@@ -481,9 +481,6 @@
             <span class="signer-role">Accountable Borrower</span>
             <span class="signer-designation">{{ $borrowerDesignation }}</span>
             <span class="signer-date">Date: ____________________</span>
-            <div class="integrity-note">
-                Handwritten/wet signature required on the printed copy. The system does not apply an electronic signature.
-            </div>
         </div>
     </section>
 
@@ -507,12 +504,6 @@
                 </td>
             </tr>
         </table>
-        <p class="approval-note">
-            GSU and VPAF are physical signatories only; they do not approve this request inside SPMU-ACPMP.
-            Print this letter, obtain the required handwritten/wet signatures, scan the fully accomplished
-            document, and upload it to the same request before submission. SPMU then verifies the uploaded
-            signed letter in the system. Inventory is reserved only after SPMU verification and approval.
-        </p>
     </section>
 </body>
 </html>

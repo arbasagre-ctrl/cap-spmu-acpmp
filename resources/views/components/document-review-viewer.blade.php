@@ -143,8 +143,8 @@
     }
 
     .scanned-pdf-stage {
-        height: min(76vh, 900px);
-        min-height: 680px;
+        height: clamp(460px, 56vh, 610px);
+        min-height: 460px;
         background: #525659;
     }
 
@@ -183,8 +183,8 @@
     }
 
     .scanned-image-stage {
-        height: min(76vh, 900px);
-        min-height: 680px;
+        height: clamp(460px, 56vh, 610px);
+        min-height: 460px;
         overflow: auto;
         padding: 22px;
         background: #e7ecf1;
@@ -217,8 +217,8 @@
 
         .scanned-pdf-stage,
         .scanned-image-stage {
-            min-height: 480px;
-            height: 64vh;
+            min-height: 380px;
+            height: 54vh;
         }
     }
 </style>
@@ -290,3 +290,60 @@
 })();
 </script>
 @endonce
+
+<!-- SPMU_COMPACT_REVIEW_OVERRIDE -->
+<style>
+/*
+ * Compact approval document review.
+ * The native PDF/image stage keeps its own scrolling; the page no longer
+ * needs an oversized 680â€“900px preview.
+ */
+.formal-document-review-card,
+.scanned-document-card {
+    min-height: 0 !important;
+    align-self: start;
+}
+
+.formal-document-review-header,
+.scanned-document-header {
+    padding-block: 14px !important;
+}
+
+.formal-document-review-stage,
+.formal-pdf-stage,
+.scanned-pdf-stage,
+.scanned-image-stage {
+    height: clamp(460px, 56vh, 610px) !important;
+    min-height: 460px !important;
+    max-height: 610px !important;
+    overflow: auto;
+}
+
+.formal-document-review-frame,
+.formal-pdf-frame,
+.scanned-pdf-frame {
+    min-height: 0 !important;
+}
+
+@media (max-width: 900px) {
+    .formal-document-review-stage,
+    .formal-pdf-stage,
+    .scanned-pdf-stage,
+    .scanned-image-stage {
+        height: 52vh !important;
+        min-height: 400px !important;
+        max-height: 540px !important;
+    }
+}
+
+@media (max-width: 620px) {
+    .formal-document-review-stage,
+    .formal-pdf-stage,
+    .scanned-pdf-stage,
+    .scanned-image-stage {
+        height: 50vh !important;
+        min-height: 340px !important;
+        max-height: 460px !important;
+    }
+}
+</style>

@@ -2,6 +2,54 @@
 
 @section('content')
 
+<style>
+    /*
+    |--------------------------------------------------------------------------
+    | Login background decoration polish
+    |--------------------------------------------------------------------------
+    | Keep the right-side soft circle from the existing design, then render
+    | the left circle as a real pseudo-element positioned fully inside the
+    | login area so it is no longer cut in half by the page boundary.
+    */
+    .login-page {
+        background:
+            radial-gradient(
+                circle at 92% 52%,
+                rgba(72, 139, 230, 0.10) 0,
+                rgba(72, 139, 230, 0.10) 14%,
+                transparent 14.2%
+            ),
+            #f3f7fc;
+    }
+
+    .login-page::before {
+        content: "";
+        position: absolute;
+        z-index: 0;
+        width: clamp(240px, 21vw, 350px);
+        aspect-ratio: 1;
+        left: clamp(24px, 4vw, 68px);
+        bottom: 24px;
+        border-radius: 50%;
+        background: rgba(72, 139, 230, 0.08);
+        pointer-events: none;
+    }
+
+    .login-page .login-card {
+        position: relative;
+        z-index: 1;
+    }
+
+    @media (max-width: 760px) {
+        .login-page::before {
+            width: 220px;
+            left: 18px;
+            bottom: 18px;
+            opacity: .75;
+        }
+    }
+</style>
+
 <div class="login-page">
 
     <div class="login-card">

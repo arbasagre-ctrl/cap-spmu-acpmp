@@ -131,6 +131,22 @@ class DocumentService
             'lines.requestItem.inventoryItem',
         ]);
 
+        /*
+         * Borrower Slip is an operational release document.
+         *
+         * It must reflect the quantities physically prepared by the SPMU
+         * Action Officer, so it is never generated at approval time.
+         * The official generation point is CustodyService::prepare(), after
+         * every Actual Prepared quantity has been confirmed to match the
+         * approved quantity.
+         */
+        if (! $custody->prepared_at) {
+            throw ValidationException::withMessages([
+                'document' =>
+                    'Borrower Slip is available only after the SPMU Action Officer confirms item preparation.',
+            ]);
+        }
+
         $this->supersede(
             $custody,
             'BORROWER_SLIP',
@@ -152,135 +168,605 @@ class DocumentService
     {
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
-        $releasedBy = $custody->released_by_user_id
-            ? User::find($custody->released_by_user_id)
-            : null;
 
         $logoPath = resource_path('images/cspc-logo-print.jpg');
+
         $logo = is_file($logoPath)
-            ? '<img class="borrower-logo" src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
-            : '<div class="seal">CSPC</div>';
+            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo" style="width:54px;height:54px;object-fit:contain;">'
+            : '<div style="font-weight:bold;font-size:8pt;">CSPC</div>';
 
+        $borrowerName = e((string) $borrower->full_name);
+        $purpose = e((string) ($version?->purpose_event ?: ''));
+
+        $formDate = $custody->scheduled_release_at
+            ? $custody->scheduled_release_at->format('m-d-Y')
+            : '';
+
+        $returnDate = $custody->due_at
+            ? $custody->due_at->format('F j, Y')
+            : '';
+
+        /*
+         * Standalone PDF:
+         * keep document-control footer anchored to the bottom.
+         *
+         * Embedded packet version:
+         * keep normal flow so it does not interfere with other pages.
+         */
+        $footerPlacement = $documentShell
+            ? 'position:fixed;bottom:0;left:0;right:0;'
+            : 'margin-top:27pt;';
+
+        /*
+         * Only actual prepared items are printed.
+         * Do not generate artificial blank rows.
+         */
         $itemRows = '';
-        $itemNo = 1;
+
         foreach ($custody->lines as $line) {
-            $itemRows .= '<tr>'
-                .'<td class="item-number">'.e((string) $itemNo).'</td>'
-                .'<td>'.e($line->requestItem->description_snapshot).'</td>'
-                .'<td class="numeric">'.e((string) ($line->approved_quantity + 0)).'</td>'
-                .'<td class="numeric final-issued">'.e((string) ($line->quantity_to_receive + 0)).'</td>'
-                .'<td class="unit-cell">'.e($line->requestItem->unit_snapshot).'</td>'
-                .'<td class="use-cell">'.e(str_replace('_', '-', $line->requestItem->use_location)).'</td>'
-                .'<td class="status-cell">'.e(str_replace('_', ' ', $line->item_status)).'</td>'
+            $quantity = (int) round((float) $line->quantity_to_receive);
+            $unit = e((string) $line->requestItem?->unit_snapshot);
+            $description = e((string) $line->requestItem?->description_snapshot);
+
+            $itemRows .=
+                '<tr>'
+                .'<td style="
+                    width:9%;
+                    border:1px solid #222;
+                    height:15pt;
+                    padding:1pt 2pt;
+                    text-align:center;
+                    vertical-align:middle;
+                ">'.$quantity.'</td>'
+
+                .'<td style="
+                    width:9%;
+                    border:1px solid #222;
+                    padding:1pt 2pt;
+                    text-align:center;
+                    vertical-align:middle;
+                ">'.$unit.'</td>'
+
+                .'<td style="
+                    width:40%;
+                    border:1px solid #222;
+                    padding:1pt 4pt;
+                    vertical-align:middle;
+                ">'.$description.'</td>'
+
+                .'<td style="
+                    width:42%;
+                    border:1px solid #222;
+                    padding:1pt 3pt;
+                    vertical-align:middle;
+                "></td>'
+
                 .'</tr>';
-            $itemNo++;
         }
 
-        if ($itemRows === '') {
-            $itemRows = '<tr><td colspan="7" class="empty-cell">No prepared custody item is recorded for this transaction.</td></tr>';
-        }
+        $body = <<<HTML
+<section style="
+    width:100%;
+    box-sizing:border-box;
+    padding-top:22pt;
+    padding-bottom:28pt;
+    font-family:Arial, Helvetica, sans-serif;
+    font-size:9.5pt;
+    line-height:1.18;
+    color:#111;
+">
 
-        $signatureVisual = '<div class="signature-placeholder">Handwritten signature on printed copy</div>';
 
-        $slipStatus = $custody->released_at
-            ? 'Released'
-            : ($custody->acknowledged_at
-                ? 'Acknowledged'
-                : ($custody->prepared_at ? 'Prepared' : 'Preparation Pending'));
+    <!-- ======================================================
+         CSPC HEADER
+    ======================================================= -->
 
-        $releaseOfficer = $releasedBy?->full_name ?: 'Pending physical release';
-        $releaseTime = $custody->released_at
-            ? ($this->formalDateTime($custody->released_at) ?? '')
-            : 'Pending';
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        border-bottom:1.2px solid #222;
+        margin:0 0 27pt 0;
+    ">
+        <tr>
 
-        $body = '<section class="official borrower-slip">'
-            .'<table class="borrower-header" role="presentation">'
-                .'<colgroup><col style="width:62px"><col></colgroup>'
-                .'<tr>'
-                    .'<td class="borrower-header-logo-cell">'.$logo.'</td>'
-                    .'<td class="borrower-header-copy">'
-                        .'<strong>CAMARINES SUR POLYTECHNIC COLLEGES</strong>'
-                        .'<span>Supply and Property Management Unit</span>'
-                    .'</td>'
-                .'</tr>'
-            .'</table>'
+            <td style="
+                width:62px;
+                vertical-align:middle;
+                padding:0 7px 5px 0;
+            ">
+                {$logo}
+            </td>
 
-            .'<div class="borrower-title-block">'
-                .'<h1>BORROWER\'S SLIP</h1>'
-                .'<div class="borrower-meta">'
-                    .'<span><b>Custody No.</b> '.e($custody->custody_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Request No.</b> '.e((string) $custody->request->request_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Status</b> '.e($slipStatus).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Issued</b> '.e($this->formalDateTime(now()) ?? '').'</span>'
-                .'</div>'
-            .'</div>'
+            <td style="
+                vertical-align:middle;
+                padding-bottom:5px;
+            ">
 
-            .'<div class="borrower-section-title">Custody / Borrower Information</div>'
-            .'<table class="borrower-info-grid">'
-                .'<tr>'
-                    .'<td><span class="field-label">Borrower</span><span class="field-value">'.e($borrower->full_name).'</span></td>'
-                    .'<td><span class="field-label">Custody No.</span><span class="field-value">'.e($custody->custody_no).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Purpose / Event</span><span class="field-value">'.e((string) $version?->purpose_event).'</span></td>'
-                    .'<td><span class="field-label">Location</span><span class="field-value">'.e((string) $version?->location).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Release Schedule</span><span class="field-value">'.e($this->formalDateTime($custody->scheduled_release_at) ?? 'Not recorded').'</span></td>'
-                    .'<td><span class="field-label">Return Deadline</span><span class="field-value">'.e($this->formalDateTime($custody->due_at) ?? 'Not recorded').'</span></td>'
-                .'</tr>'
-            .'</table>'
+                <div style="
+                    font-size:7.5pt;
+                    line-height:1.05;
+                ">
+                    Republic of the Philippines
+                </div>
 
-            .'<p class="borrower-intro">This slip records the approved quantities prepared for custody release. The final issued quantities shown below are protected custody fields and form the basis of the borrower acknowledgement.</p>'
+                <div style="
+                    font-size:9pt;
+                    font-weight:bold;
+                    line-height:1.05;
+                ">
+                    CAMARINES SUR POLYTECHNIC COLLEGES
+                </div>
 
-            .'<div class="borrower-section-title">Approved Items / Final Issued Quantities</div>'
-            .'<table class="borrower-items-table">'
-                .'<thead><tr>'
-                    .'<th class="item-number">No.</th>'
-                    .'<th>Item / Description</th>'
-                    .'<th class="numeric">Approved</th>'
-                    .'<th class="numeric final-issued">Final Issued</th>'
-                    .'<th class="unit-cell">Unit</th>'
-                    .'<th class="use-cell">Use Location</th>'
-                    .'<th class="status-cell">Status</th>'
-                .'</tr></thead>'
-                .'<tbody>'.$itemRows.'</tbody>'
-            .'</table>'
+                <div style="
+                    font-size:7.5pt;
+                    line-height:1.05;
+                ">
+                    Nabua, Camarines Sur
+                </div>
 
-            .'<div class="borrower-section-title">Borrower Acknowledgement</div>'
-            .'<p class="borrower-certification">I acknowledge and accept accountability for the actual quantities prepared and released under this custody transaction, and I agree to return the listed property by the recorded deadline in accordance with the approved borrowing request and SPMU custody requirements.</p>'
+            </td>
 
-            .'<table class="borrower-ack-table" role="presentation"><tr>'
-                .'<td class="ack-spacer"></td>'
-                .'<td class="ack-block">'
-                    .'<div class="ack-caption">Acknowledged and accepted by:</div>'
-                    .'<div class="signature-space">'.$signatureVisual.'</div>'
-                    .'<div class="signature-name">'.e($borrower->full_name).'</div>'
-                    .'<div class="signature-role">Accountable Borrower</div>'
-                    .'<div class="signature-subrole">Borrower</div>'
-                    .'<div class="signature-date">'.($custody->acknowledged_at ? 'Acknowledged on '.e($this->formalDateTime($custody->acknowledged_at) ?? '') : 'Acknowledgement pending').'</div>'
-                    .'<div class="signature-integrity">System acknowledgement is recorded by authenticated user and timestamp; no electronic signature is applied.</div>'
-                .'</td>'
-            .'</tr></table>'
+            <td style="
+                width:120px;
+                text-align:right;
+                vertical-align:bottom;
+                padding-bottom:5px;
+                font-size:6.5pt;
+                font-weight:bold;
+            ">
+                CSPC-F-SPMU-26
+            </td>
 
-            .'<div class="borrower-section-title">SPMU Release Control</div>'
-            .'<table class="borrower-release-table">'
-                .'<tr>'
-                    .'<th>SPMU Releasing Officer</th><td>'.e($releaseOfficer).'</td>'
-                    .'<th>Physical Release</th><td>'.e($releaseTime).'</td>'
-                .'</tr>'
-            .'</table>'
+        </tr>
+    </table>
 
-            .'<footer class="borrower-footer"><span>Controlled document | SPMU-ACPMP | Official operational time: Asia/Manila</span><span>Page '.e((string) $pageNumber).' of '.e((string) $pageCount).'</span></footer>'
-        .'</section>';
+
+    <!-- ======================================================
+         TITLE
+    ======================================================= -->
+
+    <div style="
+        width:93%;
+        margin:0 auto 29pt;
+        text-align:center;
+        font-size:11pt;
+        line-height:1;
+        font-weight:bold;
+    ">
+        BORROWER'S SLIP
+    </div>
+
+
+    <!-- ======================================================
+         ADDRESSEE + DATE
+    ======================================================= -->
+
+    <table style="
+        width:93%;
+        margin:0 auto 19pt;
+        border-collapse:collapse;
+        font-size:9.5pt;
+        line-height:1.18;
+    ">
+        <tr>
+
+            <td style="
+                width:68%;
+                vertical-align:top;
+            ">
+
+                <div style="
+                    font-size:10pt;
+                    font-weight:bold;
+                    line-height:1.08;
+                ">
+                    ANGELICA P. REGONDOLA, PhD
+                </div>
+
+                <div style="margin-top:2pt;">
+                    Administrative Officer V, Supply Officer III
+                </div>
+
+                <div style="margin-top:1pt;">
+                    This Institution
+                </div>
+
+            </td>
+
+            <td style="
+                width:32%;
+                vertical-align:top;
+                text-align:right;
+                padding-top:2pt;
+            ">
+
+                <strong>Date:</strong>
+
+                <span style="
+                    display:inline-block;
+                    width:82pt;
+                    margin-left:4pt;
+                    padding-bottom:1pt;
+                    border-bottom:1px solid #111;
+                    text-align:center;
+                ">
+                    {$formDate}
+                </span>
+
+            </td>
+
+        </tr>
+    </table>
+
+
+    <!-- ======================================================
+         MESSAGE
+    ======================================================= -->
+
+    <div style="
+        width:93%;
+        margin:0 auto 8pt;
+    ">
+        Ma'am:
+    </div>
+
+    <p style="
+        width:93%;
+        margin:0 auto 18pt;
+        padding:0;
+        font-size:9.5pt;
+        line-height:1.28;
+        text-indent:31pt;
+        text-align:justify;
+    ">
+        I have the honor to borrow the equipment indicated hereunder which will be used
+        for <strong>{$purpose}</strong>. It is understood that I shall be held responsible
+        for said items while in my possession until officially returned on
+        <strong>{$returnDate}</strong>.
+    </p>
+
+
+    <!-- ======================================================
+         ITEMS
+
+         QTY          9%
+         UNIT         9%
+         DESCRIPTION 40%
+         SIGNATURE   42%
+    ======================================================= -->
+
+    <table style="
+        width:93%;
+        margin:0 auto;
+        border-collapse:collapse;
+        table-layout:fixed;
+        font-size:8.5pt;
+        line-height:1.05;
+    ">
+
+        <thead>
+
+            <tr style="height:25pt;">
+
+                <th style="
+                    width:9%;
+                    border:1px solid #222;
+                    padding:2pt 1pt;
+                    text-align:center;
+                    vertical-align:middle;
+                    font-weight:bold;
+                ">
+                    QTY.
+                </th>
+
+                <th style="
+                    width:9%;
+                    border:1px solid #222;
+                    padding:2pt 1pt;
+                    text-align:center;
+                    vertical-align:middle;
+                    font-weight:bold;
+                ">
+                    UNIT
+                </th>
+
+                <th style="
+                    width:40%;
+                    border:1px solid #222;
+                    padding:2pt 3pt;
+                    text-align:center;
+                    vertical-align:middle;
+                    font-weight:bold;
+                ">
+                    ARTICLE/DESCRIPTION
+                </th>
+
+                <th style="
+                    width:42%;
+                    border:1px solid #222;
+                    padding:2pt 3pt;
+                    text-align:center;
+                    vertical-align:middle;
+                    font-weight:bold;
+                    line-height:1.05;
+                ">
+                    BORROWER'S SIGNATURE<br>
+                    UPON RECEIPT OF ITEMS
+                </th>
+
+            </tr>
+
+        </thead>
+
+        <tbody>
+            {$itemRows}
+        </tbody>
+
+    </table>
+
+
+    <!-- ======================================================
+         LOWER FORM AREA
+    ======================================================= -->
+
+    <table style="
+        width:93%;
+        margin:5pt auto 0;
+        border-collapse:collapse;
+    ">
+
+        <tr>
+
+
+            <!-- ==================================================
+                 LEFT SIDE
+
+                 Blank space is intentionally preserved for
+                 physical SPMU stamps/annotations.
+            =================================================== -->
+
+            <td style="
+                width:50%;
+                vertical-align:top;
+                padding-right:22pt;
+            ">
+
+                <div style="height:76pt;"></div>
+
+
+                <!-- Reference-form equal-sign divider -->
+
+                <div style="
+                    width:88%;
+                    margin-bottom:17pt;
+                    font-family:'Courier New', monospace;
+                    font-size:9pt;
+                    letter-spacing:0.4pt;
+                    white-space:nowrap;
+                    overflow:hidden;
+                    color:#111;
+                ">======================================</div>
+
+
+                <div style="
+                    font-size:9.5pt;
+                    font-weight:bold;
+                    margin-bottom:8pt;
+                ">
+                    Remarks upon return of items
+                </div>
+
+
+                <div style="
+                    width:88%;
+                    height:16pt;
+                    border-bottom:1px solid #111;
+                "></div>
+
+                <div style="
+                    width:88%;
+                    height:16pt;
+                    border-bottom:1px solid #111;
+                "></div>
+
+                <div style="
+                    width:88%;
+                    height:16pt;
+                    border-bottom:1px solid #111;
+                "></div>
+
+            </td>
+
+
+            <!-- ==================================================
+                 BORROWER SIGNATURE
+
+                 Printed name is system-encoded.
+                 Actual signature remains handwritten.
+            =================================================== -->
+
+            <td style="
+                width:50%;
+                vertical-align:top;
+                padding-left:18pt;
+                text-align:center;
+            ">
+
+                <div style="
+                    text-align:left;
+                    margin:7pt 0 25pt 7pt;
+                    font-size:9.5pt;
+                ">
+                    Very truly yours,
+                </div>
+
+
+                <!-- blank handwritten signature space -->
+
+                <div style="height:24pt;"></div>
+
+
+                <!-- signature line -->
+
+                <div style="
+                    border-bottom:1px solid #111;
+                    margin:0 5pt;
+                    height:1pt;
+                "></div>
+
+
+                <!-- encoded printed name -->
+
+                <div style="
+                    margin-top:2pt;
+                    font-size:9.5pt;
+                    font-weight:bold;
+                    text-transform:uppercase;
+                    line-height:1.05;
+                ">
+                    {$borrowerName}
+                </div>
+
+
+                <!-- close to printed name / line -->
+
+                <div style="
+                    margin-top:1pt;
+                    font-size:8pt;
+                    line-height:1;
+                    font-style:italic;
+                ">
+                    Signature over Printed Name
+                </div>
+
+
+                <!-- designation space -->
+
+                <div style="height:34pt;"></div>
+
+                <div style="
+                    border-bottom:1px solid #111;
+                    margin:0 14pt;
+                    height:1pt;
+                "></div>
+
+                <div style="
+                    margin-top:1pt;
+                    font-size:8pt;
+                    line-height:1;
+                    font-style:italic;
+                ">
+                    Designation
+                </div>
+
+            </td>
+
+        </tr>
+
+    </table>
+
+
+    <!-- ======================================================
+         APPROVAL
+    ======================================================= -->
+
+    <div style="
+        width:42%;
+        margin:29pt auto 0;
+        text-align:center;
+    ">
+
+        <div style="
+            font-size:9.5pt;
+            font-weight:bold;
+            margin-bottom:25pt;
+        ">
+            APPROVED:
+        </div>
+
+
+        <!-- blank handwritten signature -->
+
+        <div style="height:19pt;"></div>
+
+
+        <div style="
+            border-bottom:1px solid #111;
+            margin:0 8pt;
+        "></div>
+
+
+        <div style="
+            margin-top:3pt;
+            font-size:9.5pt;
+            font-weight:bold;
+        ">
+            ANGELICA P. REGONDOLA, PhD
+        </div>
+
+
+        <div style="
+            margin-top:1pt;
+            font-size:8pt;
+        ">
+            Administrative Officer V
+        </div>
+
+    </div>
+
+
+    <!-- ======================================================
+         FIXED DOCUMENT CONTROL FOOTER
+    ======================================================= -->
+
+    <table style="
+        {$footerPlacement}
+        width:100%;
+        border-collapse:collapse;
+        border-top:1px solid #222;
+        font-size:6.5pt;
+        line-height:1;
+    ">
+
+        <tr>
+
+            <td style="
+                width:33%;
+                padding-top:4pt;
+            ">
+                Effective Date: August 2025
+            </td>
+
+            <td style="
+                width:34%;
+                padding-top:4pt;
+                text-align:center;
+            ">
+                Rev. 3
+            </td>
+
+            <td style="
+                width:33%;
+                padding-top:4pt;
+                text-align:right;
+            ">
+                Page {$pageNumber} of {$pageCount}
+            </td>
+
+        </tr>
+
+    </table>
+
+</section>
+HTML;
 
         return $documentShell
             ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
             : $body;
     }
+
+
+
 
     public function conditionalForm(CustodyTransaction $custody, string $type): GeneratedDocument
     {
@@ -361,279 +847,1353 @@ class DocumentService
         $borrower = $custody->request->borrower;
         $gatePass = $custody->gatePass;
 
-        /*
-         * Gate Pass presentation data.
-         *
-         * Keep this document fully physical/wet-signature based.
-         * The logo is embedded only for PDF rendering and the item rows
-         * contain the approved off-campus custody lines.
-         */
         $logoPath = resource_path('images/cspc-logo-print.jpg');
+
         $logo = is_file($logoPath)
-            ? '<img class="gate-logo" src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
-            : '<div class="seal">CSPC</div>';
+            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo" style="width:54px;height:54px;object-fit:contain;">'
+            : '<div style="font-size:10px;font-weight:bold;">CSPC</div>';
+
+        $borrowerName = e((string) $borrower->full_name);
+        $purpose = e((string) ($version?->purpose_event ?: ''));
+        $destination = e((string) ($version?->location ?: ''));
+
+        $custodyNumber = e((string) $custody->custody_no);
+
+        $formDate = $custody->scheduled_release_at
+            ? $custody->scheduled_release_at->format('m-d-Y')
+            : now()->format('m-d-Y');
+
+        $verifiedName = $gatePass?->preparedVerifier?->full_name
+            ? e((string) $gatePass->preparedVerifier->full_name)
+            : 'SPMU ACTION OFFICER';
+
+        $approvedName = $gatePass?->approver?->full_name
+            ? e((string) $gatePass->approver->full_name)
+            : 'SPMU HEAD';
 
         $offCampusLines = $custody->lines->filter(
             fn ($line) =>
                 $line->requestItem?->use_location === 'OFF_CAMPUS'
+                && (float) $line->quantity_to_receive > 0
         );
 
         $itemRows = '';
-        $itemNo = 1;
 
         foreach ($offCampusLines as $line) {
-            $itemRows .= '<tr>'
-                .'<td class="item-number">'.e((string) $itemNo).'</td>'
-                .'<td>'.e((string) $line->requestItem?->description_snapshot).'</td>'
-                .'<td class="numeric">'.e((string) ($line->quantity_to_receive + 0)).'</td>'
-                .'<td class="unit-cell">'.e((string) $line->requestItem?->unit_snapshot).'</td>'
-                .'<td class="use-cell">OFF-CAMPUS</td>'
+            $quantity = (int) round((float) $line->quantity_to_receive);
+            $unit = e((string) $line->requestItem?->unit_snapshot);
+            $description = e((string) $line->requestItem?->description_snapshot);
+
+            $itemRows .=
+                '<tr>'
+                .'<td style="border:1px solid #222;height:23px;text-align:center;padding:3px 5px;">'.$quantity.'</td>'
+                .'<td style="border:1px solid #222;text-align:center;padding:3px 5px;">'.$unit.'</td>'
+                .'<td style="border:1px solid #222;padding:3px 7px;">'.$description.'</td>'
                 .'</tr>';
-
-            $itemNo++;
         }
 
-        if ($itemRows === '') {
-            $itemRows = '<tr><td colspan="5" class="empty-cell">No off-campus custody item is recorded for this transaction.</td></tr>';
+        $minimumRows = 9;
+        $existingRows = $offCampusLines->count();
+
+        for ($i = $existingRows; $i < $minimumRows; $i++) {
+            $itemRows .=
+                '<tr>'
+                .'<td style="border:1px solid #222;height:23px;"></td>'
+                .'<td style="border:1px solid #222;"></td>'
+                .'<td style="border:1px solid #222;"></td>'
+                .'</tr>';
         }
 
-        $gateStatus = $gatePass?->status === 'VERIFIED'
-            ? 'Accomplished and Verified'
-            : ($custody->released_at
-                ? 'For Accomplished Scan'
-                : 'For Physical Signatures');
+        $body = <<<HTML
+<section style="
+    width:100%;
+    box-sizing:border-box;
+    font-family:'Times New Roman', Times, serif;
+    font-size:12px;
+    line-height:1.25;
+    color:#111;
+">
 
-        $physicalSignatureLine =
-            '<div class="signature-placeholder">Handwritten signature</div>';
+    <!-- ======================================================
+         INSTITUTIONAL HEADER
+    ======================================================= -->
 
-        $body = '<section class="official gate-pass">'
-            .'<table class="gate-header" role="presentation">'
-                .'<colgroup><col style="width:62px"><col></colgroup>'
-                .'<tr>'
-                    .'<td class="gate-header-logo-cell">'.$logo.'</td>'
-                    .'<td class="gate-header-copy">'
-                        .'<strong>CAMARINES SUR POLYTECHNIC COLLEGES</strong>'
-                        .'<span>Supply and Property Management Unit</span>'
-                    .'</td>'
-                .'</tr>'
-            .'</table>'
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        border-bottom:1.5px solid #222;
+        margin-bottom:12px;
+    ">
+        <tr>
+            <td style="width:62px;padding:2px 6px 5px 2px;vertical-align:middle;">
+                {$logo}
+            </td>
 
-            .'<div class="gate-title-block">'
-                .'<h1>GATE PASS</h1>'
-                .'<div class="gate-meta">'
-                    .'<span><b>Custody No.</b> '.e($custody->custody_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Request No.</b> '.e((string) $custody->request->request_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Status</b> '.e($gateStatus).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Issued</b> '.e($this->formalDateTime(now()) ?? '').'</span>'
-                .'</div>'
-            .'</div>'
+            <td style="vertical-align:middle;padding:2px 4px 5px;">
+                <div style="font-size:10px;">Republic of the Philippines</div>
+                <div style="font-size:12px;font-weight:bold;">
+                    CAMARINES SUR POLYTECHNIC COLLEGES
+                </div>
+                <div style="font-size:10px;">
+                    Nabua, Camarines Sur
+                </div>
+            </td>
 
-            .'<div class="gate-section-title">Bearer / Movement Information</div>'
-            .'<table class="gate-info-grid">'
-                .'<tr>'
-                    .'<td><span class="field-label">Borrower / Bearer</span><span class="field-value">'.e($borrower->full_name).'</span></td>'
-                    .'<td><span class="field-label">Custody No.</span><span class="field-value">'.e($custody->custody_no).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Purpose / Event</span><span class="field-value">'.e((string) $version?->purpose_event).'</span></td>'
-                    .'<td><span class="field-label">Destination / Location</span><span class="field-value">'.e((string) $version?->location).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Release Schedule</span><span class="field-value">'.e($this->formalDateTime($custody->scheduled_release_at) ?? 'Not recorded').'</span></td>'
-                    .'<td><span class="field-label">Return Deadline</span><span class="field-value">'.e($this->formalDateTime($custody->due_at) ?? 'Not recorded').'</span></td>'
-                .'</tr>'
-            .'</table>'
+            <td style="
+                width:120px;
+                text-align:right;
+                vertical-align:bottom;
+                padding-bottom:6px;
+                font-size:9px;
+                font-weight:bold;
+            ">
+                CSPC-F-SPMU
+            </td>
+        </tr>
+    </table>
 
-            .'<p class="gate-intro">This Gate Pass covers only the approved property listed below for authorized off-campus movement. Required signatures are completed by hand on the printed form.</p>'
 
-            .'<div class="gate-section-title">Approved Items for Off-Campus Movement</div>'
-            .'<table class="gate-items-table">'
-                .'<thead><tr>'
-                    .'<th class="item-number">No.</th>'
-                    .'<th>Item / Description</th>'
-                    .'<th class="numeric">Quantity</th>'
-                    .'<th class="unit-cell">Unit</th>'
-                    .'<th class="use-cell">Use Location</th>'
-                .'</tr></thead>'
-                .'<tbody>'.$itemRows.'</tbody>'
-            .'</table>'
+    <!-- ======================================================
+         NUMBER + DATE
+    ======================================================= -->
 
-            .'<div class="gate-section-title">SPMU Verification and Approval</div>'
-            .'<p class="gate-certification">Complete the signatures below by hand on the printed Gate Pass. The accomplished scan is returned to SPMU for recording and verification.</p>'
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        margin-bottom:2px;
+    ">
+        <tr>
+            <td style="width:67%;"></td>
 
-            .'<table class="gate-signatures" role="presentation"><tr>'
-                .'<td>'
-                    .'<div class="signature-label">Verified By - SPMU Action Officer</div>'
-                    .'<div class="signature-space">'.$physicalSignatureLine.'</div>'
-                    .'<div class="signature-name">SPMU ACTION OFFICER</div>'
-                    .'<div class="signature-role">Supply and Property Management Unit</div>'
-                    .'<div class="signature-date">Sign and date on the printed form</div>'
-                .'</td>'
-                .'<td>'
-                    .'<div class="signature-label">Approved By - SPMU Head</div>'
-                    .'<div class="signature-space">'.$physicalSignatureLine.'</div>'
-                    .'<div class="signature-name">SPMU HEAD</div>'
-                    .'<div class="signature-role">Supply and Property Management Unit</div>'
-                    .'<div class="signature-date">Sign and date on the printed form</div>'
-                .'</td>'
-            .'</tr></table>'
+            <td style="width:33%;font-size:11px;">
+                <div>
+                    <strong>GP No.</strong>
+                    <span style="
+                        display:inline-block;
+                        width:110px;
+                        border-bottom:1px solid #111;
+                        text-align:center;
+                    ">
+                        {$custodyNumber}
+                    </span>
+                </div>
 
-            .'<div class="gate-section-title">Guard / Exit Control</div>'
-            .'<p class="gate-guard-note">To be completed by the guard on duty after the authorized property is physically presented for exit.</p>'
-            .'<table class="gate-guard-table">'
-                .'<tr>'
-                    .'<th>Released By</th><td class="write-line"></td>'
-                    .'<th>Date</th><td class="write-line"></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<th>Time</th><td class="write-line"></td>'
-                    .'<th>Signature</th><td class="write-line"></td>'
-                .'</tr>'
-            .'</table>'
+                <div style="margin-top:3px;">
+                    <strong>Date:</strong>
+                    <span style="
+                        display:inline-block;
+                        width:110px;
+                        border-bottom:1px solid #111;
+                        text-align:center;
+                    ">
+                        {$formDate}
+                    </span>
+                </div>
+            </td>
+        </tr>
+    </table>
 
-            .'<p class="gate-note"><strong>Document handling:</strong> Return the signed original to SPMU for recording. The borrower may upload the signed scan; any authorized SPMU fallback upload remains auditable.</p>'
 
-            .'<footer class="gate-footer"><span>Controlled document | SPMU-ACPMP | Official operational time: Asia/Manila</span><span>Page '.e((string) $pageNumber).' of '.e((string) $pageCount).'</span></footer>'
-        .'</section>';
+    <!-- ======================================================
+         TITLE
+    ======================================================= -->
+
+    <div style="
+        text-align:center;
+        font-weight:bold;
+        font-size:15px;
+        margin:2px 0 16px;
+    ">
+        GATE PASS
+    </div>
+
+
+    <!-- ======================================================
+         INTRO
+    ======================================================= -->
+
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        margin-bottom:10px;
+    ">
+        <tr>
+            <td style="
+                width:44px;
+                vertical-align:top;
+                font-weight:bold;
+            ">
+                TO:
+            </td>
+
+            <td style="vertical-align:top;">
+                <strong>Security Guard on Duty</strong>
+            </td>
+        </tr>
+    </table>
+
+    <p style="
+        margin:0 0 12px 44px;
+        text-align:justify;
+        line-height:1.4;
+    ">
+        Please allow the bearer
+        <span style="
+            display:inline-block;
+            min-width:190px;
+            border-bottom:1px solid #111;
+            text-align:center;
+            font-weight:bold;
+        ">
+            {$borrowerName}
+        </span>
+        whose signature appears below to bring out of the CSPC premises
+        the articles listed below.
+    </p>
+
+
+    <!-- ======================================================
+         ITEMS
+    ======================================================= -->
+
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        table-layout:fixed;
+        font-size:11px;
+    ">
+        <colgroup>
+            <col style="width:13%;">
+            <col style="width:14%;">
+            <col style="width:73%;">
+        </colgroup>
+
+        <thead>
+            <tr>
+                <th style="border:1px solid #222;padding:4px;text-align:center;">
+                    Quantity
+                </th>
+
+                <th style="border:1px solid #222;padding:4px;text-align:center;">
+                    Unit
+                </th>
+
+                <th style="border:1px solid #222;padding:4px;text-align:center;">
+                    Description
+                </th>
+            </tr>
+        </thead>
+
+        <tbody>
+            {$itemRows}
+
+            <tr>
+                <td colspan="3" style="
+                    border:1px solid #222;
+                    padding:6px;
+                    min-height:24px;
+                ">
+                    <strong>Purpose:</strong>
+                    &nbsp; {$purpose}
+                </td>
+            </tr>
+
+            <tr>
+                <td colspan="3" style="
+                    border:1px solid #222;
+                    padding:6px;
+                    min-height:24px;
+                ">
+                    <strong>Remarks:</strong>
+                    &nbsp; Destination: {$destination}
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+
+    <!-- ======================================================
+         BEARER
+    ======================================================= -->
+
+    <div style="
+        width:48%;
+        margin-top:16px;
+    ">
+        <div style="font-weight:bold;font-size:10px;">
+            Name &amp; Signature of Bearer (Accountable Person)
+        </div>
+
+        <div style="
+            height:30px;
+            border-bottom:1px solid #111;
+        "></div>
+
+        <div style="
+            text-align:center;
+            font-weight:bold;
+            text-transform:uppercase;
+            margin-top:3px;
+        ">
+            {$borrowerName}
+        </div>
+    </div>
+
+
+    <!-- ======================================================
+         VERIFIED + APPROVED
+    ======================================================= -->
+
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        margin-top:26px;
+    ">
+        <tr>
+            <td style="
+                width:48%;
+                vertical-align:top;
+                padding-right:30px;
+            ">
+
+                <div style="font-weight:bold;margin-bottom:24px;">
+                    Verified By:
+                </div>
+
+                <div style="
+                    height:24px;
+                    border-bottom:1px solid #111;
+                "></div>
+
+                <div style="
+                    text-align:center;
+                    font-weight:bold;
+                    margin-top:3px;
+                ">
+                    {$verifiedName}
+                </div>
+
+                <div style="
+                    text-align:center;
+                    font-size:10px;
+                ">
+                    SPMU Action Officer
+                </div>
+
+            </td>
+
+            <td style="
+                width:52%;
+                vertical-align:top;
+                padding-left:30px;
+            ">
+
+                <div style="font-weight:bold;margin-bottom:24px;">
+                    Approved By:
+                </div>
+
+                <div style="
+                    height:24px;
+                    border-bottom:1px solid #111;
+                "></div>
+
+                <div style="
+                    text-align:center;
+                    font-weight:bold;
+                    margin-top:3px;
+                ">
+                    {$approvedName}
+                </div>
+
+                <div style="
+                    text-align:center;
+                    font-size:10px;
+                ">
+                    Head, Supply and Property Management Unit
+                </div>
+
+            </td>
+        </tr>
+    </table>
+
+
+    <!-- ======================================================
+         GUARD / RELEASE CONTROL
+    ======================================================= -->
+
+    <div style="
+        width:48%;
+        margin-top:28px;
+    ">
+        <div style="font-weight:bold;margin-bottom:8px;">
+            Released by:
+        </div>
+
+        <div style="
+            height:25px;
+            border-bottom:1px solid #111;
+        "></div>
+
+        <div style="
+            text-align:center;
+            font-weight:bold;
+            font-size:10px;
+            margin-top:3px;
+        ">
+            Guard on Duty
+        </div>
+
+        <div style="margin-top:8px;font-size:10px;">
+            Date:
+            <span style="
+                display:inline-block;
+                width:105px;
+                border-bottom:1px solid #111;
+            "></span>
+        </div>
+
+        <div style="margin-top:6px;font-size:10px;">
+            Time:
+            <span style="
+                display:inline-block;
+                width:105px;
+                border-bottom:1px solid #111;
+            "></span>
+        </div>
+    </div>
+
+
+    <!-- ======================================================
+         DOCUMENT CONTROL FOOTER
+    ======================================================= -->
+
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        border-top:1px solid #222;
+        margin-top:36px;
+        font-size:8px;
+    ">
+        <tr>
+            <td style="width:33%;padding-top:4px;">
+                Effective Date: August 2025
+            </td>
+
+            <td style="width:34%;padding-top:4px;text-align:center;">
+                Rev. 3
+            </td>
+
+            <td style="width:33%;padding-top:4px;text-align:right;">
+                Page {$pageNumber} of {$pageCount}
+            </td>
+        </tr>
+    </table>
+
+</section>
+HTML;
 
         return $documentShell
             ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
             : $body;
     }
-
     private function laundryFormHtml(
         CustodyTransaction $custody,
         bool $documentShell = true,
         int $pageNumber = 1,
         int $pageCount = 1
     ): string {
+        $custody->loadMissing([
+            'request.borrower',
+            'request.currentVersion',
+            'lines.requestItem.inventoryItem',
+        ]);
+
         $version = $custody->request->currentVersion;
-        $borrower = $custody->borrower;
+        $borrower = $custody->request->borrower;
+
+        /*
+         * =========================================================
+         * CSPC HEADER
+         * =========================================================
+         */
 
         $logoPath = resource_path('images/cspc-logo-print.jpg');
+
         $logo = is_file($logoPath)
-            ? '<img class="laundry-logo" src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
-            : '<div class="seal">CSPC</div>';
+            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo" style="width:50px;height:50px;object-fit:contain;">'
+            : '<div style="font-weight:bold;font-size:7pt;">CSPC</div>';
+
+
+        /*
+         * =========================================================
+         * REQUEST INFORMATION
+         * =========================================================
+         */
+
+        $requestingOffice = e((string) (
+            $version?->represented_program_department
+            ?: $borrower?->department
+            ?: ''
+        ));
+
+        $requestNumber = e((string) $custody->request->request_no);
+        $borrowerName = e((string) $borrower->full_name);
+
+
+        /*
+         * =========================================================
+         * LAUNDRY ITEMS ONLY
+         * =========================================================
+         */
 
         $laundryLines = $custody->lines->filter(
             fn ($line) =>
-                (bool) $line->requestItem->inventoryItem?->laundry_required
+                (bool) $line->requestItem?->inventoryItem?->laundry_required
                 && (float) $line->quantity_to_receive > 0
         );
 
-        $itemRows = '';
-        $itemNo = 1;
+
+        /*
+         * The official physical form uses one large uninterrupted
+         * writing area instead of one bordered row per item.
+         */
+
+        $quantityContent = '';
+        $unitContent = '';
+        $descriptionContent = '';
 
         foreach ($laundryLines as $line) {
-            $itemRows .= '<tr>'
-                .'<td class="item-number">'.e((string) $itemNo).'</td>'
-                .'<td>'.e($line->requestItem->description_snapshot).'</td>'
-                .'<td class="numeric">'.e((string) ($line->quantity_to_receive + 0)).'</td>'
-                .'<td class="unit-cell">'.e($line->requestItem->unit_snapshot).'</td>'
-                .'<td class="write-line"></td>'
-                .'<td class="write-line"></td>'
-                .'<td class="write-line"></td>'
-                .'<td class="write-line"></td>'
-                .'</tr>';
+            $quantity = (int) round(
+                (float) $line->quantity_to_receive
+            );
 
-            $itemNo++;
+            $unit = e(
+                (string) $line->requestItem?->unit_snapshot
+            );
+
+            $description = e(
+                (string) $line->requestItem?->description_snapshot
+            );
+
+            $quantityContent .=
+                '<div style="
+                    height:17pt;
+                    line-height:17pt;
+                    white-space:nowrap;
+                ">'
+                .e((string) $quantity)
+                .'</div>';
+
+            $unitContent .=
+                '<div style="
+                    height:17pt;
+                    line-height:17pt;
+                    white-space:nowrap;
+                ">'
+                .$unit
+                .'</div>';
+
+            $descriptionContent .=
+                '<div style="
+                    min-height:17pt;
+                    line-height:17pt;
+                ">'
+                .$description
+                .'</div>';
         }
 
-        if ($itemRows === '') {
-            $itemRows = '<tr><td colspan="8" class="empty-cell">No laundry-required item is recorded for this custody transaction.</td></tr>';
+        if ($laundryLines->isEmpty()) {
+            $quantityContent = '&nbsp;';
+            $unitContent = '&nbsp;';
+            $descriptionContent = '&nbsp;';
         }
 
-        $body = '<section class="official laundry-form">'
-            .'<table class="laundry-header" role="presentation">'
-                .'<colgroup><col style="width:62px"><col></colgroup>'
-                .'<tr>'
-                    .'<td class="laundry-header-logo-cell">'.$logo.'</td>'
-                    .'<td class="laundry-header-copy">'
-                        .'<strong>CAMARINES SUR POLYTECHNIC COLLEGES</strong>'
-                        .'<span>Supply and Property Management Unit</span>'
-                    .'</td>'
-                .'</tr>'
-            .'</table>'
 
-            .'<div class="laundry-title-block">'
-                .'<h1>LAUNDRY SERVICE FORM</h1>'
-                .'<div class="laundry-meta">'
-                    .'<span><b>Custody No.</b> '.e($custody->custody_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Request No.</b> '.e((string) $custody->request->request_no).'</span>'
-                    .'<span class="meta-separator">|</span>'
-                    .'<span><b>Document</b> Physical Working Form</span>'
-                .'</div>'
-            .'</div>'
+        $body = <<<HTML
+<section style="
+    width:100%;
+    box-sizing:border-box;
 
-            .'<div class="laundry-section-title">Borrowing Information</div>'
-            .'<table class="laundry-info-grid">'
-                .'<tr>'
-                    .'<td><span class="field-label">Borrower</span><span class="field-value">'.e($borrower->full_name).'</span></td>'
-                    .'<td><span class="field-label">Custody No.</span><span class="field-value">'.e($custody->custody_no).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Purpose / Event</span><span class="field-value">'.e((string) $version?->purpose_event).'</span></td>'
-                    .'<td><span class="field-label">Location</span><span class="field-value">'.e((string) $version?->location).'</span></td>'
-                .'</tr>'
-                .'<tr>'
-                    .'<td><span class="field-label">Issued / Approved Linen</span><span class="field-value">Use the item table below</span></td>'
-                    .'<td><span class="field-label">Return Deadline</span><span class="field-value">'.e($this->formalDateTime($custody->due_at) ?? 'Not recorded').'</span></td>'
-                .'</tr>'
-            .'</table>'
+    font-family:Arial, Helvetica, sans-serif;
+    font-size:8pt;
+    line-height:1.08;
 
-            .'<p class="laundry-intro"><strong>Borrower instruction:</strong> After use, bring all used linen and this printed Laundry Form to the Laundry Area. Sign the Borrower Turnover portion before handing the linen and form to the Laundry Worker. After turnover, no borrower pickup of cleaned linen is required; Laundry will return the cleaned linen directly to SPMU.</p>'
+    color:#111;
+">
 
-            .'<div class="laundry-section-title">Borrower Turnover Certification</div>'
-            .'<table class="laundry-worker-table">'
-                .'<tr><th>Borrower</th><td class="write-line">'.e($borrower->full_name).'</td><th>Signature</th><td class="write-line"></td></tr>'
-                .'<tr><th>Turnover Date / Time</th><td class="write-line"></td><th>Quantity Turned Over</th><td class="write-line"></td></tr>'
-                .'<tr><th>Borrower Remarks</th><td colspan="3" class="write-line"></td></tr>'
-            .'</table>'
 
-            .'<div class="laundry-section-title">Laundry Worker - Receive, Inspect, and Complete</div>'
-            .'<table class="laundry-items-table">'
-                .'<thead><tr>'
-                    .'<th class="item-number">No.</th>'
-                    .'<th>Item / Description</th>'
-                    .'<th class="numeric">Issued Qty</th>'
-                    .'<th class="unit-cell">Unit</th>'
-                    .'<th>Received Qty</th>'
-                    .'<th>Condition / Issue</th>'
-                    .'<th>Completed Qty</th>'
-                    .'<th>Remarks</th>'
-                .'</tr></thead>'
-                .'<tbody>'.$itemRows.'</tbody>'
-            .'</table>'
+    <!-- ======================================================
+         INSTITUTIONAL HEADER
+         ====================================================== -->
 
-            .'<div class="laundry-section-title">Laundry Worker Certification</div>'
-            .'<table class="laundry-worker-table">'
-                .'<tr><th>Laundry Worker</th><td class="write-line"></td><th>Signature</th><td class="write-line"></td></tr>'
-                .'<tr><th>Received Date / Time</th><td class="write-line"></td><th>Completed Date / Time</th><td class="write-line"></td></tr>'
-                .'<tr><th>General Remarks</th><td colspan="3" class="write-line"></td></tr>'
-            .'</table>'
+    <table style="
+        width:94%;
+        margin:0 auto;
 
-            .'<div class="laundry-section-title">SPMU Final Receiving / Acceptance</div>'
-            .'<table class="laundry-worker-table">'
-                .'<tr><th>SPMU Head / Authorized Signatory</th><td class="write-line"></td><th>Signature</th><td class="write-line"></td></tr>'
-                .'<tr><th>Final Received Date / Time</th><td class="write-line"></td><th>Final Quantity Accepted</th><td class="write-line"></td></tr>'
-                .'<tr><th>Final Condition / Remarks</th><td colspan="3" class="write-line"></td></tr>'
-            .'</table>'
+        border-collapse:collapse;
+        border-bottom:1px solid #222;
+    ">
 
-            .'<p class="laundry-note"><strong>System recording:</strong> Laundry Worker records the actual quantity received and the laundry completion details in the Laundry portal. After processing, the Laundry Worker brings the cleaned linen and this same physical form directly to SPMU for final quantity/condition inspection and SPMU signature.</p>'
+        <tr>
 
-            .'<p class="laundry-note"><strong>Final upload:</strong> After SPMU signs the final receiving/acceptance portion, the form is returned to the Laundry Worker. The Laundry Worker scans/uploads the fully accomplished form. Only that final upload settles the Laundry transaction; the Borrower does not collect the cleaned linen or re-enter laundry quantities in the system.</p>'
+            <td style="
+                width:57px;
 
-            .'<footer class="laundry-footer"><span>Controlled physical working form | SPMU-ACPMP | Official operational time: Asia/Manila</span><span>Page '.e((string) $pageNumber).' of '.e((string) $pageCount).'</span></footer>'
-        .'</section>';
+                padding:0 6px 4px 0;
+
+                vertical-align:middle;
+            ">
+                {$logo}
+            </td>
+
+
+            <td style="
+                vertical-align:middle;
+
+                padding-bottom:4px;
+            ">
+
+                <div style="
+                    font-size:6.8pt;
+                    line-height:1.02;
+                ">
+                    Republic of the Philippines
+                </div>
+
+                <div style="
+                    margin-top:1pt;
+
+                    font-size:8.2pt;
+                    font-weight:bold;
+                    line-height:1.02;
+                ">
+                    CAMARINES SUR POLYTECHNIC COLLEGES
+                </div>
+
+                <div style="
+                    margin-top:1pt;
+
+                    font-size:6.8pt;
+                    line-height:1.02;
+                ">
+                    Nabua, Camarines Sur
+                </div>
+
+            </td>
+
+
+            <td style="
+                width:112px;
+
+                padding-bottom:4px;
+
+                vertical-align:bottom;
+
+                text-align:right;
+
+                font-size:6.5pt;
+                font-weight:bold;
+            ">
+                CSPC-F-SPMU-62
+            </td>
+
+        </tr>
+
+    </table>
+
+
+
+    <!-- ======================================================
+         TITLE
+         ====================================================== -->
+
+    <div style="
+        width:94%;
+
+        margin:8pt auto 11pt;
+
+        text-align:center;
+
+        font-size:9.3pt;
+        font-weight:bold;
+        line-height:1;
+    ">
+        REQUEST AND COMPLETION FOR LAUNDRY SERVICES
+    </div>
+
+
+
+    <!-- ======================================================
+         REQUESTING OFFICE / REQUEST NUMBER
+
+         Separate cells are used so labels and values do not
+         visually collide.
+         ====================================================== -->
+
+    <table style="
+        width:94%;
+
+        margin:0 auto 9pt;
+
+        border-collapse:collapse;
+
+        font-size:7.8pt;
+        line-height:1;
+    ">
+
+        <colgroup>
+            <col style="width:12.5%;">
+            <col style="width:49.5%;">
+            <col style="width:14%;">
+            <col style="width:24%;">
+        </colgroup>
+
+
+        <tr>
+
+            <td colspan="2" style="
+                padding:0;
+                vertical-align:bottom;
+            ">
+                <table style="
+                    width:100%;
+                    border:0;
+                    border-collapse:collapse;
+                    margin:0;
+                    padding:0;
+                    table-layout:auto;
+                ">
+                    <tr>
+                        <td style="
+                            width:1%;
+                            border:0;
+                            padding:0 2pt 2pt 0;
+                            vertical-align:bottom;
+                            font-weight:bold;
+                            white-space:nowrap;
+                        ">Requesting Office:</td>
+
+                        <td style="
+                            border:0;
+                            border-bottom:1px solid #111;
+                            padding:0 3pt 2pt;
+                            vertical-align:bottom;
+                            text-align:center;
+                            white-space:nowrap;
+                        ">{$requestingOffice}</td>
+                    </tr>
+                </table>
+            </td>
+
+
+            <td style="
+                padding-left:15pt;
+                padding-right:6pt;
+
+                vertical-align:bottom;
+
+                text-align:right;
+
+                font-weight:bold;
+                white-space:nowrap;
+            ">
+                Request No.:
+            </td>
+
+
+            <td style="
+                padding:0 4pt 2pt;
+
+                vertical-align:bottom;
+
+                border-bottom:1px solid #111;
+
+                text-align:center;
+
+                white-space:nowrap;
+            ">
+                {$requestNumber}
+            </td>
+
+        </tr>
+
+    </table>
+
+
+
+    <!-- ======================================================
+         MAIN LAUNDRY TABLE
+
+         Proportions patterned after the scanned CSPC form.
+
+           QTY              11%
+           UNIT              9%
+           DESCRIPTION      41%
+           DATE REQUESTED   19%
+           DATE COMPLETED   20%
+
+         ====================================================== -->
+
+    <table style="
+        width:94%;
+
+        margin:0 auto;
+
+        border-collapse:collapse;
+        table-layout:fixed;
+
+        font-size:8pt;
+        line-height:1.05;
+    ">
+
+        <colgroup>
+            <col style="width:11%;">
+            <col style="width:9%;">
+            <col style="width:41%;">
+            <col style="width:19%;">
+            <col style="width:20%;">
+        </colgroup>
+
+
+        <thead>
+
+            <tr style="height:28pt;">
+
+
+                <th style="
+                    width:11%;
+
+                    border:1px solid #222;
+
+                    padding:2pt 1pt;
+
+                    text-align:center;
+                    vertical-align:middle;
+
+                    font-weight:bold;
+                ">
+                    QTY
+                </th>
+
+
+                <th style="
+                    width:9%;
+
+                    border:1px solid #222;
+
+                    padding:2pt 1pt;
+
+                    text-align:center;
+                    vertical-align:middle;
+
+                    font-weight:bold;
+                ">
+                    UNIT
+                </th>
+
+
+                <th style="
+                    width:41%;
+
+                    border:1px solid #222;
+
+                    padding:2pt;
+
+                    text-align:center;
+                    vertical-align:middle;
+
+                    font-weight:bold;
+                ">
+                    DESCRIPTION
+                </th>
+
+
+                <th style="
+                    width:19%;
+
+                    border:1px solid #222;
+
+                    padding:2pt 1pt;
+
+                    text-align:center;
+                    vertical-align:middle;
+
+                    font-size:7.6pt;
+                    font-weight:bold;
+
+                    white-space:nowrap;
+                ">
+                    DATE REQUESTED
+                </th>
+
+
+                <th style="
+                    width:20%;
+
+                    border:1px solid #222;
+
+                    padding:2pt 1pt;
+
+                    text-align:center;
+                    vertical-align:middle;
+
+                    font-size:7.6pt;
+                    font-weight:bold;
+
+                    white-space:nowrap;
+                ">
+                    DATE COMPLETED
+                </th>
+
+
+            </tr>
+
+        </thead>
+
+
+
+        <tbody>
+
+            <tr>
+
+
+                <td style="
+                    width:11%;
+
+                    height:160pt;
+
+                    border:1px solid #222;
+
+                    padding:7pt 2pt;
+
+                    text-align:center;
+                    vertical-align:top;
+                ">
+                    {$quantityContent}
+                </td>
+
+
+                <td style="
+                    width:9%;
+
+                    height:160pt;
+
+                    border:1px solid #222;
+
+                    padding:7pt 2pt;
+
+                    text-align:center;
+                    vertical-align:top;
+                ">
+                    {$unitContent}
+                </td>
+
+
+                <td style="
+                    width:41%;
+
+                    height:160pt;
+
+                    border:1px solid #222;
+
+                    padding:7pt 7pt;
+
+                    text-align:left;
+                    vertical-align:top;
+                ">
+                    {$descriptionContent}
+                </td>
+
+
+                <!-- DATE REQUESTED:
+                     remains blank for physical completion -->
+
+                <td style="
+                    width:19%;
+
+                    height:160pt;
+
+                    border:1px solid #222;
+
+                    padding:7pt 4pt;
+
+                    vertical-align:top;
+                "></td>
+
+
+                <!-- DATE COMPLETED:
+                     remains blank for physical completion -->
+
+                <td style="
+                    width:20%;
+
+                    height:160pt;
+
+                    border:1px solid #222;
+
+                    padding:7pt 4pt;
+
+                    vertical-align:top;
+                "></td>
+
+
+            </tr>
+
+        </tbody>
+
+    </table>
+
+
+
+    <!-- ======================================================
+         SIGNATURE / CONTROL MATRIX
+
+         Larger Approved By area for the official name.
+         ====================================================== -->
+
+    <table style="
+        width:94%;
+
+        margin:28pt auto 0;
+
+        border-collapse:collapse;
+        table-layout:fixed;
+
+        font-size:7pt;
+        line-height:1.05;
+    ">
+
+
+        <colgroup>
+            <col style="width:15%;">
+            <col style="width:15%;">
+            <col style="width:38%;">
+            <col style="width:16%;">
+            <col style="width:16%;">
+        </colgroup>
+
+
+
+        <!-- RESPONSIBILITY HEADINGS -->
+
+        <tr style="height:17pt;">
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt;
+            "></td>
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 3pt;
+
+                text-align:center;
+                vertical-align:middle;
+            ">
+                Requested by:
+            </td>
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 3pt;
+
+                text-align:center;
+                vertical-align:middle;
+            ">
+                Approved By:
+            </td>
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 3pt;
+
+                text-align:center;
+                vertical-align:middle;
+            ">
+                Issued by:
+            </td>
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 3pt;
+
+                text-align:center;
+                vertical-align:middle;
+            ">
+                Received by:
+            </td>
+
+
+        </tr>
+
+
+
+        <!-- SIGNATURE -->
+
+        <tr style="height:20pt;">
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 4pt;
+
+                vertical-align:middle;
+            ">
+                Signature
+            </td>
+
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+
+        </tr>
+
+
+
+        <!-- PRINTED NAME -->
+
+        <tr style="height:22pt;">
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 4pt;
+
+                vertical-align:middle;
+            ">
+                Printed Name
+            </td>
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 4pt;
+
+                text-align:center;
+                vertical-align:middle;
+
+                font-size:6.8pt;
+                font-weight:normal;
+
+                line-height:1.05;
+            ">
+                {$borrowerName}
+            </td>
+
+
+            <td style="
+                border:1px solid #222;
+                padding:1pt 0;
+                text-align:center;
+                vertical-align:middle;
+                font-family:Helvetica, Arial, sans-serif;
+                font-size:6.2pt;
+                font-weight:bold;
+                line-height:1;
+                letter-spacing:0;
+                white-space:nowrap;
+            ">ANGELICA P. REGONDOLA, PhD</td>
+
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+
+        </tr>
+
+
+
+        <!-- DESIGNATION -->
+
+        <tr style="height:20pt;">
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 4pt;
+
+                vertical-align:middle;
+            ">
+                Designation
+            </td>
+
+
+            <!-- Requested By designation:
+                 blank because the system must not invent one. -->
+
+            <td style="border:1px solid #222;"></td>
+
+
+            <td style="
+                border:1px solid #222;
+                padding:1pt 0;
+                text-align:center;
+                vertical-align:middle;
+                font-family:Helvetica, Arial, sans-serif;
+                font-size:6.2pt;
+                font-weight:normal;
+                line-height:1;
+                letter-spacing:0;
+                white-space:nowrap;
+            ">ADMIN. OFFICER V, SPMU</td>
+
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+
+        </tr>
+
+
+
+        <!-- DATE -->
+
+        <tr style="height:19pt;">
+
+
+            <td style="
+                border:1px solid #222;
+
+                padding:2pt 4pt;
+
+                vertical-align:middle;
+            ">
+                Date
+            </td>
+
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+            <td style="border:1px solid #222;"></td>
+
+
+        </tr>
+
+
+    </table>
+
+
+
+    <!-- ======================================================
+         DOCUMENT CONTROL FOOTER
+
+         IMPORTANT:
+         width is EXACTLY 94%, same as:
+           - request information
+           - main table
+           - signature/control table
+
+         This makes the horizontal rule align exactly with both
+         left and right edges of the form tables.
+         ====================================================== -->
+
+    <table style="
+        width:94%;
+
+        margin:31pt auto 0;
+
+        border-collapse:collapse;
+        border-top:1px solid #222;
+
+        font-size:6.2pt;
+        line-height:1;
+    ">
+
+
+        <tr>
+
+
+            <td style="
+                width:33%;
+
+                padding-top:5pt;
+
+                text-align:left;
+
+                font-weight:bold;
+            ">
+                Effective Date: December 2025
+            </td>
+
+
+            <td style="
+                width:34%;
+
+                padding-top:5pt;
+
+                text-align:center;
+
+                font-weight:bold;
+            ">
+                Rev. 2
+            </td>
+
+
+            <td style="
+                width:33%;
+
+                padding-top:5pt;
+
+                text-align:right;
+
+                font-weight:bold;
+            ">
+                Page {$pageNumber} of {$pageCount}
+            </td>
+
+
+        </tr>
+
+
+    </table>
+
+
+    <!--
+        Intentional large blank area below this point.
+
+        This mirrors the physical CSPC-F-SPMU-62 form instead
+        of forcing the document-control footer to the absolute
+        bottom edge of the A4 page.
+    -->
+
+
+</section>
+HTML;
+
 
         return $documentShell
             ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
             : $body;
     }
+
+
+
 
     private function officialPacketRequestHtml(CustodyTransaction $custody, int $pageNumber, int $pageCount): string
     {

@@ -1274,28 +1274,14 @@ class RequestWorkflowService
                 }
 
                 /*
-                 * Historical Borrower Slip generation.
+                 * Do not generate the Borrower Slip here.
+                 *
+                 * Approval/download establishes the approved custody record,
+                 * but the Borrower Slip is a physical release document.
+                 * It is generated later by CustodyService::prepare() only
+                 * after the SPMU Action Officer confirms that every prepared
+                 * quantity matches the approved quantity.
                  */
-                if (
-                    ! GeneratedDocument::query()
-                        ->where(
-                            'subject_type',
-                            CustodyTransaction::class
-                        )
-                        ->where(
-                            'subject_id',
-                            $custody->id
-                        )
-                        ->where(
-                            'document_type',
-                            'BORROWER_SLIP'
-                        )
-                        ->exists()
-                ) {
-                    $this->documents->borrowerSlip(
-                        $custody
-                    );
-                }
 
                 /*
                  * Historical off-campus Gate Pass

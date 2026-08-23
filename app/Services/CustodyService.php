@@ -496,7 +496,7 @@ class CustodyService
         $this->audit->record(
             'RELEASE_PREPARED',
             $fresh,
-            reason: 'SPMU Action Officer entered and confirmed the actual prepared quantities against the approved allocation, then generated the required physical forms.',
+            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity against the approved allocation. Borrower Slip and other applicable physical release forms were then generated for printing and wet signatures at handover.',
             after: ['prepared_quantities' => $quantities]
         );
     }
@@ -528,19 +528,12 @@ class CustodyService
 
             $custody->lines()->update(['item_status' => 'PREPARED']);
 
-            GeneratedDocument::query()
-                ->where('subject_type', CustodyTransaction::class)
-                ->where('subject_id', $custody->id)
-                ->where('document_type', 'BORROWER_SLIP')
-                ->where('status', 'FINAL')
-                ->update([
-                    'status' => 'SUPERSEDED',
-                    'invalidated_at' => now(),
-                    'invalidation_reason' => 'Replaced by acknowledged slip version.',
-                ]);
-
-            $this->documents->borrowerSlip($custody->fresh());
-
+            /*
+             * Compatibility acknowledgement must never replace the Borrower
+             * Slip generated from the Action Officer's confirmed preparation.
+             * The physical Borrower Slip is printed and wet-signed during
+             * handover; there is no borrower-generated/e-signed slip version.
+             */
             if ($hasLinen) {
                 $this->documents->replaceConditionalForm($custody->fresh(), 'LAUNDRY_FORM');
             } else {

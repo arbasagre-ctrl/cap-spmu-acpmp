@@ -26,9 +26,9 @@
         ? max(0, $total - $knownNonGood)
         : 0;
 
-    $borrowerStatus = $available <= 0 || $item->condition_code !== 'SERVICEABLE'
-        ? 'UNAVAILABLE'
-        : ($available < $total ? 'LIMITED' : 'AVAILABLE');
+    $borrowerStatus = $available > 0 && $item->condition_code === 'SERVICEABLE'
+        ? 'AVAILABLE'
+        : 'UNAVAILABLE';
 @endphp
 
 <section class="page-heading inventory-detail-heading">
@@ -39,90 +39,85 @@
     </div>
 
     <a class="button secondary ui-pressable" href="{{ route('inventory.index') }}">
-        Back to Inventory
-        <span aria-hidden="true">&rarr;</span>
+        Back to Inventory<span aria-hidden="true" style="margin-left: 7px;">→</span>
     </a>
 </section>
 
 <section class="content-area inventory-detail-page">
     @if($isBorrower)
-        <article class="card borrower-inventory-detail-card">
-            <div class="card-header">
+        <article class="card borrower-inventory-detail-card borrower-inventory-polished">
+            <div class="card-header borrower-inventory-card-header">
                 <div>
-                    <p class="eyebrow">Current reference availability</p>
+                    <p class="eyebrow">Current availability</p>
                     <h2>Available for borrowing</h2>
+                    <p class="meta">Current reference quantity for this item.</p>
                 </div>
 
                 @if($borrowerStatus === 'AVAILABLE')
                     <x-status-badge status="AVAILABLE" label="Available" />
-                @elseif($borrowerStatus === 'LIMITED')
-                    <x-status-badge status="LOW_STOCK" label="Limited" />
                 @else
                     <x-status-badge status="UNAVAILABLE" label="Unavailable" />
                 @endif
             </div>
 
-            <div class="borrower-inventory-hero">
-                <strong>{{ $available + 0 }}</strong>
-                <span>{{ $item->unit->unit_name }} available</span>
+            <div class="borrower-availability-highlight">
+                <div class="borrower-availability-number">
+                    <strong>{{ $available + 0 }}</strong>
+                    <span>{{ $item->unit->unit_name }}</span>
+                </div>
+                <div class="borrower-availability-copy">
+                    <strong>available now</strong>
+                    <span>Reference availability before SPMU approval.</span>
+                </div>
             </div>
 
-            <dl class="detail-list compact">
-                <dt>Description</dt>
-                <dd>{{ $item->specification ?: 'No additional description.' }}</dd>
+            <div class="borrower-item-details" aria-label="Borrowing information">
+                <div class="borrower-item-detail borrower-item-detail-wide">
+                    <span>Description</span>
+                    <strong>{{ $item->specification ?: 'No additional description.' }}</strong>
+                </div>
 
-                <dt>Condition</dt>
-                <dd>
-                    @if($item->condition_code === 'SERVICEABLE')
-                        <span class="inventory-good-label"><x-icon name="success" size="16" /> Good / Serviceable</span>
-                    @else
-                        <span>Not currently suitable for borrowing</span>
-                    @endif
-                </dd>
+                <div class="borrower-item-detail">
+                    <span>Condition</span>
+                    <strong class="borrower-detail-with-icon">
+                        @if($item->condition_code === 'SERVICEABLE')
+                            <x-icon name="success" size="16" />
+                            Good / Serviceable
+                        @else
+                            Not currently suitable
+                        @endif
+                    </strong>
+                </div>
 
-                <dt>Use</dt>
-                <dd>{{ $item->off_campus_allowed ? 'Off-campus eligible' : 'On-campus only' }}</dd>
+                <div class="borrower-item-detail">
+                    <span>Use restriction</span>
+                    <strong>{{ $item->off_campus_allowed ? 'Off-campus eligible' : 'On-campus only' }}</strong>
+                </div>
 
-                @if($item->laundry_required)
-                    <dt>After use</dt>
-                    <dd>Laundry processing is required after return.</dd>
-                @endif
-            </dl>
+                <div class="borrower-item-detail">
+                    <span>Laundry after use</span>
+                    <strong>{{ $item->laundry_required ? 'Required' : 'Not required' }}</strong>
+                </div>
+
+                <div class="borrower-item-detail">
+                    <span>Borrowing eligibility</span>
+                    <strong>{{ $borrowerStatus === 'AVAILABLE' ? 'Available for request' : 'Currently unavailable' }}</strong>
+                </div>
+            </div>
         </article>
 
-        <div class="inventory-reference-note" role="note">
+        <div class="inventory-reference-note borrower-reference-note" role="note">
             <x-icon name="information" size="18" />
             <div>
-                <strong>Reference only — this is not a reservation.</strong>
+                <strong>Reference only — this does not reserve the item.</strong>
                 <p>
-                    Availability can change while your request is under review. Submitting a request does not hold this quantity. SPMU verifies the final quantity during review. Only an approved allocation reduces the quantity shown as available.
+                    Availability may change until your request is approved.
+                    Submitting a request does not hold this quantity.
+                    SPMU confirms the final available quantity during review.
                 </p>
             </div>
         </div>
     @else
-        <div class="inventory-detail-summary" aria-label="Quantity status breakdown">
-            <article class="inventory-summary-card">
-                <span>Total Quantity</span>
-                <strong>{{ $total + 0 }}</strong>
-            </article>
-            <article class="inventory-summary-card is-good">
-                <span>Available</span>
-                <strong>{{ $available + 0 }}</strong>
-            </article>
-            <article class="inventory-summary-card">
-                <span>Reserved</span>
-                <strong>{{ $reserved + 0 }}</strong>
-            </article>
-            <article class="inventory-summary-card">
-                <span>Issued</span>
-                <strong>{{ $issued + 0 }}</strong>
-            </article>
-            <article class="inventory-summary-card">
-                <span>Unavailable</span>
-                <strong>{{ $unavailable + 0 }}</strong>
-            </article>
-        </div>
-
         <div class="inventory-detail-grid">
             <article class="card">
                 <div class="card-header">
@@ -132,25 +127,43 @@
                     </div>
                 </div>
 
-                <dl class="detail-list compact inventory-breakdown-list">
-                    <dt>Available for allocation</dt>
-                    <dd><strong>{{ $available + 0 }}</strong></dd>
-
-                    <dt>Reserved</dt>
-                    <dd><strong>{{ $reserved + 0 }}</strong><small>Approved allocation not yet issued</small></dd>
-
-                    <dt>Issued</dt>
-                    <dd><strong>{{ $issued + 0 }}</strong><small>Currently under borrower custody</small></dd>
-
-                    <dt>In laundry</dt>
-                    <dd><strong>{{ $laundry + 0 }}</strong></dd>
-
-                    <dt>In accountability / incident handling</dt>
-                    <dd><strong>{{ $incident + 0 }}</strong></dd>
-
-                    <dt>Unavailable total</dt>
-                    <dd><strong>{{ $unavailable + 0 }}</strong></dd>
-                </dl>
+                <div class="inventory-ops-list" role="list">
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>Total inventory</span>
+                        <strong>{{ $total + 0 }}</strong>
+                        <small>Recorded quantity</small>
+                    </div>
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>Available for allocation</span>
+                        <strong>{{ $available + 0 }}</strong>
+                        <small>Ready for approved allocation</small>
+                    </div>
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>Reserved</span>
+                        <strong>{{ $reserved + 0 }}</strong>
+                        <small>Approved, not yet issued</small>
+                    </div>
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>Issued</span>
+                        <strong>{{ $issued + 0 }}</strong>
+                        <small>Under borrower custody</small>
+                    </div>
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>In laundry</span>
+                        <strong>{{ $laundry + 0 }}</strong>
+                        <small>Temporarily unavailable</small>
+                    </div>
+                    <div class="inventory-ops-row" role="listitem">
+                        <span>Accountability / incidents</span>
+                        <strong>{{ $incident + 0 }}</strong>
+                        <small>Under incident resolution</small>
+                    </div>
+                    <div class="inventory-ops-row is-total" role="listitem">
+                        <span>Unavailable total</span>
+                        <strong>{{ $unavailable + 0 }}</strong>
+                        <small>Not currently allocable</small>
+                    </div>
+                </div>
             </article>
 
             <article class="card">
@@ -184,17 +197,227 @@
                         <dd><strong>{{ $destroyed + 0 }}</strong></dd>
                     @endif
 
-                    @if($condemned > 0)
-                        <dt>Condemned</dt>
-                        <dd><strong>{{ $condemned + 0 }}</strong></dd>
-                    @endif
+                    <dt>Condemned</dt>
+                    <dd><strong>{{ $condemned + 0 }}</strong></dd>
                 </dl>
-
-                <p class="inventory-data-note">
-                    The current database records Serviceable, Damaged / Maintenance, Condemned, and incident dispositions. Fair/Poor quantity bands are not invented when they are not stored by the system.
-                </p>
             </article>
         </div>
+
+
+        <article class="card inventory-borrowing-history-card" id="borrowing-history">
+            <div class="card-header inventory-history-header">
+                <div>
+                    <p class="eyebrow">Item borrowing history</p>
+                    <h2>Borrowing records</h2>
+                    <p class="meta">
+                        Shows actual physical releases of this item within the selected period.
+                        Reservations that were never issued are excluded.
+                    </p>
+                </div>
+            </div>
+
+            <form
+                method="get"
+                action="{{ route('inventory.show', $item) }}"
+                class="inventory-history-filter"
+            >
+                <label>
+                    From
+                    <input
+                        type="date"
+                        name="history_from"
+                        value="{{ $historyFrom?->toDateString() }}"
+                    >
+                </label>
+
+                <label>
+                    To
+                    <input
+                        type="date"
+                        name="history_to"
+                        value="{{ $historyTo?->toDateString() }}"
+                    >
+                </label>
+
+                <label>
+                    Status
+                    <select name="history_status">
+                        <option value="ALL" @selected($historyStatus === 'ALL')>All</option>
+                        <option value="OPEN" @selected($historyStatus === 'OPEN')>On custody / outstanding</option>
+                        <option value="RETURNED" @selected($historyStatus === 'RETURNED')>Returned</option>
+                        <option value="OVERDUE" @selected($historyStatus === 'OVERDUE')>Overdue</option>
+                    </select>
+                </label>
+
+                <label class="inventory-history-search-field">
+                    Search
+                    <input
+                        type="search"
+                        name="history_search"
+                        value="{{ $historySearch }}"
+                        placeholder="Borrower, office, request, custody, purpose..."
+                    >
+                </label>
+
+                <div class="inventory-history-filter-actions">
+                    <button class="button primary ui-pressable" type="submit">
+                        Apply Filter
+                    </button>
+                    <a
+                        class="button secondary ui-pressable"
+                        href="{{ route('inventory.show', $item) }}#borrowing-history"
+                    >
+                        Reset
+                    </a>
+                </div>
+            </form>
+
+            @error('history_from')
+                <p class="field-error">{{ $message }}</p>
+            @enderror
+            @error('history_to')
+                <p class="field-error">{{ $message }}</p>
+            @enderror
+
+            <div class="inventory-history-period-note">
+                <x-icon name="information" size="17" />
+                <span>
+                    Period:
+                    <strong>{{ $historyFrom?->format('d M Y') }}</strong>
+                    to
+                    <strong>{{ $historyTo?->format('d M Y') }}</strong>.
+                    Includes records whose actual custody overlaps the selected dates.
+                </span>
+            </div>
+
+            <div class="inventory-history-summary" aria-label="Filtered borrowing history summary">
+                <div class="inventory-history-metric">
+                    <strong>{{ $historySummary['borrowers'] }}</strong>
+                    <span>Borrowers</span>
+                </div>
+                <div class="inventory-history-metric">
+                    <strong>{{ $historySummary['records'] }}</strong>
+                    <span>Records</span>
+                </div>
+                <div class="inventory-history-metric">
+                    <strong>{{ $historySummary['issued'] + 0 }}</strong>
+                    <span>Issued</span>
+                </div>
+                <div class="inventory-history-metric">
+                    <strong>{{ $historySummary['returned'] + 0 }}</strong>
+                    <span>Returned</span>
+                </div>
+                <div class="inventory-history-metric">
+                    <strong>{{ $historySummary['outstanding'] + 0 }}</strong>
+                    <span>Outstanding</span>
+                </div>
+            </div>
+
+            <div class="table-wrap inventory-history-table-wrap">
+                <table class="inventory-history-table">
+                    <thead>
+                        <tr>
+                            <th>Borrower / Office</th>
+                            <th>Request / Custody</th>
+                            <th>Purpose / Location</th>
+                            <th>Dates</th>
+                            <th>Issued</th>
+                            <th>Returned</th>
+                            <th>Outstanding</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($borrowingHistory as $row)
+                            <tr>
+                                <td data-label="Borrower / Office">
+                                    <strong>{{ $row['borrower']?->full_name ?: 'Unknown borrower' }}</strong>
+                                    <small>{{ $row['office'] ?: 'No office / department recorded' }}</small>
+                                </td>
+
+                                <td data-label="Request / Custody">
+                                    <strong>{{ $row['request_no'] ?: '—' }}</strong>
+                                    <small>{{ $row['custody']->custody_no }}</small>
+                                </td>
+
+                                <td data-label="Purpose / Location">
+                                    <strong>{{ $row['purpose'] ?: 'Borrowing request' }}</strong>
+                                    <small>{{ $row['location'] ?: 'No location recorded' }}</small>
+                                    <small>
+                                        {{ str($row['use_location'] ?: 'ON_CAMPUS')->replace('_', ' ')->title() }}
+                                    </small>
+                                </td>
+
+                                <td data-label="Dates" class="inventory-history-dates">
+                                    <span>
+                                        <b>Schedule</b>
+                                        <em>{{ optional($row['schedule_date'])->format('d M Y') ?: '—' }}</em>
+                                    </span>
+                                    <span>
+                                        <b>Released</b>
+                                        <em>{{ optional($row['released_at'])->format('d M Y · g:i A') ?: '—' }}</em>
+                                    </span>
+                                    <span>
+                                        <b>Expected</b>
+                                        <em>{{ optional($row['expected_return_date'])->format('d M Y') ?: '—' }}</em>
+                                    </span>
+                                    <span>
+                                        <b>Actual return</b>
+                                        <em>{{ optional($row['actual_return_at'])->format('d M Y · g:i A') ?: 'Not returned yet' }}</em>
+                                    </span>
+                                </td>
+
+                                <td data-label="Issued">
+                                    <strong>{{ $row['issued_quantity'] + 0 }}</strong>
+                                    <small>{{ $item->unit->unit_name }}</small>
+                                </td>
+
+                                <td data-label="Returned">
+                                    <strong>{{ $row['returned_quantity'] + 0 }}</strong>
+                                </td>
+
+                                <td data-label="Outstanding">
+                                    <strong>{{ $row['outstanding_quantity'] + 0 }}</strong>
+                                </td>
+
+                                <td data-label="Status">
+                                    @if($row['item_status'] === 'RETURNED')
+                                        <x-status-badge status="CLOSED" label="Returned" />
+                                    @elseif($row['item_status'] === 'OVERDUE')
+                                        <x-status-badge status="OVERDUE" label="Overdue" />
+                                    @else
+                                        <x-status-badge status="ACTIVE" label="On Custody" />
+                                    @endif
+
+                                </td>
+
+                                <td data-label="Action">
+                                    <a
+                                        class="button secondary small ui-pressable"
+                                        href="{{ route('custody.show', $row['custody']) }}"
+                                    >
+                                        View Borrowing
+                                    </a>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="9">
+                                    <div class="empty-state inventory-history-empty">
+                                        <strong>No actual borrowing record found for this period.</strong>
+                                        <span>
+                                            Try another date range or search. Reservations that
+                                            were never physically issued are not counted here.
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </article>
 
         <article class="card inventory-master-detail-card">
             <div class="card-header">
@@ -233,5 +456,400 @@
         </article>
     @endif
 </section>
+
+
+<style>
+.inventory-detail-grid {
+    align-items: stretch;
+}
+
+.inventory-ops-list {
+    display: grid;
+}
+
+.inventory-ops-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.25fr) minmax(70px, .35fr) minmax(220px, 1.45fr);
+    gap: 18px;
+    align-items: center;
+    min-height: 46px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.inventory-ops-row:last-child {
+    border-bottom: 0;
+}
+
+.inventory-ops-row > span {
+    font-weight: 600;
+    color: var(--text-secondary, #475569);
+}
+
+.inventory-ops-row > strong {
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.inventory-ops-row > small {
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+.inventory-ops-row.is-total {
+    font-weight: 700;
+}
+
+.inventory-borrowing-history-card {
+    display: grid;
+    gap: 18px;
+}
+
+.inventory-history-header .meta {
+    max-width: 900px;
+    margin-bottom: 0;
+}
+
+.inventory-history-filter {
+    display: grid;
+    grid-template-columns: minmax(150px, .7fr) minmax(150px, .7fr) minmax(190px, .9fr) minmax(260px, 1.5fr) auto;
+    gap: 12px;
+    align-items: end;
+}
+
+.inventory-history-filter label {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.inventory-history-filter input,
+.inventory-history-filter select {
+    width: 100%;
+}
+
+.inventory-history-filter-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.inventory-history-period-note {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-subtle, #f7f9fc);
+    color: var(--text-secondary, #475569);
+    font-size: .88rem;
+}
+
+.inventory-history-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface, #fff);
+}
+
+.inventory-history-metric {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    min-width: 0;
+    padding: 12px 14px;
+    border-right: 1px solid var(--border);
+}
+
+.inventory-history-metric:last-child {
+    border-right: 0;
+}
+
+.inventory-history-metric strong {
+    font-size: 1.05rem;
+}
+
+.inventory-history-metric span {
+    color: var(--text-muted);
+    font-size: .82rem;
+}
+
+.inventory-history-table-wrap {
+    max-height: 560px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.inventory-history-table {
+    min-width: 1280px;
+}
+
+.inventory-history-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-subtle, #f5f7fb);
+}
+
+.inventory-history-table td {
+    vertical-align: top;
+}
+
+.inventory-history-table td > small,
+.inventory-history-custody-status {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-muted);
+}
+
+.inventory-history-dates {
+    min-width: 245px;
+}
+
+.inventory-history-dates span {
+    display: grid;
+    grid-template-columns: 86px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    margin-bottom: 5px;
+    font-size: .81rem;
+}
+
+.inventory-history-dates b {
+    color: var(--text-secondary, #475569);
+    font-weight: 600;
+}
+
+.inventory-history-dates em {
+    color: var(--text);
+    font-style: normal;
+    white-space: nowrap;
+}
+
+.inventory-history-empty {
+    min-height: 150px;
+}
+
+@media (max-width: 1180px) {
+    .inventory-ops-row {
+        grid-template-columns: minmax(190px, 1fr) 70px minmax(180px, 1.2fr);
+    }
+
+    .inventory-history-filter {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .inventory-history-search-field,
+    .inventory-history-filter-actions {
+        grid-column: 1 / -1;
+    }
+
+    .inventory-history-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 700px) {
+    .inventory-ops-row {
+        grid-template-columns: 1fr auto;
+        gap: 4px 12px;
+    }
+
+    .inventory-ops-row > small {
+        grid-column: 1 / -1;
+    }
+
+    .inventory-history-filter,
+    .inventory-history-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .inventory-history-metric {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .inventory-history-metric:last-child {
+        border-bottom: 0;
+    }
+
+    .inventory-history-search-field,
+    .inventory-history-filter-actions {
+        grid-column: auto;
+    }
+
+    .inventory-history-filter-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .inventory-history-filter-actions .button {
+        width: 100%;
+    }
+}
+
+@media print {
+    .sidebar,
+    .topbar,
+    .inventory-history-filter,
+    .inventory-history-filter-actions,
+    .inventory-master-detail-card .button,
+    .inventory-history-table .button,
+    .page-heading > .button {
+        display: none !important;
+    }
+
+    .inventory-history-table-wrap {
+        max-height: none;
+        overflow: visible;
+    }
+}
+</style>
+
+
+{{-- BORROWER_INVENTORY_POLISH_V3_START --}}
+<style>
+    .borrower-inventory-polished {
+        overflow: hidden;
+    }
+
+    .borrower-inventory-card-header .meta {
+        margin: 4px 0 0;
+        color: var(--text-muted);
+        font-size: 13px;
+    }
+
+    .borrower-availability-highlight {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin: 18px 0 20px;
+        padding: 18px 20px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface-subtle, var(--surface));
+    }
+
+    .borrower-availability-number {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        min-width: max-content;
+    }
+
+    .borrower-availability-number strong {
+        color: var(--heading);
+        font-size: 34px;
+        line-height: 1;
+        letter-spacing: -0.03em;
+    }
+
+    .borrower-availability-number span {
+        color: var(--text-muted);
+        font-size: 14px;
+        font-weight: 700;
+    }
+
+    .borrower-availability-copy {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+        padding-left: 18px;
+        border-left: 1px solid var(--border);
+    }
+
+    .borrower-availability-copy strong {
+        color: var(--heading);
+        font-size: 15px;
+    }
+
+    .borrower-availability-copy span {
+        color: var(--text-muted);
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .borrower-item-details {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        border-top: 1px solid var(--border);
+    }
+
+    .borrower-item-detail {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .borrower-item-detail:nth-child(odd):not(.borrower-item-detail-wide) {
+        border-right: 1px solid var(--border);
+    }
+
+    .borrower-item-detail-wide {
+        grid-column: 1 / -1;
+    }
+
+    .borrower-item-detail span {
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .035em;
+        text-transform: uppercase;
+    }
+
+    .borrower-item-detail strong {
+        color: var(--heading);
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+    }
+
+    .borrower-detail-with-icon {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+    }
+
+    .borrower-reference-note {
+        margin-top: 14px;
+    }
+
+    @media (max-width: 700px) {
+        .borrower-availability-highlight {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .borrower-availability-copy {
+            padding-left: 0;
+            padding-top: 12px;
+            border-left: 0;
+            border-top: 1px solid var(--border);
+            width: 100%;
+        }
+
+        .borrower-item-details {
+            grid-template-columns: 1fr;
+        }
+
+        .borrower-item-detail,
+        .borrower-item-detail:nth-child(odd):not(.borrower-item-detail-wide) {
+            border-right: 0;
+        }
+
+        .borrower-item-detail-wide {
+            grid-column: auto;
+        }
+    }
+</style>
+{{-- BORROWER_INVENTORY_POLISH_V3_END --}}
 
 @endsection

@@ -16,6 +16,7 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\LaundryController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ProfilePictureController;
 use App\Http\Controllers\PolicyController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingController;
@@ -76,6 +77,15 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     Route::put('/profile', [ProfileController::class, 'update'])
         ->name('profile.update');
+
+    Route::get('/profile/picture', [ProfilePictureController::class, 'show'])
+        ->name('profile.picture.show');
+
+    Route::post('/profile/picture', [ProfilePictureController::class, 'update'])
+        ->name('profile.picture.update');
+
+    Route::delete('/profile/picture', [ProfilePictureController::class, 'destroy'])
+        ->name('profile.picture.destroy');
 
     Route::get('/protected-files/{file}', [DocumentController::class, 'protectedFile'])
         ->name('files.show');

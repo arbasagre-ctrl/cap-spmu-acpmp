@@ -65,7 +65,7 @@ class BorrowingRequestController extends Controller
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
 
-                'items' => InventoryItem::with('unit')
+                'items' => InventoryItem::with(['unit', 'category'])
                     ->where('active', true)
                     ->where('borrowable', true)
                     ->where('condition_code', 'SERVICEABLE')
@@ -215,6 +215,7 @@ class BorrowingRequestController extends Controller
             'currentVersion.documents.downloads',
 
             'currentVersion.supportingDocuments.file',
+            'currentVersion.approvalSteps',
 
             'currentVersion.supportingDocuments.uploader',
 
@@ -258,6 +259,7 @@ class BorrowingRequestController extends Controller
         $borrowingRequest->load([
             'currentVersion.items',
             'currentVersion.supportingDocuments.file',
+            'currentVersion.approvalSteps',
         ]);
 
         return view(
@@ -270,7 +272,7 @@ class BorrowingRequestController extends Controller
                     $borrowingRequest->currentVersion,
 
                 'items' =>
-                    InventoryItem::with('unit')
+                    InventoryItem::with(['unit', 'category'])
                         ->where('active', true)
                         ->where('borrowable', true)
                         ->where('condition_code', 'SERVICEABLE')
@@ -550,6 +552,23 @@ class BorrowingRequestController extends Controller
          * intentionally ignored.
          */
         $request->merge([
+            /*
+             * CREATE_REQUEST_EVENT_DETAILS_COMPAT
+             *
+             * The revised Borrower form collects Event Details only.
+             * purpose_event remains a legacy stored field used by older
+             * reports/views, so derive it server-side instead of asking
+             * the borrower to enter the same information twice.
+             */
+            'purpose_event' =>
+                $request->input('purpose_event')
+                ?: mb_substr(
+                    trim(
+                        (string) $request->input('event_details')
+                    ),
+                    0,
+                    255
+                ),
             'schedule_date' =>
                 $request->input('schedule_date')
                 ?: $request->input('needed_from'),
@@ -613,9 +632,10 @@ class BorrowingRequestController extends Controller
                 'string',
                 'max:255',
             ],
-
+            /*
+             * Year Level is intentionally not collected by the revised form.
+             */
             'represented_year_level' => [
-                'required_if:represents_student_activity,1',
                 'nullable',
                 'string',
                 'max:40',
@@ -812,9 +832,7 @@ class BorrowingRequestController extends Controller
                 ] ?? null,
 
             'represented_year_level' =>
-                $data[
-                    'represented_year_level'
-                ] ?? null,
+                null,
 
             'event_details' =>
                 $data['event_details'],
@@ -856,7 +874,7 @@ class BorrowingRequestController extends Controller
             }
 
             $item =
-                InventoryItem::with('unit')
+                InventoryItem::with(['unit', 'category'])
                     ->where(
                         'active',
                         true

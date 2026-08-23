@@ -171,13 +171,16 @@
 
 @if($isUnderSpmuReview)
 <section class="content-area spmu-verification-workspace" data-spmu-verification-workspace>
-    <div class="spmu-verification-grid">
-        <x-document-review-viewer
+    <div class="spmu-review-layout">
+        <div class="spmu-review-top-row">
+            <div class="spmu-scan-slot">
+                <x-document-review-viewer
             :file="$requestLetterDoc?->file"
             title="Inspect the signed Borrowing Request Letter"
         />
+            </div>
 
-        <article class="card spmu-checklist-panel">
+            <article class="card spmu-checklist-panel">
             @if($canDecide)
                 <div class="card-header">
                     <div>
@@ -316,86 +319,65 @@
                 </div>
             @endif
         </article>
+        </div>
+
+        <div class="spmu-review-bottom-row">
+            <article class="card spmu-left-borrowing-info">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">Request details</p>
+                    <h2>Borrowing information</h2>
+                </div>
+            </div>
+
+            <div class="spmu-left-borrowing-grid">
+                <div class="spmu-left-borrowing-cell">
+                    <span>Borrower</span>
+                    <strong>{{ $borrowingRequest->borrower->full_name }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Office / Department</span>
+                    <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Event Details</span>
+                    <strong>{{ $v->purpose_event }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Location</span>
+                    <strong>{{ $v->location }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Schedule Date</span>
+                    <strong>{{ optional($v->schedule_date ?: $v->needed_from)->format('d F Y') }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Expected Return Date</span>
+                    <strong>{{ optional($v->return_date ?: $v->return_due_at)->format('d F Y') }}</strong>
+                </div>
+
+                <div class="spmu-left-borrowing-cell">
+                    <span>Student Activity</span>
+                    <strong>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</strong>
+                </div>
+
+</div>
+        </article>
+
+            <div class="spmu-inventory-slot">
+                @include('requests.partials.spmu-availability-review')
+            </div>
+        </div>
     </div>
 </section>
 @endif
 
-@if($isUnderSpmuReview)
-<section class="content-grid two spmu-review-secondary-grid">
-    <article class="card review-column-card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Request details</p>
-                <h2>Borrowing information</h2>
-            </div>
-        </div>
-
-        <div class="review-scroll-area review-detail-scroll">
-            <dl class="detail-list">
-                <dt>Borrower</dt>
-                <dd>{{ $borrowingRequest->borrower->full_name }}</dd>
-
-                <dt>Office / Department</dt>
-                <dd>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</dd>
-
-                <dt>Purpose / Event</dt>
-                <dd>{{ $v->purpose_event }}</dd>
-
-                <dt>Event Details</dt>
-                <dd>{{ $v->event_details }}</dd>
-
-                <dt>Location</dt>
-                <dd>{{ $v->location }}</dd>
-
-                <dt>Schedule Date</dt>
-                <dd>{{ optional($v->schedule_date ?: $v->needed_from)->format('d F Y') }}</dd>
-
-                <dt>Expected Return Date</dt>
-                <dd>{{ optional($v->return_date ?: $v->return_due_at)->format('d F Y') }}</dd>
-
-                <dt>Student Activity</dt>
-                <dd>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</dd>
-            </dl>
-        </div>
-    </article>
-
-    <article class="card review-column-card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Requested property</p>
-                <h2>Items and quantities</h2>
-            </div>
-        </div>
-
-        <div class="table-wrap review-scroll-area review-table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Item</th>
-                        <th>Requested</th>
-                        <th>{{ $requestIsCompleted ? 'Approved' : 'Approved / Reserved' }}</th>
-                        <th>Use</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach($v->items as $item)
-                    <tr>
-                        <td>{{ $item->description_snapshot }}</td>
-                        <td>{{ $item->requested_quantity + 0 }} {{ $item->unit_snapshot }}</td>
-                        <td>
-                            {{ $item->approved_quantity === null
-                                ? 'Not reserved yet'
-                                : ($item->approved_quantity + 0).' '.$item->unit_snapshot }}
-                        </td>
-                        <td>{{ str($item->use_location)->replace('_',' ')->title() }}</td>
-                    </tr>
-                @endforeach
-                </tbody>
-            </table>
-        </div>
-    </article>
-</section>
-@else
+@unless($isUnderSpmuReview)
 <section class="content-grid two">
     <article class="card">
         <div class="card-header">
@@ -412,13 +394,10 @@
             <dt>Office / Department</dt>
             <dd>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</dd>
 
-            <dt>Purpose / Event</dt>
+            <dt>Event Details</dt>
             <dd>{{ $v->purpose_event }}</dd>
 
-            <dt>Event Details</dt>
-            <dd>{{ $v->event_details }}</dd>
-
-            <dt>Location</dt>
+<dt>Location</dt>
             <dd>{{ $v->location }}</dd>
 
             <dt>Schedule Date</dt>
@@ -671,6 +650,175 @@
     </article>
 </section>
 @endif
+
+
+{{-- BORROWER_REQUEST_CANCEL_FIX_V1_START --}}
+<script>
+(() => {
+    const initializeBorrowerRequestCancellation = () => {
+        const workspace = document.querySelector(
+            '[data-request-cancel-workspace]'
+        );
+
+        if (!workspace || workspace.dataset.cancelInitialized === '1') {
+            return;
+        }
+
+        const trigger = workspace.querySelector(
+            '[data-request-cancel-trigger]'
+        );
+
+        const dialog = workspace.querySelector(
+            '[data-request-cancel-dialog]'
+        );
+
+        const form = workspace.querySelector(
+            '[data-request-cancel-form]'
+        );
+
+        const hiddenReason = workspace.querySelector(
+            '[data-request-cancel-reason]'
+        );
+
+        const reasonField = workspace.querySelector(
+            '[data-request-cancel-reason-field]'
+        );
+
+        const error = workspace.querySelector(
+            '[data-request-cancel-error]'
+        );
+
+        const back = workspace.querySelector(
+            '[data-request-cancel-back]'
+        );
+
+        const confirm = workspace.querySelector(
+            '[data-request-cancel-confirm]'
+        );
+
+        if (
+            !trigger
+            || !dialog
+            || !form
+            || !hiddenReason
+            || !reasonField
+            || !confirm
+        ) {
+            return;
+        }
+
+        workspace.dataset.cancelInitialized = '1';
+
+        const clearError = () => {
+            if (!error) {
+                return;
+            }
+
+            error.textContent = '';
+            error.hidden = true;
+        };
+
+        const closeDialog = () => {
+            clearError();
+
+            if (
+                dialog.open
+                && typeof dialog.close === 'function'
+            ) {
+                dialog.close();
+            }
+        };
+
+        const submitCancellation = (reason) => {
+            const cleanReason = (reason || '').trim();
+
+            if (!cleanReason) {
+                if (error) {
+                    error.textContent =
+                        'Please provide a cancellation reason.';
+                    error.hidden = false;
+                }
+
+                reasonField.focus();
+                return;
+            }
+
+            hiddenReason.value = cleanReason;
+            confirm.disabled = true;
+            form.submit();
+        };
+
+        trigger.addEventListener('click', () => {
+            clearError();
+            reasonField.value = '';
+
+            if (typeof dialog.showModal === 'function') {
+                dialog.showModal();
+
+                window.setTimeout(
+                    () => reasonField.focus(),
+                    0
+                );
+
+                return;
+            }
+
+            const fallbackReason = window.prompt(
+                'Enter the cancellation reason:'
+            );
+
+            if (fallbackReason !== null) {
+                submitCancellation(fallbackReason);
+            }
+        });
+
+        back?.addEventListener(
+            'click',
+            closeDialog
+        );
+
+        confirm.addEventListener('click', () => {
+            submitCancellation(
+                reasonField.value
+            );
+        });
+
+        reasonField.addEventListener(
+            'input',
+            clearError
+        );
+
+        dialog.addEventListener(
+            'cancel',
+            (event) => {
+                event.preventDefault();
+                closeDialog();
+            }
+        );
+
+        dialog.addEventListener(
+            'click',
+            (event) => {
+                if (event.target === dialog) {
+                    closeDialog();
+                }
+            }
+        );
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener(
+            'DOMContentLoaded',
+            initializeBorrowerRequestCancellation,
+            { once: true }
+        );
+    } else {
+        initializeBorrowerRequestCancellation();
+    }
+})();
+</script>
+{{-- BORROWER_REQUEST_CANCEL_FIX_V1_END --}}
+
 
 @unless($isBorrower)
 <section class="content-area">
@@ -1426,4 +1574,612 @@
 
 </script>
 @endif
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+/* SPMU_CANONICAL_REVIEW_LAYOUT_START */
+
+@media (min-width: 1181px) {
+    .spmu-verification-grid {
+        display: block !important;
+    }
+
+    .spmu-review-layout {
+        display: grid;
+        gap: 20px;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .spmu-review-top-row,
+    .spmu-review-bottom-row {
+        display: grid;
+        grid-template-columns: minmax(0, 52%) minmax(0, 48%);
+        gap: 20px;
+        width: 100%;
+        min-width: 0;
+        align-items: stretch;
+    }
+
+    .spmu-review-top-row > *,
+    .spmu-review-bottom-row > * {
+        min-width: 0;
+    }
+
+    /* Scanned request: readable immediately without making the whole page tiny. */
+    .spmu-scan-slot {
+        min-width: 0;
+    }
+
+    .spmu-scan-slot > .scanned-document-card,
+    .spmu-scan-slot > .formal-document-review-card {
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .spmu-scan-slot .scanned-pdf-stage,
+    .spmu-scan-slot .scanned-image-stage,
+    .spmu-scan-slot .formal-document-review-stage,
+    .spmu-scan-slot .formal-pdf-stage {
+        height: clamp(620px, 68vh, 760px) !important;
+        min-height: 620px !important;
+        max-height: 760px !important;
+        overflow: hidden !important;
+    }
+
+    .spmu-scan-slot iframe,
+    .spmu-scan-slot embed,
+    .spmu-scan-slot object,
+    .spmu-scan-slot .scanned-pdf-frame,
+    .spmu-scan-slot .formal-document-review-frame,
+    .spmu-scan-slot .formal-pdf-frame {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        border: 0;
+    }
+
+    /*
+     * Bottom row: CSS Grid provides the synchronization.
+     * Whichever side is naturally taller determines the row height.
+     * The other card stretches to exactly the same outer height.
+     */
+    .spmu-review-bottom-row {
+        align-items: stretch;
+    }
+
+    .spmu-left-borrowing-info,
+    .spmu-inventory-slot {
+        height: 100%;
+        min-height: 0;
+        align-self: stretch !important;
+    }
+
+    .spmu-left-borrowing-info {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .spmu-left-borrowing-info .card-header {
+        flex: 0 0 auto;
+        margin-bottom: 0;
+    }
+
+    .spmu-left-borrowing-grid {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        grid-auto-rows: auto !important;
+        align-content: start;
+        min-height: 0;
+        border-top: 1px solid var(--border, #d7dee8);
+    }
+
+    .spmu-left-borrowing-cell {
+        min-width: 0;
+        min-height: 68px;
+        height: auto !important;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 4px;
+        border-right: 1px solid var(--border, #d7dee8);
+        border-bottom: 1px solid var(--border, #d7dee8);
+    }
+
+    .spmu-left-borrowing-cell:nth-child(even) {
+        border-right: 0;
+    }
+
+    .spmu-left-borrowing-cell span {
+        color: var(--text-muted, #64748b);
+        font-size: .88rem;
+        line-height: 1.25;
+    }
+
+    .spmu-left-borrowing-cell strong {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: normal;
+        line-height: 1.35;
+    }
+
+    /*
+     * Inventory slot fills the same bottom-row height.
+     * If many requested items exist, only the table region scrolls.
+     */
+    .spmu-inventory-slot {
+        display: flex;
+        min-width: 0;
+    }
+
+    .spmu-inventory-slot > [data-spmu-availability-review],
+    .spmu-inventory-slot > .spmu-availability-review {
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        min-height: 0;
+        height: 100%;
+        max-height: none !important;
+        overflow: hidden !important;
+        box-sizing: border-box;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    .spmu-inventory-slot .spmu-availability-table-wrap {
+        flex: 1 1 auto !important;
+        min-height: 112px !important;
+        max-height: 240px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+    }
+
+    .spmu-inventory-slot .spmu-availability-table {
+        width: 100% !important;
+        min-width: 0 !important;
+        table-layout: fixed !important;
+    }
+
+    .spmu-inventory-slot .spmu-availability-table thead th {
+        position: sticky !important;
+        top: 0;
+        z-index: 3;
+    }
+
+    .spmu-inventory-slot .spmu-availability-table th,
+    .spmu-inventory-slot .spmu-availability-table td {
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        word-break: normal !important;
+        vertical-align: middle !important;
+    }
+
+    .spmu-inventory-slot .status-badge {
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        text-align: center;
+        line-height: 1.1;
+    }
+
+    /* Keep Review and decide/checklist/button design unchanged. */
+    .spmu-review-top-row > .spmu-checklist-panel {
+        width: 100%;
+        min-width: 0;
+        align-self: start;
+    }
+}
+
+@media (max-width: 1180px) {
+    .spmu-review-layout,
+    .spmu-review-top-row,
+    .spmu-review-bottom-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .spmu-scan-slot .scanned-pdf-stage,
+    .spmu-scan-slot .scanned-image-stage,
+    .spmu-scan-slot .formal-document-review-stage,
+    .spmu-scan-slot .formal-pdf-stage {
+        height: clamp(500px, 65vh, 680px) !important;
+        min-height: 500px !important;
+    }
+
+    .spmu-left-borrowing-info,
+    .spmu-inventory-slot,
+    .spmu-inventory-slot > [data-spmu-availability-review],
+    .spmu-inventory-slot > .spmu-availability-review {
+        height: auto !important;
+        max-height: none !important;
+    }
+
+    .spmu-inventory-slot .spmu-availability-table-wrap {
+        max-height: 300px !important;
+        overflow-y: auto !important;
+    }
+}
+
+@media (max-width: 620px) {
+    .spmu-left-borrowing-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .spmu-left-borrowing-cell {
+        border-right: 0;
+    }
+}
+
+/* SPMU_CANONICAL_REVIEW_LAYOUT_END */
+</style>
+
+{{-- SPMU_CANONICAL_PDF_ZOOM_START --}}
+<script>
+(() => {
+    const applyReadablePdfZoom = () => {
+        const scope = document.querySelector('.spmu-scan-slot');
+        if (!scope) return;
+
+        const viewer = scope.querySelector('iframe[src], embed[src], object[data]');
+        if (!viewer || viewer.dataset.spmuReadableZoomApplied === '1') return;
+
+        const attr = viewer.tagName === 'OBJECT' ? 'data' : 'src';
+        const current = viewer.getAttribute(attr);
+        if (!current) return;
+
+        viewer.dataset.spmuReadableZoomApplied = '1';
+        const base = current.split('#')[0];
+        viewer.setAttribute(attr, `${base}#page=1&zoom=125`);
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyReadablePdfZoom, { once: true });
+    } else {
+        applyReadablePdfZoom();
+    }
+})();
+</script>
+{{-- SPMU_CANONICAL_PDF_ZOOM_END --}}
+
+
+<style>
+/* SPMU_REVIEW_ACTIONS_UNCLIP_START */
+
+/*
+ * The action buttons already exist in the Blade markup.
+ * Older review CSS forced the right card/form into a constrained flex height
+ * and clipped the footer with overflow:hidden.
+ *
+ * This block only restores natural flow for Review and decide.
+ * Checklist markup, button markup, Inventory Check, Borrowing Information,
+ * and the scanned document layout are not changed.
+ */
+
+.spmu-review-top-row {
+    align-items: start !important;
+}
+
+.spmu-review-top-row > .spmu-checklist-panel {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+
+    align-self: start !important;
+
+    display: block !important;
+    overflow: visible !important;
+}
+
+.spmu-review-top-row .spmu-verification-form {
+    display: block !important;
+
+    flex: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+
+    overflow: visible !important;
+}
+
+.spmu-review-top-row .spmu-checklist {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+.spmu-review-top-row .spmu-review-footer {
+    display: block !important;
+
+    position: static !important;
+    inset: auto !important;
+
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+
+    margin-top: 18px !important;
+    padding-top: 18px !important;
+
+    overflow: visible !important;
+    visibility: visible !important;
+}
+
+.spmu-review-top-row .spmu-decision-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+
+    height: auto !important;
+    overflow: visible !important;
+    visibility: visible !important;
+}
+
+.spmu-review-top-row .spmu-decision-actions > .button {
+    display: inline-flex !important;
+    width: 100% !important;
+    min-height: 44px !important;
+
+    opacity: 1;
+    visibility: visible !important;
+}
+
+/*
+ * Verify & Approve must still visually show disabled until all four
+ * verification checks are complete. Restore the intended disabled opacity.
+ */
+.spmu-review-top-row .spmu-decision-actions > .button:disabled {
+    opacity: .48 !important;
+}
+
+/* SPMU_REVIEW_ACTIONS_UNCLIP_END */
+</style>
+
+{{-- BORROWER_CANCEL_DIALOG_POSITION_FIX_START --}}
+<style>
+/*
+|--------------------------------------------------------------------------
+| Borrower Cancel Request Dialog
+|--------------------------------------------------------------------------
+| This block is intentionally outside the SPMU-only review condition so
+| Borrower users receive the modal positioning and styling too.
+*/
+
+dialog[data-request-cancel-dialog] {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+
+    transform: translate(-50%, -50%) !important;
+
+    width: min(560px, calc(100vw - 32px)) !important;
+    max-width: 560px !important;
+    max-height: min(680px, calc(100dvh - 40px)) !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    overflow: hidden !important;
+
+    border: 1px solid #d8e1eb !important;
+    border-radius: 16px !important;
+
+    background: #ffffff !important;
+
+    box-shadow:
+        0 24px 60px rgba(15, 23, 42, 0.22),
+        0 8px 24px rgba(15, 23, 42, 0.12) !important;
+
+    z-index: 99999 !important;
+}
+
+dialog[data-request-cancel-dialog]::backdrop {
+    background: rgba(10, 27, 47, 0.48) !important;
+    backdrop-filter: blur(2px);
+}
+
+dialog[data-request-cancel-dialog] .spmu-confirm-dialog__surface {
+    display: grid !important;
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+    gap: 14px !important;
+
+    width: 100% !important;
+    max-height: min(680px, calc(100dvh - 40px)) !important;
+
+    padding: 22px !important;
+    box-sizing: border-box !important;
+
+    overflow-y: auto !important;
+
+    background: #ffffff !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-confirm-dialog__icon {
+    display: grid !important;
+    place-items: center !important;
+
+    width: 42px !important;
+    height: 42px !important;
+
+    margin: 0 !important;
+
+    border-radius: 50% !important;
+
+    background: #fff1f0 !important;
+    color: #b42318 !important;
+
+    font-size: 18px !important;
+    font-weight: 800 !important;
+}
+
+dialog[data-request-cancel-dialog] h2 {
+    margin: 1px 0 7px !important;
+
+    color: #102a43 !important;
+
+    font-size: 20px !important;
+    line-height: 1.3 !important;
+}
+
+dialog[data-request-cancel-dialog] h2 + .meta {
+    margin: 0 !important;
+
+    color: #63768a !important;
+
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks {
+    margin-top: 18px !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks label {
+    display: block !important;
+
+    margin-bottom: 7px !important;
+
+    color: #30445a !important;
+
+    font-size: 13px !important;
+    font-weight: 700 !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks textarea {
+    display: block !important;
+
+    width: 100% !important;
+    min-height: 120px !important;
+    max-height: 220px !important;
+
+    padding: 11px 12px !important;
+
+    box-sizing: border-box !important;
+
+    resize: vertical !important;
+
+    border: 1px solid #b8c6d5 !important;
+    border-radius: 9px !important;
+
+    background: #ffffff !important;
+    color: #102a43 !important;
+
+    font: inherit !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+
+    outline: none !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks textarea:focus {
+    border-color: #1769e0 !important;
+
+    box-shadow:
+        0 0 0 3px rgba(23, 105, 224, 0.12) !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks small {
+    display: block !important;
+
+    margin-top: 6px !important;
+
+    color: #708196 !important;
+
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+}
+
+dialog[data-request-cancel-dialog] .field-error {
+    margin-top: 6px !important;
+
+    color: #b42318 !important;
+
+    font-size: 12px !important;
+    font-weight: 600 !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions {
+    grid-column: 1 / -1 !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+
+    gap: 9px !important;
+
+    margin-top: 4px !important;
+    padding-top: 16px !important;
+
+    border-top: 1px solid #e4eaf0 !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
+    min-height: 38px !important;
+    padding: 8px 14px !important;
+
+    border-radius: 8px !important;
+}
+
+@media (max-width: 620px) {
+    dialog[data-request-cancel-dialog] {
+        width: calc(100vw - 24px) !important;
+        max-height: calc(100dvh - 24px) !important;
+    }
+
+    dialog[data-request-cancel-dialog] .spmu-confirm-dialog__surface {
+        grid-template-columns: 38px minmax(0, 1fr) !important;
+
+        max-height: calc(100dvh - 24px) !important;
+
+        gap: 12px !important;
+        padding: 18px !important;
+    }
+
+    dialog[data-request-cancel-dialog] .spmu-confirm-dialog__icon {
+        width: 38px !important;
+        height: 38px !important;
+    }
+
+    dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions {
+        flex-direction: column-reverse !important;
+        align-items: stretch !important;
+    }
+
+    dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+}
+</style>
+{{-- BORROWER_CANCEL_DIALOG_POSITION_FIX_END --}}
+
 @endsection

@@ -533,7 +533,7 @@
     $trackerEyebrow =
         $isClosed
             ? 'Request history'
-            : 'Live request tracker';
+            : 'Real-time progress';
 
     $trackerTitle =
         $isClosed
@@ -699,76 +699,30 @@
              TERMINAL / ATTENTION MESSAGES
         ================================================================= --}}
 
-        @if($terminal)
-
-            <div
-                class="request-tracker__terminal-note"
-                role="status"
-            >
-
-                <x-icon
-                    name="information"
-                    size="18"
-                />
-
+       @if($terminal && $statusValue !== 'CANCELLED')
+            <div class="request-tracker__terminal-note" role="status">
+                <x-icon name="information" size="18" />
                 <span>
-
-                    This request is
-                    {{ strtolower(str_replace('_', ' ', $statusValue)) }}.
-
-                    The tracker shows the furthest workflow point reached
-                    before it was closed.
-
+                    This request is {{ strtolower(str_replace('_', ' ', $statusValue)) }}.
+                    The tracker shows the furthest workflow point reached before it was closed.
                 </span>
-
             </div>
-
         @elseif($returnedForRevision)
-
-            <div
-                class="request-tracker__attention-note"
-                role="status"
-            >
-
-                <x-icon
-                    name="information"
-                    size="18"
-                />
-
+            <div class="request-tracker__attention-note" role="status">
+                <x-icon name="information" size="18" />
                 <span>
-
                     SPMU returned this request for revision.
-
-                    Update the required details/documents and submit it
-                    again to continue.
-
+                    Update the required details/documents and submit it again to continue.
                 </span>
-
             </div>
-
         @elseif($pickupExpired)
-
-            <div
-                class="request-tracker__attention-note"
-                role="status"
-            >
-
-                <x-icon
-                    name="information"
-                    size="18"
-                />
-
+            <div class="request-tracker__attention-note" role="status">
+                <x-icon name="information" size="18" />
                 <span>
-
                     The previous pickup window expired.
-
-                    The reservation remains in place while waiting for
-                    SPMU to schedule a new pickup window.
-
+                    The reservation remains in place while waiting for SPMU to schedule a new pickup window.
                 </span>
-
             </div>
-
         @endif
 
 

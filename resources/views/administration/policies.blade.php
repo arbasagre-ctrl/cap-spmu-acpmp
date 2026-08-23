@@ -1,102 +1,460 @@
 @extends('layouts.app', ['title' => 'Academic Period Configuration'])
+
 @section('content')
+
+@php
+    $effectiveStatus = function ($period): string {
+        if ($period->status === 'ACTIVE') {
+            return 'ACTIVE';
+        }
+
+        if (
+            $period->end_date
+            && $period->end_date
+                ->copy()
+                ->endOfDay()
+                ->isPast()
+        ) {
+            return 'COMPLETED';
+        }
+
+        return 'UPCOMING';
+    };
+@endphp
+
+<style>
+    .academic-period-config {
+        --period-line: var(--border, #d7e0ea);
+        --period-muted: var(--text-muted, #64748b);
+        --period-ink: var(--text, #18324a);
+        --period-soft: var(--surface-subtle, #f7f9fc);
+        display: grid;
+        gap: 16px;
+    }
+
+    .current-period-card {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 18px 20px;
+        text-align: left;
+    }
+
+    .current-period-main {
+        min-width: 0;
+        flex: 1 1 auto;
+        text-align: left;
+    }
+
+    .current-period-value {
+        margin: 3px 0 4px;
+        color: var(--period-ink);
+        font-size: clamp(20px, 2vw, 27px);
+        font-weight: 850;
+        line-height: 1.2;
+    }
+
+    .current-period-dates {
+        color: var(--period-muted);
+        font-size: 13px;
+    }
+
+    .current-period-empty {
+        margin: 4px 0 0;
+        color: var(--period-muted);
+        font-size: 13px;
+        line-height: 1.45;
+    }
+
+    .academic-period-form {
+        display: grid;
+        gap: 14px;
+    }
+
+    .academic-period-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+    }
+
+    .academic-period-form-grid label {
+        min-width: 0;
+        margin: 0;
+    }
+
+    .academic-period-form-grid input,
+    .academic-period-form-grid select {
+        width: 100%;
+        margin-top: 7px;
+    }
+
+        .periods-table .period-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        white-space: nowrap;
+    }
+
+    .periods-table .period-current {
+        color: #157347;
+        font-size: 11px;
+        font-weight: 800;
+    }
+
+    .periods-table .period-no-action {
+        color: var(--period-muted);
+        font-size: 11px;
+    }
+
+    .period-status-copy {
+        display: block;
+        margin-top: 4px;
+        color: var(--period-muted);
+        font-size: 10px;
+        line-height: 1.35;
+    }
+
+    @media (max-width: 760px) {
+        .current-period-card {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .academic-period-form-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
 <section class="page-heading">
     <div>
-        <p class="eyebrow">SPMU Head configuration</p>
-        <h1>Academic Period Configuration</h1>
-        <p>Maintain the active academic year and term used for reporting, violation history, and accountability records. Sanction decisions are handled per case in Accountability Oversight.</p>
+        <p class="eyebrow">
+            SPMU Head configuration
+        </p>
+
+        <h1>
+            Academic Period Configuration
+        </h1>
+
+        <p>
+            Set the official academic period used for reports,
+            accountability records, and historical tracking.
+        </p>
     </div>
 </section>
 
-<section class="content-area">
-    <article class="card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Academic calendar</p>
-                <h2>Add / activate period</h2>
-                <p class="meta">Only one academic period may be active at a time.</p>
-            </div>
-        </div>
+<div class="academic-period-config">
 
-        <form method="post" action="{{ route('policies.academic-periods.store') }}" class="form-grid">
-            @csrf
-            <div class="form-columns">
-                <label>
-                    Academic Year
-                    <input name="academic_year" placeholder="2026-2027" value="{{ old('academic_year') }}" required>
-                </label>
-                <label>
-                    Semester / Term
-                    <select name="term_code" required>
-                        <option value="FIRST_SEMESTER" @selected(old('term_code') === 'FIRST_SEMESTER')>1st Semester</option>
-                        <option value="SECOND_SEMESTER" @selected(old('term_code') === 'SECOND_SEMESTER')>2nd Semester</option>
-                        <option value="SUMMER_MIDYEAR" @selected(old('term_code') === 'SUMMER_MIDYEAR')>Summer / Midyear</option>
-                    </select>
-                </label>
-                <label>
-                    Term Name
-                    <input name="term_name" value="{{ old('term_name') }}" placeholder="e.g. First Semester" required>
-                </label>
-                <label>
-                    Start Date
-                    <input type="date" name="start_date" value="{{ old('start_date') }}" required>
-                </label>
-                <label>
-                    End Date
-                    <input type="date" name="end_date" value="{{ old('end_date') }}" required>
-                </label>
-                <label>
-                    Status
-                    <select name="status" required>
-                        <option value="UPCOMING" @selected(old('status', 'UPCOMING') === 'UPCOMING')>Upcoming</option>
-                        <option value="ACTIVE" @selected(old('status') === 'ACTIVE')>Active</option>
-                        <option value="COMPLETED" @selected(old('status') === 'COMPLETED')>Closed</option>
-                    </select>
-                </label>
-            </div>
-            <button class="button primary">Save Academic Period</button>
-        </form>
-    </article>
-</section>
+    <section class="content-area">
+        <article class="card current-period-card">
+            <div class="current-period-main">
+                <p class="eyebrow">
+                    Current academic period
+                </p>
 
-<section class="content-area">
-    <article class="card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Periods</p>
-                <h2>Configured Academic Periods</h2>
-                <p class="meta">Historical records keep the academic period assigned when the transaction or violation was recorded.</p>
+                @if($activePeriod)
+                    <div class="current-period-value">
+                        {{ $activePeriod->academic_year }}
+                        ·
+                        {{ $activePeriod->term_name }}
+                    </div>
+
+                    <div class="current-period-dates">
+                        {{ $activePeriod->start_date->format('d F Y') }}
+                        –
+                        {{ $activePeriod->end_date->format('d F Y') }}
+                    </div>
+                @else
+                    <div class="current-period-value">
+                        No active academic period
+                    </div>
+
+                    <p class="current-period-empty">
+                        Add an academic period below, then activate the one
+                        currently in effect.
+                    </p>
+                @endif
             </div>
-        </div>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Academic Year</th>
-                        <th>Semester / Term</th>
-                        <th>Dates</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @forelse($academicPeriods as $period)
+
+            @if($activePeriod)
+                <x-status-badge
+                    status="ACTIVE"
+                    label="Active"
+                />
+            @endif
+        </article>
+    </section>
+
+    <section class="content-area">
+        <article class="card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">
+                        Academic calendar
+                    </p>
+
+                    <h2>
+                        Add academic period
+                    </h2>
+
+                    <p class="meta">
+                        Enter the academic year, semester, and official start and end dates.
+                    </p>
+                </div>
+            </div>
+
+            <form
+                method="post"
+                action="{{ route('policies.academic-periods.store') }}"
+                class="academic-period-form"
+            >
+                @csrf
+
+                <div class="academic-period-form-grid">
+                    <label>
+                        Academic Year
+
+                        <input
+                            name="academic_year"
+                            placeholder="2026-2027"
+                            value="{{ old('academic_year') }}"
+                            inputmode="numeric"
+                            required
+                        >
+
+                        @error('academic_year')
+                            <small class="field-error">
+                                {{ $message }}
+                            </small>
+                        @enderror
+                    </label>
+
+                    <label>
+                        Semester / Term
+
+                        <select
+                            name="term_code"
+                            required
+                        >
+                            <option
+                                value="FIRST_SEMESTER"
+                                @selected(old('term_code') === 'FIRST_SEMESTER')
+                            >
+                                1st Semester
+                            </option>
+
+                            <option
+                                value="SECOND_SEMESTER"
+                                @selected(old('term_code') === 'SECOND_SEMESTER')
+                            >
+                                2nd Semester
+                            </option>
+
+                            <option
+                                value="SUMMER_MIDYEAR"
+                                @selected(old('term_code') === 'SUMMER_MIDYEAR')
+                            >
+                                Summer / Midyear
+                            </option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Start Date
+
+                        <input
+                            type="date"
+                            name="start_date"
+                            value="{{ old('start_date') }}"
+                            required
+                        >
+
+                        @error('start_date')
+                            <small class="field-error">
+                                {{ $message }}
+                            </small>
+                        @enderror
+                    </label>
+
+                    <label>
+                        End Date
+
+                        <input
+                            type="date"
+                            name="end_date"
+                            value="{{ old('end_date') }}"
+                            required
+                        >
+
+                        @error('end_date')
+                            <small class="field-error">
+                                {{ $message }}
+                            </small>
+                        @enderror
+                    </label>
+                </div>
+
+                <button
+                    class="button primary ui-pressable"
+                    type="submit"
+                >
+                    Save Academic Period
+                </button>
+            </form>
+        </article>
+    </section>
+
+    <section class="content-area">
+        <article class="card">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">
+                        Periods
+                    </p>
+
+                    <h2>
+                        Configured Academic Periods
+                    </h2>
+
+                    <p class="meta">
+                        Review saved periods and activate the academic period
+                        currently in effect. Previous periods remain available for reference.
+                    </p>
+                </div>
+            </div>
+
+            <div class="table-wrap periods-table">
+                <table>
+                    <thead>
                         <tr>
-                            <td>{{ $period->academic_year }}</td>
-                            <td>{{ $period->term_name }}</td>
-                            <td>{{ $period->start_date->format('d M Y') }} – {{ $period->end_date->format('d M Y') }}</td>
-                            <td>
-                                <x-status-badge
-                                    :status="$period->status"
-                                    :label="$period->status === 'COMPLETED' ? 'Closed' : null"
-                                />
-                            </td>
+                            <th>Academic Year</th>
+                            <th>Semester / Term</th>
+                            <th>Dates</th>
+                            <th>Status</th>
+                            <th>
+                                <span class="visually-hidden">
+                                    Action
+                                </span>
+                            </th>
                         </tr>
-                    @empty
-                        <tr><td colspan="4">No academic periods configured.</td></tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-    </article>
-</section>
+                    </thead>
+
+                    <tbody>
+                        @forelse($academicPeriods as $period)
+                            @php
+                                $status =
+                                    $effectiveStatus(
+                                        $period
+                                    );
+
+                                $canActivate =
+                                    $status !== 'ACTIVE'
+                                    && $status !== 'COMPLETED';
+                            @endphp
+
+                            <tr>
+                                <td>
+                                    <strong>
+                                        {{ $period->academic_year }}
+                                    </strong>
+                                </td>
+
+                                <td>
+                                    {{ $period->term_name }}
+                                </td>
+
+                                <td>
+                                    {{ $period->start_date->format('d M Y') }}
+                                    –
+                                    {{ $period->end_date->format('d M Y') }}
+                                </td>
+
+                                <td>
+                                    <x-status-badge
+                                        :status="$status"
+                                        :label="match($status) {
+                                            'ACTIVE' => 'Active',
+                                            'COMPLETED' => 'Completed',
+                                            default => 'Upcoming',
+                                        }"
+                                    />
+
+                                    @if($status === 'ACTIVE')
+                                        <span class="period-status-copy">
+                                            Current period used by the system.
+                                        </span>
+                                    @elseif($status === 'COMPLETED')
+                                        <span class="period-status-copy">
+                                            Historical period retained for records.
+                                        </span>
+                                    @else
+                                        <span class="period-status-copy">
+                                            Saved and available for activation.
+                                        </span>
+                                    @endif
+                                </td>
+
+                                <td>
+                                    <div class="period-actions">
+                                        @if($status === 'ACTIVE')
+                                            <span class="period-current">
+                                                Current
+                                            </span>
+
+                                        @elseif($canActivate)
+                                            <form
+                                                method="post"
+                                                action="{{ route(
+                                                    'policies.academic-periods.update',
+                                                    $period
+                                                ) }}"
+                                            >
+                                                @csrf
+                                                @method('PUT')
+
+                                                <input
+                                                    type="hidden"
+                                                    name="activate"
+                                                    value="1"
+                                                >
+
+                                                <button
+                                                    class="button secondary small ui-pressable"
+                                                    type="submit"
+                                                    onclick="return confirm(
+                                                        'Activate {{ $period->academic_year }} · {{ $period->term_name }}? The current active period will be moved to Completed.'
+                                                    )"
+                                                >
+                                                    Activate
+                                                </button>
+                                            </form>
+
+                                        @else
+                                            <span class="period-no-action">
+                                                Historical
+                                            </span>
+                                        @endif
+                                    </div>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td
+                                    colspan="5"
+                                    class="empty-state"
+                                >
+                                    No academic periods configured.
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </article>
+    </section>
+
+</div>
+
 @endsection

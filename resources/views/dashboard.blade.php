@@ -1,5 +1,23 @@
 @extends('layouts.app', ['title' => 'Dashboard'])
 @section('content')
+<style>
+    .dashboard-heading { align-items: center; }
+    .dashboard-kpi-card {
+        border-radius: 12px;
+        box-shadow: 0 1px 2px rgba(7, 27, 53, .05);
+    }
+    .dashboard-kpi-card:hover {
+        box-shadow: 0 10px 24px rgba(7, 27, 53, .08);
+    }
+    .dashboard-balanced-grid > .card {
+        border-radius: 12px;
+    }
+    html[data-theme="dark"] .dashboard-kpi-card,
+    html[data-theme="dark"] .dashboard-balanced-grid > .card {
+        box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
+    }
+</style>
+
 @php
     $firstName = str($user->full_name)->before(' ')->value();
 
