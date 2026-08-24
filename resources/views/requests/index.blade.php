@@ -69,6 +69,10 @@
                 $custody = $request->custody;
                 $custodyStatus = $custody?->status;
 
+                $effectiveCustodyStatus = $custody?->closed_at
+                    ? 'CLOSED'
+                    : $custodyStatus;
+
                 /*
                  * The borrowing request row may remain APPROVED_READY_FOR_RELEASE
                  * even after the physical custody workflow has advanced.
@@ -442,6 +446,10 @@
                         @php
                             $custody = $request->custody;
                             $custodyStatus = $custody?->status;
+
+                $effectiveCustodyStatus = $custody?->closed_at
+                    ? 'CLOSED'
+                    : $custodyStatus;
 
                             /*
                              * Request Records must reflect the real custody lifecycle,
