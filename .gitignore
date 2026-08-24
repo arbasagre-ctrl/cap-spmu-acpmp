@@ -32,3 +32,8 @@ Homestead.yaml
 Thumbs.db
 
 *.bak
+
+# Local development backups / temporary patches
+*.bak-*
+install-item-borrowing-history.ps1
+item-borrowing-history.patch
