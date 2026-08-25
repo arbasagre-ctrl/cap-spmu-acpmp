@@ -1,4 +1,4 @@
-@props(['event', 'phaseLabel' => null, 'variant' => 'cell'])
+@props(['event', 'phaseLabel' => null, 'variant' => 'cell', 'filterable' => false])
 
 @php
     $tone = match (true) {
@@ -8,6 +8,14 @@
         $event['is_active'] => 'active',
         default => 'scheduled',
     };
+    $filterStatuses = $filterable
+        ? collect([
+            'active' => $event['is_active'],
+            'due-soon' => $event['is_due_soon'],
+            'overdue' => $event['is_overdue'],
+            'returned' => $event['is_closed'],
+        ])->filter()->keys()->implode(' ')
+        : '';
 @endphp
 
 <button
@@ -20,6 +28,10 @@
         'ui-pressable',
     ]) }}
     data-calendar-event="{{ $event['key'] }}"
+    @if($filterable)
+        data-calendar-filter-statuses="{{ $filterStatuses }}"
+        data-calendar-own-record="{{ $event['own_record'] ? 'true' : 'false' }}"
+    @endif
 >
     @if($phaseLabel)<span class="calendar-event-phase">{{ $phaseLabel }}</span>@endif
     <span class="calendar-event-reference">{{ $event['reference'] }}</span>

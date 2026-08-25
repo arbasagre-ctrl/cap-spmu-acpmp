@@ -8,11 +8,65 @@
         <p class="eyebrow">Schedule overview</p>
         <h1>Borrowing Calendar</h1>
     </div>
-    <div class="calendar-month-summary" aria-label="{{ $month->format('F Y') }} borrowing summary">
-        <span><strong>{{ $summary['active'] }}</strong> Active</span>
-        <span><strong>{{ $summary['due_soon'] }}</strong> Due Soon</span>
-        <span><strong>{{ $summary['overdue'] }}</strong> Overdue</span>
-        <span><strong>{{ $summary['returned'] }}</strong> Returned</span>
+    <div
+        class="calendar-month-summary"
+        aria-label="{{ $month->format('F Y') }} borrowing summary"
+        @if($isBorrower) data-calendar-status-filters @endif
+    >
+        @if($isBorrower)
+            <button
+                type="button"
+                class="calendar-summary-filter calendar-summary-active"
+                data-calendar-status-filter="active"
+                aria-pressed="false"
+            >
+                <strong>{{ $summary['active'] }}</strong>
+                <span>Active</span>
+            </button>
+            <button
+                type="button"
+                class="calendar-summary-filter calendar-summary-due-soon"
+                data-calendar-status-filter="due-soon"
+                aria-pressed="false"
+            >
+                <strong>{{ $summary['due_soon'] }}</strong>
+                <span>Due Soon</span>
+            </button>
+            <button
+                type="button"
+                class="calendar-summary-filter calendar-summary-overdue"
+                data-calendar-status-filter="overdue"
+                aria-pressed="false"
+            >
+                <strong>{{ $summary['overdue'] }}</strong>
+                <span>Overdue</span>
+            </button>
+            <button
+                type="button"
+                class="calendar-summary-filter calendar-summary-returned"
+                data-calendar-status-filter="returned"
+                aria-pressed="false"
+            >
+                <strong>{{ $summary['returned'] }}</strong>
+                <span>Returned</span>
+            </button>
+            <button
+                type="button"
+                class="calendar-summary-clear is-selected"
+                data-calendar-status-filter=""
+                aria-pressed="true"
+            >
+                All
+            </button>
+            <span class="visually-hidden" data-calendar-filter-live aria-live="polite">
+                Showing all calendar records.
+            </span>
+        @else
+            <span><strong>{{ $summary['active'] }}</strong> Active</span>
+            <span><strong>{{ $summary['due_soon'] }}</strong> Due Soon</span>
+            <span><strong>{{ $summary['overdue'] }}</strong> Overdue</span>
+            <span><strong>{{ $summary['returned'] }}</strong> Returned</span>
+        @endif
     </div>
 </section>
 
@@ -54,10 +108,22 @@
                                     <time datetime="{{ $day['date']->toDateString() }}">{{ $day['date']->day }}</time>
                                     @if($day['is_today'])<span>Today</span>@endif
                                 </div>
-                                <div class="calendar-day-events">
-                                    @foreach($day['occurrences']->take(2) as $occurrence)
-                                        <x-calendar-event :event="$occurrence['event']" :phase-label="$occurrence['phase_label']" />
-                                    @endforeach
+                                <div class="calendar-day-events" @if($isBorrower) data-calendar-day-events @endif>
+                                    @if($isBorrower)
+                                        @foreach($day['occurrences'] as $occurrence)
+                                            <div
+                                                class="calendar-day-occurrence"
+                                                data-calendar-occurrence
+                                                @if($loop->index >= 2) hidden @endif
+                                            >
+                                                <x-calendar-event :event="$occurrence['event']" :phase-label="$occurrence['phase_label']" :filterable="true" />
+                                            </div>
+                                        @endforeach
+                                    @else
+                                        @foreach($day['occurrences']->take(2) as $occurrence)
+                                            <x-calendar-event :event="$occurrence['event']" :phase-label="$occurrence['phase_label']" />
+                                        @endforeach
+                                    @endif
                                     @if($day['occurrences']->count() > 2)
                                         <button class="calendar-more ui-pressable" type="button" data-calendar-day="{{ $day['date']->toDateString() }}">+{{ $day['occurrences']->count() - 2 }} more</button>
                                     @endif
@@ -69,17 +135,24 @@
             </div>
         </div>
         @if($calendarEvents->isEmpty())
-            <div class="calendar-empty-month" role="status"><strong>No borrowing activity this month.</strong><span>Use the month controls to review another period.</span></div>
+            <div class="calendar-empty-month" role="status" @if($isBorrower) data-calendar-default-empty @endif><strong>No borrowing activity this month.</strong><span>Use the month controls to review another period.</span></div>
         @endif
     </div>
 
     <div class="calendar-list-view" data-calendar-view-panel="list" hidden>
         @forelse($calendarEvents as $event)
-            <x-calendar-event :event="$event" variant="list" />
+            <x-calendar-event :event="$event" variant="list" :filterable="$isBorrower" />
         @empty
-            <div class="empty-state"><strong>No borrowing activity this month.</strong><span>Use the month controls to review another period.</span></div>
+            <div class="empty-state" @if($isBorrower) data-calendar-default-empty @endif><strong>No borrowing activity this month.</strong><span>Use the month controls to review another period.</span></div>
         @endforelse
     </div>
+
+    @if($isBorrower)
+        <div class="calendar-filter-empty" role="status" data-calendar-filter-empty hidden>
+            <strong>No matching records this month.</strong>
+            <span>Select another status or choose All.</span>
+        </div>
+    @endif
 
     @foreach($calendarEvents as $event)
         <template id="calendar-detail-{{ $event['key'] }}">
@@ -125,7 +198,7 @@
                 <p>Select a reservation to see its complete schedule and items.</p>
                 <div class="calendar-day-summary-list">
                     @foreach($day['occurrences'] as $occurrence)
-                        <x-calendar-event :event="$occurrence['event']" :phase-label="$occurrence['phase_label']" variant="drawer" />
+                        <x-calendar-event :event="$occurrence['event']" :phase-label="$occurrence['phase_label']" variant="drawer" :filterable="$isBorrower" />
                     @endforeach
                 </div>
             </div>

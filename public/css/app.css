@@ -1,4 +1,4 @@
-:root {
+﻿:root {
     --navy-950: #071b35;
     --navy-900: #0b274b;
     --navy-800: #123b69;
@@ -643,7 +643,7 @@ small, .muted { color: var(--text-muted); }
 
 /* Buttons and status */
 .actions, .inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-drawer-backdrop) {
+.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop) {
     display: inline-flex;
     min-height: 40px;
     align-items: center;
@@ -659,7 +659,7 @@ small, .muted { color: var(--text-muted); }
     font-weight: 750;
     line-height: 1.2;
 }
-.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-drawer-backdrop):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .button.primary { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
 .button.primary:hover { color: #fff; background: var(--primary-action-hover); border-color: var(--primary-action-hover); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .button.primary:active {
@@ -921,6 +921,43 @@ nav[role="navigation"] svg { width: 18px; height: 18px; }
 }
 .calendar-month-summary span { white-space: nowrap; }
 .calendar-month-summary strong { margin-right: 3px; color: var(--heading); font-size: 13px; }
+.calendar-summary-filter,
+.calendar-summary-clear {
+    min-height: 32px;
+    padding: 5px 8px;
+    color: var(--text-muted);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.15;
+    transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast);
+}
+.calendar-summary-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border-left: 3px solid var(--calendar-summary-accent, var(--border-strong));
+}
+.calendar-summary-filter strong { margin: 0; font-size: 14px; }
+.calendar-summary-filter:hover,
+.calendar-summary-clear:hover { color: var(--heading); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.calendar-summary-filter:focus-visible,
+.calendar-summary-clear:focus-visible { outline: 0; border-color: var(--interactive); box-shadow: var(--focus-ring); }
+.calendar-summary-filter.is-selected,
+.calendar-summary-clear.is-selected { color: var(--heading); border-color: var(--calendar-summary-accent, var(--interactive)); box-shadow: 0 0 0 2px rgba(27, 90, 151, .12); }
+.calendar-summary-active { --calendar-summary-accent: var(--success); }
+.calendar-summary-due-soon { --calendar-summary-accent: var(--warning); }
+.calendar-summary-overdue { --calendar-summary-accent: var(--danger); }
+.calendar-summary-returned { --calendar-summary-accent: var(--neutral); }
+.calendar-summary-active.is-selected { background: var(--success-bg); }
+.calendar-summary-due-soon.is-selected { background: var(--warning-bg); }
+.calendar-summary-overdue.is-selected { background: var(--danger-bg); }
+.calendar-summary-returned.is-selected { background: var(--neutral-bg); }
+.calendar-summary-clear { color: var(--interactive); background: transparent; }
 .borrowing-calendar {
     overflow: hidden;
     background: var(--surface);
@@ -1012,6 +1049,11 @@ nav[role="navigation"] svg { width: 18px; height: 18px; }
 .calendar-day.is-today .calendar-day-heading time { color: #fff; background: var(--navy-800); border-radius: 50%; }
 .calendar-day-heading span { color: var(--interactive); font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .calendar-day-events { display: grid; gap: 4px; }
+.calendar-day-occurrence { min-width: 0; }
+.calendar-day-occurrence[hidden],
+.calendar-event[hidden],
+.calendar-more[hidden],
+.calendar-filter-empty[hidden] { display: none !important; }
 .calendar-event {
     display: grid;
     width: 100%;
@@ -1056,6 +1098,8 @@ nav[role="navigation"] svg { width: 18px; height: 18px; }
 .calendar-more:hover { color: var(--heading); background: var(--surface-hover); }
 .calendar-empty-month { display: grid; gap: 3px; padding: 16px; color: var(--text-muted); border-top: 1px solid var(--border); text-align: center; }
 .calendar-empty-month strong { color: var(--heading); }
+.calendar-filter-empty { display: grid; gap: 3px; padding: 14px; color: var(--text-muted); border-top: 1px solid var(--border); text-align: center; }
+.calendar-filter-empty strong { color: var(--heading); }
 .calendar-list-view { display: grid; gap: 8px; padding: 13px; }
 .calendar-event-list, .calendar-event-drawer {
     grid-template-columns: minmax(135px, .65fr) minmax(170px, 1fr) auto;
@@ -1288,6 +1332,123 @@ body.calendar-drawer-open { overflow: hidden; }
 .accountability-summary span { display: grid; gap: 1px; padding: 13px 15px; color: var(--text-muted); font-size: 11px; border-right: 1px solid var(--border); }
 .accountability-summary span:last-child { border-right: 0; }
 .accountability-summary strong { color: var(--heading); font-size: 21px; line-height: 1; }
+.dashboard-stat-grid.accountability-filter-grid .dashboard-kpi-card { height: 100px; min-height: 100px; padding: 10px 12px; }
+.accountability-filter-card {
+    width: 100%;
+    appearance: none;
+    grid-template-columns: 30px minmax(0, 1fr);
+    grid-template-rows: 25px 14px 12px;
+    align-content: center;
+    column-gap: 10px;
+    row-gap: 2px;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+.accountability-filter-card[data-accountability-card-filter="overdue"] { --kpi-accent: #b42318; --accountability-card-color: #b42318; }
+.accountability-filter-card[data-accountability-card-filter="property"] { --kpi-accent: #a16207; --accountability-card-color: #a16207; }
+.accountability-filter-card[data-accountability-card-filter="billing"] { --kpi-accent: #1769aa; --accountability-card-color: #1769aa; }
+.accountability-filter-card[data-accountability-card-filter="restriction"] { --kpi-accent: #c05621; --accountability-card-color: #c05621; }
+.accountability-filter-card .kpi-icon {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    width: 30px;
+    height: 30px;
+    align-self: center;
+    color: #fff;
+    background: var(--accountability-card-color);
+    border-color: var(--accountability-card-color);
+}
+.accountability-filter-card .kpi-value {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    margin: 0;
+    font-size: 25px;
+    line-height: 1;
+}
+.accountability-filter-card .kpi-label { grid-column: 2; grid-row: 2; align-self: start; font-size: 11px; line-height: 1.2; }
+.accountability-filter-card > small {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: start;
+    overflow: hidden;
+    margin-top: 0;
+    font-size: 9px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.accountability-filter-card:hover { border-color: var(--kpi-accent); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.accountability-filter-card:focus-visible { outline: 0; border-color: var(--interactive); box-shadow: var(--focus-ring); }
+.accountability-filter-card.is-selected {
+    border-color: var(--accountability-card-color);
+    outline: 3px solid var(--accountability-card-color);
+    outline-offset: 1px;
+    box-shadow: var(--shadow-sm);
+}
+.accountability-filter-card.is-selected::after {
+    position: absolute;
+    top: 9px;
+    right: 10px;
+    padding: 2px 5px;
+    color: #fff;
+    background: var(--accountability-card-color);
+    border-radius: 999px;
+    content: "Filtered";
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .045em;
+    text-transform: uppercase;
+}
+.accountability-filter-card { position: relative; }
+.borrower-accountability-browser { display: grid; gap: 11px; }
+.borrower-accountability-toolbar {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(170px, 220px) minmax(145px, 180px) auto;
+    gap: 10px;
+    align-items: end;
+    padding: 10px;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.borrower-accountability-toolbar label { display: grid; min-width: 0; gap: 6px; margin: 0; color: var(--text-muted); font-size: 10px; font-weight: 750; }
+.borrower-accountability-toolbar input,
+.borrower-accountability-toolbar select { width: 100%; height: 40px; min-height: 40px; }
+.borrower-accountability-clear { height: 40px; min-height: 40px; }
+.borrower-accountability-results { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11px; }
+.borrower-accountability-results [data-accountability-result-count] { color: var(--text-secondary); font-weight: 750; }
+.borrower-accountability-records { display: grid; gap: 9px; }
+.accountability-browser-record { display: grid; gap: 11px; padding: 14px 16px; }
+.accountability-browser-record[hidden],
+.borrower-accountability-empty[hidden] { display: none !important; }
+.accountability-browser-record .record-heading h3 { margin: 1px 0 2px; font-size: 15px; }
+.accountability-browser-record .record-heading small { color: var(--text-muted); font-size: 10px; }
+.accountability-browser-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--row-border); }
+.accountability-browser-facts > span { display: grid; min-width: 0; gap: 3px; padding: 9px 12px 0 0; }
+.accountability-browser-facts small { color: var(--text-muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.accountability-browser-facts strong { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.accountability-browser-record > .meta { margin: 0; }
+.borrower-accountability-empty { display: grid; min-height: 80px; place-content: center; gap: 3px; padding: 10px 14px; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius); text-align: center; }
+.borrower-accountability-empty strong { color: var(--heading); }
+@media (max-width: 900px) {
+    .borrower-accountability-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .borrower-accountability-search { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+    .stat-grid.accountability-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dashboard-stat-grid.accountability-filter-grid .dashboard-kpi-card { height: 100px; min-height: 100px; padding: 9px 10px; }
+    .accountability-filter-card small { display: none; }
+    .borrower-accountability-toolbar { grid-template-columns: 1fr; }
+    .borrower-accountability-search { grid-column: auto; }
+    .borrower-accountability-clear { width: 100%; }
+    .borrower-accountability-results { align-items: flex-start; flex-direction: column; gap: 2px; }
+    .accountability-browser-facts { grid-template-columns: 1fr; }
+    .accountability-browser-facts > span { padding-top: 7px; }
+}
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .section-heading h2 { margin-bottom: 0; }
 .accountability-record { padding: 17px 19px; }
@@ -1372,9 +1533,9 @@ body.calendar-drawer-open { overflow: hidden; }
 .physical-release-panel { display: grid; gap: 13px; border-top: 3px solid var(--warning); }
 .release-checklist { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .release-checklist li { position: relative; padding-left: 20px; color: var(--warning); font-size: 11px; font-weight: 700; }
-.release-checklist li::before { position: absolute; top: 1px; left: 0; content: "○"; }
+.release-checklist li::before { position: absolute; top: 1px; left: 0; content: "â—‹"; }
 .release-checklist li.is-complete { color: var(--success); }
-.release-checklist li.is-complete::before { content: "✓"; }
+.release-checklist li.is-complete::before { content: "âœ“"; }
 .evidence-upload-panel { border-top: 3px solid var(--info); }
 .evidence-verification-panel { border-top: 3px solid var(--warning); }
 .operational-evidence-row { align-items: flex-start; }
@@ -1676,7 +1837,7 @@ body > footer span:last-child {
     line-height: 1.5;
 }
 .info-card li::before {
-    content: "✓";
+    content: "âœ“";
     position: absolute;
     left: 0;
     top: 0;
@@ -2612,6 +2773,8 @@ body > main + footer {
     .calendar-navigation .button { width: auto; }
     .calendar-legend { padding: 8px 10px; }
     .calendar-month-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .calendar-summary-filter { justify-content: center; }
+    .calendar-summary-clear { grid-column: 1 / -1; }
     .calendar-drawer { width: 100%; }
     .calendar-drawer-content { padding: 15px; }
     .calendar-drawer-reference { align-items: flex-start; flex-direction: column; }
@@ -2640,7 +2803,7 @@ body > main + footer {
     .card, .table-wrap { box-shadow: none; break-inside: avoid; }
 }
 /* =========================================================
-   LOGIN PAGE — LOCAL OVERRIDES ONLY
+   LOGIN PAGE â€” LOCAL OVERRIDES ONLY
    Does NOT modify public header/footer/global layout.
    ========================================================= */
 
@@ -3835,3 +3998,99 @@ body > main + footer {
         text-align: left;
     }
 }
+
+/* BORROWER CALENDAR STATUS CARDS V2 */
+
+/* Remove the large wrapper rectangle */
+.calendar-month-summary[data-calendar-status-filters] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: stretch;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+/* Shared card design */
+[data-calendar-status-filters] .calendar-summary-filter {
+    min-width: 118px;
+    min-height: 56px;
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 3px;
+    padding: 9px 13px;
+    border: 0 !important;
+    border-radius: 10px;
+    box-shadow: none !important;
+    text-align: left;
+}
+
+[data-calendar-status-filters] .calendar-summary-filter strong {
+    font-size: 19px;
+    line-height: 1;
+    font-weight: 800;
+    color: #fff !important;
+}
+
+[data-calendar-status-filters] .calendar-summary-filter span {
+    font-size: 11px;
+    line-height: 1.2;
+    font-weight: 700;
+    color: #fff !important;
+}
+
+/* Solid status colors */
+[data-calendar-status-filters] .calendar-summary-active {
+    background: #15803d !important;
+}
+
+[data-calendar-status-filters] .calendar-summary-due-soon {
+    background: #a16207 !important;
+}
+
+[data-calendar-status-filters] .calendar-summary-overdue {
+    background: #b42318 !important;
+}
+
+[data-calendar-status-filters] .calendar-summary-returned {
+    background: #64748b !important;
+}
+
+/* Selected status — no shadow */
+[data-calendar-status-filters] .calendar-summary-filter.is-selected {
+    outline: 2px solid #16365f !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+}
+
+/* All remains secondary */
+[data-calendar-status-filters] .calendar-summary-clear {
+    min-width: 52px;
+    min-height: 56px;
+    padding: 9px 12px;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px;
+    background: var(--surface) !important;
+    color: var(--interactive) !important;
+    box-shadow: none !important;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+[data-calendar-status-filters] .calendar-summary-clear.is-selected {
+    border-color: var(--interactive) !important;
+    background: var(--surface-subtle) !important;
+    box-shadow: none !important;
+}
+
+@media (max-width: 760px) {
+    [data-calendar-status-filters] .calendar-summary-filter {
+        flex: 1 1 105px;
+        min-width: 105px;
+    }
+}
+
+/* END BORROWER CALENDAR STATUS CARDS V2 */

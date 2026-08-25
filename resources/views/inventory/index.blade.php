@@ -21,7 +21,7 @@
 
         <p>
             {{ $isBorrower
-                ? 'Check which serviceable items have available quantity for your selected dates. Availability is a guide only; SPMU still decides whether the request can be approved.'
+                ? 'Browse active, borrowable, serviceable items currently available for borrowing. Displayed stock does not reserve an item or guarantee approval.'
                 : 'Monitor physical stock, reservations, active custody, laundry/incident states, condition, and borrowing restrictions.' }}
         </p>
     </div>
@@ -45,6 +45,7 @@
     @endif
 </section>
 
+@unless($isBorrower)
 <section class="content-area">
     <form
         method="get"
@@ -74,6 +75,7 @@
         </button>
     </form>
 </section>
+@endunless
 
 
 @if($isBorrower)
@@ -99,7 +101,7 @@
 
             .borrower-inventory-browser-toolbar {
                 display: grid;
-                grid-template-columns: minmax(280px, 1.5fr) minmax(190px, .65fr) minmax(190px, .65fr);
+                grid-template-columns: minmax(280px, 1fr) minmax(190px, 240px);
                 gap: 12px;
                 align-items: end;
                 margin: 16px 0 12px;
@@ -118,6 +120,25 @@
             .borrower-inventory-browser-toolbar select {
                 width: 100%;
                 margin-top: 7px;
+            }
+
+            .borrower-inventory-helper {
+                display: inline-flex;
+                align-items: flex-start;
+                gap: 6px;
+                margin: 0 0 10px;
+                padding: 2px 0;
+                color: var(--inventory-filter-muted);
+                font-size: 12px;
+                line-height: 1.45;
+            }
+
+            .borrower-inventory-helper-icon {
+                flex: 0 0 auto;
+                color: var(--primary, #175da8);
+                font-size: 12px;
+                line-height: 1.45;
+                opacity: .7;
             }
 
             .borrower-inventory-browser-summary {
@@ -152,12 +173,119 @@
                 display: none !important;
             }
 
+            .borrower-inventory-table table {
+                width: 100%;
+                table-layout: fixed;
+            }
+
+            .borrower-inventory-table th,
+            .borrower-inventory-table td {
+                padding: 8px 9px;
+                vertical-align: middle;
+            }
+
+            .borrower-inventory-table th {
+                white-space: nowrap;
+                font-size: 11px;
+            }
+
+            .borrower-inventory-table td {
+                font-size: 12px;
+                line-height: 1.35;
+            }
+
+            .borrower-inventory-table .col-number {
+                width: 6%;
+                text-align: center;
+            }
+
+            .borrower-inventory-table .col-id {
+                width: 11%;
+            }
+
+            .borrower-inventory-table .col-description {
+                width: 31%;
+            }
+
+            .borrower-inventory-table .col-category {
+                width: 15%;
+            }
+
+            .borrower-inventory-table .col-unit,
+            .borrower-inventory-table .col-quantity {
+                width: 10%;
+            }
+
+            .borrower-inventory-table .col-quantity {
+                text-align: center;
+            }
+
+            .borrower-inventory-table .col-premises {
+                width: 17%;
+            }
+
+            .borrower-item-id,
+            .borrower-premises {
+                display: inline-flex;
+                align-items: center;
+                min-height: 24px;
+                padding: 3px 7px;
+                border: 1px solid var(--inventory-filter-line);
+                background: var(--inventory-filter-soft);
+                color: var(--inventory-filter-ink);
+                font-size: 11px;
+                font-weight: 700;
+                white-space: nowrap;
+            }
+
+            .borrower-item-id {
+                border-radius: 6px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            }
+
+            .borrower-premises {
+                border-radius: 999px;
+                font-size: 10.5px;
+            }
+
+            .borrower-item-title {
+                display: block;
+                margin-bottom: 2px;
+                color: var(--inventory-filter-ink);
+                font-weight: 700;
+            }
+
+            .borrower-description {
+                color: var(--inventory-filter-muted);
+                font-size: 11.5px;
+            }
+
+            .borrower-description-more {
+                padding: 0;
+                border: 0;
+                background: transparent;
+                color: var(--primary, #175da8);
+                font: inherit;
+                font-weight: 700;
+                cursor: pointer;
+            }
+
+            .borrower-description-more:hover {
+                text-decoration: underline;
+            }
+
+            .borrower-quantity {
+                font-size: 13px;
+                font-variant-numeric: tabular-nums;
+                font-weight: 800;
+            }
+
             .borrower-inventory-pagination {
                 display: grid;
                 grid-template-columns: auto minmax(130px, 1fr) auto;
                 align-items: center;
                 gap: 10px;
-                margin-top: 12px;
+                margin: 0 0 10px;
                 padding: 11px 12px;
                 border: 1px solid var(--inventory-filter-line);
                 border-radius: 12px;
@@ -191,6 +319,10 @@
                     grid-template-columns: 1fr 1fr;
                 }
 
+                .borrower-inventory-table table {
+                    min-width: 850px;
+                }
+
                 .borrower-inventory-browser-toolbar .borrower-inventory-search-field {
                     grid-column: 1 / -1;
                 }
@@ -221,29 +353,16 @@
             }
         </style>
 
-        <div class="availability-window" role="note">
-            <strong>
-                {{ $from->format('d M Y') }}
-                to
-                {{ $to->format('d M Y') }}
-            </strong>
-
-            <span>
-                Only active, borrowable, serviceable items are shown.
-                A positive quantity does not guarantee approval and does not reserve stock.
-            </span>
-        </div>
-
         <div
             class="borrower-inventory-browser-toolbar"
             aria-label="Search and filter available items"
         >
             <label class="borrower-inventory-search-field">
-                Search item or category
+                Search
                 <input
                     id="borrower-inventory-search"
                     type="search"
-                    placeholder="Search item, category, description, or unit..."
+                    placeholder="Search Item ID, article, description, category, or unit..."
                     autocomplete="off"
                 >
             </label>
@@ -261,15 +380,15 @@
                 </select>
             </label>
 
-            <label>
-                Use
-                <select id="borrower-inventory-use">
-                    <option value="">All Use</option>
-                    <option value="on-campus-only">On-campus only</option>
-                    <option value="off-campus-allowed">Off-campus allowed</option>
-                </select>
-            </label>
         </div>
+
+        <p class="borrower-inventory-helper" role="note">
+            <span class="borrower-inventory-helper-icon" aria-hidden="true">ⓘ</span>
+            <span>
+                Only active, borrowable, serviceable items are shown.
+                Availability does not guarantee approval or reserve stock.
+            </span>
+        </p>
 
         <div class="borrower-inventory-browser-summary">
             <span id="borrower-inventory-result-label">
@@ -277,149 +396,13 @@
             </span>
 
             <span class="borrower-inventory-page-size">
-                10 items per page
+                7 items per page
             </span>
-        </div>
-
-        <div class="table-wrap borrower-inventory-table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Item</th>
-                        <th>Available for selected dates</th>
-                        <th>Unit</th>
-                        <th>Use</th>
-                        <th>Condition</th>
-                        <th>
-                            <span class="visually-hidden">Action</span>
-                        </th>
-                    </tr>
-                </thead>
-
-                <tbody id="borrower-inventory-table-body">
-                    @forelse($items as $item)
-
-                        @php
-                            $balance = $balances[$item->id] ?? [];
-
-                            $available = (float) (
-                                $balance['borrower_available']
-                                ?? $balance['available']
-                                ?? 0
-                            );
-
-                            $categoryName = $item->category?->category_name ?: 'Uncategorized';
-                            $unitName = $item->unit?->unit_name ?: '';
-                            $useFilter = $item->off_campus_allowed
-                                ? 'off-campus-allowed'
-                                : 'on-campus-only';
-
-                            $searchText = strtolower(
-                                $item->unique_description.' '.
-                                ($item->specification ?? '').' '.
-                                $categoryName.' '.
-                                $unitName
-                            );
-                        @endphp
-
-                        <tr
-                            data-borrower-inventory-row
-                            data-search="{{ $searchText }}"
-                            data-category="{{ strtolower($categoryName) }}"
-                            data-use="{{ $useFilter }}"
-                        >
-                            <td data-label="Item">
-                                <strong>
-                                    {{ $item->unique_description }}
-                                </strong>
-
-                                @if($item->specification)
-                                    <small>
-                                        {{ $item->specification }}
-                                    </small>
-                                @endif
-
-                                <small>
-                                    {{ $categoryName }}
-                                </small>
-                            </td>
-
-                            <td data-label="Available">
-                                <strong class="availability-number">
-                                    {{ $available + 0 }}
-                                </strong>
-
-                                <x-status-badge
-                                    :status="$available > 0 ? 'AVAILABLE' : 'UNAVAILABLE'"
-                                    :label="$available > 0 ? 'Available' : 'Unavailable'"
-                                />
-                            </td>
-
-                            <td data-label="Unit">
-                                {{ $unitName }}
-                            </td>
-
-                            <td data-label="Use">
-                                <strong>
-                                    {{ $item->off_campus_allowed
-                                        ? 'On-campus or Off-campus'
-                                        : 'On-campus only' }}
-                                </strong>
-
-                                @if($item->off_campus_allowed)
-                                    <small>
-                                        Off-campus requests require a Gate Pass after approval.
-                                    </small>
-                                @endif
-
-                                @if($item->laundry_required)
-                                    <small>
-                                        Laundry process required after use.
-                                    </small>
-                                @endif
-                            </td>
-
-                            <td data-label="Condition">
-                                <x-status-badge :status="$item->condition_code" />
-                            </td>
-
-                            <td data-label="Action">
-                                <a
-                                    class="table-action ui-pressable"
-                                    href="{{ route('inventory.show', $item) }}"
-                                >
-                                    <x-icon name="eye" size="16" />
-                                    View Details
-                                </a>
-                            </td>
-                        </tr>
-
-                    @empty
-
-                        <tr data-static-empty-row>
-                            <td colspan="6" class="empty-state">
-                                <strong>
-                                    No items are currently available to display.
-                                </strong>
-                            </td>
-                        </tr>
-
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-
-        <div
-            id="borrower-inventory-no-results"
-            class="borrower-inventory-no-results"
-            hidden
-        >
-            No available item matches the current search and filters.
         </div>
 
         <div
             class="borrower-inventory-pagination"
-            aria-label="Available item pages"
+            aria-label="Available inventory pages"
         >
             <button
                 id="borrower-inventory-previous"
@@ -445,10 +428,139 @@
             </button>
         </div>
 
+        <div class="table-wrap borrower-inventory-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="col-number">No.</th>
+                        <th class="col-id">Item ID</th>
+                        <th class="col-description">Article / Description</th>
+                        <th class="col-category">Category</th>
+                        <th class="col-unit">Unit</th>
+                        <th class="col-quantity">Quantity</th>
+                        <th class="col-premises">Premises</th>
+                    </tr>
+                </thead>
+
+                <tbody id="borrower-inventory-table-body">
+                    @forelse($items as $item)
+
+                        @php
+                            $balance = $balances[$item->id] ?? [];
+
+                            $available = max(
+                                0,
+                                (int) floor((float) (
+                                    $balance['borrower_available']
+                                    ?? $balance['available']
+                                    ?? 0
+                                ))
+                            );
+
+                            $categoryName = $item->category?->category_name ?: 'Uncategorized';
+                            $unitName = $item->unit?->unit_name ?: '—';
+                            $itemUiId = 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT);
+                            $description = trim((string) ($item->specification ?? ''));
+                            $hasLongDescription = mb_strlen($description) > 120;
+                            $descriptionPreview = $hasLongDescription
+                                ? \Illuminate\Support\Str::limit($description, 120)
+                                : $description;
+
+                            $searchText = strtolower(
+                                $itemUiId.' '.
+                                $item->unique_description.' '.
+                                $description.' '.
+                                $categoryName.' '.
+                                $unitName
+                            );
+                        @endphp
+
+                        <tr
+                            data-borrower-inventory-row
+                            data-search="{{ $searchText }}"
+                            data-category="{{ strtolower($categoryName) }}"
+                        >
+                            <td class="col-number" data-label="No." data-row-number></td>
+
+                            <td class="col-id" data-label="Item ID">
+                                <span class="borrower-item-id">{{ $itemUiId }}</span>
+                            </td>
+
+                            <td class="col-description" data-label="Article / Description">
+                                <span class="borrower-item-title">
+                                    {{ $item->unique_description }}
+                                </span>
+
+                                <span class="borrower-description" data-description>
+                                    @if($description !== '')
+                                        <span data-description-preview>{{ $descriptionPreview }}</span>
+
+                                        @if($hasLongDescription)
+                                            <span data-description-full hidden>{{ $description }}</span>
+
+                                            <button
+                                                class="borrower-description-more"
+                                                type="button"
+                                                data-description-toggle
+                                                aria-expanded="false"
+                                            >
+                                                More
+                                            </button>
+                                        @endif
+                                    @else
+                                        No additional description.
+                                    @endif
+                                </span>
+                            </td>
+
+                            <td class="col-category" data-label="Category">
+                                {{ $categoryName }}
+                            </td>
+
+                            <td class="col-unit" data-label="Unit">
+                                {{ $unitName }}
+                            </td>
+
+                            <td class="col-quantity" data-label="Quantity">
+                                <span class="borrower-quantity">{{ $available }}</span>
+                            </td>
+
+                            <td class="col-premises" data-label="Premises">
+                                <span class="borrower-premises">
+                                    {{ $item->off_campus_allowed
+                                        ? 'Off-campus eligible'
+                                        : 'On-campus only' }}
+                                </span>
+                            </td>
+                        </tr>
+
+                    @empty
+
+                        <tr data-static-empty-row>
+                            <td colspan="7" class="empty-state">
+                                <strong>
+                                    No items are currently available to display.
+                                </strong>
+                            </td>
+                        </tr>
+
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+
+        <div
+            id="borrower-inventory-no-results"
+            class="borrower-inventory-no-results"
+            hidden
+        >
+            No available item matches the current search and filters.
+        </div>
+
         <script>
         (() => {
             const initializeBorrowerInventoryBrowser = () => {
-                const pageSize = 10;
+                const pageSize = 7;
 
                 const search = document.getElementById(
                     'borrower-inventory-search'
@@ -456,10 +568,6 @@
 
                 const category = document.getElementById(
                     'borrower-inventory-category'
-                );
-
-                const use = document.getElementById(
-                    'borrower-inventory-use'
                 );
 
                 const rows = Array.from(
@@ -507,10 +615,6 @@
                         .trim()
                         .toLowerCase();
 
-                    const selectedUse = (use?.value || '')
-                        .trim()
-                        .toLowerCase();
-
                     return rows.filter((row) => {
                         const matchesSearch =
                             !query
@@ -520,15 +624,7 @@
                             !selectedCategory
                             || (row.dataset.category || '') === selectedCategory;
 
-                        const matchesUse =
-                            !selectedUse
-                            || (row.dataset.use || '') === selectedUse;
-
-                        return (
-                            matchesSearch
-                            && matchesCategory
-                            && matchesUse
-                        );
+                        return matchesSearch && matchesCategory;
                     });
                 };
 
@@ -567,8 +663,16 @@
 
                     matches
                         .slice(start, end)
-                        .forEach((row) => {
+                        .forEach((row, index) => {
                             row.hidden = false;
+
+                            const number = row.querySelector(
+                                '[data-row-number]'
+                            );
+
+                            if (number) {
+                                number.textContent = String(start + index + 1);
+                            }
                         });
 
                     if (noResults) {
@@ -631,14 +735,6 @@
                     }
                 );
 
-                use?.addEventListener(
-                    'change',
-                    () => {
-                        currentPage = 1;
-                        render();
-                    }
-                );
-
                 previous?.addEventListener(
                     'click',
                     () => {
@@ -672,6 +768,35 @@
                             });
                     }
                 );
+
+                document
+                    .querySelectorAll('[data-description-toggle]')
+                    .forEach((button) => {
+                        button.addEventListener('click', () => {
+                            const holder = button.closest('[data-description]');
+                            const preview = holder?.querySelector(
+                                '[data-description-preview]'
+                            );
+                            const full = holder?.querySelector(
+                                '[data-description-full]'
+                            );
+
+                            if (!preview || !full) {
+                                return;
+                            }
+
+                            const expanded =
+                                button.getAttribute('aria-expanded') === 'true';
+
+                            preview.hidden = !expanded;
+                            full.hidden = expanded;
+                            button.setAttribute(
+                                'aria-expanded',
+                                String(!expanded)
+                            );
+                            button.textContent = expanded ? 'More' : 'Less';
+                        });
+                    });
 
                 render();
             };

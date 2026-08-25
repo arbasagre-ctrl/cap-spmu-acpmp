@@ -128,9 +128,103 @@
     const drawerClose = drawer.querySelector('[data-calendar-drawer-close]');
     const viewButtons = calendar.querySelectorAll('[data-calendar-view-button]');
     const viewPanels = calendar.querySelectorAll('[data-calendar-view-panel]');
+    const statusFilterBar = document.querySelector('[data-calendar-status-filters]');
+    const statusFilterButtons = statusFilterBar
+        ? Array.from(statusFilterBar.querySelectorAll('[data-calendar-status-filter]'))
+        : [];
+    const filterLive = statusFilterBar?.querySelector('[data-calendar-filter-live]');
+    const filterEmpty = calendar.querySelector('[data-calendar-filter-empty]');
+    const defaultEmptyStates = calendar.querySelectorAll('[data-calendar-default-empty]');
     const compactViewport = window.matchMedia('(max-width: 700px)');
     let lastTrigger = null;
     let closeTimer = null;
+    let selectedStatus = '';
+
+    const statusLabels = {
+        active: 'Active',
+        'due-soon': 'Due Soon',
+        overdue: 'Overdue',
+        returned: 'Returned',
+    };
+
+    const eventMatchesStatus = (eventTrigger) => {
+        if (!selectedStatus) {
+            return true;
+        }
+
+        const statuses = (eventTrigger.dataset.calendarFilterStatuses || '')
+            .split(' ')
+            .filter(Boolean);
+
+        return eventTrigger.dataset.calendarOwnRecord === 'true'
+            && statuses.includes(selectedStatus);
+    };
+
+    const filterEventsIn = (context) => {
+        context.querySelectorAll('[data-calendar-event]').forEach((eventTrigger) => {
+            eventTrigger.hidden = !eventMatchesStatus(eventTrigger);
+        });
+    };
+
+    const refreshMonthDays = () => {
+        calendar.querySelectorAll('[data-calendar-day-events]').forEach((dayEvents) => {
+            const occurrences = Array.from(
+                dayEvents.querySelectorAll('[data-calendar-occurrence]')
+            );
+            const matching = occurrences.filter((occurrence) => {
+                const eventTrigger = occurrence.querySelector('[data-calendar-event]');
+
+                return eventTrigger && eventMatchesStatus(eventTrigger);
+            });
+
+            occurrences.forEach((occurrence) => {
+                occurrence.hidden = true;
+            });
+            matching.slice(0, 2).forEach((occurrence) => {
+                occurrence.hidden = false;
+            });
+
+            const moreButton = dayEvents.querySelector('[data-calendar-day]');
+            if (moreButton) {
+                const remaining = Math.max(0, matching.length - 2);
+                moreButton.hidden = remaining === 0;
+                moreButton.textContent = `+${remaining} more`;
+            }
+        });
+    };
+
+    const applyStatusFilter = () => {
+        const listPanel = calendar.querySelector('[data-calendar-view-panel="list"]');
+        const listEvents = listPanel
+            ? Array.from(listPanel.children).filter((child) => child.matches('[data-calendar-event]'))
+            : [];
+
+        listEvents.forEach((eventTrigger) => {
+            eventTrigger.hidden = !eventMatchesStatus(eventTrigger);
+        });
+        refreshMonthDays();
+
+        const matchingCount = listEvents.filter(eventMatchesStatus).length;
+        if (filterEmpty) {
+            filterEmpty.hidden = !selectedStatus || matchingCount > 0;
+        }
+        defaultEmptyStates.forEach((emptyState) => {
+            emptyState.hidden = Boolean(selectedStatus);
+        });
+
+        statusFilterButtons.forEach((button) => {
+            const buttonStatus = button.dataset.calendarStatusFilter || '';
+            const selected = buttonStatus === selectedStatus;
+            button.classList.toggle('is-selected', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+
+        if (filterLive) {
+            filterLive.textContent = selectedStatus
+                ? `Showing ${statusLabels[selectedStatus]} records.`
+                : 'Showing all calendar records.';
+        }
+    };
 
     const selectView = (view) => {
         viewButtons.forEach((button) => {
@@ -150,6 +244,9 @@
 
         window.clearTimeout(closeTimer);
         drawerContent.replaceChildren(template.content.cloneNode(true));
+        if (selectedStatus) {
+            filterEventsIn(drawerContent);
+        }
         if (!drawer.contains(trigger)) {
             lastTrigger = trigger;
         }
@@ -206,6 +303,15 @@
     viewButtons.forEach((button) => {
         button.addEventListener('click', () => selectView(button.dataset.calendarViewButton));
     });
+    statusFilterButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const requestedStatus = button.dataset.calendarStatusFilter || '';
+            selectedStatus = requestedStatus && selectedStatus === requestedStatus
+                ? ''
+                : requestedStatus;
+            applyStatusFilter();
+        });
+    });
 
     calendar.addEventListener('click', (event) => activateCalendarControl(event.target));
     drawerContent?.addEventListener('click', (event) => activateCalendarControl(event.target));
@@ -218,7 +324,131 @@
         }
     });
 
+    if (statusFilterBar) {
+        applyStatusFilter();
+    }
     selectView(compactViewport.matches ? 'list' : 'month');
+})();
+
+(() => {
+    const browser = document.querySelector('[data-borrower-accountability]');
+    const cardFilters = document.querySelector('[data-accountability-card-filters]');
+
+    if (!browser || !cardFilters) {
+        return;
+    }
+
+    const recordsContainer = browser.querySelector('[data-accountability-records]');
+    const records = Array.from(browser.querySelectorAll('[data-accountability-record]'));
+    const cards = Array.from(cardFilters.querySelectorAll('[data-accountability-card-filter]'));
+    const search = browser.querySelector('[data-accountability-search]');
+    const status = browser.querySelector('[data-accountability-status]');
+    const sort = browser.querySelector('[data-accountability-sort]');
+    const clear = browser.querySelector('[data-accountability-clear]');
+    const resultCount = browser.querySelector('[data-accountability-result-count]');
+    const empty = browser.querySelector('[data-accountability-empty]');
+    let selectedCategory = '';
+
+    const applyFilters = () => {
+        const query = (search?.value || '').trim().toLowerCase();
+        const selectedStatus = status?.value || '';
+        const sortDirection = sort?.value === 'oldest' ? 'oldest' : 'newest';
+        const orderedRecords = [...records].sort((left, right) => {
+            const leftDate = Number(left.dataset.date || 0);
+            const rightDate = Number(right.dataset.date || 0);
+
+            return sortDirection === 'oldest'
+                ? leftDate - rightDate
+                : rightDate - leftDate;
+        });
+        let visibleCount = 0;
+
+        orderedRecords.forEach((record) => {
+            recordsContainer?.append(record);
+
+            const matchesCategory = !selectedCategory
+                || record.dataset.category === selectedCategory;
+            const matchesSearch = !query
+                || (record.dataset.search || '').includes(query);
+            const matchesStatus = !selectedStatus
+                || record.dataset.status === selectedStatus;
+            const visible = matchesCategory && matchesSearch && matchesStatus;
+
+            record.hidden = !visible;
+            if (visible) {
+                visibleCount += 1;
+            }
+        });
+
+        cards.forEach((card) => {
+            const selected = card.dataset.accountabilityCardFilter === selectedCategory;
+            card.classList.toggle('is-selected', selected);
+            card.setAttribute('aria-pressed', String(selected));
+        });
+
+        if (resultCount) {
+            resultCount.textContent = records.length === visibleCount
+                ? `Showing ${visibleCount} ${visibleCount === 1 ? 'record' : 'records'}`
+                : `Showing ${visibleCount} of ${records.length} records`;
+        }
+
+        if (empty) {
+            empty.hidden = visibleCount > 0;
+            const heading = empty.querySelector('strong');
+            const copy = empty.querySelector('span');
+            const hasRecords = records.length > 0;
+
+            if (heading) {
+                heading.textContent = hasRecords
+                    ? 'No records match the current filters.'
+                    : 'You have no unresolved obligations.';
+            }
+            if (copy) {
+                copy.textContent = hasRecords
+                    ? 'Adjust the search or filters to see other records.'
+                    : 'There are no open overdue, property, billing, or restriction records on your account.';
+            }
+        }
+    };
+
+    cards.forEach((card) => {
+        card.addEventListener('click', () => {
+            const requestedCategory = card.dataset.accountabilityCardFilter || '';
+
+            if (selectedCategory === requestedCategory) {
+                selectedCategory = '';
+                if (search) {
+                    search.value = '';
+                }
+                if (status) {
+                    status.value = '';
+                }
+            } else {
+                selectedCategory = requestedCategory;
+            }
+
+            applyFilters();
+        });
+    });
+
+    search?.addEventListener('input', applyFilters);
+    status?.addEventListener('change', applyFilters);
+    sort?.addEventListener('change', applyFilters);
+    clear?.addEventListener('click', () => {
+        selectedCategory = '';
+        if (search) {
+            search.value = '';
+        }
+        if (status) {
+            status.value = '';
+        }
+        if (sort) {
+            sort.value = 'newest';
+        }
+        applyFilters();
+    });
+
+    applyFilters();
 })();
 
 (() => {
