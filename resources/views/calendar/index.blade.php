@@ -162,8 +162,8 @@
                     <x-status-badge :status="$event['status']" />
                 </div>
                 <dl class="calendar-drawer-summary">
-                    <div><dt>Borrowing period</dt><dd>{{ $event['start_at']->format('d M Y, g:i A') }} <span aria-hidden="true">&rarr;</span> {{ $event['due_at']->format('d M Y, g:i A') }}</dd></div>
-                    <div><dt>Return deadline</dt><dd>{{ $event['due_at']->format('d M Y, g:i A') }}</dd></div>
+                    <div><dt>Borrowing period</dt><dd>{{ $event['start_at']->format('d M Y') }} <span aria-hidden="true">&rarr;</span> {{ $event['due_at']->format('d M Y') }}</dd></div>
+                    <div><dt>Return deadline</dt><dd>{{ $event['due_at']->format('d M Y') }}</dd></div>
                     @if($event['purpose'])<div><dt>Purpose / Event</dt><dd>{{ $event['purpose'] }}</dd></div>@endif
                     @if($event['office'])<div><dt>Office / Department</dt><dd>{{ $event['office'] }}</dd></div>@endif
                 </dl>

@@ -968,7 +968,7 @@ class BatchOneReliabilityTest extends TestCase
             'purpose_event' => 'Return closeout test',
             'location' => 'Campus',
             'needed_from' => now()->subDay(),
-            'return_due_at' => now()->addDay(),
+            'return_due_at' => now()->endOfDay(),
             'created_by_user_id' => $borrower->id,
         ]);
         $custody = CustodyTransaction::query()->create([
@@ -978,7 +978,7 @@ class BatchOneReliabilityTest extends TestCase
             'borrower_user_id' => $borrower->id,
             'status' => 'ACTIVE',
             'released_at' => now(),
-            'due_at' => now()->addDay(),
+            'due_at' => now()->endOfDay(),
         ]);
         $items = InventoryItem::query()->where('active', true)->where('borrowable', true)->where('laundry_required', false)->limit($count)->get();
         $this->assertCount($count, $items);

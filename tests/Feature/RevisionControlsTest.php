@@ -162,24 +162,9 @@ class RevisionControlsTest extends TestCase
         $this->assertDatabaseMissing('generated_documents', ['subject_id' => $ordinaryCustody->id, 'document_type' => 'LAUNDRY_FORM']);
     }
 
-    public function test_early_return_notice_does_not_change_inventory_before_spmu_inspection(): void
+    public function test_early_return_route_is_removed_from_current_policy(): void
     {
-        [$request, $letter] = $this->approvedRequestWithItems(false, false, 'BR-EARLY-001');
-        $borrower = $request->borrower;
-        $custody = app(RequestWorkflowService::class)->recordApprovedLetterDownload($request, $letter, $borrower, '127.0.0.1', 'test');
-        $line = $custody->lines()->firstOrFail();
-        $line->update(['actual_released_quantity' => $line->quantity_to_receive, 'item_status' => 'RELEASED_PENDING_RETURN']);
-        $custody->update(['status' => 'ACTIVE', 'released_at' => now()]);
-        $transactionLinesBefore = DB::table('inventory_transaction_lines')->count();
-
-        $this->withSession(['active_workspace' => 'BORROWER'])->actingAs($borrower)->post(route('custody.early-return', $custody), [
-            'proposed_return_at' => now()->addHours(2)->format('Y-m-d H:i:s'),
-            'quantities' => [$line->id => 1], 'reason' => 'Activity ended early.',
-        ])->assertSessionHasNoErrors();
-
-        $this->assertDatabaseHas('early_return_requests', ['custody_transaction_id' => $custody->id, 'status' => 'REQUESTED']);
-        $this->assertSame($transactionLinesBefore, DB::table('inventory_transaction_lines')->count());
-        $this->assertSame('ACTIVE', $custody->fresh()->status);
+        $this->assertFalse(app('router')->has('custody.early-return'));
     }
 
     private function assertClassification(AccessClassification $classification, bool $mayBorrow, array $workspaces): void

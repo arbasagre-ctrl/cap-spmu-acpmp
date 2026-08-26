@@ -338,54 +338,6 @@
         </section>
     @endif
 
-    @if($custody->released_at && $outstandingTotal > 0)
-        <section class="content-area">
-            <form method="post" action="{{ route('custody.early-return', $custody) }}" class="card form-grid">
-                @csrf
-
-                <div class="card-header">
-                    <div>
-                        <p class="eyebrow">Optional coordination</p>
-                        <h2>Send an Early Return Notice</h2>
-                    </div>
-                </div>
-
-                <p class="meta">
-                    Use this only when you plan to return an item earlier than the expected return date. It is a coordination notice; SPMU records the actual return inspection.
-                </p>
-
-                <label>
-                    Proposed Handover Date &amp; Time
-                    <input type="datetime-local" name="proposed_return_at" required>
-                </label>
-
-                @foreach($custody->lines as $line)
-                    @php
-                        $outstanding = max(0, (float) $line->actual_released_quantity - (float) $line->returned_quantity);
-                    @endphp
-
-                    @if($outstanding > 0)
-                        <label class="checkbox">
-                            <input
-                                type="checkbox"
-                                name="quantities[{{ $line->id }}]"
-                                value="{{ $outstanding }}"
-                                @checked((float) old('quantities.'.$line->id, 0) === (float) $outstanding)
-                            >
-                            {{ $line->requestItem->description_snapshot }} — full outstanding quantity: {{ $outstanding + 0 }}
-                        </label>
-                    @endif
-                @endforeach
-
-                <label>
-                    Reason / Coordination Note
-                    <textarea name="reason"></textarea>
-                </label>
-
-                <button class="button primary ui-pressable">Send Early Return Notice</button>
-            </form>
-        </section>
-    @endif
 @else
 <style>
 .workflow-focus-target { scroll-margin-top: 96px; }
@@ -1056,7 +1008,7 @@
                     'info',
                 ],
             };
-        $canMarkEarlyReturn = $returnDate && now()->lt($returnDate);
+        $returnAvailableToday = ! $returnDate || ! now()->startOfDay()->lt($returnDate->copy()->startOfDay());
         $hasRecordedReturns = $custody->returns->isNotEmpty();
     @endphp
 
@@ -1145,7 +1097,12 @@
                 {{-- ================================================= --}}
                 {{-- NON-LINEN â€” editable SPMU physical inspection     --}}
                 {{-- ================================================= --}}
-                @if($eligibleReturnLines->isNotEmpty())
+                @if(!$returnAvailableToday && $eligibleReturnLines->isNotEmpty())
+                    <div class="callout info">
+                        <strong>Return inspection opens on {{ $returnDate?->format('d F Y') }}.</strong>
+                        <p>The SPMU Action Officer records the return only when the borrower physically hands over the items. Any issued items still outstanding after {{ $returnDate?->format('d F Y') }} will be marked overdue beginning {{ $returnDate?->copy()?->addDay()?->format('d F Y') }}.</p>
+                    </div>
+                @elseif($eligibleReturnLines->isNotEmpty())
                     <form
                         method="post"
                         action="{{ route('custody.return', $custody) }}"
@@ -1323,19 +1280,6 @@
                                     placeholder="Optional inspection note"
                                 >{{ old('remarks') }}</textarea>
                             </label>
-
-                            @if($canMarkEarlyReturn)
-                                <label class="checkbox return-early-option">
-                                    <input
-                                        type="checkbox"
-                                        name="early_return"
-                                        value="1"
-                                        @checked(old('early_return'))
-                                    >
-                                    This is an early physical return before the
-                                    expected return date.
-                                </label>
-                            @endif
 
                             <button
                                 class="button primary ui-pressable"
@@ -1635,10 +1579,6 @@
                                 placeholder="Optional physical verification note"
                             >{{ old('remarks') }}</textarea>
                         </label>
-
-                        @if($canMarkEarlyReturn)
-                            <input type="hidden" name="early_return" value="0">
-                        @endif
 
                         <label class="checkbox linen-spmu-confirmation">
                             <input
@@ -2208,54 +2148,5 @@
 </div>
 @endif {{-- showReturnWorkflow --}}
 
-@if($isBorrower && $custody->released_at && $outstandingTotal > 0)
-    <section class="content-area">
-        <form method="post" action="{{ route('custody.early-return', $custody) }}" class="card form-grid">
-            @csrf
-
-            <div class="card-header">
-                <div>
-                    <p class="eyebrow">Borrower notice</p>
-                    <h2>Early Return Notice</h2>
-                </div>
-            </div>
-
-            <label>
-                Proposed Handover Date & Time
-                <input type="datetime-local" name="proposed_return_at" required>
-            </label>
-
-            @foreach($custody->lines as $line)
-                @php
-                    $outstanding = max(
-                        0,
-                        (float) $line->actual_released_quantity - (float) $line->returned_quantity
-                    );
-                @endphp
-
-                @if($outstanding > 0)
-                    <label class="checkbox">
-                        <input
-                            type="checkbox"
-                            name="quantities[{{ $line->id }}]"
-                            value="{{ $outstanding }}"
-                            @checked((float) old('quantities.'.$line->id, 0) === (float) $outstanding)
-                        >
-                        Include {{ $line->requestItem->description_snapshot }} — full outstanding quantity: {{ $outstanding + 0 }}
-                    </label>
-                @endif
-            @endforeach
-
-            <p class="meta">Early Return is a coordination notice only. For any selected item, the full outstanding quantity must be handed over; split item quantities are not allowed.</p>
-
-            <label>
-                Reason / Coordination Note
-                <textarea name="reason"></textarea>
-            </label>
-
-            <button class="button primary ui-pressable">Send Early Return Notice</button>
-        </form>
-    </section>
-@endif
 @endif
 @endsection

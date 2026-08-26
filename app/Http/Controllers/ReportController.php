@@ -1198,11 +1198,6 @@ class ReportController extends Controller
                     'Obligation Open',
                 ],
 
-                'EARLY_RETURN' => [
-                    'EARLY_RETURN',
-                    'Early Return',
-                ],
-
                 'PREPARING_RELEASE' =>
                     $custody->scheduled_release_at
                         ? [

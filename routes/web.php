@@ -319,10 +319,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('custody.return');
 
-    Route::post('/custody/{custody}/early-return', [CustodyController::class, 'requestEarlyReturn'])
-        ->middleware('workspace:BORROWER')
-        ->name('custody.early-return');
-
 
     /*
     |--------------------------------------------------------------------------

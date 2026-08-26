@@ -6,7 +6,6 @@ use App\Enums\AccessClassification;
 use App\Models\BorrowerRestriction;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
-use App\Models\EarlyReturnRequest;
 use App\Models\GeneratedDocument;
 use App\Models\GatePass;
 use App\Models\Incident;
@@ -784,7 +783,7 @@ class CustodyService
                 ]);
 
             $this->audit->record('ITEMS_RELEASED', $custody, after: ['released_by' => $spmu->id, 'released_at' => now()->toIso8601String()]);
-            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Return deadline: {$custody->due_at->format('F j, Y g:i A')}.", $custody);
+            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Expected Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
 
             if ($hasLinen) {
                 $laundryWorkers = User::query()
@@ -808,18 +807,32 @@ class CustodyService
         }, 3);
     }
 
-    public function receiveReturn(CustodyTransaction $custody, User $spmu, array $quantities, array $conditions, ?string $remarks, bool $early = false, array $policeBlotterReferences = [], array $evidenceFileIds = [], array $conditionBreakdowns = []): ReturnTransaction
+    public function receiveReturn(CustodyTransaction $custody, User $spmu, array $quantities, array $conditions, ?string $remarks, array $policeBlotterReferences = [], array $evidenceFileIds = [], array $conditionBreakdowns = []): ReturnTransaction
     {
         abort_unless($spmu->access_classification === AccessClassification::SpmuOfficer && $custody->borrower_user_id !== $spmu->id, 403);
 
-        return DB::transaction(function () use ($custody, $spmu, $quantities, $conditions, $remarks, $early, $policeBlotterReferences, $evidenceFileIds, $conditionBreakdowns): ReturnTransaction {
+        return DB::transaction(function () use ($custody, $spmu, $quantities, $conditions, $remarks, $policeBlotterReferences, $evidenceFileIds, $conditionBreakdowns): ReturnTransaction {
             $custody = CustodyTransaction::query()->lockForUpdate()->findOrFail($custody->id);
-            if (! in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE', 'EARLY_RETURN', 'INCIDENT_OPEN'], true)) {
+            if (! in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE', 'INCIDENT_OPEN'], true)) {
                 throw ValidationException::withMessages(['return' => 'This custody record is no longer open for a physical return.']);
             }
 
             $custody->setRelation('lines', $custody->lines()->with('requestItem.inventoryItem')->lockForUpdate()->get());
             $custody->loadMissing('borrower');
+
+            /*
+             * DATE-BASED RETURN POLICY
+             * ------------------------
+             * Borrowed property is returnable on the Expected Return Date.
+             * A physical return cannot be recorded before that calendar date.
+             * If property remains outstanding on the following calendar day,
+             * the deadline processor marks the custody OVERDUE.
+             */
+            if ($custody->due_at && now()->startOfDay()->lt($custody->due_at->copy()->startOfDay())) {
+                throw ValidationException::withMessages([
+                    'return' => 'Return inspection may be recorded only on the Expected Return Date or after it.',
+                ]);
+            }
 
             /*
              * NO PARTIAL RETURN RULE
@@ -1276,9 +1289,6 @@ class CustodyService
                 default => 'RETURN_PROCESSING',
             };
             $custody->update(['status' => $status, 'closed_at' => $status === 'CLOSED' ? now() : null]);
-            if ($early) {
-                $custody->earlyReturnRequests()->where('status', 'REQUESTED')->update(['status' => 'COMPLETED', 'completed_at' => now()]);
-            }
             $releasedTotal = (float) $custody->lines->sum('actual_released_quantity');
             $returnedTotal = (float) $custody->lines->sum('returned_quantity');
             DB::table('kpi_observations')->insert([
@@ -1304,105 +1314,7 @@ class CustodyService
         }, 3);
     }
 
-    public function requestEarlyReturn(CustodyTransaction $custody, User $borrower, array $quantities, string $proposedReturnAt, ?string $reason): EarlyReturnRequest
-    {
-        $custody = $custody->fresh() ?? $custody;
 
-        abort_unless(
-            $custody->borrower_user_id === $borrower->id
-                && $custody->released_at
-                && in_array(
-                    $custody->status,
-                    ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE'],
-                    true
-                ),
-            403
-        );
-
-        $early = DB::transaction(function () use ($custody, $borrower, $quantities, $proposedReturnAt, $reason): EarlyReturnRequest {
-            $early = EarlyReturnRequest::create([
-                'early_return_no' => 'ER-'.now()->format('YmdHis').'-'.$custody->id,
-                'custody_transaction_id' => $custody->id,
-                'requested_by_user_id' => $borrower->id,
-                'proposed_return_at' => $proposedReturnAt,
-                'reason' => $reason,
-                'status' => 'REQUESTED',
-                'requested_at' => now(),
-            ]);
-
-            $selected = 0;
-
-            foreach ($custody->lines()->get() as $line) {
-                $outstanding = max(
-                    0,
-                    (float) $line->actual_released_quantity
-                        - (float) $line->returned_quantity
-                );
-
-                $quantity = (float) ($quantities[$line->id] ?? 0);
-
-                if ($quantity < 0 || $quantity > $outstanding) {
-                    throw ValidationException::withMessages([
-                        'early_return' => 'An Early Return quantity cannot exceed the outstanding issued quantity.',
-                    ]);
-                }
-
-                if ($quantity > 0 && abs($quantity - $outstanding) > 0.0005) {
-                    throw ValidationException::withMessages([
-                        'early_return' => 'Early Return cannot split the outstanding quantity of an item. Select the item only when its full outstanding quantity will be handed over.',
-                    ]);
-                }
-
-                if ($quantity > 0) {
-                    $early->lines()->create([
-                        'custody_line_id' => $line->id,
-                        'proposed_quantity' => $quantity,
-                    ]);
-                    $selected++;
-                }
-            }
-
-            if ($selected === 0) {
-                throw ValidationException::withMessages([
-                    'early_return' => 'Select at least one item quantity for Early Return.',
-                ]);
-            }
-
-            return $early;
-        });
-
-        try {
-            $this->audit->record(
-                'EARLY_RETURN_REQUESTED',
-                $early,
-                reason: $reason,
-                after: ['proposed_return_at' => $proposedReturnAt]
-            );
-        } catch (Throwable $exception) {
-            Log::warning('Early Return audit recording failed after persistence.', [
-                'early_return_id' => $early->id,
-                'exception' => $exception->getMessage(),
-            ]);
-        }
-
-        try {
-            $this->notifications->send(
-                'EARLY_RETURN_REQUESTED',
-                $this->spmuRecipients()
-                    ->merge([$borrower])
-                    ->unique('id'),
-                "Early Return {$early->early_return_no} was requested for {$custody->custody_no}. No inventory changes occur until SPMU inspection.",
-                $custody
-            );
-        } catch (Throwable $exception) {
-            Log::warning('Early Return notification failed after persistence.', [
-                'early_return_id' => $early->id,
-                'exception' => $exception->getMessage(),
-            ]);
-        }
-
-        return $early;
-    }
 
     private function spmuRecipients(): Collection
     {

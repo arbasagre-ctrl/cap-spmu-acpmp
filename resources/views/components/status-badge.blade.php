@@ -16,7 +16,7 @@
         'PREPARING_RELEASE' => 'Preparing for Release',
         'RETURN_PROCESSING' => 'Return Processing',
         'OBLIGATION_OPEN' => 'Outstanding Obligation',
-        'EARLY_RETURN' => 'Early Return Requested',
+        'EARLY_RETURN' => 'Return Processing', // legacy records only
         'INCIDENT_OPEN' => 'Accountability Review',
         'RECEIPT_SUBMITTED' => 'Receipt Submitted',
         'PENDING_VERIFICATION' => 'Pending Verification',

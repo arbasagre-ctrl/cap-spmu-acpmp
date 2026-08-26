@@ -145,7 +145,7 @@ class DashboardController extends Controller
                 ->count();
 
             $forReturnCheck = CustodyTransaction::query()
-                ->whereIn('status', ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE', 'EARLY_RETURN'])
+                ->whereIn('status', ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE'])
                 ->count();
 
             $laundryVerification = LaundryJob::query()

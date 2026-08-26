@@ -110,7 +110,7 @@
                     'RETURN_PROCESSING' => 'RETURN_PROCESSING',
                     'PARTIALLY_RETURNED' => 'PARTIALLY_RETURNED',
                     'OVERDUE' => 'OVERDUE',
-                    'EARLY_RETURN' => 'EARLY_RETURN',
+                    'EARLY_RETURN' => 'RETURN_PROCESSING',
                     'INCIDENT_OPEN' => 'INCIDENT_OPEN',
                     'OBLIGATION_OPEN' => 'OBLIGATION_OPEN',
                     'CLOSED' => 'CLOSED',
@@ -132,7 +132,7 @@
                     'RETURN_PROCESSING' => 'Return Processing',
                     'PARTIALLY_RETURNED' => 'Return Processing',
                     'OVERDUE' => 'Overdue',
-                    'EARLY_RETURN' => 'Early Return',
+                    'EARLY_RETURN' => 'Return Processing',
                     'INCIDENT_OPEN' => 'Incident Open',
                     'OBLIGATION_OPEN' => 'Obligation Open',
                     'CLOSED' => 'Completed',
@@ -175,7 +175,7 @@
 
                     'EARLY_RETURN' => [
                         'Open borrowing',
-                        'An early-return process is recorded for this borrowing.',
+                        'Return processing is recorded for this borrowing.',
                     ],
 
                     'INCIDENT_OPEN' => [
@@ -264,7 +264,6 @@
                             'RETURN_PROCESSING',
                             'PARTIALLY_RETURNED',
                             'OVERDUE',
-                            'EARLY_RETURN',
                             'INCIDENT_OPEN',
                             'OBLIGATION_OPEN',
                         ],
@@ -457,7 +456,7 @@
                         <small>
                             {{ optional($request->currentVersion?->needed_from)->format('d M Y, g:i A') }}
                             to
-                            {{ optional($request->currentVersion?->return_due_at)->format('d M Y, g:i A') }}
+                            {{ optional($request->currentVersion?->return_due_at)->format('d M Y') }}
                         </small>
                     </td>
 
@@ -501,7 +500,7 @@
                                 'RETURN_PROCESSING' => 'RETURN_PROCESSING',
                                 'PARTIALLY_RETURNED' => 'RETURN_PROCESSING',
                                 'OVERDUE' => 'OVERDUE',
-                                'EARLY_RETURN' => 'EARLY_RETURN',
+                                'EARLY_RETURN' => 'RETURN_PROCESSING',
                                 'INCIDENT_OPEN' => 'INCIDENT_OPEN',
                                 'OBLIGATION_OPEN' => 'OBLIGATION_OPEN',
                                 'CLOSED' => 'COMPLETED',
@@ -513,7 +512,7 @@
                                 'RETURN_PROCESSING',
                                 'PARTIALLY_RETURNED' => 'Return Processing',
                                 'OVERDUE' => 'Overdue',
-                                'EARLY_RETURN' => 'Early Return',
+                                'EARLY_RETURN' => 'Return Processing',
                                 'INCIDENT_OPEN' => 'Incident Open',
                                 'OBLIGATION_OPEN' => 'Obligation Open',
                                 'CLOSED' => 'Completed',
@@ -560,7 +559,7 @@
  const rows=[...document.querySelectorAll('[data-request-record]')];
  const search=document.querySelector('[data-record-search]'); const status=document.querySelector('[data-record-status-filter]'); const sort=document.querySelector('[data-record-sort]'); const empty=document.querySelector('[data-record-empty]');
  if(!rows.length || !search || !status || !sort) return;
- const labels={PREPARING_RELEASE:'Preparing Release',ACTIVE:'Released / On Custody',RETURN_PROCESSING:'Return Processing',PARTIALLY_RETURNED:'Return Processing',OVERDUE:'Overdue',EARLY_RETURN:'Early Return',INCIDENT_OPEN:'Incident Open',OBLIGATION_OPEN:'Obligation Open',CLOSED:'Completed',COMPLETED:'Completed',DRAFT:'Draft',UNDER_SPMU:'Under SPMU Review',APPROVED_READY_FOR_RELEASE:'Approved / Ready for Release',FINAL_APPROVED_AWAITING_DOWNLOAD:'Approved',RETURNED_FOR_REVISION:'Returned for Revision',REJECTED:'Rejected',CANCELLED:'Cancelled'};
+ const labels={PREPARING_RELEASE:'Preparing Release',ACTIVE:'Released / On Custody',RETURN_PROCESSING:'Return Processing',PARTIALLY_RETURNED:'Return Processing',OVERDUE:'Overdue',EARLY_RETURN:'Return Processing',INCIDENT_OPEN:'Incident Open',OBLIGATION_OPEN:'Obligation Open',CLOSED:'Completed',COMPLETED:'Completed',DRAFT:'Draft',UNDER_SPMU:'Under SPMU Review',APPROVED_READY_FOR_RELEASE:'Approved / Ready for Release',FINAL_APPROVED_AWAITING_DOWNLOAD:'Approved',RETURNED_FOR_REVISION:'Returned for Revision',REJECTED:'Rejected',CANCELLED:'Cancelled'};
  [...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=labels[v]||v.replaceAll('_',' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());status.appendChild(o)});
  const body=rows[0].parentElement;
  const render=()=>{const q=search.value.trim().toLowerCase(); const st=status.value; const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)); ordered.forEach(r=>body.appendChild(r)); let n=0; rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++}); if(empty)empty.hidden=n>0;};

@@ -818,12 +818,6 @@ HTML;
             'TRANSACTION_CLOSED' =>
                 'All required return and post-return obligations for this borrowing transaction have been completed. The transaction is now officially closed in SPMU-ACPMP.',
 
-            'EARLY_RETURN_REQUESTED',
-            'EARLY_RETURN' =>
-                $isBorrower
-                    ? 'Your early return notice has been recorded. Please bring the applicable borrowed property to SPMU for physical inspection and return processing.'
-                    : 'An early return notice has been recorded for this custody transaction. Physical return and inspection must still be completed by SPMU.',
-
             /*
              * -----------------------------------------------------
              * OVERDUE

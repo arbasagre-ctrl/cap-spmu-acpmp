@@ -56,7 +56,7 @@ class ProcessOperationalDeadlines extends Command
             ->whereIn('status', [
                 'ACTIVE',
                 'RETURN_PROCESSING',
-                'EARLY_RETURN',
+                
                 'OVERDUE',
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',

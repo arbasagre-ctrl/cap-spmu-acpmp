@@ -19,7 +19,6 @@ class CalendarController extends Controller
         'ACTIVE',
         'RETURN_PROCESSING',
         'OVERDUE',
-        'EARLY_RETURN',
         'INCIDENT_OPEN',
         'OBLIGATION_OPEN',
         'CLOSED',
@@ -207,7 +206,7 @@ class CalendarController extends Controller
         $today = $now->startOfDay();
         $dueDate = $dueAt->startOfDay();
         $isDueSoon = $custody
-            && in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN'], true)
+            && in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING'], true)
             && $dueDate->betweenIncluded($today, $today->addDays($dueSoonDays));
         $canViewRequest = $this->canViewRequest($request, $workspace, $userId);
 
@@ -228,7 +227,7 @@ class CalendarController extends Controller
             'request_url' => $canViewRequest ? route('requests.show', $request) : null,
             'action_label' => $workspace === 'BORROWER' ? 'View My Request' : 'View Request',
             'next_action' => $this->nextAction($status, $own, $detailsVisible, $isDueSoon, $dueAt),
-            'is_active' => $custody && in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN', 'INCIDENT_OPEN'], true),
+            'is_active' => $custody && in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'INCIDENT_OPEN'], true),
             'is_due_soon' => $isDueSoon,
             'is_overdue' => $custody?->status === 'OVERDUE',
             'is_closed' => $custody?->status === 'CLOSED',
@@ -269,7 +268,7 @@ class CalendarController extends Controller
             RequestStatus::UnderSpmu->value => 'No action required — waiting for SPMU review.',
             RequestStatus::UnderGsu->value,
             RequestStatus::UnderVpaf->value => 'Legacy request — borrower resubmission is required under the current SPMU-only workflow.',
-            'ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN', 'INCIDENT_OPEN' => 'Return due '.$dueAt->format('d F Y').'.',
+            'ACTIVE', 'RETURN_PROCESSING', 'INCIDENT_OPEN' => 'Return due '.$dueAt->format('d F Y').'.',
             default => 'Review the request record for its latest status and instructions.',
         };
     }

@@ -32,7 +32,7 @@
             return 'attention';
         }
 
-        if (in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'], true)) {
+        if (in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true)) {
             return 'return';
         }
 
@@ -383,7 +383,7 @@
                         $isCompleted => 'Completed',
                         $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
                         $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
-                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'], true) => 'Return Processing',
+                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
                         $custody->status === 'OVERDUE' => 'Overdue',
                         (bool) $custody->released_at => 'Items Released / On Custody',
                         (bool) $custody->prepared_at && $hasActivePickupSchedule => 'Ready for Release',
@@ -671,7 +671,7 @@
                         $custody->status === 'CLOSED' || $custody->closed_at !== null => 'Completed',
                         $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
                         $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
-                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'], true) => 'Return Processing',
+                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
                         $custody->status === 'OVERDUE' => 'Overdue',
                         (bool) $custody->released_at => 'Items Released / On Custody',
                         (bool) $custody->prepared_at && $hasActivePickupSchedule => 'Ready for Release',

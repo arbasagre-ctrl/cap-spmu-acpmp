@@ -261,7 +261,7 @@
                         <div>
                             <strong>{{ $custody->request?->request_no }}</strong>
                             <span>{{ $custody->scheduled_release_at ? 'Pickup '.$custody->scheduled_release_at->format('d M Y, g:i A') : 'Pickup not yet scheduled' }}</span>
-                            <small>{{ $custody->due_at ? 'Return due '.$custody->due_at->format('d M Y, g:i A') : 'Return deadline will appear after release.' }}</small>
+                            <small>{{ $custody->due_at ? 'Return due '.$custody->due_at->format('d M Y') : 'Return deadline will appear after release.' }}</small>
                         </div>
                         <a class="table-action" href="{{ route('custody.show', $custody) }}">View</a>
                     </article>

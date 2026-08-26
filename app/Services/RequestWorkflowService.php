@@ -68,7 +68,6 @@ class RequestWorkflowService
                 'ACTIVE',
                 'RETURN_PROCESSING',
                 'OVERDUE',
-                'EARLY_RETURN',
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',
             ])
@@ -885,7 +884,7 @@ class RequestWorkflowService
      * A borrower may cancel any open request until physical release. This
      * includes Draft, Submitted/Under Review, Approved/Allocated, Prepared,
      * and Pickup Scheduled requests. Once released/on custody, cancellation is
-     * blocked and the Early Return / Return workflow must be used instead.
+     * blocked and the Return workflow must be used instead.
      *
      * If approval already allocated inventory, cancellation immediately
      * restores that unreleased allocation to Available stock and invalidates
@@ -912,7 +911,7 @@ class RequestWorkflowService
         if ($request->custody?->released_at) {
             throw ValidationException::withMessages([
                 'cancel' =>
-                    'Items have already been physically released. Use the Early Return / Return process instead of cancellation.',
+                    'Items have already been physically released. Use the Return process on the Expected Return Date instead of cancellation.',
             ]);
         }
 

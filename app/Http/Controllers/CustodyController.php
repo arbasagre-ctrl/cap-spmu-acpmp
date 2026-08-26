@@ -113,32 +113,11 @@ class CustodyController extends Controller
             'gatePass.accomplishedFile',
         ];
 
-        /*
-        * Prevent /custody/{id} from crashing when the Early Return
-        * database tables have not yet been created.
-        */
         if (Schema::hasTable('laundry_jobs')) {
             $relations[] = 'laundryJob.document.file';
             $relations[] = 'laundryJob.latestEvidence.file';
             $relations[] = 'laundryJob.lines.custodyLine.requestItem.inventoryItem.unit';
             $relations[] = 'laundryJob.formVerifier';
-        }
-
-        if (Schema::hasTable('early_return_requests')) {
-            if (Schema::hasTable('early_return_request_lines')) {
-                $relations[] = 'earlyReturnRequests.lines';
-            } else {
-                $relations[] = 'earlyReturnRequests';
-            }
-        } else {
-            /*
-            * custody.show.blade.php accesses:
-            * $custody->earlyReturnRequests
-            *
-            * Setting an empty relation prevents Laravel from trying
-            * to query a table that does not exist.
-            */
-            $custody->setRelation('earlyReturnRequests', collect());
         }
 
         $custody->load($relations);
@@ -312,7 +291,6 @@ class CustodyController extends Controller
             'evidence_files' => ['nullable', 'array'],
             'evidence_files.*' => ['nullable', 'file', 'mimes:pdf,png,jpg,jpeg,webp', 'max:5120'],
             'remarks' => ['nullable', 'string', 'max:2000'],
-            'early_return' => ['nullable', 'boolean'],
         ]);
 
         /*
@@ -408,7 +386,6 @@ class CustodyController extends Controller
             $data['quantities'] ?? [],
             $data['conditions'] ?? [],
             $data['remarks'] ?? null,
-            $request->boolean('early_return'),
             $data['police_blotter_references'] ?? [],
             $evidenceFileIds,
             conditionBreakdowns: $data['accounting'] ?? [],
@@ -417,19 +394,6 @@ class CustodyController extends Controller
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
             ->with('status', 'Return inspection recorded. The remaining return or Laundry status is shown beside the inspection panel.');
-    }
-
-    public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
-    {
-        $data = $request->validate([
-            'proposed_return_at' => ['required', 'date', 'after_or_equal:now'],
-            'quantities' => ['required', 'array'],
-            'quantities.*' => ['nullable', 'numeric', 'min:0'],
-            'reason' => ['nullable', 'string', 'max:1000'],
-        ]);
-        $service->requestEarlyReturn($custody, $request->user(), $data['quantities'], $data['proposed_return_at'], $data['reason'] ?? null);
-
-        return back()->with('status', 'Early Return notice sent to SPMU. Inventory will change only after physical inspection.');
     }
 
     private function authorizeSpmuOfficer(Request $request): void

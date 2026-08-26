@@ -180,7 +180,7 @@ class LaundryController extends Controller
                 'worker_received_at' => $job->worker_received_at ?: now(),
             ]);
 
-            if (in_array($job->custody->status, ['ACTIVE', 'EARLY_RETURN'], true)) {
+            if (in_array($job->custody->status, ['ACTIVE'], true)) {
                 $job->custody->update([
                     'status' => 'RETURN_PROCESSING',
                 ]);

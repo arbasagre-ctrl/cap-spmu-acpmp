@@ -207,7 +207,7 @@ class InventoryService
                     'ACTIVE',
                     'RETURN_PROCESSING',
                     'OVERDUE',
-                    'EARLY_RETURN',
+                    
                     'INCIDENT_OPEN',
                     'OBLIGATION_OPEN',
                 ]
@@ -277,7 +277,7 @@ class InventoryService
                     'ACTIVE',
                     'RETURN_PROCESSING',
                     'OVERDUE',
-                    'EARLY_RETURN',
+                    
                     'INCIDENT_OPEN',
                     'OBLIGATION_OPEN',
                 ]
