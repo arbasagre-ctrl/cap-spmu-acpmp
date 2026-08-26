@@ -6,7 +6,6 @@ use App\Enums\RequestStatus;
 use App\Models\Allocation;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
-use App\Models\SystemSetting;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
@@ -35,7 +34,7 @@ class CalendarController extends Controller
         $monthEnd = $month->endOfMonth();
         $gridStart = $monthStart->startOfWeek(CarbonInterface::SUNDAY);
         $gridEnd = $monthEnd->endOfWeek(CarbonInterface::SATURDAY);
-        $dueSoonHours = max(0, (int) SystemSetting::value('due_soon_hours', 24));
+        $dueSoonDays = 1;
 
         $allocations = Allocation::query()
             ->with([
@@ -76,13 +75,13 @@ class CalendarController extends Controller
 
         $events = collect();
         foreach ($allocations->groupBy(fn (Allocation $allocation) => $allocation->requestItem->version->request_id) as $requestId => $requestAllocations) {
-            $event = $this->allocationEvent($requestAllocations, $workspace, $request->user()->id, $dueSoonHours);
+            $event = $this->allocationEvent($requestAllocations, $workspace, $request->user()->id, $dueSoonDays);
             if ($event) {
                 $events->put((int) $requestId, $event);
             }
         }
         foreach ($custodies as $custody) {
-            $events->put($custody->request_id, $this->custodyEvent($custody, $workspace, $request->user()->id, $dueSoonHours));
+            $events->put($custody->request_id, $this->custodyEvent($custody, $workspace, $request->user()->id, $dueSoonDays));
         }
 
         $calendarEvents = $events->sortBy('start_at')->values();
@@ -119,7 +118,7 @@ class CalendarController extends Controller
     }
 
     /** @param Collection<int, Allocation> $allocations */
-    private function allocationEvent(Collection $allocations, string $workspace, int $userId, int $dueSoonHours): ?array
+    private function allocationEvent(Collection $allocations, string $workspace, int $userId, int $dueSoonDays): ?array
     {
         $first = $allocations->first();
         $request = $first?->requestItem?->version?->request;
@@ -152,11 +151,11 @@ class CalendarController extends Controller
             own: $own,
             detailsVisible: $detailsVisible,
             custody: null,
-            dueSoonHours: $dueSoonHours,
+            dueSoonDays: $dueSoonDays,
         );
     }
 
-    private function custodyEvent(CustodyTransaction $custody, string $workspace, int $userId, int $dueSoonHours): array
+    private function custodyEvent(CustodyTransaction $custody, string $workspace, int $userId, int $dueSoonDays): array
     {
         $request = $custody->request;
         $version = $request->currentVersion;
@@ -185,7 +184,7 @@ class CalendarController extends Controller
             own: $own,
             detailsVisible: $detailsVisible,
             custody: $custody,
-            dueSoonHours: $dueSoonHours,
+            dueSoonDays: $dueSoonDays,
         );
     }
 
@@ -202,12 +201,14 @@ class CalendarController extends Controller
         bool $own,
         bool $detailsVisible,
         ?CustodyTransaction $custody,
-        int $dueSoonHours,
+        int $dueSoonDays,
     ): array {
         $now = CarbonImmutable::now(config('app.timezone'));
+        $today = $now->startOfDay();
+        $dueDate = $dueAt->startOfDay();
         $isDueSoon = $custody
             && in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN'], true)
-            && $dueAt->betweenIncluded($now, $now->addHours($dueSoonHours));
+            && $dueDate->betweenIncluded($today, $today->addDays($dueSoonDays));
         $canViewRequest = $this->canViewRequest($request, $workspace, $userId);
 
         return [
@@ -258,7 +259,7 @@ class CalendarController extends Controller
             return $own ? 'Action required — resolve the outstanding accountability obligation.' : 'The return is complete, with an outstanding obligation under review.';
         }
         if ($isDueSoon) {
-            return 'Return due '.$dueAt->format('d F Y, g:i A').'.';
+            return 'Return due '.$dueAt->format('d F Y').'.';
         }
 
         return match ($status) {
@@ -268,7 +269,7 @@ class CalendarController extends Controller
             RequestStatus::UnderSpmu->value => 'No action required — waiting for SPMU review.',
             RequestStatus::UnderGsu->value,
             RequestStatus::UnderVpaf->value => 'Legacy request — borrower resubmission is required under the current SPMU-only workflow.',
-            'ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN', 'INCIDENT_OPEN' => 'Return due '.$dueAt->format('d F Y, g:i A').'.',
+            'ACTIVE', 'RETURN_PROCESSING', 'EARLY_RETURN', 'INCIDENT_OPEN' => 'Return due '.$dueAt->format('d F Y').'.',
             default => 'Review the request record for its latest status and instructions.',
         };
     }

@@ -172,6 +172,8 @@ class DocumentController extends Controller
                 )
                 ->exists();
 
+        $isTemplateSource = (string) $file->classification === 'DOCUMENT_TEMPLATE_SOURCE';
+
         $operationalEvidence = in_array(
             (string) $file->classification,
             [
@@ -196,6 +198,7 @@ class DocumentController extends Controller
             || $isRequestOwner
             || ($requestSupportingDocument && $isSpmu)
             || ($operationalEvidence && $isSpmu)
+            || ($isTemplateSource && ($isSpmu || $isIctu))
             || $laundryEvidenceMayView
             || $isIctu;
 
@@ -216,7 +219,8 @@ class DocumentController extends Controller
             [
                 'Content-Type' => $mimeType,
                 'Content-Disposition' =>
-                    'inline; filename="'.$safeName.'"',
+                    ($isTemplateSource && str_contains(strtolower($mimeType), 'html') ? 'attachment' : 'inline')
+                    .'; filename="'.$safeName.'"',
                 'X-Content-Type-Options' => 'nosniff',
                 'Cache-Control' => 'private, no-store, max-age=0',
                 'Pragma' => 'no-cache',

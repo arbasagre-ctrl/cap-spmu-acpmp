@@ -805,8 +805,8 @@
             <article class="card">
                 <div class="card-header">
                     <div>
-                        <p class="eyebrow">3. Physical documents</p>
-                        <h2>Print at SPMU for the physical handover</h2>
+                        <p class="eyebrow">3. Document verification</p>
+                        <h2>Verify the borrower's printed operational forms</h2>
                     </div>
                 </div>
 
@@ -825,7 +825,7 @@
                         );
 
                         $documentDisplayStatus = $isReleaseOperationalDocument
-                            ? 'READY TO PRINT'
+                            ? 'BORROWER COPY / REFERENCE'
                             : str($document->status)->replace('_', ' ')->upper();
                     @endphp
 
@@ -835,7 +835,7 @@
                             <small>{{ $documentDisplayStatus }}</small>
                         </div>
                         <a class="button secondary small ui-pressable" href="{{ route('documents.download', $document) }}">
-                            Print / Download
+                            View reference
                         </a>
                     </div>
                 @empty
@@ -845,10 +845,7 @@
                 @endforelse
 
                 <p class="meta top-gap">
-                    These are release-stage forms ready for printing. The Borrower Slip is completed with the required
-                    handwritten/wet signatures during the actual handover. Gate Pass is included only for off-campus
-                    borrowing. Laundry Form is included only for applicable linen and is completed later through the
-                    linen return and Laundry workflow.
+                    These forms were generated after SPMU approval and are also available in the Borrower request page for printing. Verify that the borrower brought the correct Borrower Slip and any applicable Gate Pass / Laundry Form. Do not generate a duplicate copy here. Required handwritten signatures are completed through the applicable physical workflow.
                 </p>
             </article>
         </section>
@@ -1090,76 +1087,53 @@
         <article class="card return-context-card return-documents-card">
             <div class="card-header">
                 <div>
-                    <p class="eyebrow">Related documents</p>
-                    <h2>Operational return references</h2>
+                    <p class="eyebrow">Operational documents</p>
+                    <h2>Accomplished return documents</h2>
                 </div>
             </div>
 
-            @php
-                // The Action Officer Return view should show only documents needed for
-                // operational custody/return reference. Approval-stage files (signed BR
-                // Letter / PTC) remain in Request Records and are not duplicated here.
-                $activeOperationalDocuments = $documents
-                    ->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'])
-                    ->filter(fn ($document) => in_array(
-                        $document->document_type,
-                        ['BORROWER_SLIP', 'GATE_PASS'],
-                        true
-                    ));
-            @endphp
-
             <div class="return-document-list">
-                @forelse($activeOperationalDocuments as $document)
-                    <div class="return-document-row">
-                        <div>
-                            <strong>
-                                {{ $document->document_type === 'BORROWER_SLIP'
-                                    ? 'Borrower Slip'
-                                    : 'Gate Pass' }}
-                            </strong>
-                            <small>
-                                {{ $document->document_type === 'BORROWER_SLIP'
-                                    ? 'Reference for the items physically issued to the borrower.'
-                                    : 'Required operational reference for off-campus use.' }}
-                            </small>
-                        </div>
-
-                        <a
-                            class="button secondary small ui-pressable"
-                            href="{{ route('documents.download', $document) }}"
-                        >
-                            View
-                        </a>
+                <div class="return-document-row">
+                    <div>
+                        <strong>Laundry Form</strong>
+                        <small>{{ $hasLaundryItem ? 'Required for linen included in this borrowing.' : 'Not applicable — this borrowing has no linen items.' }}</small>
                     </div>
-                @empty
-                    @unless($hasLaundryItem)
-                        <div class="empty-state return-document-empty">
-                            <strong>No related return documents.</strong>
-                        </div>
-                    @endunless
-                @endforelse
+                    @if(!$hasLaundryItem)
+                        <span class="status-badge status-neutral">Locked</span>
+                    @elseif($laundryJob?->latestEvidence?->file)
+                        <a class="button secondary small ui-pressable" href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}" target="_blank" rel="noopener">View uploaded form</a>
+                    @else
+                        <span class="status-badge status-warning">Pending accomplished scan</span>
+                    @endif
+                </div>
 
-                @if($hasLaundryItem)
-                    <div class="return-document-row">
-                        <div>
-                            <strong>Final signed Laundry Form</strong>
-                            <small>Uploaded by the Laundry Worker after SPMU final acceptance.</small>
-                        </div>
-
-                        @if($laundryJob?->latestEvidence?->file)
-                            <a
-                                class="button secondary small ui-pressable"
-                                href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
-                                target="_blank"
-                                rel="noopener"
-                            >
-                                View
-                            </a>
-                        @else
-                            <span class="status-badge status-neutral">Pending from Laundry Worker</span>
-                        @endif
+                <div class="return-document-row">
+                    <div>
+                        <strong>Gate Pass</strong>
+                        <small>{{ $hasOffCampusItem ? 'Required for approved off-campus use.' : 'Not applicable — this borrowing is on-campus only.' }}</small>
                     </div>
-                @endif
+                    @if(!$hasOffCampusItem)
+                        <span class="status-badge status-neutral">Locked</span>
+                    @elseif($custody->gatePass?->accomplishedFile)
+                        <a class="button secondary small ui-pressable" href="{{ route('files.show', $custody->gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View uploaded gate pass</a>
+                    @else
+                        <span class="status-badge status-warning">Pending accomplished scan</span>
+                    @endif
+                </div>
+
+                <div class="return-document-row">
+                    <div>
+                        <strong>Receipt</strong>
+                        <small>{{ $relatedBillings->isNotEmpty() ? 'Payment evidence for a billing linked to this borrowing.' : 'Not applicable — no billing obligation is linked to this borrowing.' }}</small>
+                    </div>
+                    @if($relatedBillings->isEmpty())
+                        <span class="status-badge status-neutral">Locked</span>
+                    @elseif($latestReceipt?->evidence_file_id)
+                        <a class="button secondary small ui-pressable" href="{{ route('files.show', $latestReceipt->evidence_file_id, false) }}" target="_blank" rel="noopener">View receipt</a>
+                    @else
+                        <span class="status-badge status-warning">Pending receipt upload</span>
+                    @endif
+                </div>
             </div>
         </article>
     </section>

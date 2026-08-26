@@ -4,7 +4,7 @@
     <div>
         <p class="eyebrow">SPMU Action Officer</p>
         <h1>Laundry Final Acceptance</h1>
-        <p>Receive cleaned linen directly from the Laundry Worker, perform the final quantity/condition inspection, and return the signed physical Laundry Form to Laundry for final upload.</p>
+        <p>Receive cleaned linen from the Laundry Worker, review the recorded laundry details, complete the final physical acceptance, and archive the fully accomplished Laundry Form.</p>
     </div>
 </section>
 <section class="content-area">
@@ -13,9 +13,9 @@
             @forelse($jobs as $job)
                 @php
                     $statusText = match($job->status) {
-                        'READY_FOR_SPMU_RETURN' => 'Laundry Worker is to bring cleaned linen + physical Laundry Form to SPMU.',
-                        'AWAITING_FINAL_FORM_UPLOAD' => 'SPMU final physical acceptance is complete; waiting for Laundry Worker final form upload.',
-                        'FORM_REPLACEMENT_REQUIRED' => 'Waiting for Laundry Worker to upload a clear final signed form.',
+                        'READY_FOR_SPMU_RETURN' => 'Cleaned linen and the physical Laundry Form are ready for SPMU final inspection.',
+                        'AWAITING_FINAL_FORM_UPLOAD' => 'Final physical acceptance is complete; archive the fully accomplished Laundry Form.',
+                        'FORM_REPLACEMENT_REQUIRED' => 'A clear replacement scan of the fully accomplished Laundry Form is required.',
                         default => str($job->status)->replace('_',' ')->title(),
                     };
                 @endphp
@@ -25,7 +25,7 @@
                         <span>{{ $job->custody->borrower->full_name }} · {{ $job->custody->custody_no }}</span>
                         <small>{{ $statusText }}</small>
                     </div>
-                    <div class="inline-actions"><x-status-badge :status="$job->status" /><a class="button primary small ui-pressable" href="{{ route('custody.show', $job->custody) }}">Review</a></div>
+                    <div class="inline-actions"><x-status-badge :status="$job->status" /><a class="button primary small ui-pressable" href="{{ route('laundry.spmu.show', $job) }}">View details</a></div>
                 </article>
             @empty
                 <div class="empty-state"><strong>No Laundry final-acceptance cases need action.</strong></div>

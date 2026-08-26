@@ -455,6 +455,7 @@
                     ['custody.release.index', 'custody.release.*', 'Release', 'custody'],
                     ['custody.return.index', 'custody.return.*', 'Return', 'custody'],
                     ['laundry.spmu.index', 'laundry.spmu.*', 'Laundry Final Acceptance', 'custody'],
+                    ['gate-passes.index', 'gate-passes.*', 'Gate Pass', 'custody'],
                     ['inventory.index', 'inventory.*', 'Inventory', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Return Issues', 'accountability'],

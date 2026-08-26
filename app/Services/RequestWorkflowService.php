@@ -764,6 +764,63 @@ class RequestWorkflowService
                     $approver
                 );
 
+                /*
+                 * Generate the borrower's printable physical document packet
+                 * immediately after approval. The borrower prints these forms
+                 * and brings the applicable originals to SPMU for handwritten
+                 * signatures/operational completion.
+                 */
+                $custody->loadMissing([
+                    'borrower',
+                    'request.currentVersion',
+                    'lines.requestItem.inventoryItem',
+                    'gatePass',
+                ]);
+
+                $this->documents->borrowerSlip($custody);
+
+                $offCampusLine = $custody->lines->first(
+                    fn ($line) =>
+                        $line->requestItem?->use_location === 'OFF_CAMPUS'
+                        && (float) $line->approved_quantity > 0
+                );
+
+                if ($offCampusLine) {
+                    $gatePassDocument = $this->documents->conditionalForm(
+                        $custody,
+                        'GATE_PASS'
+                    );
+
+                    GatePass::query()->updateOrCreate(
+                        ['custody_transaction_id' => $custody->id],
+                        [
+                            'custody_line_id' => $offCampusLine->id,
+                            'pass_document_id' => $gatePassDocument->id,
+                            'bearer_name' => $request->borrower->full_name,
+                            'destination' => $version->location,
+                            'purpose' => $version->purpose_event,
+                            'status' => 'PENDING',
+                        ]
+                    );
+                }
+
+                $hasLaundry = $custody->lines->contains(
+                    fn ($line) =>
+                        (bool) $line->requestItem?->inventoryItem?->laundry_required
+                        && (float) $line->approved_quantity > 0
+                );
+
+                if ($hasLaundry) {
+                    $this->documents->conditionalForm(
+                        $custody->fresh([
+                            'borrower',
+                            'request.currentVersion',
+                            'lines.requestItem.inventoryItem',
+                        ]),
+                        'LAUNDRY_FORM'
+                    );
+                }
+
                 $this->audit->record(
                     'REQUEST_READY_FOR_PICKUP_SCHEDULING',
                     $request,
@@ -776,6 +833,9 @@ class RequestWorkflowService
 
                         'pickup_schedule_created' =>
                             false,
+
+                        'borrower_documents_generated' =>
+                            true,
                     ]
                 );
 
@@ -784,7 +844,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was verified and approved by the SPMU Head. The approved quantity is allocated/held for your pickup.",
+                    "Request {$request->request_no} was verified and approved by the SPMU Head. Your Borrower Slip and any applicable Laundry Form or Gate Pass are now available in the request for printing.",
                     $request
                 );
 

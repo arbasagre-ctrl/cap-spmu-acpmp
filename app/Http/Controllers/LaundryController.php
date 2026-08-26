@@ -92,6 +92,28 @@ class LaundryController extends Controller
         ]);
     }
 
+    public function spmuShow(Request $request, LaundryJob $laundryJob): View
+    {
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Laundry final acceptance is an SPMU Action Officer operation.'
+        );
+
+        $laundryJob->load([
+            'custody.borrower',
+            'custody.request.currentVersion',
+            'document.file',
+            'latestEvidence.file',
+            'lines.custodyLine.requestItem.inventoryItem.unit',
+            'formVerifier',
+        ]);
+
+        return view('laundry.spmu-show', [
+            'job' => $laundryJob,
+        ]);
+    }
+
     public function receive(
         Request $request,
         LaundryJob $laundryJob,
@@ -355,7 +377,11 @@ class LaundryController extends Controller
         AuditService $audit,
         NotificationService $notifications
     ): RedirectResponse {
-        $this->authorizeLaundryWorker($request);
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may archive the fully accomplished Laundry Form.'
+        );
 
         $maxKb = ((int) \App\Models\SystemSetting::value('max_upload_mb', 5)) * 1024;
 
@@ -434,8 +460,8 @@ class LaundryController extends Controller
                 'stored_file_id' => $file->id,
                 'borrower_user_id' => $job->custody->borrower_user_id,
                 'uploaded_by_user_id' => $request->user()->id,
-                'verified_by_user_id' => $finalReturn->received_by_user_id,
-                'upload_mode' => 'LAUNDRY_WORKER',
+                'verified_by_user_id' => $request->user()->id,
+                'upload_mode' => 'SPMU_ACTION_OFFICER',
                 'submitted_at' => now(),
                 'verification_status' => 'VERIFIED',
                 'verified_at' => now(),
@@ -445,7 +471,7 @@ class LaundryController extends Controller
                 'generated_document_id' => $document->id,
                 'latest_evidence_submission_id' => $submission->id,
                 'status' => 'LAUNDRY_COMPLETED',
-                'form_verified_by_user_id' => $finalReturn->received_by_user_id,
+                'form_verified_by_user_id' => $request->user()->id,
                 'form_verified_at' => now(),
                 'completed_at' => now(),
             ]);
@@ -469,13 +495,14 @@ class LaundryController extends Controller
                     'status' => 'LAUNDRY_COMPLETED',
                     'uploaded_by_user_id' => $request->user()->id,
                     'spmu_final_return_id' => $finalReturn->id,
+                    'archived_by' => 'SPMU_ACTION_OFFICER',
                 ]
             );
 
             $notifications->send(
                 'LAUNDRY_COMPLETED',
                 collect([$job->custody->borrower]),
-                "The fully accomplished Laundry Form for {$job->custody->custody_no} was uploaded after SPMU final acceptance. The Laundry transaction is completed/settled.",
+                "The fully accomplished Laundry Form for {$job->custody->custody_no} was archived by the SPMU Action Officer after final acceptance. The Laundry transaction is completed/settled.",
                 $job,
                 ['SYSTEM', 'EMAIL']
             );
@@ -483,15 +510,15 @@ class LaundryController extends Controller
             $notifications->send(
                 'LAUNDRY_FINAL_FORM_ARCHIVED',
                 $this->spmuRecipients(),
-                "Laundry uploaded the fully signed final Laundry Form for {$job->custody->custody_no}. The Laundry transaction is now completed/settled.",
+                "The SPMU Action Officer archived the fully signed final Laundry Form for {$job->custody->custody_no}. The Laundry transaction is now completed/settled.",
                 $job,
                 ['SYSTEM']
             );
         }, 3);
 
         return redirect()
-            ->route('laundry.show', $laundryJob)
-            ->with('status', 'Fully accomplished Laundry Form uploaded. Laundry transaction completed/settled.');
+            ->route('laundry.spmu.show', $laundryJob)
+            ->with('status', 'Fully accomplished Laundry Form archived. Laundry transaction completed/settled.');
     }
 
     private function syncCustodyAfterLaundryCompletion(LaundryJob $job): void

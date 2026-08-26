@@ -11,7 +11,9 @@ use App\Http\Controllers\CustodyController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DelegationController;
 use App\Http\Controllers\DocumentController;
+use App\Http\Controllers\DocumentTemplateController;
 use App\Http\Controllers\EvidenceController;
+use App\Http\Controllers\GatePassController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\LaundryController;
 use App\Http\Controllers\NotificationController;
@@ -339,16 +341,22 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     /*
     |--------------------------------------------------------------------------
-    | Gate Pass
+    | Gate Pass - SPMU Action Officer
     |--------------------------------------------------------------------------
     */
 
-    Route::post(
-        '/gate-passes/{gatePass}/verify',
-        [ConditionalProcessingController::class, 'gatePass']
-    )
-        ->middleware('workspace:SPMU')
-        ->name('gate-passes.verify');
+    Route::middleware('workspace:SPMU')->group(function (): void {
+        Route::get('/gate-passes', [GatePassController::class, 'index'])
+            ->name('gate-passes.index');
+
+        Route::get('/gate-passes/{gatePass}', [GatePassController::class, 'show'])
+            ->name('gate-passes.show');
+
+        Route::post(
+            '/gate-passes/{gatePass}/verify',
+            [ConditionalProcessingController::class, 'gatePass']
+        )->name('gate-passes.verify');
+    });
 
 
 
@@ -383,13 +391,18 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/laundry/{laundryJob}/complete-processing', [LaundryController::class, 'completeProcessing'])
             ->name('laundry.complete-processing');
 
-        Route::post('/laundry/{laundryJob}/upload-form', [LaundryController::class, 'upload'])
-            ->name('laundry.upload-form');
     });
 
-    Route::get('/spmu/laundry', [LaundryController::class, 'spmuIndex'])
-        ->middleware('workspace:SPMU')
-        ->name('laundry.spmu.index');
+    Route::middleware('workspace:SPMU')->group(function (): void {
+        Route::get('/spmu/laundry', [LaundryController::class, 'spmuIndex'])
+            ->name('laundry.spmu.index');
+
+        Route::get('/spmu/laundry/{laundryJob}', [LaundryController::class, 'spmuShow'])
+            ->name('laundry.spmu.show');
+
+        Route::post('/spmu/laundry/{laundryJob}/upload-form', [LaundryController::class, 'upload'])
+            ->name('laundry.spmu.upload-form');
+    });
 
 
 
@@ -461,6 +474,11 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             '/administration/policies/academic-periods/{period}',
             [PolicyController::class, 'updateAcademicPeriod']
         )->name('policies.academic-periods.update');
+
+        Route::put(
+            '/administration/policies/sanctions/{offenseNo}',
+            [PolicyController::class, 'updateSanctionRule']
+        )->whereNumber('offenseNo')->name('policies.sanctions.update');
     });
 
 
@@ -507,6 +525,11 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
             Route::put('/settings/{setting}', [SettingController::class, 'update'])
                 ->name('settings.update');
+
+
+            Route::post('/document-templates/{type}', [DocumentTemplateController::class, 'store'])
+                ->where('type', 'billing-statement|gate-pass|laundry-form')
+                ->name('document-templates.store');
         });
 
 

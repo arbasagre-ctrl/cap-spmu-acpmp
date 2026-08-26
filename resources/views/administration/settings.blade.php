@@ -7,28 +7,172 @@
 <section class="page-heading">
     <div>
         <p class="eyebrow">Effective operational configuration</p>
-        <h1>Open decisions and system settings</h1>
+        <h1>Operational configuration</h1>
+        <p>Manage approved policy values and controlled document templates. Every change is preserved in the audit trail.</p>
+    </div>
+</section>
+
+@if(session('status'))
+<section class="content-area">
+    <div class="callout success">{{ session('status') }}</div>
+</section>
+@endif
+
+<section class="content-area">
+    <div class="card return-policy-card">
+        <div class="card-header">
+            <div>
+                <p class="eyebrow">Return deadline policy</p>
+                <h2>Date-based return rule</h2>
+            </div>
+            <span class="badge">POLICY</span>
+        </div>
+        <div class="return-policy-grid">
+            <div><span>Expected Return Date</span><strong>Return anytime on that calendar date</strong></div>
+            <div><span>Reminder</span><strong>1 day before + on the due date</strong></div>
+            <div><span>Overdue begins</span><strong>Next calendar day if items remain outstanding</strong></div>
+            <div><span>Grace period</span><strong>None</strong></div>
+        </div>
+        <p class="meta">Example: Expected Return Date = 27 Aug 2026. The borrower may return on 27 Aug. If issued property is still outstanding on 28 Aug, the custody becomes overdue.</p>
+    </div>
+</section>
+
+<section class="content-area" id="document-templates">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">Controlled document management</p>
+            <h2>Document templates</h2>
+            <p>Upload a new approved template version without replacing historical versions. New generated documents are linked to the active version.</p>
+        </div>
+    </div>
+
+    <div class="template-config-grid">
+        @foreach($templateTypes as $type => $label)
+            @php
+                $history = $documentTemplates->get($type, collect());
+                $activeTemplate = $history->firstWhere('status', 'ACTIVE');
+                $activeVersion = $activeTemplate?->version_label ?: ($activeTemplate ? 'v'.$activeTemplate->template_version.'.0' : 'v1.0');
+                $sourceMode = $activeTemplate?->source_mode ?: 'BUILT_IN';
+                $sourceLabel = match($sourceMode) {
+                    'HTML_PLACEHOLDER' => 'Uploaded auto-fill HTML',
+                    'REFERENCE_ONLY' => 'Controlled reference file',
+                    default => 'Built-in auto-fill layout',
+                };
+            @endphp
+
+            <article class="card template-config-card" id="template-{{ strtolower(str_replace('_', '-', $type)) }}">
+                <div class="card-header settings-card-header">
+                    <div>
+                        <span class="badge">DOCUMENT</span>
+                        <h3>{{ $label }}</h3>
+                        <small>{{ $type }}</small>
+                    </div>
+                    <x-status-badge :status="$activeTemplate?->status ?: 'ACTIVE'" />
+                </div>
+
+                <div class="template-current-summary">
+                    <div>
+                        <span>Current version</span>
+                        <strong>{{ $activeVersion }}</strong>
+                    </div>
+                    <div>
+                        <span>Generation source</span>
+                        <strong>{{ $sourceLabel }}</strong>
+                    </div>
+                </div>
+
+                <div class="template-source-row">
+                    <div>
+                        <small>Current source file</small>
+                        <strong>{{ $activeTemplate?->file?->original_name ?: 'Built-in system template' }}</strong>
+                    </div>
+                    @if($activeTemplate?->file)
+                        <a class="button secondary small ui-pressable" href="{{ route('files.show', $activeTemplate->file) }}" target="_blank" rel="noopener">View / Download</a>
+                    @endif
+                </div>
+
+                @if($sourceMode === 'REFERENCE_ONLY')
+                    <div class="callout compact">
+                        <strong>Reference-only source.</strong>
+                        <span>The PDF/DOCX is preserved as the official source, but the safe built-in auto-fill layout remains in use. Upload HTML containing <code>@{{generated_content}}</code> when the uploaded layout itself must drive newly generated borrower documents.</span>
+                    </div>
+                @elseif($sourceMode === 'HTML_PLACEHOLDER')
+                    <div class="callout compact success">
+                        <strong>Auto-fill enabled.</strong>
+                        <span>New applicable documents generated after activation use this uploaded HTML template shell. Existing generated documents remain unchanged.</span>
+                    </div>
+                @else
+                    <div class="callout compact">
+                        <strong>Built-in version.</strong>
+                        <span>Upload a new approved version below. HTML with <code>@{{generated_content}}</code> automatically applies to future generated documents.</span>
+                    </div>
+                @endif
+
+                <form method="post" action="{{ route('administration.document-templates.store', ['type' => strtolower(str_replace('_', '-', $type))]) }}" enctype="multipart/form-data" class="form-grid template-upload-form">
+                    @csrf
+
+                    <label>
+                        New version
+                        <input type="text" name="version_label" value="{{ old('version_label') }}" placeholder="e.g. v1.1" required>
+                    </label>
+
+                    <label>
+                        Template file
+                        <input type="file" name="template_file" accept=".html,.htm,.pdf,.doc,.docx,text/html,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+                        <small>HTML = automatic generated layout. PDF/DOCX = controlled reference only. Maximum 10 MB.</small>
+                    </label>
+
+                    <label>
+                        Reason for change
+                        <textarea name="reason" required maxlength="1000" placeholder="Example: Updated signatory section and revised official form layout.">{{ old('reason') }}</textarea>
+                    </label>
+
+                    <div class="settings-actions">
+                        <button class="button primary ui-pressable" type="submit">Upload &amp; Activate</button>
+                    </div>
+                </form>
+
+                @if($history->count() > 1)
+                    <details class="template-history">
+                        <summary>Version history ({{ $history->count() }})</summary>
+                        <div class="template-history-list">
+                            @foreach($history as $template)
+                                <div>
+                                    <span><strong>{{ $template->version_label ?: 'v'.$template->template_version.'.0' }}</strong> · {{ str($template->status)->replace('_', ' ')->title() }}</span>
+                                    <small>{{ $template->file?->original_name ?: 'Built-in' }}{{ $template->activated_at ? ' · '.$template->activated_at->format('d M Y') : '' }}</small>
+                                </div>
+                            @endforeach
+                        </div>
+                    </details>
+                @endif
+            </article>
+        @endforeach
     </div>
 </section>
 
 <section class="content-area">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">Other configuration</p>
+            <h2>Policy and system settings</h2>
+        </div>
+    </div>
+
     <div class="settings-grid admin-settings-grid">
         @foreach($settings as $setting)
             @php
                 $dataType = strtoupper((string) ($setting->data_type ?: 'TEXT'));
                 $value = $setting->value_json;
                 $valueText = $value === null ? 'Not configured' : (
-                    is_bool($value) ? ($value ? 'Enabled' : 'Disabled') : (
-                        is_numeric($value) ? (string) $value : (string) $value
-                    )
+                    is_bool($value) ? ($value ? 'Enabled' : 'Disabled') : (string) $value
                 );
                 $displayKey = match ($setting->setting_key) {
-                    'overdue_grace_hours' => 'Overdue Grace Period',
+                    'daily_overdue_tariff' => 'Late Return Daily Fee',
                     default => $humanizedKey($setting->setting_key),
                 };
             @endphp
 
-            <form method="post" action="{{ route('administration.settings.update', $setting) }}" class="card form-grid settings-form" data-settings-form>
+            <form id="setting-{{ $setting->setting_key }}" method="post" action="{{ route('administration.settings.update', $setting) }}" class="card form-grid settings-form" data-settings-form>
                 @csrf
                 @method('PUT')
 
@@ -36,15 +180,9 @@
                     <div>
                         <span class="badge">{{ $setting->group_code }}</span>
                         <h3>{{ $displayKey }}</h3>
-                        @if($setting->setting_key)
-                            <small class="setting-key">{{ $setting->setting_key }}</small>
-                        @endif
+                        <small class="setting-key">{{ $setting->setting_key }}</small>
                     </div>
-                    @if($setting->status)
-                        <x-status-badge :status="$setting->status" />
-                    @else
-                        <x-status-badge status="NOT_CONFIGURED" />
-                    @endif
+                    <x-status-badge :status="$setting->status ?: 'NOT_CONFIGURED'" />
                 </div>
 
                 <div class="settings-summary">
@@ -91,6 +229,10 @@
         @endforeach
     </div>
 </section>
+
+<style>
+.template-config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.template-config-card{display:flex;flex-direction:column;gap:16px;min-width:0}.template-current-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px}.template-current-summary>div,.return-policy-grid>div{padding:13px 14px;border:1px solid var(--border,#d7e1eb);border-radius:10px;background:var(--surface-muted,#f7f9fb)}.template-current-summary span,.return-policy-grid span,.template-source-row small{display:block;color:var(--muted,#62758a);font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em}.template-current-summary strong,.return-policy-grid strong,.template-source-row strong{display:block;margin-top:4px}.template-source-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.template-upload-form{padding-top:14px;border-top:1px solid var(--border,#d7e1eb)}.template-upload-form textarea{min-height:92px}.template-history summary{cursor:pointer;font-weight:700}.template-history-list{display:grid;gap:8px;margin-top:10px}.template-history-list>div{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--border,#d7e1eb)}.template-history-list small{color:var(--muted,#62758a);text-align:right}.return-policy-card{gap:14px}.return-policy-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.callout.compact{padding:11px 12px}.callout.compact strong,.callout.compact span{display:block}.callout.compact span{margin-top:3px}.callout code{font-size:.84em}@media(max-width:1100px){.template-config-grid{grid-template-columns:1fr}.return-policy-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:680px){.template-current-summary,.return-policy-grid{grid-template-columns:1fr}.template-source-row,.template-history-list>div{align-items:flex-start;flex-direction:column}.template-history-list small{text-align:left}}
+</style>
 
 <script>
     document.querySelectorAll('[data-settings-form]').forEach(function (form) {

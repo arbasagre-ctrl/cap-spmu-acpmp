@@ -9,6 +9,8 @@
 @php
     $isBorrower = session('active_workspace') === 'BORROWER';
     $isSpmu = session('active_workspace') === 'SPMU';
+    $isInventoryAdmin = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
+    $isActionOfficer = auth()->user()?->access_classification?->value === 'SPMU_OFFICER';
 @endphp
 
 <section class="page-heading">
@@ -34,7 +36,7 @@
             <x-icon name="plus" />
             New Request
         </a>
-    @elseif($isSpmu)
+    @elseif($isInventoryAdmin)
         <a
             class="button primary ui-pressable"
             href="{{ route('inventory.create') }}"
@@ -897,7 +899,7 @@
                 grid-template-columns: auto minmax(130px, 1fr) auto;
                 align-items: center;
                 gap: 10px;
-                margin-top: 12px;
+                margin: 0 0 12px;
                 padding: 11px 12px;
                 border: 1px solid var(--spmu-inventory-line);
                 border-radius: 12px;
@@ -930,6 +932,32 @@
                 white-space: nowrap;
             }
 
+            .inventory-operations-table table {
+                min-width: 1320px;
+            }
+
+            .inventory-item-id-heading,
+            .inventory-total-stock-heading {
+                white-space: nowrap;
+            }
+
+            .inventory-item-id {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 28px;
+                padding: 4px 9px;
+                border: 1px solid var(--spmu-inventory-line);
+                border-radius: 8px;
+                background: var(--spmu-inventory-soft);
+                color: var(--spmu-inventory-ink);
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                font-size: 11px;
+                font-weight: 800;
+                letter-spacing: .01em;
+                white-space: nowrap;
+            }
+
             @media (max-width: 760px) {
                 .spmu-inventory-browser-toolbar {
                     grid-template-columns: 1fr;
@@ -951,17 +979,6 @@
             }
         </style>
 
-        <div class="availability-window" role="note">
-            <strong>Operational inventory</strong>
-
-            <span>
-                Physical Available = physically serviceable stock currently ready in SPMU custody.
-                Allocated = reserved after Head approval.
-                On Custody = physically issued.
-                Laundry/incident quantities remain unavailable until final reconciliation.
-            </span>
-        </div>
-
         <div
             class="spmu-inventory-browser-toolbar"
             aria-label="Search and filter operational inventory"
@@ -971,7 +988,7 @@
                 <input
                     id="spmu-inventory-search"
                     type="search"
-                    placeholder="Search item, category, description, or unit..."
+                    placeholder="Search Item ID, item, category, description, or unit..."
                     autocomplete="off"
                 >
             </label>
@@ -992,7 +1009,7 @@
 
         <div class="spmu-inventory-browser-summary">
             <span id="spmu-inventory-result-label">
-                Showing operational inventory
+                Showing inventory items
             </span>
 
             <span class="spmu-inventory-page-size">
@@ -1000,12 +1017,42 @@
             </span>
         </div>
 
+        <div
+            class="spmu-inventory-pagination"
+            aria-label="Inventory pages"
+        >
+            <button
+                id="spmu-inventory-previous"
+                class="button secondary small ui-pressable"
+                type="button"
+            >
+                &larr; Previous
+            </button>
+
+            <span
+                id="spmu-inventory-page-label"
+                class="spmu-inventory-page-label"
+            >
+                Page 1
+            </span>
+
+            <button
+                id="spmu-inventory-next"
+                class="button secondary small ui-pressable"
+                type="button"
+            >
+                Next &rarr;
+            </button>
+        </div>
+
         <div class="table-wrap operational-table inventory-operations-table">
             <table>
                 <thead>
                     <tr>
+                        <th class="inventory-item-id-heading">Item ID</th>
                         <th>Item</th>
-                        <th class="physical-available-heading">Physical Available</th>
+                        <th class="inventory-total-stock-heading">Total Stock</th>
+                        <th class="physical-available-heading">Available Stock</th>
                         <th>Allocated</th>
                         <th>On Custody</th>
                         <th>Laundry / Incident</th>
@@ -1039,6 +1086,13 @@
                             $borrowed = (float) ($b['borrowed'] ?? 0);
                             $laundry = (float) ($b['laundry'] ?? 0);
                             $incident = (float) ($b['incident'] ?? 0);
+                            $totalStock = (float) $item->total_quantity;
+                            $itemCode = 'INV-'.str_pad(
+                                (string) $item->id,
+                                4,
+                                '0',
+                                STR_PAD_LEFT
+                            );
 
                             $categoryName =
                                 $item->category?->category_name
@@ -1049,6 +1103,7 @@
                                 ?: '';
 
                             $searchText = strtolower(
+                                $itemCode.' '.
                                 $item->unique_description.' '.
                                 ($item->specification ?? '').' '.
                                 $categoryName.' '.
@@ -1062,6 +1117,12 @@
                             data-category="{{ strtolower($categoryName) }}"
                         >
                             <td>
+                                <span class="inventory-item-id">
+                                    {{ $itemCode }}
+                                </span>
+                            </td>
+
+                            <td>
                                 <strong>
                                     {{ $item->unique_description }}
                                 </strong>
@@ -1071,6 +1132,10 @@
                                     ·
                                     {{ $unitName }}
                                 </small>
+                            </td>
+
+                            <td>
+                                <strong>{{ $totalStock + 0 }}</strong>
                             </td>
 
                             <td>
@@ -1121,16 +1186,18 @@
                                         href="{{ route('inventory.show', $item) }}"
                                     >
                                         <x-icon name="eye" size="16" />
-                                        View
+                                        View Details
                                     </a>
 
-                                    <a
-                                        class="table-action ui-pressable"
-                                        href="{{ route('inventory.edit', $item) }}"
-                                    >
-                                        <x-icon name="edit" size="16" />
-                                        Edit
-                                    </a>
+                                    @if($isInventoryAdmin)
+                                        <a
+                                            class="table-action ui-pressable"
+                                            href="{{ route('inventory.edit', $item) }}"
+                                        >
+                                            <x-icon name="edit" size="16" />
+                                            Edit
+                                        </a>
+                                    @endif
                                 </div>
                             </td>
                         </tr>
@@ -1138,7 +1205,7 @@
                     @empty
 
                         <tr data-spmu-static-empty-row>
-                            <td colspan="8" class="empty-state">
+                            <td colspan="10" class="empty-state">
                                 No inventory items found.
                             </td>
                         </tr>
@@ -1154,34 +1221,6 @@
             hidden
         >
             No inventory item matches the current search and category filter.
-        </div>
-
-        <div
-            class="spmu-inventory-pagination"
-            aria-label="Operational inventory pages"
-        >
-            <button
-                id="spmu-inventory-previous"
-                class="button secondary small ui-pressable"
-                type="button"
-            >
-                &larr; Previous
-            </button>
-
-            <span
-                id="spmu-inventory-page-label"
-                class="spmu-inventory-page-label"
-            >
-                Page 1
-            </span>
-
-            <button
-                id="spmu-inventory-next"
-                class="button secondary small ui-pressable"
-                type="button"
-            >
-                Next &rarr;
-            </button>
         </div>
 
         <script>
@@ -1406,4 +1445,11 @@
 
 @endif
 
+@unless($isBorrower)
+<style>
+.inventory-operations-table th,.inventory-operations-table td{padding-top:8px!important;padding-bottom:8px!important;vertical-align:middle}
+.inventory-operations-table td small{margin-top:2px;line-height:1.25}
+.inventory-row-actions{display:flex;align-items:center;gap:12px;flex-wrap:nowrap;white-space:nowrap}
+</style>
+@endunless
 @endsection

@@ -206,7 +206,7 @@
             <p>Bring the cleaned linen and the same physical Laundry Form directly to SPMU. Do not release the linen back to the Borrower.</p>
         </div>
         <p>
-            SPMU will perform the final quantity/condition inspection. The SPMU Head or authorized SPMU signatory signs the final receiving/acceptance portion of the physical form. After signing, the form is returned to you for the final upload.
+            SPMU will perform the final quantity/condition inspection. The SPMU Head or authorized SPMU signatory signs the final receiving/acceptance portion of the physical form. The SPMU Action Officer will archive the fully accomplished form after final acceptance.
         </p>
     </article>
 </section>
@@ -214,30 +214,13 @@
 
 @if(in_array($job->status, ['AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'], true))
 <section class="content-area narrow">
-    <form method="post" action="{{ route('laundry.upload-form', $job) }}" enctype="multipart/form-data" class="card form-grid">
-        @csrf
+    <article class="card attention-card">
         <div class="card-header">
-            <div><p class="eyebrow">Action 4</p><h2>Upload fully accomplished Laundry Form</h2></div>
-            <x-status-badge status="AWAITING_FINAL_FORM_UPLOAD" />
+            <div><p class="eyebrow">Final archive</p><h2>SPMU is completing the Laundry record</h2></div>
+            <x-status-badge :status="$job->status" />
         </div>
-
-        <div class="callout success">
-            <strong>SPMU final physical acceptance is complete.</strong>
-            <p>Upload the same form only after it contains the Borrower signature, Laundry Worker signature, and final SPMU authorized signature.</p>
-        </div>
-
-        @if($job->status === 'FORM_REPLACEMENT_REQUIRED')
-            <div class="callout warning"><strong>Replacement scan required.</strong><p>Upload a clear and readable scan/photo of the fully signed physical Laundry Form.</p></div>
-        @endif
-
-        <label>Fully Accomplished Laundry Form
-            <small>PDF, PNG, JPG, JPEG, or WebP · all required signatures must be readable</small>
-            <input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required>
-        </label>
-
-        <button class="button primary ui-pressable"><x-icon name="upload" /> Upload Final Signed Form &amp; Complete Laundry</button>
-        <p class="meta">Successful upload settles the Laundry transaction. No Borrower laundry quantity encoding or cleaned-linen pickup is required.</p>
-    </form>
+        <p>The final accomplished Laundry Form is archived by the SPMU Action Officer after the cleaned linen has been physically accepted. No further Laundry Worker upload is required.</p>
+    </article>
 </section>
 @endif
 
@@ -245,7 +228,7 @@
 <section class="content-area narrow">
     <article class="card">
         <div class="card-header"><div><p class="eyebrow">Completed</p><h2>Laundry transaction settled</h2></div><x-status-badge status="LAUNDRY_COMPLETED" /></div>
-        <p>SPMU final acceptance was completed and the Laundry Worker uploaded the fully accomplished physical Laundry Form.</p>
+        <p>SPMU final acceptance was completed and the SPMU Action Officer archived the fully accomplished physical Laundry Form.</p>
         @if($job->completed_at)<p class="meta">Completed {{ $job->completed_at->format('d M Y, g:i A') }}</p>@endif
     </article>
 </section>

@@ -633,7 +633,20 @@
     </script>
 @else
     <section class="content-area">
-        <div class="operational-record-list">
+        @if(in_array($mode, ['release','return'], true))
+        <div class="operational-browser-toolbar">
+            <label>Search
+                <input type="search" id="operational-search" placeholder="Search borrower, request no., custody no., or event..." autocomplete="off">
+            </label>
+            <label>Status
+                <select id="operational-status"><option value="all">All statuses</option></select>
+            </label>
+            <label>Sort
+                <select id="operational-sort"><option value="newest">Newest</option><option value="oldest">Oldest</option></select>
+            </label>
+        </div>
+        @endif
+        <div class="operational-record-list" id="operational-filter-list">
             @forelse($custodies as $custody)
                 @php
                     $outstanding = $custody->lines->sum(
@@ -674,7 +687,14 @@
                     };
                 @endphp
 
-                <a class="operational-record ui-pressable" href="{{ $detailRoute }}">
+                <a class="operational-record ui-pressable" href="{{ $detailRoute }}"
+                    @if(in_array($mode, ['release','return'], true))
+                    data-operational-record
+                    data-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
+                    data-status="{{ $operationalLabel ?: $custody->status }}"
+                    data-search="{{ strtolower(trim(($custody->borrower?->full_name ?? '').' '.($custody->request?->request_no ?? '').' '.($custody->custody_no ?? '').' '.($custody->request?->currentVersion?->purpose_event ?? ''))) }}"
+                    @endif
+                >
                     <span class="operational-record-primary">
                         <strong>{{ $isBorrower ? $custody->custody_no : $custody->borrower->full_name }}</strong>
                         <span>Request {{ $custody->request->request_no }}</span>
@@ -720,7 +740,21 @@
                 </div>
             @endforelse
         </div>
+        @if(in_array($mode, ['release','return'], true))
+            <div class="empty-state top-gap" id="operational-filter-empty" hidden><strong>No matching records.</strong><span>Try another search term or status.</span></div>
+        @endif
     </section>
+    @if(in_array($mode, ['release','return'], true))
+    <style>
+    .operational-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,230px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
+    .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+    .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
+    @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
+    </style>
+    <script>
+    (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;[...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;status.appendChild(o)});const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1));ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();
+    </script>
+    @endif
 @endif
 
 @endsection

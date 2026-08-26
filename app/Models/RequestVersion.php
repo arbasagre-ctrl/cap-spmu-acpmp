@@ -16,6 +16,8 @@ class RequestVersion extends Model
         'version_no',
         'purpose_event',
         'location',
+        'division_code',
+        'office_unit',
 
         /*
          * Canonical date-only borrowing period used by the

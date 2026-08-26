@@ -9,6 +9,7 @@ use App\Models\BorrowerViolation;
 use App\Models\CustodyTransaction;
 use App\Models\ReturnTransaction;
 use App\Models\Sanction;
+use App\Models\SanctionRule;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -96,8 +97,8 @@ class PolicyService
 
     /**
      * SPMU Head reviews a detected violation and, when confirmed, records the
-     * administrative sanction chosen for that specific case. Sanctions are
-     * decided here instead of being generated from configurable sanction rules.
+     * administrative sanction for that specific case. The configured offense
+     * rule supplies the default action; the Head may explicitly override it.
      */
     public function reviewViolation(
         BorrowerViolation $violation,
@@ -135,21 +136,19 @@ class PolicyService
             'OTHER' => null,
         ];
 
-        if ($decision === 'CONFIRMED' && ! array_key_exists((string) $sanctionCode, $allowedSanctions)) {
+        if (
+            $decision === 'CONFIRMED'
+            && $sanctionCode !== null
+            && ! array_key_exists($sanctionCode, $allowedSanctions)
+        ) {
             throw ValidationException::withMessages([
-                'sanction_code' => 'Choose the administrative sanction to record for this confirmed violation.',
+                'sanction_code' => 'Choose a valid administrative sanction or use the configured offense rule.',
             ]);
         }
 
         if ($decision === 'CONFIRMED' && $sanctionCode === 'OTHER' && trim((string) $customSanctionLabel) === '') {
             throw ValidationException::withMessages([
                 'custom_sanction_label' => 'Enter the administrative action when Other is selected.',
-            ]);
-        }
-
-        if ($decision === 'CONFIRMED' && $sanctionCode === 'BORROWING_SUSPENSION' && ! $effectiveTo) {
-            throw ValidationException::withMessages([
-                'effective_to' => 'Set the suspension end date.',
             ]);
         }
 
@@ -202,9 +201,41 @@ class PolicyService
                 ->whereKeyNot($locked->id)
                 ->count() + 1;
 
+            $configuredRule = SanctionRule::query()
+                ->where('offense_no', min($offenseNo, 3))
+                ->where('status', 'ACTIVE')
+                ->latest('effective_from')
+                ->first();
+
+            if ($sanctionCode === null) {
+                $sanctionCode = $configuredRule?->sanction_code;
+            }
+
+            if (! $sanctionCode || ! array_key_exists($sanctionCode, $allowedSanctions)) {
+                throw ValidationException::withMessages([
+                    'sanction_code' => 'Configure the applicable offense sanction rule or choose an override for this case.',
+                ]);
+            }
+
+            if ($sanctionCode === 'BORROWING_SUSPENSION' && ! $effectiveTo) {
+                throw ValidationException::withMessages([
+                    'effective_to' => 'Set the suspension end date for a borrowing suspension.',
+                ]);
+            }
+
             $sanctionLabel = $sanctionCode === 'OTHER'
                 ? trim((string) $customSanctionLabel)
-                : $allowedSanctions[$sanctionCode];
+                : ($configuredRule && $configuredRule->sanction_code === $sanctionCode
+                    ? $configuredRule->sanction_label
+                    : $allowedSanctions[$sanctionCode]);
+
+            if ($sanctionCode === 'OTHER' && $sanctionLabel === '') {
+                throw ValidationException::withMessages([
+                    'custom_sanction_label' => 'Enter the administrative action when Other is selected.',
+                ]);
+            }
+
+
 
             $effectiveFrom = now();
             $sanctionEffectiveTo = $effectiveTo
@@ -223,7 +254,7 @@ class PolicyService
                 'borrower_violation_id' => $locked->id,
                 'borrower_user_id' => $locked->borrower_user_id,
                 'academic_period_id' => $period->id,
-                'sanction_rule_id' => null,
+                'sanction_rule_id' => $configuredRule && $configuredRule->sanction_code === $sanctionCode ? $configuredRule->id : null,
                 'offense_no' => $offenseNo,
                 'sanction_code' => $sanctionCode,
                 'sanction_label' => $sanctionLabel,

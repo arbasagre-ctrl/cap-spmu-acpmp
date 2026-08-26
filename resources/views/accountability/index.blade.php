@@ -111,47 +111,47 @@
             <small>Borrowing restrictions currently in force</small>
         </button>
     @elseif($isHead)
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning">
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="review" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
             <strong class="kpi-value">{{ $pendingViolations->count() }}</strong>
             <span class="kpi-label">Needs Head Review</span>
             <small>{{ $pendingViolations->count() ? 'Administrative decision pending' : 'No pending administrative decision' }}</small>
-        </article>
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger">
+        </button>
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-spmu-filter-card" data-spmu-accountability-filter="cases" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="custody" size="18" /></span>
             <strong class="kpi-value">{{ $openCaseCount }}</strong>
             <span class="kpi-label">Open Cases</span>
             <small>{{ $openOverdueCases->count() }} overdue · {{ $openIncidents->count() }} property</small>
-        </article>
+        </button>
     @else
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger">
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-spmu-filter-card" data-spmu-accountability-filter="overdue" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
             <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
             <span class="kpi-label">Overdue Returns</span>
             <small>Unresolved date-based lateness</small>
-        </article>
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning">
+        </button>
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="property" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
             <strong class="kpi-value">{{ $openIncidents->count() }}</strong>
             <span class="kpi-label">Property Cases</span>
             <small>Damage, loss, or accountability findings</small>
-        </article>
+        </button>
     @endif
 
     @unless($isBorrower)
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info">
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-spmu-filter-card" data-spmu-accountability-filter="billing" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
             <small>Awaiting settlement or disposition</small>
-        </article>
+        </button>
 
-        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning">
+        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="restriction" aria-pressed="false">
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
             <small>Borrowing restrictions currently in force</small>
-        </article>
+        </button>
     @endunless
 </section>
 
@@ -406,7 +406,7 @@
 @endif
 
 @if($isHead && $pendingViolations->isNotEmpty())
-<section class="content-area">
+<section class="content-area" data-spmu-accountability-section="review">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Administrative accountability</p>
@@ -443,7 +443,7 @@
                     <label>
                         Administrative Action
                         <select name="sanction_code">
-                            <option value="">Select when confirming</option>
+                            <option value="">Use configured offense rule</option>
                             <option value="NOTICE">Notice</option>
                             <option value="WRITTEN_REPRIMAND">Written Reprimand</option>
                             <option value="BORROWING_SUSPENSION">Borrowing Suspension</option>
@@ -475,7 +475,7 @@
 @endif
 
 @if(! $isBorrower && $openOverdueCases->isNotEmpty())
-<section class="content-area">
+<section class="content-area" data-spmu-accountability-section="overdue cases">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Date-based lateness</p>
@@ -495,7 +495,7 @@
 @endif
 
 @if(! $isBorrower && $openIncidents->isNotEmpty())
-<section class="content-area">
+<section class="content-area" data-spmu-accountability-section="property cases">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Property accountability</p>
@@ -514,7 +514,7 @@
 @endif
 
 @if(! $isBorrower && $openBillings->isNotEmpty())
-<section class="content-area">
+<section class="content-area" data-spmu-accountability-section="billing">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Cashier payment evidence</p>
@@ -542,7 +542,7 @@
 @endif
 
 @if(! $isBorrower && $activeRestrictions->isNotEmpty())
-<section class="content-area">
+<section class="content-area" data-spmu-accountability-section="restriction">
     <article class="card">
         <div class="card-header">
             <div>
@@ -570,6 +570,26 @@
     </article>
 </section>
 @endif
+
+@unless($isBorrower)
+<section class="content-area" id="accountability-filter-result" hidden>
+    <div class="empty-state"><strong data-accountability-filter-empty-title>No matching accountability records.</strong><span>Select another accountability category.</span></div>
+</section>
+<style>
+.accountability-spmu-filter-card{appearance:none;text-align:left;cursor:pointer;width:100%;font:inherit;color:inherit}
+.accountability-spmu-filter-card.is-active{outline:2px solid var(--primary);outline-offset:2px}
+</style>
+<script>
+(() => {
+ const cards=[...document.querySelectorAll('[data-spmu-accountability-filter]')];
+ const sections=[...document.querySelectorAll('[data-spmu-accountability-section]')];
+ const empty=document.getElementById('accountability-filter-result');
+ if(!cards.length)return;
+ const show=(filter)=>{cards.forEach(c=>{const a=c.dataset.spmuAccountabilityFilter===filter;c.classList.toggle('is-active',a);c.setAttribute('aria-pressed',a?'true':'false')});let visible=0;sections.forEach(section=>{const cats=(section.dataset.spmuAccountabilitySection||'').split(/\s+/);const match=filter==='cases'?cats.includes('cases'):cats.includes(filter);section.hidden=!match;if(match)visible++});if(empty){empty.hidden=visible>0;empty.querySelector('[data-accountability-filter-empty-title]').textContent=filter==='cases'?'No open overdue or property cases.':'No records in this category.';} const target=sections.find(s=>!s.hidden)||empty;if(target&&!target.hidden)target.scrollIntoView({behavior:'smooth',block:'start'});};
+ cards.forEach(c=>c.addEventListener('click',()=>show(c.dataset.spmuAccountabilityFilter)));
+})();
+</script>
+@endunless
 
 @if(($isHead || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
 <section class="content-area">

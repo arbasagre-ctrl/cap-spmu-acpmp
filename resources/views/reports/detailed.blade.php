@@ -279,8 +279,7 @@
             </div>
 
             <p class="report-period-helper">
-                Dates follow the selected academic period.
-                Choose <strong>Custom Date Range</strong> to use different dates.
+                Choose a reporting scope: <strong>Week</strong>, <strong>Month</strong>, <strong>Semester</strong>, or <strong>Academic Year</strong>. The system resolves the corresponding dates automatically.
             </p>
 
             <p class="report-description">{{ $selectedReportMeta['description'] }}</p>

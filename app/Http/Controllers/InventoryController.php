@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AccessClassification;
 use App\Models\CustodyTransaction;
 use App\Models\InventoryCategory;
 use App\Models\InventoryItem;
@@ -83,6 +84,10 @@ class InventoryController extends Controller
                                     'like',
                                     "%{$search}%"
                                 );
+
+                            if (preg_match('/^INV-?(\d+)$/i', $search, $match)) {
+                                $inner->orWhereKey((int) $match[1]);
+                            }
                         }
                     );
                 }
@@ -227,6 +232,8 @@ class InventoryController extends Controller
         $historySearch = '';
         $historyStatus = 'ALL';
         $borrowingHistory = collect();
+        $stockCard = collect();
+
         $historySummary = [
             'borrowers' => 0,
             'records' => 0,
@@ -236,6 +243,25 @@ class InventoryController extends Controller
         ];
 
         if ($workspace === 'SPMU') {
+            $stockCard = DB::table('inventory_transaction_lines as line')
+                ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+                ->leftJoin('users as actor', 'actor.id', '=', 'tx.actor_user_id')
+                ->where('line.inventory_item_id', $inventory->id)
+                ->orderByDesc('tx.occurred_at')
+                ->limit(100)
+                ->get([
+                    'tx.id',
+                    'tx.transaction_type',
+                    'tx.reason',
+                    'tx.occurred_at',
+                    'actor.email as actor_email',
+                    'line.from_state',
+                    'line.to_state',
+                    'line.quantity',
+                    'line.before_quantity',
+                    'line.after_quantity',
+                ]);
+
             $filters = $request->validate([
                 'history_from' => ['nullable', 'date'],
                 'history_to' => ['nullable', 'date'],
@@ -513,11 +539,14 @@ class InventoryController extends Controller
             'historyStatus' => $historyStatus,
             'borrowingHistory' => $borrowingHistory,
             'historySummary' => $historySummary,
+            'stockCard' => $stockCard,
         ]);
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
+        $this->authorizeInventoryAdministrator($request);
+
         return view('inventory.form', [
             'item' => new InventoryItem,
             'categories' => InventoryCategory::where(
@@ -570,6 +599,8 @@ class InventoryController extends Controller
         Request $request,
         AuditService $audit
     ): RedirectResponse {
+        $this->authorizeInventoryAdministrator($request);
+
         $data = $this->validated($request);
 
         $item = InventoryItem::query()->create($data);
@@ -590,8 +621,11 @@ class InventoryController extends Controller
     }
 
     public function edit(
+        Request $request,
         InventoryItem $inventory
     ): View {
+        $this->authorizeInventoryAdministrator($request);
+
         return view('inventory.form', [
             'item' => $inventory,
             'categories' => InventoryCategory::where(
@@ -611,6 +645,8 @@ class InventoryController extends Controller
         InventoryService $service,
         AuditService $audit
     ): RedirectResponse {
+        $this->authorizeInventoryAdministrator($request);
+
         $data = $this->validated(
             $request,
             $inventory
@@ -653,6 +689,15 @@ class InventoryController extends Controller
                 'status',
                 'Inventory item updated with an audit record.'
             );
+    }
+
+    private function authorizeInventoryAdministrator(Request $request): void
+    {
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403,
+            'Only the SPMU Head / Administrator may create or edit inventory items.'
+        );
     }
 
     private function validated(

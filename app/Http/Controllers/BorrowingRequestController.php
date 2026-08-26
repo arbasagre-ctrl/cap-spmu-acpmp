@@ -9,7 +9,6 @@ use App\Models\InventoryItem;
 use App\Models\RequestItem;
 use App\Models\RequestSupportingDocument;
 use App\Models\RequestVersion;
-use App\Services\DocumentService;
 use App\Services\InventoryService;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
@@ -79,7 +78,7 @@ class BorrowingRequestController extends Controller
         Request $request,
         InventoryService $inventory,
         ProtectedFileService $files,
-        DocumentService $documents
+        RequestWorkflowService $workflow
     ): RedirectResponse {
         $data = $this->validateRequest($request);
 
@@ -155,32 +154,26 @@ class BorrowingRequestController extends Controller
             )
         );
 
-        /*
-         * Generate the printable Borrowing Request Letter after the draft
-         * data is saved. The borrower prints this document, obtains the
-         * required GSU/VPAF wet signatures, scans the accomplished letter,
-         * and uploads that scan before submission to SPMU.
-         *
-         * Document-generation failure must never erase the saved draft.
-         */
-        try {
-            $documents->requestLetter(
+        if ($request->input('intent') === 'submit') {
+            $workflow->submit(
                 $borrowingRequest->fresh(),
-                false
+                $user
             );
-        } catch (\Throwable $exception) {
-            report($exception);
+
+            return redirect()
+                ->route('requests.show', $borrowingRequest)
+                ->with(
+                    'status',
+                    'Request and required scanned document(s) submitted to SPMU for verification.'
+                );
         }
 
-        return redirect(
-            route(
-                'requests.show',
-                $borrowingRequest
-            ).'#borrower-next-action'
-        )->with(
-            'status',
-            'Draft saved.'
-        );
+        return redirect()
+            ->route('requests.show', $borrowingRequest)
+            ->with(
+                'status',
+                'Draft saved. You can continue editing and submit when the required scanned document(s) are complete.'
+            );
     }
 
     public function show(
@@ -223,7 +216,8 @@ class BorrowingRequestController extends Controller
 
             'custody.lines.requestItem.inventoryItem',
             'custody.returns',
-            'custody.laundryJob',
+            'custody.laundryJob.latestEvidence.file',
+            'custody.gatePass.accomplishedFile',
         ]);
 
         return view(
@@ -289,7 +283,7 @@ class BorrowingRequestController extends Controller
         BorrowingRequest $borrowingRequest,
         InventoryService $inventory,
         ProtectedFileService $files,
-        DocumentService $documents
+        RequestWorkflowService $workflow
     ): RedirectResponse {
         abort_unless(
             $borrowingRequest->borrower_user_id
@@ -395,40 +389,26 @@ class BorrowingRequestController extends Controller
             )
         );
 
-        /*
-         * Editing changes the content of the printable letter. Supersede
-         * the prior draft PDF and generate the current version again.
-         */
-        $borrowingRequest
-            ->currentVersion
-            ?->documents()
-            ->where('document_type', 'REQUEST_LETTER')
-            ->where('status', 'DRAFT')
-            ->update([
-                'status' => 'SUPERSEDED',
-                'invalidated_at' => now(),
-                'invalidation_reason' =>
-                    'Draft request was edited and the printable letter was regenerated.',
-            ]);
-
-        try {
-            $documents->requestLetter(
+        if ($request->input('intent') === 'submit') {
+            $workflow->submit(
                 $borrowingRequest->fresh(),
-                false
+                $request->user()
             );
-        } catch (\Throwable $exception) {
-            report($exception);
+
+            return redirect()
+                ->route('requests.show', $borrowingRequest)
+                ->with(
+                    'status',
+                    'Request and required scanned document(s) submitted to SPMU for verification.'
+                );
         }
 
-        return redirect(
-            route(
-                'requests.show',
-                $borrowingRequest
-            ).'#borrower-next-action'
-        )->with(
-            'status',
-            'Draft changes saved.'
-        );
+        return redirect()
+            ->route('requests.show', $borrowingRequest)
+            ->with(
+                'status',
+                'Draft changes saved.'
+            );
     }
 
     public function submit(
@@ -450,23 +430,16 @@ class BorrowingRequestController extends Controller
 
     public function recoverDraftDocument(
         Request $request,
-        BorrowingRequest $borrowingRequest,
-        DocumentService $documents
+        BorrowingRequest $borrowingRequest
     ): RedirectResponse {
         abort_unless(
             $borrowingRequest->borrower_user_id === $request->user()->id,
             403
         );
 
-        $result = $documents->recoverMissingDraftRequestLetter(
-            $borrowingRequest
-        );
-
         return back()->with(
             'status',
-            $result['generated']
-                ? 'Printable Borrowing Request Letter regenerated.'
-                : 'The current printable Borrowing Request Letter is already available.'
+            'The current workflow does not generate a Borrowing Request Letter. Upload the already approved and fully signed scanned Borrowing Request Letter instead.'
         );
     }
 
@@ -591,6 +564,21 @@ class BorrowingRequestController extends Controller
                 'max:255',
             ],
 
+            'division_code' => [
+                'required',
+                Rule::in([
+                    'ADMINISTRATION',
+                    'ACADEMIC',
+                    'RESEARCH_INNOVATION_COLLABORATION',
+                ]),
+            ],
+
+            'office_unit' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+
             'schedule_date' => [
                 'required',
                 'date',
@@ -642,7 +630,7 @@ class BorrowingRequestController extends Controller
             ],
 
             'event_details' => [
-                'required',
+                'nullable',
                 'string',
                 'max:2000',
             ],
@@ -656,6 +644,11 @@ class BorrowingRequestController extends Controller
             'off_campus' => [
                 'nullable',
                 'boolean',
+            ],
+
+            'intent' => [
+                'nullable',
+                Rule::in(['draft', 'submit']),
             ],
 
             /*
@@ -699,7 +692,7 @@ class BorrowingRequestController extends Controller
 
             'quantities.*' => [
                 'nullable',
-                'numeric',
+                'integer',
                 'min:0',
             ],
 
@@ -759,6 +752,69 @@ class BorrowingRequestController extends Controller
             ]);
         }
 
+
+        $allowedOfficeUnits = [
+            'ADMINISTRATION' => [
+                'Office of the President',
+                'Office of the Vice President for Administration and Finance',
+                'Office of the Vice President for Academic Affairs',
+                'Office of the Vice President for Research, Innovation and Collaboration',
+                'Internal Audit Unit',
+                'Legal Affairs Office',
+                'Institutional Planning and Development Unit',
+                'Board Secretary',
+                'Human Resource Management Office',
+                'Budget Office',
+                'Accounting Office',
+                "Cashier's Office",
+                'Procurement Office',
+                'Supply and Property Management Unit',
+                'General Services',
+                'Physical Planning and Development Office',
+                'Records Management / College Archives',
+                'Safety and Security Services',
+                "Registrar's Office",
+                'Library',
+                'Guidance and Counseling Office',
+                'Student Affairs and Services',
+                'Medical and Dental Services',
+                'Center for International Relations and Linkages',
+            ],
+            'ACADEMIC' => [
+                'Graduate School',
+                'College of Arts and Sciences',
+                'College of Computer Studies',
+                'College of Engineering and Architecture',
+                'College of Health Sciences',
+                'College of Technological and Developmental Education',
+                'College of Tourism, Hospitality and Business Management',
+            ],
+            'RESEARCH_INNOVATION_COLLABORATION' => [
+                'Research and Development Services Office (RDSO)',
+                'Extension and Community Services Office (ECSO)',
+                'Production and Auxiliary Services (PAxS)',
+                'Technology Transfer Office (TechTro)',
+                'AI Research Center for Community Development (AIRCoDe)',
+                'Center for Future Energy and Sustainable Technology (CFEST)',
+                'Center for Future Thinking and Strategic Foresight (CFTSF)',
+                'Center for Research in Integrative, Social and Special Sciences and Policy (CRIS3P)',
+                'Center for Rinconada Culture and Arts (CRCA)',
+                'Rinconada Center for Environmental Sustainability (RiCES)',
+                'Research Ethics Board',
+            ],
+        ];
+
+        if (! in_array(
+            $data['office_unit'],
+            $allowedOfficeUnits[$data['division_code']] ?? [],
+            true
+        )) {
+            throw ValidationException::withMessages([
+                'office_unit' =>
+                    'Choose an Office / Academic Unit / Research Unit that belongs to the selected Division.',
+            ]);
+        }
+
         return $data;
     }
 
@@ -776,6 +832,12 @@ class BorrowingRequestController extends Controller
 
             'location' =>
                 $data['location'],
+
+            'division_code' =>
+                $data['division_code'],
+
+            'office_unit' =>
+                $data['office_unit'],
 
             /*
              * Canonical date-only fields.
@@ -835,7 +897,7 @@ class BorrowingRequestController extends Controller
                 null,
 
             'event_details' =>
-                $data['event_details'],
+                null,
 
             'off_campus' =>
                 collect(
@@ -859,12 +921,43 @@ class BorrowingRequestController extends Controller
     ): void {
         $selected = 0;
 
+        $selectedItemIds = collect($data['item_ids'])
+            ->filter(
+                fn ($itemId) =>
+                    (int) (
+                        $data['quantities'][$itemId]
+                        ?? 0
+                    ) > 0
+            )
+            ->values();
+
+        $hasOffCampusSelection =
+            $selectedItemIds->contains(
+                fn ($itemId) =>
+                    strtoupper(
+                        (string) (
+                            $data['locations'][$itemId]
+                            ?? 'ON_CAMPUS'
+                        )
+                    ) === 'OFF_CAMPUS'
+            );
+
+        if (
+            $hasOffCampusSelection
+            && $selectedItemIds->count() > 1
+        ) {
+            throw ValidationException::withMessages([
+                'locations' =>
+                    'An Off-Campus item must be the only selected item in the request.',
+            ]);
+        }
+
         foreach (
             $data['item_ids']
             as $itemId
         ) {
             $quantity =
-                (float) (
+                (int) (
                     $data['quantities'][$itemId]
                     ?? 0
                 );

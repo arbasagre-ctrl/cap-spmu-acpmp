@@ -442,7 +442,24 @@ class CustodyService
             'gatePass',
         ]);
 
-        $this->documents->borrowerSlip($fresh);
+        /*
+         * The printable Borrower Slip / Laundry Form / Gate Pass are created
+         * at approval time so the borrower can print them before coming to
+         * SPMU. Preparation verifies the same approved quantities and must not
+         * silently supersede a document the borrower may already have printed.
+         * A missing document is regenerated only as a recovery fallback.
+         */
+        $borrowerSlip = GeneratedDocument::query()
+            ->where('subject_type', CustodyTransaction::class)
+            ->where('subject_id', $fresh->id)
+            ->where('document_type', 'BORROWER_SLIP')
+            ->where('status', 'FINAL')
+            ->latest('id')
+            ->first();
+
+        if (! $borrowerSlip) {
+            $this->documents->borrowerSlip($fresh);
+        }
 
         $offCampusLine = $fresh->lines->first(
             fn ($line) =>
@@ -451,33 +468,34 @@ class CustodyService
         );
 
         if ($offCampusLine) {
-            $gatePassDocument = $this->documents->conditionalForm(
-                $fresh,
-                'GATE_PASS'
-            );
+            $gatePassDocument = GeneratedDocument::query()
+                ->where('subject_type', CustodyTransaction::class)
+                ->where('subject_id', $fresh->id)
+                ->where('document_type', 'GATE_PASS')
+                ->where('status', 'FINAL')
+                ->latest('id')
+                ->first();
 
-            if ($fresh->gatePass) {
-                $fresh->gatePass->update([
+            if (! $gatePassDocument) {
+                $gatePassDocument = $this->documents->conditionalForm(
+                    $fresh,
+                    'GATE_PASS'
+                );
+            }
+
+            GatePass::query()->updateOrCreate(
+                ['custody_transaction_id' => $fresh->id],
+                [
                     'custody_line_id' => $offCampusLine->id,
                     'pass_document_id' => $gatePassDocument->id,
                     'bearer_name' => $fresh->borrower?->full_name,
                     'destination' => $fresh->request?->currentVersion?->location,
                     'purpose' => $fresh->request?->currentVersion?->purpose_event,
-                    'status' => $fresh->gatePass->status === 'VERIFIED'
+                    'status' => $fresh->gatePass?->status === 'VERIFIED'
                         ? 'VERIFIED'
                         : 'PENDING',
-                ]);
-            } else {
-                GatePass::query()->create([
-                    'custody_transaction_id' => $fresh->id,
-                    'custody_line_id' => $offCampusLine->id,
-                    'pass_document_id' => $gatePassDocument->id,
-                    'bearer_name' => $fresh->borrower?->full_name,
-                    'destination' => $fresh->request?->currentVersion?->location,
-                    'purpose' => $fresh->request?->currentVersion?->purpose_event,
-                    'status' => 'PENDING',
-                ]);
-            }
+                ]
+            );
         }
 
         $hasLaundry = $fresh->lines->contains(
@@ -487,16 +505,25 @@ class CustodyService
         );
 
         if ($hasLaundry) {
-            $this->documents->conditionalForm(
-                $fresh->fresh(),
-                'LAUNDRY_FORM'
-            );
+            $laundryDocumentExists = GeneratedDocument::query()
+                ->where('subject_type', CustodyTransaction::class)
+                ->where('subject_id', $fresh->id)
+                ->where('document_type', 'LAUNDRY_FORM')
+                ->where('status', 'FINAL')
+                ->exists();
+
+            if (! $laundryDocumentExists) {
+                $this->documents->conditionalForm(
+                    $fresh->fresh(),
+                    'LAUNDRY_FORM'
+                );
+            }
         }
 
         $this->audit->record(
             'RELEASE_PREPARED',
             $fresh,
-            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity against the approved allocation. Borrower Slip and other applicable physical release forms were then generated for printing and wet signatures at handover.',
+            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity against the approved allocation. Existing borrower-printable documents remain valid for physical handover.',
             after: ['prepared_quantities' => $quantities]
         );
     }

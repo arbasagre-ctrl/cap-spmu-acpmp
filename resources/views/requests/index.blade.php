@@ -405,6 +405,18 @@
 
 @else
 
+    <div class="record-browser-toolbar" data-record-browser-toolbar>
+        <label class="record-browser-search">Search
+            <input type="search" data-record-search placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+        </label>
+        <label>Status
+            <select data-record-status-filter><option value="all">All statuses</option></select>
+        </label>
+        <label>Sort
+            <select data-record-sort><option value="newest">Newest</option><option value="oldest">Oldest</option></select>
+        </label>
+    </div>
+
     <div class="table-wrap">
         <table>
             <thead>
@@ -420,7 +432,18 @@
 
             <tbody>
             @forelse($requests as $request)
-                <tr>
+                @php
+                    $recordStatus = $request->custody?->closed_at
+                        ? 'COMPLETED'
+                        : ($request->custody?->status ?: $request->status->value);
+                    $recordSearch = strtolower(trim(
+                        $request->request_no.' '.
+                        ($request->borrower?->full_name ?? '').' '.
+                        ($request->currentVersion?->purpose_event ?? '').' '.
+                        $request->currentVersion?->items?->map(fn($ri) => $ri->inventoryItem?->unique_description)->filter()->implode(' ')
+                    ));
+                @endphp
+                <tr data-request-record data-search="{{ $recordSearch }}" data-status="{{ $recordStatus }}" data-created="{{ optional($request->created_at)->timestamp ?? 0 }}">
                     <td>
                         <strong>{{ $request->request_no }}</strong>
                         <small>Version {{ $request->current_version_no }}</small>
@@ -520,9 +543,31 @@
             </tbody>
         </table>
     </div>
+    <div class="empty-state top-gap" data-record-empty hidden><strong>No matching request records.</strong><span>Try another search term or status.</span></div>
 
 @endif
 </section>
+
+@unless($isBorrower)
+<style>
+.record-browser-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(170px,220px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
+.record-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+.record-browser-toolbar input,.record-browser-toolbar select{width:100%;min-height:42px}
+@media(max-width:760px){.record-browser-toolbar{grid-template-columns:1fr}}
+</style>
+<script>
+(() => {
+ const rows=[...document.querySelectorAll('[data-request-record]')];
+ const search=document.querySelector('[data-record-search]'); const status=document.querySelector('[data-record-status-filter]'); const sort=document.querySelector('[data-record-sort]'); const empty=document.querySelector('[data-record-empty]');
+ if(!rows.length || !search || !status || !sort) return;
+ const labels={PREPARING_RELEASE:'Preparing Release',ACTIVE:'Released / On Custody',RETURN_PROCESSING:'Return Processing',PARTIALLY_RETURNED:'Return Processing',OVERDUE:'Overdue',EARLY_RETURN:'Early Return',INCIDENT_OPEN:'Incident Open',OBLIGATION_OPEN:'Obligation Open',CLOSED:'Completed',COMPLETED:'Completed',DRAFT:'Draft',UNDER_SPMU:'Under SPMU Review',APPROVED_READY_FOR_RELEASE:'Approved / Ready for Release',FINAL_APPROVED_AWAITING_DOWNLOAD:'Approved',RETURNED_FOR_REVISION:'Returned for Revision',REJECTED:'Rejected',CANCELLED:'Cancelled'};
+ [...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=labels[v]||v.replaceAll('_',' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());status.appendChild(o)});
+ const body=rows[0].parentElement;
+ const render=()=>{const q=search.value.trim().toLowerCase(); const st=status.value; const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)); ordered.forEach(r=>body.appendChild(r)); let n=0; rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++}); if(empty)empty.hidden=n>0;};
+ [search,status,sort].forEach(el=>el.addEventListener(el===search?'input':'change',render)); render();
+})();
+</script>
+@endunless
 
 @if($isBorrower)
 <style>

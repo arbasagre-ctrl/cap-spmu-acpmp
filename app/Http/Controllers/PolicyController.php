@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
 use App\Models\AcademicPeriod;
+use App\Models\SanctionRule;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,11 @@ class PolicyController extends Controller
                 fn (AcademicPeriod $period): bool =>
                     $period->status === 'ACTIVE'
             ),
+            'sanctionRules' => SanctionRule::query()
+                ->whereIn('offense_no', [1, 2, 3])
+                ->orderBy('offense_no')
+                ->get()
+                ->keyBy('offense_no'),
         ]);
     }
 
@@ -323,6 +329,56 @@ class PolicyController extends Controller
             'status',
             'Academic period updated.'
         );
+    }
+
+    public function updateSanctionRule(
+        Request $request,
+        int $offenseNo,
+        AuditService $audit
+    ): RedirectResponse {
+        $this->authorizeHead($request);
+
+        abort_unless(in_array($offenseNo, [1, 2, 3], true), 404);
+
+        $data = $request->validate([
+            'sanction_code' => [
+                'required',
+                Rule::in([
+                    'NOTICE',
+                    'WRITTEN_REPRIMAND',
+                    'BORROWING_SUSPENSION',
+                    'OTHER',
+                ]),
+            ],
+            'sanction_label' => ['required', 'string', 'max:255'],
+        ]);
+
+        $rule = SanctionRule::query()->firstOrNew([
+            'offense_no' => $offenseNo,
+        ]);
+
+        $before = $rule->exists ? $rule->toArray() : null;
+
+        $rule->fill([
+            'sanction_code' => $data['sanction_code'],
+            'sanction_label' => trim($data['sanction_label']),
+            'duration_mode' => 'MANUAL',
+            'status' => 'ACTIVE',
+            'effective_from' => now()->toDateString(),
+            'effective_to' => null,
+            'configured_by_user_id' => $request->user()->id,
+        ])->save();
+
+        $audit->record(
+            'SANCTION_RULE_CONFIGURED',
+            $rule,
+            before: $before,
+            after: $rule->fresh()->toArray()
+        );
+
+        return redirect()
+            ->to(route('policies.index').'#sanction-rules')
+            ->with('status', "{$offenseNo} offense sanction rule updated.");
     }
 
     private function termNameFor(

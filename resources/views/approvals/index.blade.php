@@ -25,6 +25,14 @@
 </section>
 
 <section class="content-area">
+    <div class="approval-browser-toolbar">
+        <label>Search
+            <input type="search" id="approval-search" placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+        </label>
+        <label>Sort
+            <select id="approval-sort"><option value="newest">Newest</option><option value="oldest">Oldest</option></select>
+        </label>
+    </div>
 
     <div
         class="approval-queue-list"
@@ -61,6 +69,9 @@
             <a
                 class="approval-queue-item ui-pressable"
                 href="{{ route('requests.show', $request) }}"
+                data-approval-record
+                data-created="{{ optional($submittedAt)->timestamp ?? 0 }}"
+                data-search="{{ strtolower(trim($request->request_no.' '.$request->borrower->full_name.' '.($version->purpose_event ?? '').' '.$version->items->map(fn($ri) => $ri->inventoryItem?->unique_description)->filter()->implode(' '))) }}"
             >
                 <span class="approval-queue-primary">
                     <strong>
@@ -175,6 +186,15 @@
         @endforelse
     </div>
 
+    <div class="empty-state top-gap" id="approval-filter-empty" hidden><strong>No matching approval requests.</strong><span>Try another search term.</span></div>
 </section>
-
+<style>
+.approval-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
+.approval-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+.approval-browser-toolbar input,.approval-browser-toolbar select{min-height:42px;width:100%}
+@media(max-width:680px){.approval-browser-toolbar{grid-template-columns:1fr}}
+</style>
+<script>
+(() => { const list=document.querySelector('.approval-queue-list'); const rows=[...document.querySelectorAll('[data-approval-record]')]; const search=document.getElementById('approval-search'); const sort=document.getElementById('approval-sort'); const empty=document.getElementById('approval-filter-empty'); if(!list||!rows.length||!search||!sort)return; const render=()=>{const q=search.value.trim().toLowerCase();const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1));ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=!q||r.dataset.search.includes(q);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);sort.addEventListener('change',render);render(); })();
+</script>
 @endsection

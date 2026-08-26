@@ -482,7 +482,7 @@ class AccountabilityController extends Controller
 
         $data = $request->validate([
             'decision' => ['required', 'in:CONFIRMED,DISMISSED'],
-            'sanction_code' => ['nullable', 'required_if:decision,CONFIRMED', 'in:NOTICE,WRITTEN_REPRIMAND,BORROWING_SUSPENSION,OTHER'],
+            'sanction_code' => ['nullable', 'in:NOTICE,WRITTEN_REPRIMAND,BORROWING_SUSPENSION,OTHER'],
             'custom_sanction_label' => ['nullable', 'string', 'max:255'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:today'],
             'remarks' => ['nullable', 'string', 'max:2000'],

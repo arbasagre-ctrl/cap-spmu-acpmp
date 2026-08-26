@@ -1,4 +1,4 @@
-@extends('layouts.app', ['title' => 'Academic Period Configuration'])
+@extends('layouts.app', ['title' => 'Operational Configuration'])
 
 @section('content')
 
@@ -134,18 +134,25 @@
             SPMU Head configuration
         </p>
 
-        <h1>
-            Academic Period Configuration
-        </h1>
+        <h1>Operational Configuration</h1>
 
-        <p>
-            Set the official academic period used for reports,
-            accountability records, and historical tracking.
-        </p>
+        <p>Manage SPMU policy settings, controlled document template versions, academic periods, and administrative sanction rules. User account administration remains under ICTU.</p>
     </div>
 </section>
 
-<div class="academic-period-config">
+<section class="content-area">
+    <div class="operational-config-grid">
+        <a class="card operational-config-card ui-pressable" href="#academic-periods"><x-icon name="calendar" size="19" /><strong>Academic Period</strong><span>Semester and academic-year configuration</span></a>
+        <a class="card operational-config-card ui-pressable" href="{{ route('administration.settings.index') }}#setting-daily_overdue_tariff"><x-icon name="clock" size="19" /><strong>Late Return Fee</strong><span>Daily late-return assessment</span></a>
+        <a class="card operational-config-card ui-pressable" href="{{ route('administration.settings.index') }}#template-billing-statement"><x-icon name="requests" size="19" /><strong>Billing Statement Template</strong><span>Upload, version and activate approved template</span></a>
+        <a class="card operational-config-card ui-pressable" href="{{ route('administration.settings.index') }}#template-laundry-form"><x-icon name="custody" size="19" /><strong>Laundry Form Template</strong><span>Upload, version and activate approved template</span></a>
+        <a class="card operational-config-card ui-pressable" href="{{ route('administration.settings.index') }}#template-gate-pass"><x-icon name="document" size="19" /><strong>Gate Pass Template</strong><span>Upload, version and activate approved template</span></a>
+        <a class="card operational-config-card ui-pressable" href="#sanction-rules"><x-icon name="accountability" size="19" /><strong>Sanction Rules</strong><span>1st, 2nd and 3rd offense defaults</span></a>
+        <div class="card operational-config-card operational-config-card-locked" aria-disabled="true"><x-icon name="lock" size="19" /><strong>User Account Management</strong><span>Managed by ICTU · SPMU has no account-edit access</span></div>
+    </div>
+</section>
+
+<div class="academic-period-config" id="academic-periods">
 
     <section class="content-area">
         <article class="card current-period-card">
@@ -455,6 +462,47 @@
         </article>
     </section>
 
+    <section class="content-area" id="sanction-rules">
+        <article class="card">
+            <div class="card-header">
+                <div><p class="eyebrow">Administrative accountability</p><h2>Sanction Rules</h2><p class="meta">Set the default administrative action for the 1st, 2nd, and 3rd confirmed offense within the applicable academic period. The SPMU Head still records the final case decision.</p></div>
+            </div>
+            <div class="sanction-rule-grid">
+                @foreach([1 => '1st Offense', 2 => '2nd Offense', 3 => '3rd Offense'] as $offenseNo => $offenseLabel)
+                    @php
+                        $rule = $sanctionRules->get($offenseNo);
+                        $defaultCode = $rule?->sanction_code ?: match($offenseNo) {1 => 'NOTICE', 2 => 'WRITTEN_REPRIMAND', default => 'BORROWING_SUSPENSION'};
+                        $defaultLabel = $rule?->sanction_label ?: match($offenseNo) {1 => 'Notice', 2 => 'Written Reprimand', default => 'Borrowing Suspension'};
+                    @endphp
+                    <form method="post" action="{{ route('policies.sanctions.update', $offenseNo) }}" class="sanction-rule-card">
+                        @csrf @method('PUT')
+                        <strong>{{ $offenseLabel }}</strong>
+                        <label>Default action
+                            <select name="sanction_code" required>
+                                @foreach(['NOTICE'=>'Notice','WRITTEN_REPRIMAND'=>'Written Reprimand','BORROWING_SUSPENSION'=>'Borrowing Suspension','OTHER'=>'Other'] as $code=>$label)
+                                    <option value="{{ $code }}" @selected($defaultCode === $code)>{{ $label }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                        <label>Display label<input name="sanction_label" value="{{ $defaultLabel }}" maxlength="255" required></label>
+                        <button class="button secondary small ui-pressable" type="submit">Save {{ $offenseLabel }}</button>
+                    </form>
+                @endforeach
+            </div>
+        </article>
+    </section>
 </div>
+
+<style>
+.operational-config-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.operational-config-card{display:grid;gap:6px;min-height:118px;padding:15px;text-decoration:none;color:inherit;align-content:start}
+.operational-config-card strong{font-size:14px}.operational-config-card span{font-size:12px;line-height:1.4;color:var(--muted)}
+.operational-config-card-locked{opacity:.72;background:var(--surface-subtle);cursor:not-allowed}
+.sanction-rule-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.sanction-rule-card{display:grid;gap:10px;padding:14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-subtle)}
+.sanction-rule-card label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+@media(max-width:980px){.operational-config-grid{grid-template-columns:repeat(2,1fr)}.sanction-rule-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.operational-config-grid{grid-template-columns:1fr}}
+</style>
 
 @endsection

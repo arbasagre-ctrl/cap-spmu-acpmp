@@ -7,6 +7,7 @@ use App\Enums\UserRole;
 use App\Models\BillingStatement;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
+use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
 use App\Models\RequestVersion;
@@ -132,20 +133,12 @@ class DocumentService
         ]);
 
         /*
-         * Borrower Slip is an operational release document.
-         *
-         * It must reflect the quantities physically prepared by the SPMU
-         * Action Officer, so it is never generated at approval time.
-         * The official generation point is CustodyService::prepare(), after
-         * every Actual Prepared quantity has been confirmed to match the
-         * approved quantity.
+         * Borrower Slip is generated immediately after SPMU approval so the
+         * borrower can download, print, and bring the physical form to SPMU.
+         * The approved custody quantities are already fixed at this point.
+         * Item preparation later verifies the same approved quantities and
+         * does not create a second Borrower Slip version.
          */
-        if (! $custody->prepared_at) {
-            throw ValidationException::withMessages([
-                'document' =>
-                    'Borrower Slip is available only after the SPMU Action Officer confirms item preparation.',
-            ]);
-        }
 
         $this->supersede(
             $custody,
@@ -2365,6 +2358,20 @@ HTML;
         $lines[] = 'TOTAL: PHP '.number_format((float) $billing->total_amount, 2);
         $lines[] = 'Payment is processed externally through Accounting/Cashier. Submit Official Receipt evidence to SPMU for verification.';
 
+        $activeTemplate = $this->activeTemplate('BILLING_STATEMENT');
+
+        if ($activeTemplate?->source_mode === 'HTML_PLACEHOLDER' && $activeTemplate->file) {
+            return $this->saveHtml(
+                'BILLING_STATEMENT',
+                $this->officialHtml('Billing Statement', $lines),
+                null,
+                $billing::class,
+                $billing->id,
+                'FINAL',
+                $billing->billing_no.'.pdf'
+            );
+        }
+
         return $this->save('BILLING_STATEMENT', $lines, null, $billing::class, $billing->id, 'FINAL', $billing->billing_no.'.pdf');
     }
 
@@ -2405,10 +2412,12 @@ HTML;
     /** @param list<string> $lines */
     private function save(string $type, array $lines, ?RequestVersion $version, string $subjectType, int $subjectId, string $status, string $filename): GeneratedDocument
     {
+        $template = $this->activeTemplate($type);
         $bytes = $this->pdf->make($lines);
         $file = $this->files->storeBytes($bytes, 'generated-documents', $filename, 'application/pdf', 'pdf', 'CONTROLLED_DOCUMENT');
 
         return GeneratedDocument::query()->create([
+            'template_id' => $template?->id,
             'stored_file_id' => $file->id,
             'request_version_id' => $version?->id,
             'subject_type' => $subjectType,
@@ -2425,10 +2434,12 @@ HTML;
     /** @param list<list<string>> $pages */
     private function savePages(string $type, array $pages, ?RequestVersion $version, string $subjectType, int $subjectId, string $status, string $filename): GeneratedDocument
     {
+        $template = $this->activeTemplate($type);
         $bytes = $this->pdf->makePages($pages);
         $file = $this->files->storeBytes($bytes, 'generated-documents', $filename, 'application/pdf', 'pdf', 'CONTROLLED_DOCUMENT');
 
         return GeneratedDocument::query()->create([
+            'template_id' => $template?->id,
             'stored_file_id' => $file->id,
             'request_version_id' => $version?->id,
             'subject_type' => $subjectType,
@@ -2444,16 +2455,92 @@ HTML;
 
     private function saveHtml(string $type, string $html, ?RequestVersion $version, string $subjectType, int $subjectId, string $status, string $filename, bool $pageNumbers = false): GeneratedDocument
     {
+        $template = $this->activeTemplate($type);
+        $html = $this->applyConfiguredHtmlTemplate($type, $html, $template);
         $bytes = $this->pdf->html($html, $pageNumbers);
         $file = $this->files->storeBytes($bytes, 'generated-documents', $filename, 'application/pdf', 'pdf', 'CONTROLLED_DOCUMENT');
 
         return GeneratedDocument::query()->create([
-            'stored_file_id' => $file->id, 'request_version_id' => $version?->id,
-            'subject_type' => $subjectType, 'subject_id' => $subjectId,
+            'template_id' => $template?->id,
+            'stored_file_id' => $file->id,
+            'request_version_id' => $version?->id,
+            'subject_type' => $subjectType,
+            'subject_id' => $subjectId,
             'document_no' => strtoupper($type).'-'.now()->format('YmdHis').'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT),
-            'document_type' => $type, 'version_no' => $version?->version_no ?? 1, 'sha256' => $file->sha256,
-            'status' => $status, 'generated_at' => now(),
+            'document_type' => $type,
+            'version_no' => $version?->version_no ?? 1,
+            'sha256' => $file->sha256,
+            'status' => $status,
+            'generated_at' => now(),
         ]);
+    }
+
+    private function activeTemplate(string $type): ?DocumentTemplate
+    {
+        if (! in_array($type, ['BILLING_STATEMENT', 'GATE_PASS', 'LAUNDRY_FORM'], true)) {
+            return null;
+        }
+
+        return DocumentTemplate::query()
+            ->with('file')
+            ->where('document_type', $type)
+            ->where('status', 'ACTIVE')
+            ->orderByDesc('template_version')
+            ->first();
+    }
+
+    private function applyConfiguredHtmlTemplate(string $type, string $generatedHtml, ?DocumentTemplate $template): string
+    {
+        if (! $template || $template->source_mode !== 'HTML_PLACEHOLDER' || ! $template->file) {
+            return $generatedHtml;
+        }
+
+        $source = $this->files->bytes($template->file);
+        if (! str_contains($source, '{{generated_content}}')) {
+            return $generatedHtml;
+        }
+
+        $body = $generatedHtml;
+        $generatedStyles = '';
+
+        if (preg_match('/<body[^>]*>(.*)<\/body>/is', $generatedHtml, $matches) === 1) {
+            $body = $matches[1];
+        }
+        if (preg_match('/<head[^>]*>(.*)<\/head>/is', $generatedHtml, $matches) === 1) {
+            $generatedStyles = $matches[1];
+        }
+
+        $rendered = str_replace(
+            [
+                '{{generated_content}}',
+                '{{generated_styles}}',
+                '{{document_type}}',
+                '{{template_version}}',
+                '{{generated_at}}',
+            ],
+            [
+                $body,
+                $generatedStyles,
+                e(str($type)->replace('_', ' ')->title()->toString()),
+                e($template->version_label ?: 'v'.$template->template_version.'.0'),
+                e(now()->setTimezone('Asia/Manila')->format('d F Y')),
+            ],
+            $source
+        );
+
+        if ($generatedStyles !== '' && ! str_contains($source, '{{generated_styles}}')) {
+            if (stripos($rendered, '</head>') !== false) {
+                $rendered = preg_replace('/<\/head>/i', $generatedStyles.'</head>', $rendered, 1) ?? $rendered;
+            } else {
+                $rendered = $generatedStyles.$rendered;
+            }
+        }
+
+        if (! str_contains(strtolower($rendered), '<html')) {
+            return '<!doctype html><html><head><meta charset="utf-8">'.$generatedStyles.'</head><body>'.$rendered.'</body></html>';
+        }
+
+        return $rendered;
     }
 
     private function officialHtml(

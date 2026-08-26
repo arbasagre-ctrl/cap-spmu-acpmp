@@ -3,11 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
+use App\Models\BillingStatement;
 use App\Models\CustodyTransaction;
+use App\Models\Incident;
+use App\Models\Penalty;
 use App\Services\CustodyService;
 use App\Services\ProtectedFileService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -106,7 +110,7 @@ class CustodyController extends Controller
             'lines.allocation',
             'lines.requestItem.inventoryItem.unit',
             'returns.lines.laundryRecord',
-            'gatePass',
+            'gatePass.accomplishedFile',
         ];
 
         /*
@@ -139,9 +143,50 @@ class CustodyController extends Controller
 
         $custody->load($relations);
 
+        $incidentIds = Incident::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->pluck('id');
+
+        $penaltyIds = Penalty::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->pluck('id');
+
+        $billingIds = collect();
+
+        if ($incidentIds->isNotEmpty() || $penaltyIds->isNotEmpty()) {
+            $billingIds = DB::table('billing_lines')
+                ->where(function ($query) use ($incidentIds, $penaltyIds): void {
+                    if ($incidentIds->isNotEmpty()) {
+                        $query->whereIn('incident_id', $incidentIds);
+                    }
+
+                    if ($penaltyIds->isNotEmpty()) {
+                        $method = $incidentIds->isNotEmpty() ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('penalty_id', $penaltyIds);
+                    }
+                })
+                ->pluck('billing_statement_id')
+                ->unique()
+                ->values();
+        }
+
+        $relatedBillings = BillingStatement::query()
+            ->with('payments')
+            ->whereIn('id', $billingIds)
+            ->latest('issued_at')
+            ->get();
+
+        $latestReceipt = $relatedBillings
+            ->flatMap(fn (BillingStatement $billing) => $billing->payments)
+            ->filter(fn ($payment) => $payment->evidence_file_id)
+            ->sortByDesc(fn ($payment) => $payment->submitted_at?->timestamp ?? 0)
+            ->first();
+
         return view('custody.show', [
             'custody' => $custody,
             'spmuMode' => $spmuMode,
+            'relatedBillings' => $relatedBillings,
+            'latestReceipt' => $latestReceipt,
             'documents' => $custody->request->currentVersion
                 ->documents()
                 ->where(function ($query) use ($custody) {

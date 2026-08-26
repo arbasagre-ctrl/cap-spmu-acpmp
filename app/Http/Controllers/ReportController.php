@@ -20,6 +20,7 @@ use App\Models\Sanction;
 use App\Services\InventoryService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -205,6 +206,78 @@ class ReportController extends Controller
             );
 
         $totalRequests = (int) $requestStatuses->sum();
+
+        $requestStatusSnapshotCounts = BorrowingRequest::query()
+            ->with('custody')
+            ->whereBetween('created_at', [$from, $to])
+            ->get()
+            ->map(fn (BorrowingRequest $row): string => $this->requestReportStatus($row)[0])
+            ->countBy();
+
+        $requestStatusSnapshot = [
+            'total' => $totalRequests,
+            'obligation_open' => (int) ($requestStatusSnapshotCounts['OBLIGATION_OPEN'] ?? 0),
+            'completed' => (int) ($requestStatusSnapshotCounts['COMPLETED'] ?? 0),
+            'draft' => (int) ($requestStatusSnapshotCounts['DRAFT'] ?? 0),
+        ];
+
+        /*
+         * Request Status Overview drill-down. These cards stay on the Analytics
+         * page and filter the records immediately below them. Custody status
+         * remains authoritative once physical custody exists.
+         */
+        $allowedStatusFocus = [
+            'ALL',
+            'DRAFT',
+            'OBLIGATION_OPEN',
+            'COMPLETED',
+        ];
+
+        $statusFocus = strtoupper(trim((string) $request->input('status_focus', '')));
+        if (! in_array($statusFocus, $allowedStatusFocus, true)) {
+            $statusFocus = null;
+        }
+
+        $statusRecordCollection = collect();
+
+        if ($statusFocus) {
+            $statusRecordCollection = BorrowingRequest::query()
+                ->with([
+                    'borrower',
+                    'currentVersion',
+                    'custody',
+                ])
+                ->whereBetween('created_at', [$from, $to])
+                ->orderByDesc('created_at')
+                ->get();
+
+            if ($statusFocus !== 'ALL') {
+                $statusRecordCollection = $statusRecordCollection
+                    ->filter(
+                        fn (BorrowingRequest $row): bool =>
+                            $this->requestReportStatus($row)[0] === $statusFocus
+                    )
+                    ->values();
+            }
+        }
+
+        $statusPage = max(1, (int) $request->input('status_page', 1));
+        $statusPerPage = 10;
+
+        $requestStatusRecords = new LengthAwarePaginator(
+            $statusRecordCollection->forPage($statusPage, $statusPerPage)->values(),
+            $statusRecordCollection->count(),
+            $statusPerPage,
+            $statusPage,
+            [
+                'path' => route('reports.index'),
+                'pageName' => 'status_page',
+            ]
+        );
+
+        $requestStatusRecords->appends(
+            $request->except('status_page')
+        );
 
         $requestOutcomes = collect([
             'Approved' =>
@@ -856,6 +929,18 @@ class ReportController extends Controller
                 'totalRequests' =>
                     $totalRequests,
 
+                'requestStatusSnapshot' =>
+                    $requestStatusSnapshot,
+
+                'statusFocus' =>
+                    $statusFocus,
+
+                'requestStatusRecords' =>
+                    $requestStatusRecords,
+
+                'recordReportStatus' =>
+                    fn (BorrowingRequest $row): array => $this->requestReportStatus($row),
+
                 'approvalRate' =>
                     $approvalRate,
 
@@ -995,8 +1080,7 @@ class ReportController extends Controller
     /**
      * Resolve the reporting scope shared by Analytics and Reports.
      *
-     * The official Active academic period is the default. Users can select
-     * another configured period or use a Custom Date Range.
+     * Reporting periods are constrained to weekly, monthly, semester, or academic-year scopes. Semester and academic-year dates follow Operational Configuration.
      *
      * @return array{0:Carbon,1:Carbon,2:?AcademicPeriod,3:string}
      */
@@ -1005,50 +1089,61 @@ class ReportController extends Controller
         $academicPeriods,
         ?AcademicPeriod $activeAcademicPeriod
     ): array {
-        $selection = trim(
-            (string) $request->input('academic_period', '')
-        );
+        $selection = strtolower(trim((string) $request->input('academic_period', '')));
 
-        if ($selection === '') {
-            $selection = $activeAcademicPeriod
-                ? (string) $activeAcademicPeriod->id
-                : 'custom';
-        }
-
-        $selectedAcademicPeriod = null;
-
-        if ($selection !== 'custom') {
-            $selectedAcademicPeriod = $academicPeriods->first(
-                fn (AcademicPeriod $period): bool =>
-                    (string) $period->id === $selection
+        // Backward-compatible handling for old links that stored a period ID.
+        if ($selection !== '' && ctype_digit($selection)) {
+            $legacyPeriod = $academicPeriods->first(
+                fn (AcademicPeriod $period): bool => (string) $period->id === $selection
             );
+
+            if ($legacyPeriod) {
+                return [
+                    Carbon::parse($legacyPeriod->start_date)->startOfDay(),
+                    Carbon::parse($legacyPeriod->end_date)->endOfDay(),
+                    $legacyPeriod,
+                    'semester',
+                ];
+            }
         }
 
-        if ($selectedAcademicPeriod) {
+        if (! in_array($selection, ['week', 'month', 'semester', 'academic_year'], true)) {
+            $selection = $activeAcademicPeriod ? 'semester' : 'month';
+        }
+
+        if ($selection === 'week') {
+            return [now()->startOfWeek()->startOfDay(), now()->endOfWeek()->endOfDay(), null, 'week'];
+        }
+
+        if ($selection === 'month') {
+            return [now()->startOfMonth()->startOfDay(), now()->endOfMonth()->endOfDay(), null, 'month'];
+        }
+
+        if ($selection === 'semester' && $activeAcademicPeriod) {
             return [
-                Carbon::parse($selectedAcademicPeriod->start_date)->startOfDay(),
-                Carbon::parse($selectedAcademicPeriod->end_date)->endOfDay(),
-                $selectedAcademicPeriod,
-                (string) $selectedAcademicPeriod->id,
+                Carbon::parse($activeAcademicPeriod->start_date)->startOfDay(),
+                Carbon::parse($activeAcademicPeriod->end_date)->endOfDay(),
+                $activeAcademicPeriod,
+                'semester',
             ];
         }
 
-        $from = Carbon::parse(
-            $request->input('from', now()->subDays(30)->toDateString())
-        )->startOfDay();
+        if ($selection === 'academic_year' && $activeAcademicPeriod) {
+            $yearPeriods = $academicPeriods->where('academic_year', $activeAcademicPeriod->academic_year);
+            $fromDate = $yearPeriods->min('start_date') ?: $activeAcademicPeriod->start_date;
+            $toDate = $yearPeriods->max('end_date') ?: $activeAcademicPeriod->end_date;
 
-        $to = Carbon::parse(
-            $request->input('to', now()->toDateString())
-        )->endOfDay();
-
-        if ($to->lt($from)) {
-            [$from, $to] = [
-                $to->copy()->startOfDay(),
-                $from->copy()->endOfDay(),
+            return [
+                Carbon::parse($fromDate)->startOfDay(),
+                Carbon::parse($toDate)->endOfDay(),
+                null,
+                'academic_year',
             ];
         }
 
-        return [$from, $to, null, 'custom'];
+        // When no active period is configured, semester/year safely fall back
+        // to the current calendar month instead of exposing arbitrary dates.
+        return [now()->startOfMonth()->startOfDay(), now()->endOfMonth()->endOfDay(), null, 'month'];
     }
 
     /**
@@ -1238,6 +1333,13 @@ class ReportController extends Controller
 
                     return $row;
                 });
+
+            $statusFocus = strtoupper(trim((string) $request->input('status_focus', '')));
+            if ($selectedReport === 'requests' && $statusFocus !== '' && $statusFocus !== 'ALL') {
+                $rows = $rows
+                    ->filter(fn (BorrowingRequest $row): bool => $row->report_display_status === $statusFocus)
+                    ->values();
+            }
 
             /*
              * Build the Request Status Report summary from the same derived

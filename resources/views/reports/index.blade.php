@@ -27,13 +27,33 @@
         ? number_format($returnCompliance['percentage'], 1).'%'
         : 'N/A';
 
-    $reportUrl = fn (string $report) => route('reports.index', [
+    $reportUrl = fn (string $report, ?string $statusFocus = null) => route('reports.index', array_filter([
         'tab' => 'reports',
         'report' => $report,
         'academic_period' => $periodSelection,
-        'from' => $from->toDateString(),
-        'to' => $to->toDateString(),
-    ]);
+        'status_focus' => $statusFocus,
+    ], fn ($value) => $value !== null && $value !== ''));
+
+    $analyticsStatusUrl = fn (string $statusFocus) => route('reports.index', [
+        'tab' => 'analytics',
+        'academic_period' => $periodSelection,
+        'status_focus' => $statusFocus,
+    ]).'#request-status-records';
+
+    $statusFocusLabels = [
+        'ALL' => 'All Requests',
+        'DRAFT' => 'Draft',
+        'OBLIGATION_OPEN' => 'Obligation Open',
+        'COMPLETED' => 'Completed',
+    ];
+
+    $reportingPeriodLabel = match($periodSelection) {
+        'week' => 'Weekly',
+        'month' => 'Monthly',
+        'semester' => 'Semester',
+        'academic_year' => 'Academic Year',
+        default => 'Reporting Period',
+    };
 @endphp
 
 <style>
@@ -64,6 +84,128 @@
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 16px;
+    }
+
+    .request-status-kpi-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .analytics-section-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 2px 2px 0;
+    }
+
+    .analytics-section-heading h2 {
+        margin: 2px 0 0;
+        font-size: 18px;
+    }
+
+    .analytics-section-heading p {
+        margin: 4px 0 0;
+        color: var(--analytics-muted);
+        font-size: 11px;
+        line-height: 1.45;
+    }
+
+    .request-status-kpi-grid .analytics-kpi-link {
+        min-height: 148px;
+        padding: 16px;
+    }
+
+    .request-status-kpi-grid .analytics-kpi-link.is-selected {
+        border-color: var(--primary, #1769e0);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #1769e0) 14%, transparent);
+        background: color-mix(in srgb, var(--primary, #1769e0) 4%, var(--surface, #fff));
+    }
+
+    .request-status-results {
+        scroll-margin-top: 90px;
+    }
+
+    .request-status-results .card {
+        overflow: hidden;
+    }
+
+    .request-status-results-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--analytics-line);
+    }
+
+    .request-status-results-header h3 {
+        margin: 2px 0 0;
+        font-size: 17px;
+    }
+
+    .request-status-results-header p {
+        margin: 4px 0 0;
+        color: var(--analytics-muted);
+        font-size: 11px;
+    }
+
+    .request-status-table-wrap {
+        overflow-x: auto;
+    }
+
+    .request-status-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .request-status-table th,
+    .request-status-table td {
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--analytics-line);
+        text-align: left;
+        vertical-align: top;
+    }
+
+    .request-status-table th {
+        background: var(--analytics-soft);
+        color: var(--analytics-ink);
+        font-size: 10px;
+        letter-spacing: .035em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .request-status-table td {
+        color: var(--analytics-ink);
+        font-size: 11px;
+    }
+
+    .request-status-table td small {
+        display: block;
+        margin-top: 3px;
+        color: var(--analytics-muted);
+        font-size: 10px;
+    }
+
+    .request-status-empty {
+        padding: 34px 18px;
+        color: var(--analytics-muted);
+        text-align: center;
+    }
+
+    .request-status-results-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding: 12px 16px;
+    }
+
+    .request-status-results-footer .pagination {
+        margin: 0;
     }
 
     .analytics-kpi-link {
@@ -364,6 +506,12 @@
         font-weight: 700;
     }
 
+    @media (max-width: 1180px) {
+        .request-status-kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
     @media (max-width: 1050px) {
         .analytics-kpi-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -376,6 +524,7 @@
 
     @media (max-width: 760px) {
         .analytics-kpi-grid,
+        .request-status-kpi-grid,
         .analytics-grid-two {
             grid-template-columns: 1fr;
         }
@@ -424,13 +573,7 @@
             @include('reports.partials.module-tabs')
 
             <span class="meta">
-                @if($selectedAcademicPeriod)
-                    {{ $selectedAcademicPeriod->academic_year }}
-                    · {{ $selectedAcademicPeriod->term_name }}
-                    · {{ $periodLabel }}
-                @else
-                    Custom reporting period: {{ $periodLabel }}
-                @endif
+                {{ $reportingPeriodLabel }}: {{ $periodLabel }}
             </span>
         </div>
 
@@ -439,7 +582,7 @@
 
             <div
                 class="report-filter-row"
-                style="grid-template-columns: minmax(280px, 1.15fr) minmax(160px, .55fr) minmax(160px, .55fr) auto;"
+                style="grid-template-columns: minmax(280px, 1fr) auto;"
             >
                 @include(
                     'reports.partials.academic-period-filter',
@@ -451,6 +594,169 @@
                 </button>
             </div>
         </form>
+    </section>
+
+    <section class="analytics-section-heading" aria-labelledby="request-status-overview-heading">
+        <div>
+            <p class="eyebrow">Request records</p>
+            <h2 id="request-status-overview-heading">Request Status Overview</h2>
+            <p>Select a card to display the matching request records below without leaving Analytics.</p>
+        </div>
+        @if($statusFocus)
+            <a
+                class="button secondary small ui-pressable"
+                href="{{ route('reports.index', ['tab' => 'analytics', 'academic_period' => $periodSelection]) }}"
+            >
+                Clear status filter
+            </a>
+        @endif
+    </section>
+
+    <section class="analytics-kpi-grid request-status-kpi-grid" aria-label="Request status overview">
+        <a
+            class="card dashboard-kpi-card analytics-kpi-link kpi-accent-info ui-pressable {{ $statusFocus === 'ALL' ? 'is-selected' : '' }}"
+            href="{{ $analyticsStatusUrl('ALL') }}"
+            @if($statusFocus === 'ALL') aria-current="true" @endif
+        >
+            <span class="kpi-icon"><x-icon name="requests" size="18" /></span>
+            <strong class="kpi-value">{{ number_format($requestStatusSnapshot['total']) }}</strong>
+            <span class="kpi-label">All Requests</span>
+            <small class="kpi-support">Every request created in the selected reporting period.</small>
+            <span class="kpi-drilldown">{{ $statusFocus === 'ALL' ? 'Showing records ↓' : 'Show records ↓' }}</span>
+        </a>
+
+        <a
+            class="card dashboard-kpi-card analytics-kpi-link kpi-accent-warning ui-pressable {{ $statusFocus === 'DRAFT' ? 'is-selected' : '' }}"
+            href="{{ $analyticsStatusUrl('DRAFT') }}"
+            @if($statusFocus === 'DRAFT') aria-current="true" @endif
+        >
+            <span class="kpi-icon"><x-icon name="document" size="18" /></span>
+            <strong class="kpi-value">{{ number_format($requestStatusSnapshot['draft']) }}</strong>
+            <span class="kpi-label">Draft</span>
+            <small class="kpi-support">Requests that have not yet been submitted to SPMU.</small>
+            <span class="kpi-drilldown">{{ $statusFocus === 'DRAFT' ? 'Showing records ↓' : 'Show records ↓' }}</span>
+        </a>
+
+        <a
+            class="card dashboard-kpi-card analytics-kpi-link kpi-accent-danger ui-pressable {{ $statusFocus === 'OBLIGATION_OPEN' ? 'is-selected' : '' }}"
+            href="{{ $analyticsStatusUrl('OBLIGATION_OPEN') }}"
+            @if($statusFocus === 'OBLIGATION_OPEN') aria-current="true" @endif
+        >
+            <span class="kpi-icon"><x-icon name="accountability" size="18" /></span>
+            <strong class="kpi-value">{{ number_format($requestStatusSnapshot['obligation_open']) }}</strong>
+            <span class="kpi-label">Obligation Open</span>
+            <small class="kpi-support">Physical return is complete but accountability is still unresolved.</small>
+            <span class="kpi-drilldown">{{ $statusFocus === 'OBLIGATION_OPEN' ? 'Showing records ↓' : 'Show records ↓' }}</span>
+        </a>
+
+        <a
+            class="card dashboard-kpi-card analytics-kpi-link kpi-accent-success ui-pressable {{ $statusFocus === 'COMPLETED' ? 'is-selected' : '' }}"
+            href="{{ $analyticsStatusUrl('COMPLETED') }}"
+            @if($statusFocus === 'COMPLETED') aria-current="true" @endif
+        >
+            <span class="kpi-icon"><x-icon name="success" size="18" /></span>
+            <strong class="kpi-value">{{ number_format($requestStatusSnapshot['completed']) }}</strong>
+            <span class="kpi-label">Completed</span>
+            <small class="kpi-support">Custody records that are fully closed.</small>
+            <span class="kpi-drilldown">{{ $statusFocus === 'COMPLETED' ? 'Showing records ↓' : 'Show records ↓' }}</span>
+        </a>
+    </section>
+
+    @if($statusFocus)
+        <section class="content-area request-status-results" id="request-status-records">
+            <article class="card">
+                <div class="request-status-results-header">
+                    <div>
+                        <p class="eyebrow">Matching requests</p>
+                        <h3>{{ $statusFocusLabels[$statusFocus] ?? 'Request Records' }}</h3>
+                        <p>
+                            {{ number_format($requestStatusRecords->total()) }} record(s) in {{ strtolower($reportingPeriodLabel) }} scope
+                            · {{ $periodLabel }}
+                        </p>
+                    </div>
+                    <a class="button secondary small ui-pressable" href="{{ $reportUrl('requests', $statusFocus) }}">
+                        Open full request report
+                    </a>
+                </div>
+
+                @if($requestStatusRecords->isNotEmpty())
+                    <div class="request-status-table-wrap">
+                        <table class="request-status-table">
+                            <thead>
+                                <tr>
+                                    <th>Request</th>
+                                    <th>Borrower</th>
+                                    <th>Purpose / Location</th>
+                                    <th>Borrowing Period</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($requestStatusRecords as $record)
+                                    @php
+                                        [$recordStatus, $recordStatusLabel] = $recordReportStatus($record);
+                                        $recordVersion = $record->currentVersion;
+                                    @endphp
+                                    <tr>
+                                        <td>
+                                            <strong>{{ $record->request_no }}</strong>
+                                            <small>Created {{ optional($record->created_at)->format('d M Y') }}</small>
+                                        </td>
+                                        <td>
+                                            {{ $record->borrower?->full_name ?? 'Unknown borrower' }}
+                                            <small>{{ $record->borrower?->department ?: '—' }}</small>
+                                        </td>
+                                        <td>
+                                            {{ $recordVersion?->purpose_event ?: 'No purpose recorded' }}
+                                            <small>{{ $recordVersion?->location ?: 'No location recorded' }}</small>
+                                        </td>
+                                        <td>
+                                            {{ optional($recordVersion?->schedule_date)->format('d M Y') ?: '—' }}
+                                            <small>to {{ optional($recordVersion?->return_date)->format('d M Y') ?: '—' }}</small>
+                                        </td>
+                                        <td>
+                                            <x-status-badge
+                                                :status="$recordStatus"
+                                                :label="$recordStatusLabel ?: str($recordStatus)->replace('_', ' ')->title()"
+                                            />
+                                        </td>
+                                        <td>
+                                            <a class="table-action ui-pressable" href="{{ route('requests.show', $record) }}">
+                                                View details
+                                            </a>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="request-status-results-footer">
+                        <span class="meta">
+                            Showing {{ $requestStatusRecords->firstItem() }}–{{ $requestStatusRecords->lastItem() }}
+                            of {{ $requestStatusRecords->total() }}
+                        </span>
+                        @if($requestStatusRecords->hasPages())
+                            {{ $requestStatusRecords->onEachSide(1)->links() }}
+                        @endif
+                    </div>
+                @else
+                    <div class="request-status-empty">
+                        <strong>No matching request records.</strong>
+                        <div>There are no {{ strtolower($statusFocusLabels[$statusFocus] ?? 'matching') }} records for {{ $periodLabel }}.</div>
+                    </div>
+                @endif
+            </article>
+        </section>
+    @endif
+
+    <section class="analytics-section-heading" aria-labelledby="performance-analytics-heading">
+        <div>
+            <p class="eyebrow">Management metrics</p>
+            <h2 id="performance-analytics-heading">Performance Analytics</h2>
+            <p>Operational KPIs for the same selected reporting period.</p>
+        </div>
     </section>
 
     <section class="analytics-kpi-grid">

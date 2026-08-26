@@ -14,11 +14,6 @@
         'document_type',
         App\Models\RequestSupportingDocument::TYPE_PERMISSION_TO_CONDUCT
     );
-    $draftRequestLetter = $v->documents
-        ->where('document_type', 'REQUEST_LETTER')
-        ->where('status', 'DRAFT')
-        ->sortByDesc('id')
-        ->first();
     $pendingCancellation = $borrowingRequest->pendingCancellation;
     $isUnderSpmuReview = $isSpmu
         && $borrowingRequest->status === App\Enums\RequestStatus::UnderSpmu;
@@ -46,6 +41,36 @@
     $ptcRequired = (bool) $v->represents_student_activity;
     $ptcReady = ! $ptcRequired || (bool) $permissionToConductDoc;
     $submissionReady = $signedRequestLetterReady && $ptcReady;
+
+    $operationalDocuments = $custody
+        ? $v->documents
+            ->where('subject_type', App\Models\CustodyTransaction::class)
+            ->where('subject_id', $custody->id)
+            ->where('status', 'FINAL')
+        : collect();
+
+    $borrowerSlipDocument = $operationalDocuments
+        ->where('document_type', 'BORROWER_SLIP')
+        ->sortByDesc('id')
+        ->first();
+
+    $laundryFormDocument = $operationalDocuments
+        ->where('document_type', 'LAUNDRY_FORM')
+        ->sortByDesc('id')
+        ->first();
+
+    $gatePassDocument = $operationalDocuments
+        ->where('document_type', 'GATE_PASS')
+        ->sortByDesc('id')
+        ->first();
+
+    $requestHasLaundry = $custody?->lines?->contains(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    ) ?? false;
+
+    $requestHasOffCampus = $custody?->lines?->contains(
+        fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+    ) ?? false;
 
     if ($custody) {
         $preparationComplete = (bool) $custody->prepared_at;
@@ -96,58 +121,29 @@
         <div>
             <p class="eyebrow">Current action</p>
 
-            @if(!$signedRequestLetterReady)
-                <h2>Complete the signed request document</h2>
+            @if(!$submissionReady)
+                <h2>Complete the required request documents</h2>
                 <p>
-                    Print the generated Borrowing Request Letter, obtain the required wet signatures,
-                    then upload the fully signed scan{{ $ptcRequired ? ' and the Permission to Conduct Letter' : '' }}.
-                </p>
-            @elseif(!$ptcReady)
-                <h2>Upload the required Permission to Conduct Letter</h2>
-                <p>
-                    Your signed Borrowing Request Letter is already uploaded. Add the Permission to Conduct Letter to continue.
+                    Your draft is saved. Upload the already approved and fully signed Borrowing Request Letter
+                    {{ $ptcRequired ? 'and the Permission to Conduct Letter' : '' }} before submitting to SPMU.
+                    The system does not generate or re-print the Borrowing Request Letter.
                 </p>
             @else
                 <h2>Ready to submit to SPMU</h2>
                 <p>
-                    The required documents are complete. Review the request if needed, then submit it to SPMU.
+                    The required scanned document(s) are complete. Review the draft if needed, then submit it to SPMU.
                 </p>
             @endif
 
             <div class="inline-actions top-gap">
-                @if(!$signedRequestLetterReady && $draftRequestLetter)
-                    <a
-                        class="button primary ui-pressable"
-                        href="{{ route('documents.download', $draftRequestLetter) }}"
-                        target="_blank"
-                        rel="noopener"
-                    >
-                        View / Print Request Letter
-                    </a>
-                @elseif(!$signedRequestLetterReady)
-                    <form method="post" action="{{ route('requests.recover-draft-document', $borrowingRequest) }}">
-                        @csrf
-                        <button class="button primary ui-pressable" type="submit">
-                            Generate Request Letter
-                        </button>
-                    </form>
-                @endif
+                <a
+                    class="button secondary ui-pressable"
+                    href="{{ route('requests.edit', $borrowingRequest) }}"
+                >
+                    {{ $submissionReady ? 'Review / Edit Draft' : 'Edit Draft & Upload Documents' }}
+                </a>
 
-                @if(!$submissionReady)
-                    <a
-                        class="button secondary ui-pressable"
-                        href="{{ route('requests.edit', $borrowingRequest) }}"
-                    >
-                        {{ $signedRequestLetterReady ? 'Upload Required Document' : 'Upload Signed Scan' }}
-                    </a>
-                @else
-                    <a
-                        class="button secondary ui-pressable"
-                        href="{{ route('requests.edit', $borrowingRequest) }}"
-                    >
-                        Edit Request
-                    </a>
-
+                @if($submissionReady)
                     <form method="post" action="{{ route('requests.submit', $borrowingRequest) }}">
                         @csrf
                         <button class="button primary ui-pressable" type="submit">
@@ -159,7 +155,8 @@
 
             @if(!$submissionReady)
                 <p class="meta top-gap">
-                    Submit to SPMU becomes available after all required scanned documents are uploaded.
+                    Submit to SPMU becomes available after the fully signed Borrowing Request Letter
+                    {{ $ptcRequired ? 'and Permission to Conduct Letter are' : 'is' }} uploaded.
                 </p>
             @endif
         </div>
@@ -272,7 +269,7 @@
                         </div>
 
                         <p class="meta spmu-review-footer__note">
-                            After approval, the Action Officer handles pickup scheduling, required physical documents, item preparation, and release.
+                            After approval, the system prepares the borrower-printable Borrower Slip and any applicable Laundry Form / Gate Pass. The Action Officer handles pickup scheduling, item preparation, verification of the physical forms, and release.
                         </p>
                     </div>
                 </form>
@@ -498,6 +495,62 @@
 </section>
 @endif
 
+@if($isBorrower && $borrowingRequest->custody && $borrowingRequest->final_approved_at)
+<section class="content-area" id="borrower-operational-documents">
+    <article class="card">
+        <div class="card-header">
+            <div>
+                <p class="eyebrow">Approved operational documents</p>
+                <h2>Print the forms you need for physical processing</h2>
+                <p class="meta">These forms are generated after SPMU approval. Print the applicable documents and bring them for the required handwritten signatures and physical processing.</p>
+            </div>
+        </div>
+
+        <div class="document-list">
+            <article>
+                <div>
+                    <strong>Borrower Slip</strong>
+                    <small>Print and sign the borrower portion, then bring it to SPMU for physical handover and the required SPMU signature.</small>
+                </div>
+                @if($borrowerSlipDocument)
+                    <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
+                @else
+                    <span class="status-badge status-neutral">Preparing document</span>
+                @endif
+            </article>
+
+            <article>
+                <div>
+                    <strong>Laundry Form</strong>
+                    <small>{{ $requestHasLaundry ? 'Required because this borrowing includes linen / laundry-required items.' : 'Not applicable to this borrowing.' }}</small>
+                </div>
+                @if(!$requestHasLaundry)
+                    <span class="status-badge status-neutral">Locked · Not applicable</span>
+                @elseif($laundryFormDocument)
+                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
+                @else
+                    <span class="status-badge status-neutral">Preparing document</span>
+                @endif
+            </article>
+
+            <article>
+                <div>
+                    <strong>Gate Pass</strong>
+                    <small>{{ $requestHasOffCampus ? 'Required because the approved borrowing includes off-campus use.' : 'Not applicable to this borrowing.' }}</small>
+                </div>
+                @if(!$requestHasOffCampus)
+                    <span class="status-badge status-neutral">Locked · Not applicable</span>
+                @elseif($gatePassDocument)
+                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download / Print</a>
+                @else
+                    <span class="status-badge status-neutral">Preparing document</span>
+                @endif
+            </article>
+        </div>
+    </article>
+</section>
+@endif
+
 @if($borrowingRequest->custody)
 <section class="content-area">
     <div class="action-panel action-neutral">
@@ -572,6 +625,7 @@
     && !in_array(
         $borrowingRequest->status,
         [
+            App\Enums\RequestStatus::Draft,
             App\Enums\RequestStatus::Cancelled,
             App\Enums\RequestStatus::Rejected,
             App\Enums\RequestStatus::Expired,

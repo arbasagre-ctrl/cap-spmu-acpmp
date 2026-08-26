@@ -29,6 +29,11 @@
     $borrowerStatus = $available > 0 && $item->condition_code === 'SERVICEABLE'
         ? 'AVAILABLE'
         : 'UNAVAILABLE';
+
+    // Inventory modification belongs to the SPMU Head / Administrator only.
+    // The Action Officer may inspect all operational details, stock-card
+    // movements, and borrowing history but must remain read-only.
+    $canEditInventory = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
 @endphp
 
 <section class="page-heading inventory-detail-heading">
@@ -203,6 +208,36 @@
             </article>
         </div>
 
+
+        <article class="card inventory-borrowing-history-card" id="stock-card">
+            <div class="card-header inventory-history-header">
+                <div>
+                    <p class="eyebrow">Read-only inventory ledger</p>
+                    <h2>Stock Card</h2>
+                    <p class="meta">Latest recorded inventory movements for {{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }}. This view is read-only.</p>
+                </div>
+            </div>
+            <div class="table-wrap inventory-history-table-wrap">
+                <table class="inventory-history-table">
+                    <thead><tr><th>Date</th><th>Transaction</th><th>From</th><th>To</th><th>Quantity</th><th>Balance change</th><th>Reason / Actor</th></tr></thead>
+                    <tbody>
+                    @forelse($stockCard as $entry)
+                        <tr>
+                            <td>{{ \Illuminate\Support\Carbon::parse($entry->occurred_at)->format('d M Y, g:i A') }}</td>
+                            <td>{{ str($entry->transaction_type)->replace('_',' ')->title() }}</td>
+                            <td>{{ $entry->from_state ?: '—' }}</td>
+                            <td>{{ $entry->to_state ?: '—' }}</td>
+                            <td><strong>{{ (float) $entry->quantity + 0 }}</strong></td>
+                            <td>{{ $entry->before_quantity !== null ? ((float)$entry->before_quantity + 0) : '—' }} → {{ $entry->after_quantity !== null ? ((float)$entry->after_quantity + 0) : '—' }}</td>
+                            <td><strong>{{ $entry->reason ?: 'Recorded inventory movement' }}</strong><small>{{ $entry->actor_email ?: 'System' }}</small></td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="7" class="empty-state">No stock-card movements have been recorded for this item yet.</td></tr>
+                    @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </article>
 
         <article class="card inventory-borrowing-history-card" id="borrowing-history">
             <div class="card-header inventory-history-header">
@@ -426,7 +461,7 @@
                     <h2>Item information</h2>
                 </div>
 
-                @if($isSpmu)
+                @if($canEditInventory)
                     <a class="button secondary small ui-pressable" href="{{ route('inventory.edit', $item) }}">
                         <x-icon name="edit" size="16" />
                         Edit item

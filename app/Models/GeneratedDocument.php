@@ -20,6 +20,11 @@ class GeneratedDocument extends Model
         return $this->belongsTo(StoredFile::class, 'stored_file_id');
     }
 
+    public function template(): BelongsTo
+    {
+        return $this->belongsTo(DocumentTemplate::class, 'template_id');
+    }
+
     public function version(): BelongsTo
     {
         return $this->belongsTo(RequestVersion::class, 'request_version_id');
