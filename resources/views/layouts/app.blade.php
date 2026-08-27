@@ -452,14 +452,14 @@
                 ]
                 : [
                     ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],
-                    ['requests.index', 'requests.*', 'Approved Requests', 'requests'],
+                    ['requests.index', 'requests.*', 'Borrowing Records', 'requests'],
                     ['custody.release.index', 'custody.release.*', 'Release', 'custody'],
                     ['custody.return.index', 'custody.return.*', 'Return', 'custody'],
-                    ['laundry.spmu.index', 'laundry.spmu.*', 'Laundry Final Acceptance', 'custody'],
+                    ['laundry.spmu.index', 'laundry.spmu.*', 'Laundry Processing', 'custody'],
                     ['gate-passes.index', 'gate-passes.*', 'Gate Pass', 'custody'],
                     ['inventory.index', 'inventory.*', 'Inventory', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Operations Calendar', 'calendar'],
-                    ['accountability.index', 'accountability.*', 'Return Issues', 'accountability'],
+                    ['accountability.index', 'accountability.*', 'Accountability Processing', 'accountability'],
                 ],
             'ICTU' => [
                 ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],

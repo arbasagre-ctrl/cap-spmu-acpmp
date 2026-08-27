@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Models\BorrowingRequest;
+use App\Models\RequestVersion;
 use App\Services\RequestWorkflowService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -40,7 +41,23 @@ class ApprovalController extends Controller
                     ->where('sequence_no', 1)
                     ->whereIn('decision', ['PENDING', 'RECEIVED']);
             })
-            ->oldest()
+            /*
+             * First-ready, first-reviewed queue.
+             *
+             * Priority follows the latest request version's submission time,
+             * not the original request creation time. If a request was returned
+             * for revision, its new resubmission timestamp becomes its queue
+             * position when it comes back for SPMU review.
+             */
+            ->orderBy(
+                RequestVersion::query()
+                    ->selectRaw('COALESCE(submitted_at, updated_at)')
+                    ->whereColumn('request_versions.request_id', 'borrowing_requests.id')
+                    ->orderByDesc('version_no')
+                    ->limit(1),
+                'asc'
+            )
+            ->orderBy('borrowing_requests.id')
             ->get();
 
         return view('approvals.index', [
@@ -111,7 +128,7 @@ class ApprovalController extends Controller
         );
 
         $message = match ($data['decision']) {
-            'APPROVED' => 'Request verified and approved by the SPMU Head. The approved quantity is allocated/held for pickup, and the Action Officer may now schedule pickup and process release.',
+            'APPROVED' => 'Request verified and approved by the SPMU Head. Approved quantities are allocated/held for pickup, and the Borrower Slip plus any applicable Laundry Form or Gate Pass are now generated for physical processing.',
             'RETURNED_FOR_REVISION' => 'Request returned for revision. No inventory allocation was created.',
             default => 'Request rejected. No inventory allocation was created.',
         };

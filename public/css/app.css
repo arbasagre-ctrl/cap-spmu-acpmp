@@ -1,4 +1,4 @@
-﻿:root {
+:root {
     --navy-950: #071b35;
     --navy-900: #0b274b;
     --navy-800: #123b69;
@@ -1383,26 +1383,6 @@ body.calendar-drawer-open { overflow: hidden; }
 }
 .accountability-filter-card:hover { border-color: var(--kpi-accent); box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .accountability-filter-card:focus-visible { outline: 0; border-color: var(--interactive); box-shadow: var(--focus-ring); }
-.accountability-filter-card.is-selected {
-    border-color: var(--accountability-card-color);
-    outline: 3px solid var(--accountability-card-color);
-    outline-offset: 1px;
-    box-shadow: var(--shadow-sm);
-}
-.accountability-filter-card.is-selected::after {
-    position: absolute;
-    top: 9px;
-    right: 10px;
-    padding: 2px 5px;
-    color: #fff;
-    background: var(--accountability-card-color);
-    border-radius: 999px;
-    content: "Filtered";
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: .045em;
-    text-transform: uppercase;
-}
 .accountability-filter-card { position: relative; }
 .borrower-accountability-browser { display: grid; gap: 11px; }
 .borrower-accountability-toolbar {

@@ -69,16 +69,11 @@ class RequestWorkflowService
             'submission'
         );
 
-        /*
-         * A normal active borrowing is not itself a borrowing violation.
-         * Borrowers may have more than one legitimate request/custody at the
-         * same time; item availability is validated separately. Submission is
-         * blocked only when a custody has already become overdue or has an
-         * unresolved accountability obligation.
-         */
-        $blockingCustody = CustodyTransaction::query()
+        $outstandingCustody = CustodyTransaction::query()
             ->where('borrower_user_id', $borrower->id)
             ->whereIn('status', [
+                'ACTIVE',
+                'RETURN_PROCESSING',
                 'OVERDUE',
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',
@@ -86,10 +81,10 @@ class RequestWorkflowService
             ->latest('id')
             ->first();
 
-        if ($blockingCustody) {
+        if ($outstandingCustody) {
             throw ValidationException::withMessages([
                 'restriction' =>
-                    "You cannot submit a new borrowing request while {$blockingCustody->custody_no} has an overdue return or unresolved accountability obligation.",
+                    "You cannot submit a new borrowing request while {$outstandingCustody->custody_no} has an outstanding return or unresolved obligation.",
             ]);
         }
 
@@ -806,6 +801,7 @@ class RequestWorkflowService
                 ]);
 
                 $this->documents->borrowerSlip($custody);
+                $generatedOperationalDocuments = ['BORROWER_SLIP'];
 
                 $offCampusLine = $custody->lines->first(
                     fn ($line) =>
@@ -818,6 +814,8 @@ class RequestWorkflowService
                         $custody,
                         'GATE_PASS'
                     );
+
+                    $generatedOperationalDocuments[] = 'GATE_PASS';
 
                     GatePass::query()->updateOrCreate(
                         ['custody_transaction_id' => $custody->id],
@@ -847,6 +845,7 @@ class RequestWorkflowService
                         ]),
                         'LAUNDRY_FORM'
                     );
+                    $generatedOperationalDocuments[] = 'LAUNDRY_FORM';
                 }
 
                 $this->audit->record(
@@ -864,6 +863,9 @@ class RequestWorkflowService
 
                         'borrower_documents_generated' =>
                             true,
+
+                        'generated_document_types' =>
+                            $generatedOperationalDocuments,
                     ]
                 );
 

@@ -732,7 +732,6 @@
         <div class="landing-container">
 
             <div class="landing-section-heading">
-                <span class="mini">Process</span>
                 <h2>How It Works</h2>
                 <p>
                     A clear end-to-end process from borrowing request to completed return.

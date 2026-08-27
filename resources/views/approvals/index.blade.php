@@ -11,8 +11,10 @@
         <p>
             Review the submitted request, signed supporting documents,
             requested quantities, borrowing dates, and current availability.
-            Approval allocates and holds the approved quantities for pickup;
-            physical issuance happens later through the SPMU Action Officer.
+            Approval performs the final availability check, allocates and holds
+            the approved quantities for pickup, and generates the Borrower Slip
+            plus any applicable Laundry Form or Gate Pass. Physical issuance
+            happens later through the SPMU Action Officer.
         </p>
     </div>
 
@@ -30,7 +32,7 @@
             <input type="search" id="approval-search" placeholder="Search request no., borrower, event, or item..." autocomplete="off">
         </label>
         <label>Sort
-            <select id="approval-sort"><option value="newest">Newest</option><option value="oldest">Oldest</option></select>
+            <select id="approval-sort"><option value="oldest">Oldest submitted</option><option value="newest">Newest submitted</option></select>
         </label>
     </div>
 

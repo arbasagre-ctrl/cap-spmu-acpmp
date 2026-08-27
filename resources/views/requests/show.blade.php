@@ -281,10 +281,6 @@
                                 Reject
                             </button>
                         </div>
-
-                        <p class="meta spmu-review-footer__note">
-                            After approval, the system prepares the borrower-printable Borrower Slip and any applicable Laundry Form / Gate Pass. The Action Officer handles pickup scheduling, item preparation, verification of the physical forms, and release.
-                        </p>
                     </div>
                 </form>
 
