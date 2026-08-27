@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Models\Allocation;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
+use App\Services\OperationalCalendarService;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
@@ -24,10 +26,13 @@ class CalendarController extends Controller
         'CLOSED',
     ];
 
-    public function index(Request $request): View
+    public function index(Request $request, OperationalCalendarService $operationalCalendar): View
     {
         $workspace = strtoupper((string) $request->session()->get('active_workspace'));
         $isBorrower = $workspace === 'BORROWER';
+        $classification = $request->user()->access_classification;
+        $isSpmuHead = $classification === AccessClassification::SpmuHead;
+        $isSpmuOfficer = $classification === AccessClassification::SpmuOfficer;
         $month = $this->selectedMonth($request);
         $monthStart = $month->startOfMonth();
         $monthEnd = $month->endOfMonth();
@@ -43,6 +48,11 @@ class CalendarController extends Controller
             ->whereIn('status', ['ACTIVE', 'PARTIALLY_RELEASED'])
             ->where('period_start', '<=', $monthEnd->endOfDay())
             ->where('period_end', '>=', $monthStart->startOfDay())
+            ->when($isBorrower, function ($query) use ($request): void {
+                $query->whereHas('requestItem.version.request', function ($requests) use ($request): void {
+                    $requests->where('borrower_user_id', $request->user()->id);
+                });
+            })
             ->orderBy('period_start')
             ->get();
 
@@ -64,29 +74,50 @@ class CalendarController extends Controller
                 });
             })
             ->when($isBorrower, function ($query) use ($request): void {
-                $query->where(function ($privacy) use ($request): void {
-                    $privacy->where('borrower_user_id', $request->user()->id)
-                        ->orWhereNotIn('status', ['CLOSED', 'OBLIGATION_OPEN']);
-                });
+                $query->where('borrower_user_id', $request->user()->id);
             })
             ->orderBy('scheduled_release_at')
             ->get();
 
         $events = collect();
         foreach ($allocations->groupBy(fn (Allocation $allocation) => $allocation->requestItem->version->request_id) as $requestId => $requestAllocations) {
-            $event = $this->allocationEvent($requestAllocations, $workspace, $request->user()->id, $dueSoonDays);
+            $event = $this->allocationEvent($requestAllocations, $workspace, $request->user()->id, $dueSoonDays, $operationalCalendar);
             if ($event) {
                 $events->put((int) $requestId, $event);
             }
         }
         foreach ($custodies as $custody) {
-            $events->put($custody->request_id, $this->custodyEvent($custody, $workspace, $request->user()->id, $dueSoonDays));
+            $events->put($custody->request_id, $this->custodyEvent($custody, $workspace, $request->user()->id, $dueSoonDays, $operationalCalendar));
         }
 
         $calendarEvents = $events->sortBy('start_at')->values();
         $occurrencesByDate = $this->occurrencesByDate($calendarEvents, $monthStart, $monthEnd, $gridStart, $gridEnd);
-        $calendarWeeks = $this->calendarWeeks($gridStart, $gridEnd, $month, $occurrencesByDate);
-        $summaryEvents = $isBorrower ? $calendarEvents->where('own_record', true) : $calendarEvents;
+        $operationalProfiles = $operationalCalendar->profilesForRange($gridStart, $gridEnd);
+        $calendarWeeks = $this->calendarWeeks($gridStart, $gridEnd, $month, $occurrencesByDate, $operationalProfiles);
+        $summaryEvents = $calendarEvents;
+
+        [$calendarTitle, $calendarEyebrow, $calendarDescription] = match (true) {
+            $isBorrower => [
+                'Borrowing Calendar',
+                'My schedule',
+                'Your requests, pickup/return dates, and SPMU operating days. Other borrowers’ request details are not shown.',
+            ],
+            $isSpmuHead => [
+                'Borrowing & Operations Calendar',
+                'Institutional schedule',
+                'Institution-wide borrowing activity with the weekly transaction schedule and special-date overrides applied automatically.',
+            ],
+            $isSpmuOfficer => [
+                'Operations Calendar',
+                'Operational schedule',
+                'Approved and released borrowings, pickup/return activity, and SPMU operating-day availability in one calendar.',
+            ],
+            default => [
+                'Borrowing Calendar',
+                'Schedule overview',
+                'Borrowing and operational schedule overview.',
+            ],
+        };
         $summary = [
             'active' => $summaryEvents->where('is_active', true)->count(),
             'due_soon' => $summaryEvents->where('is_due_soon', true)->count(),
@@ -102,6 +133,11 @@ class CalendarController extends Controller
             'calendarWeeks' => $calendarWeeks,
             'calendarEvents' => $calendarEvents,
             'summary' => $summary,
+            'calendarTitle' => $calendarTitle,
+            'calendarEyebrow' => $calendarEyebrow,
+            'calendarDescription' => $calendarDescription,
+            'isSpmuHead' => $isSpmuHead,
+            'isSpmuOfficer' => $isSpmuOfficer,
         ]);
     }
 
@@ -117,7 +153,7 @@ class CalendarController extends Controller
     }
 
     /** @param Collection<int, Allocation> $allocations */
-    private function allocationEvent(Collection $allocations, string $workspace, int $userId, int $dueSoonDays): ?array
+    private function allocationEvent(Collection $allocations, string $workspace, int $userId, int $dueSoonDays, OperationalCalendarService $operationalCalendar): ?array
     {
         $first = $allocations->first();
         $request = $first?->requestItem?->version?->request;
@@ -137,12 +173,21 @@ class CalendarController extends Controller
             ])->values()
             : collect();
 
+        $originalDueAt = CarbonImmutable::instance($allocations->sortByDesc('period_end')->first()->period_end)->endOfDay();
+        $effectiveDueAt = $operationalCalendar->effectiveReturnDeadline($originalDueAt);
+        $adjustmentReason = $originalDueAt->isSameDay($effectiveDueAt)
+            ? null
+            : ($operationalCalendar->profile($originalDueAt)['reason'] ?: 'The requested return date is not an open SPMU return day.');
+
         return $this->baseEvent(
             request: $request,
             workspace: $workspace,
             userId: $userId,
             startAt: CarbonImmutable::instance($allocations->sortBy('period_start')->first()->period_start),
-            dueAt: CarbonImmutable::instance($allocations->sortByDesc('period_end')->first()->period_end),
+            startPhaseLabel: 'Approved use begins',
+            dueAt: $effectiveDueAt,
+            originalDueAt: $originalDueAt,
+            dueAdjustmentReason: $adjustmentReason,
             status: $detailsVisible ? $request->status->value : 'APPROVED',
             reference: $detailsVisible ? $request->request_no : 'Reserved institutional use',
             itemCount: $allocations->count(),
@@ -154,7 +199,7 @@ class CalendarController extends Controller
         );
     }
 
-    private function custodyEvent(CustodyTransaction $custody, string $workspace, int $userId, int $dueSoonDays): array
+    private function custodyEvent(CustodyTransaction $custody, string $workspace, int $userId, int $dueSoonDays, OperationalCalendarService $operationalCalendar): array
     {
         $request = $custody->request;
         $version = $request->currentVersion;
@@ -170,12 +215,24 @@ class CalendarController extends Controller
             ])->values()
             : collect();
 
+        $storedDueAt = CarbonImmutable::instance($custody->due_at);
+        $originalDueAt = CarbonImmutable::instance($custody->original_due_at ?: $custody->due_at)->endOfDay();
+        $effectiveDueAt = $custody->status === 'CLOSED'
+            ? $storedDueAt
+            : $operationalCalendar->effectiveReturnDeadline($originalDueAt);
+        $adjustmentReason = $originalDueAt->isSameDay($effectiveDueAt)
+            ? null
+            : ($custody->due_adjustment_reason ?: $operationalCalendar->profile($originalDueAt)['reason'] ?: 'The original return date is not an open SPMU return day.');
+
         return $this->baseEvent(
             request: $request,
             workspace: $workspace,
             userId: $userId,
-            startAt: CarbonImmutable::instance($custody->scheduled_release_at ?: $version->needed_from),
-            dueAt: CarbonImmutable::instance($custody->due_at),
+            startAt: CarbonImmutable::instance($custody->released_at ?: $custody->scheduled_release_at ?: $version->needed_from),
+            startPhaseLabel: $custody->released_at ? 'Items released' : 'Pickup / Release',
+            dueAt: $effectiveDueAt,
+            originalDueAt: $originalDueAt,
+            dueAdjustmentReason: $adjustmentReason,
             status: $custody->status,
             reference: $detailsVisible ? $request->request_no : 'Active institutional use',
             itemCount: $custody->lines->count(),
@@ -192,7 +249,10 @@ class CalendarController extends Controller
         string $workspace,
         int $userId,
         CarbonImmutable $startAt,
+        string $startPhaseLabel,
         CarbonImmutable $dueAt,
+        CarbonImmutable $originalDueAt,
+        ?string $dueAdjustmentReason,
         string $status,
         string $reference,
         int $itemCount,
@@ -216,7 +276,11 @@ class CalendarController extends Controller
             'reference' => $reference,
             'status' => $status,
             'start_at' => $startAt,
+            'start_phase_label' => $startPhaseLabel,
             'due_at' => $dueAt,
+            'original_due_at' => $originalDueAt,
+            'return_adjusted' => ! $originalDueAt->isSameDay($dueAt),
+            'due_adjustment_reason' => $dueAdjustmentReason,
             'closed_at' => $custody?->closed_at ? CarbonImmutable::instance($custody->closed_at) : null,
             'purpose' => $detailsVisible ? $request->currentVersion?->purpose_event : null,
             'office' => $detailsVisible ? $request->accountableUnit?->unit_name : null,
@@ -282,6 +346,9 @@ class CalendarController extends Controller
                 ['date' => $event['start_at'], 'kind' => 'start'],
                 ['date' => $event['due_at'], 'kind' => 'due'],
             ]);
+            if ($event['return_adjusted']) {
+                $markers->push(['date' => $event['original_due_at'], 'kind' => 'adjusted_due']);
+            }
             if ($event['closed_at']) {
                 $markers->push(['date' => $event['closed_at'], 'kind' => 'returned']);
             }
@@ -300,7 +367,7 @@ class CalendarController extends Controller
                 $dayEvents->put($event['key'], [
                     'event' => $event,
                     'kind' => $kind,
-                    'phase_label' => $this->phaseLabel($kind),
+                    'phase_label' => $this->phaseLabel($kind, $event),
                 ]);
                 $occurrences->put($date, $dayEvents);
             }
@@ -324,19 +391,26 @@ class CalendarController extends Controller
         return $incoming;
     }
 
-    private function phaseLabel(string $kind): string
+    /** @param array<string, mixed> $event */
+    private function phaseLabel(string $kind, array $event): string
     {
         return match ($kind) {
-            'start' => 'Borrowing starts',
-            'due' => 'Return due',
-            'start_due' => 'Starts and due',
+            'start' => (string) ($event['start_phase_label'] ?? 'Pickup / Release'),
+            'due' => $event['return_adjusted'] ? 'Adjusted return' : 'Return due',
+            'start_due' => $event['return_adjusted'] ? 'Release / adjusted return' : 'Release / return due',
             'returned' => 'Returned',
+            'adjusted_due' => 'Original return date',
             default => 'Ongoing borrowing',
         };
     }
 
-    private function calendarWeeks(CarbonImmutable $gridStart, CarbonImmutable $gridEnd, CarbonImmutable $month, Collection $occurrences): Collection
-    {
+    private function calendarWeeks(
+        CarbonImmutable $gridStart,
+        CarbonImmutable $gridEnd,
+        CarbonImmutable $month,
+        Collection $occurrences,
+        Collection $operationalProfiles
+    ): Collection {
         $weeks = collect();
         $cursor = $gridStart;
         $today = CarbonImmutable::now(config('app.timezone'));
@@ -349,6 +423,9 @@ class CalendarController extends Controller
                     'in_month' => $date->month === $month->month && $date->year === $month->year,
                     'is_today' => $date->isSameDay($today),
                     'occurrences' => $occurrences->get($date->toDateString(), collect()),
+                    'operational' => $this->operationalPresentation(
+                        $operationalProfiles->get($date->toDateString(), [])
+                    ),
                 ]);
                 $cursor = $cursor->addDay();
             }
@@ -356,6 +433,59 @@ class CalendarController extends Controller
         }
 
         return $weeks;
+    }
+
+    /** @param array<string, mixed> $profile */
+    private function operationalPresentation(array $profile): array
+    {
+        $isOpen = (bool) ($profile['is_open'] ?? false);
+        $acceptsRequests = (bool) ($profile['accepts_requests'] ?? false);
+        $allowsPickup = (bool) ($profile['allows_pickup'] ?? false);
+        $allowsReturn = (bool) ($profile['allows_return'] ?? false);
+        $isException = ($profile['source'] ?? null) === 'EXCEPTION';
+        $isLimited = $isOpen && ! ($acceptsRequests && $allowsPickup && $allowsReturn);
+
+        $label = match (true) {
+            ! $isOpen => 'SPMU Closed',
+            $isException => 'Special Open',
+            $isLimited => 'Limited Operations',
+            default => null,
+        };
+        $tone = match (true) {
+            ! $isOpen => 'closed',
+            $isException => 'special',
+            $isLimited => 'limited',
+            default => 'open',
+        };
+
+        $hours = null;
+        if (! empty($profile['open_time']) && ! empty($profile['close_time'])) {
+            $hours = substr((string) $profile['open_time'], 0, 5).'–'.substr((string) $profile['close_time'], 0, 5);
+        }
+
+        $capabilities = collect([
+            'Requests' => $acceptsRequests,
+            'Pickup / Release' => $allowsPickup,
+            'Returns' => $allowsReturn,
+        ])->map(fn (bool $allowed, string $name) => $name.': '.($allowed ? 'Open' : 'Closed'))->values()->implode(' · ');
+
+        $details = ! $isOpen
+            ? ((string) ($profile['reason'] ?? '') ?: 'No SPMU transactions are accepted on this date.')
+            : $capabilities.($hours ? ' · Hours: '.$hours : '').(! empty($profile['reason']) ? ' · '.$profile['reason'] : '');
+
+        return [
+            'is_open' => $isOpen,
+            'accepts_requests' => $acceptsRequests,
+            'allows_pickup' => $allowsPickup,
+            'allows_return' => $allowsReturn,
+            'is_exception' => $isException,
+            'is_limited' => $isLimited,
+            'label' => $label,
+            'tone' => $tone,
+            'details' => $details,
+            'reason' => $profile['reason'] ?? null,
+            'hours' => $hours,
+        ];
     }
 
     private function quantity(mixed $quantity): string

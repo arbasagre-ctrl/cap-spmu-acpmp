@@ -28,9 +28,9 @@ use Illuminate\View\View;
 
 class AccountabilityController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, PolicyService $policy): View
     {
-        $incidentQuery = Incident::with(['borrower', 'custody.request', 'lines'])->latest('reported_at');
+        $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines'])->latest('reported_at');
         $billingQuery = BillingStatement::with(['borrower', 'lines', 'payments', 'documents'])->latest('issued_at');
         $restrictionQuery = BorrowerRestriction::latest('effective_from');
         $overdueQuery = OverdueCase::with(['borrower', 'custody.lines', 'penalties'])->latest('overdue_started_at');
@@ -48,13 +48,28 @@ class AccountabilityController extends Controller
             $sanctionQuery->where('borrower_user_id', $request->user()->id);
         }
 
+        $incidents = $incidentQuery->get();
+        $billings = $billingQuery->get();
+        $restrictions = $restrictionQuery->get();
+        $overdueCases = $overdueQuery->get();
+        $violations = $violationQuery->get();
+        $sanctions = $sanctionQuery->get();
+
+        $incidentOffensePreviews = [];
+        if ($request->user()?->access_classification === AccessClassification::SpmuHead) {
+            foreach ($incidents as $incident) {
+                $incidentOffensePreviews[$incident->id] = $policy->incidentOffensePreview($incident);
+            }
+        }
+
         return view('accountability.index', [
-            'incidents' => $incidentQuery->get(),
-            'billings' => $billingQuery->get(),
-            'restrictions' => $restrictionQuery->get(),
-            'overdueCases' => $overdueQuery->get(),
-            'violations' => $violationQuery->get(),
-            'sanctions' => $sanctionQuery->get(),
+            'incidents' => $incidents,
+            'billings' => $billings,
+            'restrictions' => $restrictions,
+            'overdueCases' => $overdueCases,
+            'violations' => $violations,
+            'sanctions' => $sanctions,
+            'incidentOffensePreviews' => $incidentOffensePreviews,
         ]);
     }
 
@@ -173,6 +188,12 @@ class AccountabilityController extends Controller
             'basis' => ['required', 'string', 'max:2000'],
             'due_at' => ['nullable', 'date', 'after_or_equal:today'],
         ]);
+
+        if ($incident->status !== 'FOR_BILLING') {
+            return back()->withErrors([
+                'incident' => 'The SPMU Head must first record Billing / Payment Required as the formal accountability decision before a property Billing Statement can be generated.',
+            ]);
+        }
 
         if (DB::table('billing_lines')->where('incident_id', $incident->id)->exists()) {
             return back()->withErrors([
@@ -467,6 +488,165 @@ class AccountabilityController extends Controller
         }, 3);
 
         return back()->with('status', 'Authorized waiver recorded and related financial restriction re-evaluated.');
+    }
+
+    /**
+     * Final Head-level resolution for a property accountability case that does
+     * not require an open Billing Statement. Financial cases must continue
+     * through billing settlement or an authorized billing waiver instead.
+     */
+    public function resolveIncident(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications,
+        PolicyService $policy
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuHead,
+            403,
+            'Only the SPMU Head may record the final resolution of a property accountability case.'
+        );
+
+        $data = $request->validate([
+            'resolution_outcome' => ['required', 'in:NO_BORROWER_CHARGE,COMPLIANCE_REQUIRED,BILLING_REQUIRED,COMPLIANCE_COMPLETED,ADMINISTRATIVELY_CLEARED'],
+            'resolution_remarks' => ['required', 'string', 'max:2000'],
+            'count_as_offense' => ['nullable', 'boolean'],
+        ]);
+
+        $countAsOffense = $request->boolean('count_as_offense');
+        $recordedSanction = null;
+
+        if (DB::table('billing_lines')->where('incident_id', $incident->id)->exists()) {
+            return back()->withErrors([
+                'incident' => 'This property case already has a Billing Statement. Continue through billing settlement or an authorized billing waiver instead of recording another Head decision.',
+            ]);
+        }
+
+        $outcomeLabel = match ($data['resolution_outcome']) {
+            'NO_BORROWER_CHARGE' => 'No borrower liability / no charge',
+            'COMPLIANCE_REQUIRED' => 'Repair / replacement / compliance required',
+            'BILLING_REQUIRED' => 'Billing / payment required',
+            'COMPLIANCE_COMPLETED' => 'Required compliance completed',
+            'ADMINISTRATIVELY_CLEARED' => 'Administratively cleared',
+        };
+
+        $isInterimDecision = in_array($data['resolution_outcome'], ['COMPLIANCE_REQUIRED', 'BILLING_REQUIRED'], true);
+
+        DB::transaction(function () use ($incident, $request, $data, $outcomeLabel, $isInterimDecision, $audit, $notifications, $policy, $countAsOffense, &$recordedSanction): void {
+            $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
+
+            if (in_array($incident->status, ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'], true)) {
+                return;
+            }
+
+            $previousStatus = $incident->status;
+            $existingRemarks = trim((string) $incident->remarks);
+            $decisionNote = 'SPMU Head decision: '.$outcomeLabel.'. '.$data['resolution_remarks'];
+
+            if ($countAsOffense) {
+                $recordedSanction = $policy->confirmIncidentOffense(
+                    $incident,
+                    $request->user(),
+                    $data['resolution_remarks']
+                );
+            }
+
+            if ($isInterimDecision) {
+                $nextStatus = $data['resolution_outcome'] === 'BILLING_REQUIRED'
+                    ? 'FOR_BILLING'
+                    : 'COMPLIANCE_REQUIRED';
+
+                $incident->update([
+                    'status' => $nextStatus,
+                    'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$decisionNote),
+                ]);
+
+                $audit->record(
+                    'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
+                    $incident,
+                    reason: $data['resolution_remarks'],
+                    before: ['status' => $previousStatus],
+                    after: [
+                        'status' => $nextStatus,
+                        'resolution_outcome' => $data['resolution_outcome'],
+                        'administrative_offense_confirmed' => (bool) $recordedSanction,
+                        'sanction_id' => $recordedSanction?->id,
+                    ]
+                );
+
+                $incident->loadMissing('borrower');
+                if ($incident->borrower) {
+                    $borrowerMessage = $nextStatus === 'FOR_BILLING'
+                        ? "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires billing/payment processing. Your linked borrowing restriction remains active until the obligation is settled or formally waived."
+                        : "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires repair, replacement, or other compliance. Coordinate with SPMU. Your linked borrowing restriction remains active until compliance is verified.";
+
+                    $notifications->send(
+                        'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
+                        collect([$incident->borrower]),
+                        $borrowerMessage,
+                        $incident,
+                        ['SYSTEM', 'EMAIL']
+                    );
+                }
+
+                return;
+            }
+
+            $resolutionNote = 'SPMU Head resolution: '.$outcomeLabel.'. '.$data['resolution_remarks'];
+
+            $incident->update([
+                'status' => 'RESOLVED',
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$resolutionNote),
+            ]);
+
+            BorrowerRestriction::query()
+                ->where('incident_id', $incident->id)
+                ->where('status', 'ACTIVE')
+                ->update([
+                    'status' => 'LIFTED',
+                    'effective_to' => now(),
+                    'lifted_by_user_id' => $request->user()->id,
+                ]);
+
+            $this->attemptCloseCustody((int) $incident->custody_transaction_id);
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                $incident,
+                reason: $data['resolution_remarks'],
+                before: ['status' => $previousStatus],
+                after: [
+                    'status' => 'RESOLVED',
+                    'resolution_outcome' => $data['resolution_outcome'],
+                    'administrative_offense_confirmed' => (bool) $recordedSanction,
+                    'sanction_id' => $recordedSanction?->id,
+                ]
+            );
+
+            $incident->loadMissing('borrower');
+            if ($incident->borrower) {
+                $notifications->send(
+                    'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                    collect([$incident->borrower]),
+                    "Property accountability case {$incident->incident_no} has been resolved by SPMU. The restriction linked to this case has been lifted. Any other active obligation or restriction on your account still applies.",
+                    $incident,
+                    ['SYSTEM', 'EMAIL']
+                );
+            }
+        }, 3);
+
+        $sanctionSuffix = $recordedSanction
+            ? ' Administrative offense recorded: '.$recordedSanction->offense_no.' offense — '.$recordedSanction->sanction_label.'.'
+            : '';
+
+        if ($isInterimDecision) {
+            return back()->with('status', ($data['resolution_outcome'] === 'BILLING_REQUIRED'
+                ? 'Head decision recorded. The case is now for billing/payment processing and the linked restriction remains active.'
+                : 'Head decision recorded. Required compliance remains open and the linked restriction stays active until SPMU verifies completion.').$sanctionSuffix);
+        }
+
+        return back()->with('status', 'Property accountability case resolved. Its linked borrowing restriction was lifted.'.$sanctionSuffix);
     }
 
     public function reviewViolation(

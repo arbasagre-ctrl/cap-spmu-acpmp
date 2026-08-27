@@ -32,6 +32,7 @@ class CustodyService
         private DocumentService $documents,
         private AuditService $audit,
         private NotificationService $notifications,
+        private OperationalCalendarService $operationalCalendar,
     ) {}
 
     /**
@@ -105,6 +106,9 @@ class CustodyService
                     'pickup_scheduled_at' => null,
 
                     'due_at' => $dueAt,
+                    'original_due_at' => $dueAt,
+                    'due_adjustment_reason' => null,
+                    'due_adjusted_at' => null,
                     'prepared_by_user_id' => null,
                     'prepared_at' => null,
                     'released_by_user_id' => null,
@@ -112,6 +116,11 @@ class CustodyService
                     'acknowledged_at' => null,
                     'closed_at' => null,
                 ]
+            );
+
+            $custody = $this->operationalCalendar->synchronizeCustodyDueDate(
+                $custody,
+                $this->audit
             );
 
             foreach ($version->items as $item) {
@@ -248,6 +257,12 @@ class CustodyService
         $pickup = CarbonImmutable::parse($pickupAt, $timezone);
         $expires = CarbonImmutable::parse($pickupExpiresAt, $timezone);
 
+        $this->operationalCalendar->assertOpenFor(
+            OperationalCalendarService::PICKUP,
+            $pickup,
+            'pickup_at'
+        );
+
         $custody->loadMissing('request.currentVersion', 'borrower');
         $version = $custody->request?->currentVersion;
 
@@ -266,12 +281,20 @@ class CustodyService
             ]);
         }
 
-        $approvedDate = CarbonImmutable::parse($approvedSchedule, $timezone)->toDateString();
+        $approvedDate = CarbonImmutable::parse($approvedSchedule, $timezone)->startOfDay();
+        $effectivePickupDate = $this->operationalCalendar->nextOpenDate(
+            OperationalCalendarService::PICKUP,
+            $approvedDate,
+            true
+        );
 
-        if ($pickup->toDateString() !== $approvedDate) {
+        if ($pickup->toDateString() !== $effectivePickupDate->toDateString()) {
+            $message = $effectivePickupDate->isSameDay($approvedDate)
+                ? 'Pickup must be scheduled on the approved Schedule Date: '.$approvedDate->format('F j, Y').'.'
+                : 'The approved Schedule Date '.$approvedDate->format('F j, Y').' is closed for pickup/release. Schedule the pickup on the next open operational date: '.$effectivePickupDate->format('F j, Y').'.';
+
             throw ValidationException::withMessages([
-                'pickup_at' => 'Pickup must be scheduled on the approved Schedule Date: '
-                    .CarbonImmutable::parse($approvedDate, $timezone)->format('F j, Y').'.',
+                'pickup_at' => $message,
             ]);
         }
 
@@ -586,6 +609,12 @@ class CustodyService
             403
         );
 
+        $this->operationalCalendar->assertOpenFor(
+            OperationalCalendarService::PICKUP,
+            now(),
+            'release'
+        );
+
         if (! $custody->prepared_at) {
             throw ValidationException::withMessages([
                 'release' => 'SPMU physical preparation is required before release.',
@@ -783,7 +812,7 @@ class CustodyService
                 ]);
 
             $this->audit->record('ITEMS_RELEASED', $custody, after: ['released_by' => $spmu->id, 'released_at' => now()->toIso8601String()]);
-            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Expected Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
+            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Effective Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
 
             if ($hasLinen) {
                 $laundryWorkers = User::query()
@@ -813,6 +842,14 @@ class CustodyService
 
         return DB::transaction(function () use ($custody, $spmu, $quantities, $conditions, $remarks, $policeBlotterReferences, $evidenceFileIds, $conditionBreakdowns): ReturnTransaction {
             $custody = CustodyTransaction::query()->lockForUpdate()->findOrFail($custody->id);
+            $custody = $this->operationalCalendar->synchronizeCustodyDueDate($custody, $this->audit);
+
+            $this->operationalCalendar->assertOpenFor(
+                OperationalCalendarService::RETURN,
+                now(),
+                'return'
+            );
+
             if (! in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE', 'INCIDENT_OPEN'], true)) {
                 throw ValidationException::withMessages(['return' => 'This custody record is no longer open for a physical return.']);
             }
@@ -974,7 +1011,13 @@ class CustodyService
                     ->except('FINE')
                     ->sum();
 
-                if ($nonFine > 0 && empty($evidenceFileIds[$line->id])) {
+                $usesLaundrySupportingForm =
+                    (bool) $line->requestItem?->inventoryItem?->laundry_required
+                    && $laundryJob;
+
+                if ($nonFine > 0
+                    && ! $usesLaundrySupportingForm
+                    && empty($evidenceFileIds[$line->id])) {
                     throw ValidationException::withMessages([
                         'evidence_files' => 'Supporting evidence is required for every item with damaged, destroyed, missing, lost, or stolen quantity.',
                     ]);
@@ -992,7 +1035,7 @@ class CustodyService
                 'return_no' => 'RET-'.now()->format('YmdHis').'-'.$custody->id,
                 'custody_transaction_id' => $custody->id,
                 'received_by_user_id' => $spmu->id,
-                'return_type' => $early ? 'EARLY' : 'NORMAL',
+                'return_type' => 'NORMAL',
                 'received_at' => now(),
                 'status' => 'INSPECTED',
                 'remarks' => $remarks,
@@ -1010,7 +1053,7 @@ class CustodyService
                 if ($item->laundry_required && $laundryJob) {
                     /*
                      * Current linen flow:
-                     * Borrower -> Laundry Worker -> SPMU -> Laundry Worker upload.
+                     * Borrower -> Laundry Worker -> SPMU Action Officer archive.
                      * The Laundry Worker returns the cleaned linen and the same
                      * physical form directly to SPMU. SPMU performs the final
                      * physical quantity/condition inspection before the worker
@@ -1156,9 +1199,9 @@ class CustodyService
                 if ($allLaundryReturned) {
                     /*
                      * SPMU has now physically accepted/accounted for all linen.
-                     * The physical form is returned to the Laundry Worker for
-                     * the final scan/upload. Laundry is not settled until that
-                     * fully signed form is successfully uploaded.
+                     * The SPMU Action Officer archives the accomplished physical Laundry
+                     * Form as the supporting document. Laundry is not settled
+                     * until that final form is successfully uploaded.
                      */
                     $laundryJob->update([
                         'status' => 'AWAITING_FINAL_FORM_UPLOAD',

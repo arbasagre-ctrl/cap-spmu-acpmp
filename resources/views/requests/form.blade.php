@@ -36,15 +36,9 @@
         App\Models\RequestSupportingDocument::TYPE_PERMISSION_TO_CONDUCT
     );
 
-    $categories = $items
-        ->map(fn ($item) => $item->category?->category_name)
-        ->filter()
-        ->unique()
-        ->sort()
-        ->values();
 
     $divisionOptions = [
-        'ADMINISTRATION' => 'Administration',
+        'ADMINISTRATION' => 'Administrative',
         'ACADEMIC' => 'Academic',
         'RESEARCH_INNOVATION_COLLABORATION' => 'Research, Innovation and Collaboration',
     ];
@@ -100,24 +94,15 @@
         ],
     ];
 
-    $programSuggestions = [
-        'Bachelor of Science in Information Systems',
-        'Bachelor of Science in Information Technology',
-        'Bachelor of Science in Computer Science',
-        'Bachelor of Science in Civil Engineering',
-        'Bachelor of Science in Electrical Engineering',
-        'Bachelor of Science in Electronics Engineering',
-        'Bachelor of Science in Mechanical Engineering',
-        'Bachelor of Science in Nursing',
-        'Bachelor of Science in Hospitality Management',
-        'Bachelor of Science in Tourism Management',
-        'Bachelor of Science in Business Administration',
-        'Bachelor of Science in Education',
-        'Graduate School programs',
-    ];
 
     $selectedDivision = old('division_code', $version->division_code ?? '');
     $selectedOfficeUnit = old('office_unit', $version->office_unit ?? '');
+
+    $oldLocations = collect(old('locations', []));
+    $requestUsesOffCampus = $oldLocations->contains('OFF_CAMPUS')
+        || ($oldLocations->isEmpty() && $selectedItems->contains(
+            fn ($requestItem) => $requestItem?->use_location === 'OFF_CAMPUS'
+        ));
 @endphp
 
 <style>
@@ -236,18 +221,6 @@
         margin: 0;
     }
 
-    .student-fields {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-        margin-top: 15px;
-        padding-top: 15px;
-        border-top: 1px solid var(--cr-line);
-    }
-
-    .student-fields[hidden] {
-        display: none !important;
-    }
 
     .inventory-date-context {
         display: inline-flex;
@@ -264,22 +237,32 @@
         white-space: nowrap;
     }
 
-    .item-picker-toolbar {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(190px, .34fr);
-        gap: 12px;
+    .inventory-search-shell {
+        position: relative;
         margin-bottom: 16px;
     }
 
-    .item-picker-toolbar label {
+    .inventory-search-label {
+        display: block;
         min-width: 0;
     }
 
     .catalog-shell {
-        overflow: hidden;
+        position: absolute;
+        z-index: 30;
+        top: calc(100% + 8px);
+        left: 0;
+        right: 0;
+        max-height: 430px;
+        overflow: auto;
         border: 1px solid var(--cr-line);
         border-radius: 12px;
         background: #fff;
+        box-shadow: 0 16px 38px rgba(16, 42, 67, .16);
+    }
+
+    .catalog-shell[hidden] {
+        display: none !important;
     }
 
     .catalog-summary {
@@ -383,22 +366,6 @@
         color: var(--cr-success);
     }
 
-    .catalog-pagination {
-        display: grid;
-        grid-template-columns: auto minmax(120px, 1fr) auto;
-        align-items: center;
-        gap: 10px;
-        padding: 11px 14px;
-        border-top: 1px solid var(--cr-line);
-        background: #fbfcfe;
-    }
-
-    .catalog-page-label {
-        color: var(--cr-muted);
-        font-size: 12px;
-        font-weight: 700;
-        text-align: center;
-    }
 
     .catalog-empty {
         padding: 28px 18px;
@@ -489,8 +456,57 @@
         max-width: 108px;
     }
 
-    .selected-location {
-        min-width: 150px;
+    .request-premises-panel {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border: 1px solid #d8e3ee;
+        border-radius: 12px;
+        background: #f8fafc;
+    }
+
+    .request-premises-copy {
+        display: grid;
+        gap: 3px;
+        color: var(--cr-muted);
+        font-size: 11px;
+        line-height: 1.45;
+    }
+
+    .request-premises-copy strong {
+        color: var(--cr-ink);
+        font-size: 12px;
+    }
+
+    .request-premises-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 38px;
+        margin: 0;
+        padding: 8px 11px;
+        border: 1px solid #cbd8e5;
+        border-radius: 10px;
+        background: #fff;
+        color: var(--cr-ink);
+        font-weight: 800;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+
+    .request-premises-toggle input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin: 0;
+    }
+
+    @media (max-width: 760px) {
+        .request-premises-panel {
+            flex-direction: column;
+        }
     }
 
     .selected-empty {
@@ -761,7 +777,6 @@
     }
 
     @media (max-width: 800px) {
-        .item-picker-toolbar,
         .documents-grid {
             grid-template-columns: 1fr;
         }
@@ -807,6 +822,13 @@
             padding-right: 15px;
         }
 
+        .catalog-shell {
+            position: static;
+            max-height: 360px;
+            margin-top: 8px;
+            box-shadow: none;
+        }
+
         .catalog-item {
             grid-template-columns: 1fr;
         }
@@ -822,14 +844,6 @@
             text-align: left;
         }
 
-        .catalog-pagination {
-            grid-template-columns: 1fr 1fr;
-        }
-
-        .catalog-page-label {
-            grid-column: 1 / -1;
-            grid-row: 1;
-        }
 
         .sticky-actions {
             position: static;
@@ -869,6 +883,27 @@
         height: 18px;
         margin: 2px 0 0;
     }
+
+    .final-confirmation > span {
+        display: grid;
+        gap: 5px;
+    }
+
+    .final-confirmation > span > strong {
+        color: var(--cr-ink);
+        font-size: 12px;
+    }
+
+    .final-confirmation > span > small {
+        color: var(--cr-muted);
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.55;
+    }
+
+    .acknowledgement-help {
+        margin-top: 7px;
+    }
 </style>
 
 <section class="page-heading create-request-heading">
@@ -884,8 +919,6 @@
 
         <p class="heading-copy">
             Choose the event details, borrowing dates, and items you need.
-            Saving or submitting the request does not reserve inventory.
-            Inventory is reserved only after SPMU approval.
         </p>
     </div>
 </section>
@@ -956,7 +989,7 @@
                     <p class="eyebrow">Request details</p>
                     <h2 id="request-details-heading">Borrowing information</h2>
                     <p class="meta">
-                        Complete the request information first. Off-campus use is selected per item in the next stage.
+                        Complete the request information first. Premises is selected once before searching for items in the next stage.
                     </p>
                 </div>
 
@@ -1068,41 +1101,6 @@
                             >
                             This request represents a student activity
                         </label>
-
-                        <div id="student-activity-fields" class="student-fields">
-                            <label>
-                                Student Organization (optional)
-                                <input
-                                    name="student_organization"
-                                    value="{{ old('student_organization', $version->student_organization) }}"
-                                    maxlength="255"
-                                    placeholder="Enter the student organization, if applicable"
-                                >
-                                @error('student_organization')
-                                    <small class="field-error">{{ $message }}</small>
-                                @enderror
-                            </label>
-
-                            <label>
-                                Program / Department
-                                <input
-                                    name="represented_program_department"
-                                    list="program-suggestions"
-                                    value="{{ old('represented_program_department', $version->represented_program_department) }}"
-                                    maxlength="255"
-                                    autocomplete="off"
-                                    placeholder="Select or type the academic program / department"
-                                >
-                                <datalist id="program-suggestions">
-                                    @foreach($programSuggestions as $program)
-                                        <option value="{{ $program }}"></option>
-                                    @endforeach
-                                </datalist>
-                                @error('represented_program_department')
-                                    <small class="field-error">{{ $message }}</small>
-                                @enderror
-                            </label>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1143,39 +1141,42 @@
                     <p class="field-error">{{ $message }}</p>
                 @enderror
 
-                <div class="item-picker-toolbar">
-                    <label for="inventory-search">
-                        Search item / category
+                <div class="request-premises-panel" id="request-premises-panel">
+                    <div class="request-premises-copy">
+                        <strong>Premises</strong>
+                        <span id="request-premises-help">
+                            Items are On-campus by default. Check Off-campus only when the request is for Barricade outside campus premises.
+                        </span>
+                    </div>
+
+                    <label class="request-premises-toggle">
                         <input
-                            id="inventory-search"
-                            type="search"
-                            placeholder="Search item name, category, description, or unit..."
-                            autocomplete="off"
+                            id="request-off-campus-toggle"
+                            type="checkbox"
+                            value="1"
+                            @checked($requestUsesOffCampus)
                         >
-                    </label>
-
-                    <label for="inventory-category">
-                        Category
-                        <select id="inventory-category">
-                            <option value="">All Categories</option>
-
-                            @foreach($categories as $category)
-                                <option value="{{ strtolower($category) }}">
-                                    {{ $category }}
-                                </option>
-                            @endforeach
-                        </select>
+                        <span>Off-campus</span>
                     </label>
                 </div>
 
-                <div class="catalog-shell">
-                    <div class="catalog-summary">
-                        <span id="catalog-result-label">
-                            Browse available inventory
-                        </span>
+                <div class="inventory-search-shell">
+                    <label for="inventory-search" class="inventory-search-label">
+                        Search inventory
+                        <input
+                            id="inventory-search"
+                            type="search"
+                            placeholder="Start typing an item name, category, description, or unit..."
+                            autocomplete="off"
+                            aria-autocomplete="list"
+                            aria-controls="catalog-list"
+                        >
+                    </label>
 
-                        <span>7 items per page</span>
-                    </div>
+                    <div class="catalog-shell" id="catalog-shell" hidden>
+                        <div class="catalog-summary">
+                            <span id="catalog-result-label">Recommended matches</span>
+                        </div>
 
                     <div id="catalog-list" class="catalog-list">
                         @foreach($items as $item)
@@ -1213,6 +1214,7 @@
                                 data-item-id="{{ $item->id }}"
                                 data-search="{{ $searchText }}"
                                 data-category="{{ strtolower($categoryName) }}"
+                                data-off-campus-allowed="{{ $item->off_campus_allowed ? '1' : '0' }}"
                             >
                                 <div class="catalog-item-main">
                                     <div class="catalog-item-title">
@@ -1262,32 +1264,9 @@
                         class="catalog-empty"
                         hidden
                     >
-                        No item matches the current search and category filter.
+                        No matching eligible item found. Try another item name or keyword.
                     </div>
 
-                    <div class="catalog-pagination">
-                        <button
-                            type="button"
-                            class="button secondary small ui-pressable"
-                            id="catalog-previous"
-                        >
-                            &larr; Previous
-                        </button>
-
-                        <span
-                            class="catalog-page-label"
-                            id="catalog-page-label"
-                        >
-                            Page 1
-                        </span>
-
-                        <button
-                            type="button"
-                            class="button secondary small ui-pressable"
-                            id="catalog-next"
-                        >
-                            Next &rarr;
-                        </button>
                     </div>
                 </div>
 
@@ -1305,7 +1284,7 @@
                     id="selected-empty"
                     class="selected-empty"
                 >
-                    No items added yet. Search or browse above, then select <strong>+ Add</strong>.
+                    No items added yet. Use the search field above, then select <strong>+ Add</strong>.
                 </div>
 
                 <div class="table-wrap selected-items-table">
@@ -1315,7 +1294,6 @@
                                 <th>Item</th>
                                 <th>Available</th>
                                 <th>Quantity</th>
-                                <th>Use Location</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -1349,6 +1327,7 @@
                                     data-item-name="{{ $item->unique_description }}"
                                     data-item-category="{{ $categoryName }}"
                                     data-item-unit="{{ $item->unit?->unit_name ?? '—' }}"
+                                    data-off-campus-allowed="{{ $item->off_campus_allowed ? '1' : '0' }}"
                                     @if(!$wasSelected) hidden @endif
                                 >
                                     <td data-label="Item">
@@ -1403,33 +1382,21 @@
                                             aria-label="Requested quantity for {{ $item->unique_description }}"
                                         >
                                     </td>
-
-                                    <td data-label="Use Location">
-                                        <select
-                                            class="selected-location"
-                                            name="locations[{{ $item->id }}]"
-                                            data-selected-location="{{ $item->id }}"
-                                            aria-label="Use location for {{ $item->unique_description }}"
-                                        >
-                                            <option
-                                                value="ON_CAMPUS"
-                                                @selected($selectedLocation === 'ON_CAMPUS')
-                                            >
-                                                On Campus
-                                            </option>
-
-                                            @if($item->off_campus_allowed)
-                                                <option
-                                                    value="OFF_CAMPUS"
-                                                    @selected($selectedLocation === 'OFF_CAMPUS')
-                                                >
-                                                    Off Campus
-                                                </option>
-                                            @endif
-                                        </select>
-                                    </td>
+                                    @php
+                                        $normalizedSelectedLocation = $item->off_campus_allowed
+                                            && $selectedLocation === 'OFF_CAMPUS'
+                                                ? 'OFF_CAMPUS'
+                                                : 'ON_CAMPUS';
+                                    @endphp
 
                                     <td data-label="Action">
+                                        <input
+                                            type="hidden"
+                                            name="locations[{{ $item->id }}]"
+                                            value="{{ $normalizedSelectedLocation }}"
+                                            data-selected-location="{{ $item->id }}"
+                                        >
+
                                         <button
                                             type="button"
                                             class="button danger small ui-pressable"
@@ -1445,15 +1412,21 @@
                 </div>
 
                 <div
+                    id="off-campus-mode-note"
+                    class="callout picker-warning"
+                    hidden
+                >
+                    <strong>Off-campus borrowing is active.</strong>
+                    <p>Only Barricade may be selected, and it must be borrowed by itself for off-campus use.</p>
+                </div>
+
+                <div
                     id="campus-mode-conflict"
                     class="callout danger picker-warning"
                     hidden
                 >
-                    <strong>Off-campus use must be the only selected item.</strong>
-                    <p>
-                        If an eligible item is set to Off Campus, other items cannot be added.
-                        Change it back to On Campus or remove it before adding other items.
-                    </p>
+                    <strong>Review the Off-campus selection.</strong>
+                    <p>Off-campus borrowing allows one Barricade item only. Remove incompatible selected items or switch back to On-campus.</p>
                 </div>
 
                 <div
@@ -1526,12 +1499,12 @@
                             <strong id="summary-return">—</strong>
                         </div>
                         <div class="review-summary-field">
+                            <span>Premises</span>
+                            <strong id="summary-premises">On-campus</strong>
+                        </div>
+                        <div class="review-summary-field">
                             <span>Student Activity</span>
                             <strong id="summary-student-activity">No</strong>
-                        </div>
-                        <div class="review-summary-field" id="summary-student-details-wrap" hidden>
-                            <span>Organization / Program</span>
-                            <strong id="summary-student-details">—</strong>
                         </div>
                     </div>
 
@@ -1545,12 +1518,11 @@
                                     <th>Category</th>
                                     <th>Unit</th>
                                     <th>Quantity</th>
-                                    <th>Use Location</th>
                                 </tr>
                             </thead>
                             <tbody id="summary-items-body">
                                 <tr>
-                                    <td colspan="6" class="review-items-empty">No selected items.</td>
+                                    <td colspan="5" class="review-items-empty">No selected items.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1634,26 +1606,39 @@
                 </div>
 
                 <label class="final-confirmation">
+                    <input type="hidden" name="borrower_acknowledgement" value="0">
                     <input
                         id="final-confirmation"
                         type="checkbox"
+                        name="borrower_acknowledgement"
                         value="1"
+                        @checked(old('borrower_acknowledgement'))
                     >
                     <span>
-                        I confirm that the request information, selected items, quantities,
-                        use locations, and uploaded document(s) are correct.
+                        <strong>Borrower Certification and Acknowledgement</strong>
+                        <small>
+                            I hereby certify that the information provided in this borrowing request, including the selected items,
+                            requested quantities, premises, borrowing period, and uploaded supporting document(s), is true and correct.
+                            I acknowledge responsibility for the proper use, custody, and timely return of all approved items in accordance
+                            with SPMU policies and procedures.
+                        </small>
                     </span>
                 </label>
+                <p class="field-help acknowledgement-help">
+
+                </p>
+                @error('borrower_acknowledgement')
+                    <p class="field-error">{{ $message }}</p>
+                @enderror
                 <p class="field-error" id="final-confirmation-error" hidden>
-                    Confirm the request summary before submitting to SPMU.
+                    Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.
                 </p>
             </div>
         </section>
 
         <div class="sticky-actions" data-stage-panel="3">
             <p class="meta">
-                Search works across the full eligible inventory.
-                Previous / Next is only for browsing seven items at a time.
+                &nbsp;
             </p>
 
             <div class="actions">
@@ -1686,8 +1671,6 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    const pageSize = 7;
-
     const form = document.getElementById('request-form');
     const submitButton = document.getElementById('request-submit-button');
     const saveDraftButton = document.getElementById('request-save-draft-button');
@@ -1709,9 +1692,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryOffice = document.getElementById('summary-office');
     const summaryFrom = document.getElementById('summary-from');
     const summaryReturn = document.getElementById('summary-return');
+    const summaryPremises = document.getElementById('summary-premises');
     const summaryStudentActivity = document.getElementById('summary-student-activity');
-    const summaryStudentDetailsWrap = document.getElementById('summary-student-details-wrap');
-    const summaryStudentDetails = document.getElementById('summary-student-details');
     const summaryItemsBody = document.getElementById('summary-items-body');
     const summaryRequestLetter = document.getElementById('summary-request-letter');
     const summaryPtcRow = document.getElementById('summary-ptc-row');
@@ -1720,25 +1702,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const officeUnitsByDivision = @json($officeUnitsByDivision);
 
     const studentToggle = document.getElementById('student-activity-toggle');
-    const studentFields = document.getElementById('student-activity-fields');
     const ptcDocumentBox = document.getElementById('ptc-document-box');
 
     const searchInput = document.getElementById('inventory-search');
-    const categorySelect = document.getElementById('inventory-category');
-
     const catalogItems = Array.from(
         document.querySelectorAll('[data-catalog-item]')
     );
 
-    const previousButton = document.getElementById('catalog-previous');
-    const nextButton = document.getElementById('catalog-next');
-    const pageLabel = document.getElementById('catalog-page-label');
+    const catalogShell = document.getElementById('catalog-shell');
     const resultLabel = document.getElementById('catalog-result-label');
     const catalogEmpty = document.getElementById('catalog-empty');
 
     const selectedEmpty = document.getElementById('selected-empty');
     const selectedCount = document.getElementById('selected-item-count');
     const availabilityConflict = document.getElementById('availability-conflict');
+    const requestOffCampusToggle = document.getElementById('request-off-campus-toggle');
+    const premisesHelp = document.getElementById('request-premises-help');
+    const offCampusModeNote = document.getElementById('off-campus-mode-note');
     const campusModeConflict = document.getElementById('campus-mode-conflict');
 
     const stagePanels = Array.from(
@@ -1750,7 +1730,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let activeStage = 1;
     let furthestStage = 1;
-    let currentPage = 1;
     let availability = {};
     let availabilityLoaded = false;
     let availabilityTimer = null;
@@ -1778,8 +1757,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateReviewSummary() {
         const purposeField = form?.querySelector('[name="purpose_event"]');
         const locationField = form?.querySelector('[name="location"]');
-        const organizationField = form?.querySelector('[name="student_organization"]');
-        const programField = form?.querySelector('[name="represented_program_department"]');
 
         setSummaryText(summaryPurpose, purposeField?.value);
         setSummaryText(summaryLocation, locationField?.value);
@@ -1790,6 +1767,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setSummaryText(summaryOffice, officeInput?.value);
         setSummaryText(summaryFrom, formatDateLabel(scheduleDate?.value));
         setSummaryText(summaryReturn, formatDateLabel(returnDate?.value));
+        setSummaryText(summaryPremises, requestOffCampusToggle?.checked ? 'Off-campus' : 'On-campus');
 
         const isStudentActivity = Boolean(studentToggle?.checked);
         setSummaryText(
@@ -1798,21 +1776,6 @@ document.addEventListener('DOMContentLoaded', () => {
             'No'
         );
 
-        if (summaryStudentDetailsWrap) {
-            summaryStudentDetailsWrap.hidden = !isStudentActivity;
-        }
-
-        if (isStudentActivity) {
-            const organization = String(organizationField?.value || '').trim();
-            const program = String(programField?.value || '').trim();
-            const parts = [];
-
-            if (organization) parts.push(organization);
-            if (program) parts.push(program);
-
-            setSummaryText(summaryStudentDetails, parts.join(' · '));
-        }
-
         if (summaryItemsBody) {
             const rows = getSelectedRows();
             summaryItemsBody.innerHTML = '';
@@ -1820,7 +1783,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rows.length === 0) {
                 const emptyRow = document.createElement('tr');
                 const emptyCell = document.createElement('td');
-                emptyCell.colSpan = 6;
+                emptyCell.colSpan = 5;
                 emptyCell.className = 'review-items-empty';
                 emptyCell.textContent = 'No selected items.';
                 emptyRow.appendChild(emptyCell);
@@ -1831,12 +1794,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const quantity = document.querySelector(
                         `[data-selected-quantity="${itemId}"]`
                     )?.value || '0';
-                    const location = document.querySelector(
-                        `[data-selected-location="${itemId}"]`
-                    )?.value === 'OFF_CAMPUS'
-                        ? 'Off Campus'
-                        : 'On Campus';
-
                     const tr = document.createElement('tr');
                     [
                         row.dataset.itemCode || `INV-${String(itemId).padStart(4, '0')}`,
@@ -1844,7 +1801,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         row.dataset.itemCategory || '—',
                         row.dataset.itemUnit || '—',
                         String(Math.max(0, Math.trunc(Number(quantity) || 0))),
-                        location,
                     ].forEach((value, index) => {
                         const td = document.createElement('td');
 
@@ -2043,22 +1999,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function syncStudentFields() {
         const active = Boolean(studentToggle?.checked);
 
-        if (studentFields) {
-            studentFields.hidden = !active;
-        }
-
-        const programField = studentFields?.querySelector(
-            '[name="represented_program_department"]'
-        );
-
-        if (programField) {
-            programField.required = active;
-        }
-
-        studentFields?.querySelectorAll('input').forEach((input) => {
-            input.disabled = !active;
-        });
-
         if (ptcDocumentBox) {
             ptcDocumentBox.hidden = !active;
         }
@@ -2066,52 +2006,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function getFilteredCatalog() {
         const query = (searchInput?.value || '').trim().toLowerCase();
-        const category = (categorySelect?.value || '').trim().toLowerCase();
+        const offCampusMode = Boolean(requestOffCampusToggle?.checked);
 
-        return catalogItems.filter((item) => {
-            const matchesSearch = !query || (item.dataset.search || '').includes(query);
-            const matchesCategory = !category || (item.dataset.category || '') === category;
-            return matchesSearch && matchesCategory;
-        });
+        if (!query) {
+            return [];
+        }
+
+        return catalogItems
+            .filter((item) => (item.dataset.search || '').includes(query))
+            .filter((item) => !offCampusMode || item.dataset.offCampusAllowed === '1')
+            .slice(0, 8);
     }
 
     function renderCatalog() {
+        const query = (searchInput?.value || '').trim();
         const filtered = getFilteredCatalog();
-        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
 
-        currentPage = Math.min(Math.max(1, currentPage), totalPages);
         catalogItems.forEach((item) => { item.hidden = true; });
 
-        const start = (currentPage - 1) * pageSize;
-        const end = Math.min(start + pageSize, filtered.length);
-
-        filtered.slice(start, end).forEach((item) => { item.hidden = false; });
-
-        if (catalogEmpty) {
-            catalogEmpty.hidden = filtered.length !== 0;
+        if (!query) {
+            if (catalogShell) catalogShell.hidden = true;
+            if (catalogEmpty) catalogEmpty.hidden = true;
+            if (resultLabel) resultLabel.textContent = 'Recommended matches';
+            syncCatalogButtons();
+            return;
         }
 
-        if (pageLabel) {
-            pageLabel.textContent = filtered.length
-                ? `Page ${currentPage} of ${totalPages}`
-                : 'No results';
-        }
+        filtered.forEach((item) => { item.hidden = false; });
+
+        if (catalogShell) catalogShell.hidden = false;
+        if (catalogEmpty) catalogEmpty.hidden = filtered.length !== 0;
 
         if (resultLabel) {
-            if (filtered.length === 0) {
-                resultLabel.textContent = 'No matching items';
-            } else {
-                resultLabel.textContent =
-                    `Showing ${start + 1}-${end} of ${filtered.length} eligible items`;
-            }
-        }
-
-        if (previousButton) {
-            previousButton.disabled = filtered.length === 0 || currentPage <= 1;
-        }
-
-        if (nextButton) {
-            nextButton.disabled = filtered.length === 0 || currentPage >= totalPages;
+            resultLabel.textContent = filtered.length
+                ? `Recommended matches for “${query}”`
+                : `No match for “${query}”`;
         }
 
         syncCatalogButtons();
@@ -2131,39 +2060,50 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    function hasOffCampusItem() {
-        return getSelectedRows().some((row) => {
-            const itemId = row.dataset.selectedItem;
-            return document.querySelector(
-                `[data-selected-location="${itemId}"]`
-            )?.value === 'OFF_CAMPUS';
-        });
+    function isOffCampusMode() {
+        return Boolean(requestOffCampusToggle?.checked);
     }
 
-    function syncCampusModeOptions() {
-        const rows = getSelectedRows();
-        const offCampusSelected = hasOffCampusItem();
+    function syncRequestPremises() {
+        const offCampusMode = isOffCampusMode();
 
-        rows.forEach((row) => {
-            const itemId = row.dataset.selectedItem;
-            const select = document.querySelector(
-                `[data-selected-location="${itemId}"]`
-            );
-            const offCampusOption = select?.querySelector('option[value="OFF_CAMPUS"]');
-
-            if (offCampusOption) {
-                offCampusOption.disabled = rows.length > 1 && !offCampusSelected;
-            }
+        document.querySelectorAll('[data-selected-location]').forEach((location) => {
+            location.value = 'ON_CAMPUS';
         });
+
+        if (offCampusMode) {
+            getSelectedRows().forEach((row) => {
+                const itemId = row.dataset.selectedItem;
+                const location = document.querySelector(`[data-selected-location="${itemId}"]`);
+                if (location) {
+                    location.value = 'OFF_CAMPUS';
+                }
+            });
+        }
+
+        if (premisesHelp) {
+            premisesHelp.textContent = offCampusMode
+                ? 'Off-campus selected. Search and select Barricade only; it must be the only item in this request.'
+                : 'Items are On-campus by default. Check Off-campus only when the request is for Barricade outside campus premises.';
+        }
+
+        if (searchInput) {
+            searchInput.placeholder = offCampusMode
+                ? 'Search Barricade for off-campus borrowing...'
+                : 'Start typing an item name, category, description, or unit...';
+        }
     }
 
     function syncCatalogButtons() {
-        const offCampusMode = hasOffCampusItem();
+        const offCampusMode = isOffCampusMode();
+        const selectedCountNow = getSelectedRows().length;
 
         document.querySelectorAll('[data-add-item]').forEach((button) => {
             const itemId = button.dataset.addItem;
             const added = isSelected(itemId);
             const available = Math.floor(Number(availability[itemId]?.available ?? 0));
+            const catalogItem = document.querySelector(`[data-catalog-item][data-item-id="${itemId}"]`);
+            const offCampusAllowed = catalogItem?.dataset.offCampusAllowed === '1';
 
             if (added) {
                 button.textContent = 'Added';
@@ -2175,15 +2115,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
             button.textContent = '+ Add';
             button.classList.remove('is-added');
+
+            const modeBlocked = offCampusMode && (!offCampusAllowed || selectedCountNow >= 1);
             button.disabled =
                 !availabilityLoaded
                 || !scheduleDate?.value
                 || !returnDate?.value
                 || available <= 0
-                || offCampusMode;
+                || modeBlocked;
 
-            button.title = offCampusMode
-                ? 'An Off-Campus item must be the only selected item.'
+            button.title = modeBlocked
+                ? 'Off-campus borrowing allows one Barricade item only.'
                 : '';
         });
     }
@@ -2243,7 +2185,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function syncSelectedItems() {
         let count = 0;
         let conflict = false;
-        let offCampus = false;
 
         document.querySelectorAll('[data-selected-item]').forEach((row) => {
             const itemId = row.dataset.selectedItem;
@@ -2260,9 +2201,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             count++;
-            if (location?.value === 'OFF_CAMPUS') {
-                offCampus = true;
-            }
 
             const balance = availability[itemId];
             if (!availabilityLoaded || !balance) {
@@ -2305,21 +2243,28 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        const campusConflict = offCampus && count > 1;
-        syncCampusModeOptions();
+        syncRequestPremises();
+
+        const offCampusMode = isOffCampusMode();
+        const selectedRows = getSelectedRows();
+        const offCampusInvalid = offCampusMode && (
+            selectedRows.length !== 1
+            || selectedRows[0]?.dataset.offCampusAllowed !== '1'
+        );
 
         if (selectedEmpty) selectedEmpty.hidden = count !== 0;
         if (selectedCount) selectedCount.textContent = String(count);
-        if (campusModeConflict) campusModeConflict.hidden = !campusConflict;
+        if (offCampusModeNote) offCampusModeNote.hidden = !offCampusMode || offCampusInvalid;
+        if (campusModeConflict) campusModeConflict.hidden = !offCampusInvalid;
         if (availabilityConflict) {
             availabilityConflict.hidden = !availabilityLoaded || !conflict;
         }
 
         const itemSelectionInvalid =
-            count === 0 || campusConflict || (availabilityLoaded && conflict);
+            count === 0 || offCampusInvalid || (availabilityLoaded && conflict);
 
         if (submitButton) {
-            submitButton.disabled = itemSelectionInvalid;
+            submitButton.disabled = itemSelectionInvalid || !finalConfirmation?.checked;
         }
 
         if (saveDraftButton) {
@@ -2334,7 +2279,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function addItem(itemId) {
-        if (hasOffCampusItem()) {
+        const offCampusMode = isOffCampusMode();
+        const catalogItem = document.querySelector(`[data-catalog-item][data-item-id="${itemId}"]`);
+        const offCampusAllowed = catalogItem?.dataset.offCampusAllowed === '1';
+
+        if (offCampusMode && (!offCampusAllowed || getSelectedRows().length >= 1)) {
             return;
         }
 
@@ -2351,11 +2300,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         checkbox.checked = true;
+
+        const location = document.querySelector(`[data-selected-location="${itemId}"]`);
+        if (location) {
+            location.value = offCampusMode ? 'OFF_CAMPUS' : 'ON_CAMPUS';
+        }
+
         if (quantity && Number(quantity.value || 0) <= 0) {
             quantity.value = '1';
         }
 
         syncSelectedItems();
+
+        if (searchInput) {
+            searchInput.value = '';
+            renderCatalog();
+            searchInput.focus();
+        }
     }
 
     function removeItem(itemId) {
@@ -2475,24 +2436,12 @@ document.addEventListener('DOMContentLoaded', () => {
     scheduleDate?.addEventListener('change', refreshAvailability);
     returnDate?.addEventListener('change', refreshAvailability);
 
-    searchInput?.addEventListener('input', () => {
-        currentPage = 1;
-        renderCatalog();
-    });
+    searchInput?.addEventListener('input', renderCatalog);
 
-    categorySelect?.addEventListener('change', () => {
-        currentPage = 1;
-        renderCatalog();
-    });
-
-    previousButton?.addEventListener('click', () => {
-        currentPage = Math.max(1, currentPage - 1);
-        renderCatalog();
-    });
-
-    nextButton?.addEventListener('click', () => {
-        currentPage++;
-        renderCatalog();
+    searchInput?.addEventListener('focus', () => {
+        if ((searchInput.value || '').trim()) {
+            renderCatalog();
+        }
     });
 
     document.querySelectorAll('[data-add-item]').forEach((button) => {
@@ -2521,8 +2470,41 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    document.querySelectorAll('[data-selected-location]').forEach((select) => {
-        select.addEventListener('change', syncSelectedItems);
+    requestOffCampusToggle?.addEventListener('change', () => {
+        if (requestOffCampusToggle.checked) {
+            const selectedRows = getSelectedRows();
+            const needsReset = selectedRows.length > 1
+                || selectedRows.some((row) => row.dataset.offCampusAllowed !== '1');
+
+            if (needsReset) {
+                const proceed = window.confirm(
+                    'Switch to Off-campus borrowing? Current selected items will be removed because only Barricade may be borrowed off-campus.'
+                );
+
+                if (!proceed) {
+                    requestOffCampusToggle.checked = false;
+                    syncRequestPremises();
+                    syncSelectedItems();
+                    renderCatalog();
+                    return;
+                }
+
+                getSelectedRows().forEach((row) => {
+                    const itemId = row.dataset.selectedItem;
+                    const checkbox = document.querySelector(`[data-selected-checkbox="${itemId}"]`);
+                    const quantity = document.querySelector(`[data-selected-quantity="${itemId}"]`);
+                    const location = document.querySelector(`[data-selected-location="${itemId}"]`);
+
+                    if (checkbox) checkbox.checked = false;
+                    if (quantity) quantity.value = '0';
+                    if (location) location.value = 'ON_CAMPUS';
+                });
+            }
+        }
+
+        syncRequestPremises();
+        syncSelectedItems();
+        renderCatalog();
     });
 
     form?.addEventListener('submit', (event) => {
@@ -2601,10 +2583,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (finalConfirmationError) {
             finalConfirmationError.hidden = Boolean(finalConfirmation.checked);
         }
+        syncSelectedItems();
     });
 
     syncOfficeOptions(false);
     syncStudentFields();
+    syncRequestPremises();
     syncDateContext();
     renderCatalog();
     syncSelectedItems();

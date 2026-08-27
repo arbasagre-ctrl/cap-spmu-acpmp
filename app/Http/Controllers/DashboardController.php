@@ -33,7 +33,8 @@ class DashboardController extends Controller
         $statistics = [];
         $queue = collect();
         $nextCustodies = collect();
-        $latestRequest = null;
+        $activeRequestBars = collect();
+        $activeRequestTotal = 0;
         $dashboardMode = $workspace;
 
         if ($workspace === 'BORROWER') {
@@ -98,38 +99,98 @@ class DashboardController extends Controller
                         ->orWhereHas('custody', fn ($custody) => $custody->where('status', '!=', 'CLOSED'));
                 });
 
+            // Only records that require an actual borrower action belong in
+            // the dashboard action queue. Passive monitoring (under review,
+            // released/on-custody, laundry in process, etc.) remains visible in
+            // Active Requests without being duplicated under "Needs My Action".
             $queue = BorrowingRequest::query()
                 ->with(['currentVersion', 'custody.laundryJob'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
-                ->latest()
-                ->limit(6)
-                ->get();
+                ->get()
+                ->filter(function (BorrowingRequest $record): bool {
+                    $custody = $record->custody;
+                    $laundry = $custody?->laundryJob;
 
-            // The dashboard tracker is intentionally live-only. Completed,
-            // cancelled, rejected, and expired requests remain available in
-            // My Requests for history, but they no longer occupy the dashboard.
-            $latestRequest = BorrowingRequest::query()
-                ->with([
-                    'currentVersion.approvalSteps',
-                    'statusHistory',
-                    'custody.returns',
-                    'custody.laundryJob',
-                ])
+                    return in_array($record->status, [RequestStatus::Draft, RequestStatus::ReturnedForRevision], true)
+                        || $laundry?->status === 'FOR_LAUNDRY'
+                        || (
+                            $custody?->scheduled_release_at !== null
+                            && $custody?->released_at === null
+                            && $custody?->pickup_expired_at === null
+                        );
+                })
+                ->sort(function (BorrowingRequest $left, BorrowingRequest $right): int {
+                    $priority = static function (BorrowingRequest $record): int {
+                        $custody = $record->custody;
+                        $laundry = $custody?->laundryJob;
+
+                        return match (true) {
+                            $record->status === RequestStatus::ReturnedForRevision => 1,
+                            $record->status === RequestStatus::Draft => 2,
+                            $laundry?->status === 'FOR_LAUNDRY' => 3,
+                            $custody?->scheduled_release_at !== null && $custody?->released_at === null => 4,
+                            default => 5,
+                        };
+                    };
+
+                    $priorityComparison = $priority($left) <=> $priority($right);
+
+                    if ($priorityComparison !== 0) {
+                        return $priorityComparison;
+                    }
+
+                    return ($right->updated_at?->getTimestamp() ?? 0) <=> ($left->updated_at?->getTimestamp() ?? 0);
+                })
+                ->take(6)
+                ->values();
+
+            // Dashboard overview: show several ongoing requests instead of
+            // one "latest request" tracker. Urgent custody/return states are
+            // intentionally ranked ahead of newer drafts so an older active
+            // borrowing cannot be hidden by a recently created request.
+            $borrowerRequestPriority = static function (BorrowingRequest $record): int {
+                $custody = $record->custody;
+                $custodyStatus = strtoupper((string) ($custody?->status ?? ''));
+
+                return match (true) {
+                    in_array($custodyStatus, ['OVERDUE', 'OBLIGATION_OPEN', 'INCIDENT_OPEN'], true) => 1,
+                    in_array($custodyStatus, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 2,
+                    $custody?->released_at !== null => 3,
+                    $record->status === RequestStatus::ReturnedForRevision => 4,
+                    $custody?->scheduled_release_at !== null && $custody?->released_at === null => 5,
+                    $custodyStatus === 'PREPARING_RELEASE'
+                        || in_array($record->status, [RequestStatus::FinalApprovedAwaitingDownload, RequestStatus::ApprovedReadyForRelease], true) => 6,
+                    $record->status === RequestStatus::UnderSpmu => 7,
+                    in_array($record->status, [RequestStatus::Submitted, RequestStatus::Signed], true) => 8,
+                    $record->status === RequestStatus::Draft => 9,
+                    default => 10,
+                };
+            };
+
+            $activeBorrowerRequests = BorrowingRequest::query()
+                ->with(['currentVersion', 'custody.laundryJob'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
-                ->latest()
-                ->first();
+                ->get()
+                ->sort(function (BorrowingRequest $left, BorrowingRequest $right) use ($borrowerRequestPriority): int {
+                    $priorityComparison = $borrowerRequestPriority($left) <=> $borrowerRequestPriority($right);
 
-            $nextCustodies = CustodyTransaction::query()
-                ->with(['request'])
-                ->where('borrower_user_id', $user->id)
-                ->where('status', '!=', 'CLOSED')
-                ->orderByRaw('CASE WHEN scheduled_release_at IS NULL THEN 1 ELSE 0 END')
-                ->orderBy('scheduled_release_at')
-                ->orderBy('due_at')
-                ->limit(5)
-                ->get();
+                    if ($priorityComparison !== 0) {
+                        return $priorityComparison;
+                    }
+
+                    return ($right->updated_at?->getTimestamp() ?? 0) <=> ($left->updated_at?->getTimestamp() ?? 0);
+                })
+                ->values();
+
+            $activeRequestTotal = $activeBorrowerRequests->count();
+            $activeRequestBars = $activeBorrowerRequests->take(5)->values();
+
+            // Pickup and return dates are already shown contextually in the
+            // Active Requests rows, so the borrower dashboard no longer performs
+            // a second schedule query that would duplicate the same records.
+            $nextCustodies = collect();
         } elseif ($workspace === 'SPMU' && $classification === AccessClassification::SpmuOfficer) {
             $dashboardMode = 'SPMU_OFFICER';
 
@@ -281,7 +342,8 @@ class DashboardController extends Controller
             'dashboardMode',
             'queue',
             'nextCustodies',
-            'latestRequest'
+            'activeRequestBars',
+            'activeRequestTotal'
         ));
     }
 }

@@ -156,8 +156,10 @@
             .split(' ')
             .filter(Boolean);
 
-        return eventTrigger.dataset.calendarOwnRecord === 'true'
-            && statuses.includes(selectedStatus);
+        const ownOnly = calendar.dataset.calendarFilterOwnOnly === 'true';
+        const inScope = !ownOnly || eventTrigger.dataset.calendarOwnRecord === 'true';
+
+        return inScope && statuses.includes(selectedStatus);
     };
 
     const filterEventsIn = (context) => {
@@ -237,6 +239,84 @@
         });
     };
 
+    const clearStatusJumpHighlight = () => {
+        calendar.querySelectorAll('.calendar-status-jump-target').forEach((element) => {
+            element.classList.remove('calendar-status-jump-target');
+        });
+        calendar.querySelectorAll('.calendar-status-jump-day').forEach((element) => {
+            element.classList.remove('calendar-status-jump-day');
+        });
+        filterEmpty?.classList.remove('calendar-status-jump-empty');
+    };
+
+    const nearestMatchingMonthOccurrence = () => {
+        const candidates = Array.from(calendar.querySelectorAll('[data-calendar-occurrence]'))
+            .filter((occurrence) => {
+                const trigger = occurrence.querySelector('[data-calendar-event]');
+                return trigger && eventMatchesStatus(trigger);
+            });
+
+        if (!candidates.length) {
+            return null;
+        }
+
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+        return candidates
+            .map((occurrence) => {
+                const rawDate = occurrence.dataset.calendarOccurrenceDate || '';
+                const time = rawDate ? new Date(`${rawDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
+                return { occurrence, distance: Math.abs(time - today), time };
+            })
+            .sort((left, right) => left.distance - right.distance || left.time - right.time)[0]?.occurrence || null;
+    };
+
+    const jumpToSelectedStatus = () => {
+        clearStatusJumpHighlight();
+
+        if (!selectedStatus) {
+            const todayCell = calendar.querySelector('.calendar-day.is-today');
+            const target = todayCell || calendar.querySelector('.calendar-toolbar');
+            target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+
+        const monthPanel = calendar.querySelector('[data-calendar-view-panel="month"]');
+        const monthIsVisible = monthPanel && !monthPanel.hidden;
+
+        if (monthIsVisible) {
+            const occurrence = nearestMatchingMonthOccurrence();
+            const eventTrigger = occurrence?.querySelector('[data-calendar-event]');
+            if (occurrence && eventTrigger) {
+                occurrence.hidden = false;
+                eventTrigger.classList.add('calendar-status-jump-target');
+                const day = occurrence.closest('.calendar-day');
+                day?.classList.add('calendar-status-jump-day');
+                day?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                window.setTimeout(clearStatusJumpHighlight, 2400);
+                return;
+            }
+        } else {
+            const listPanel = calendar.querySelector('[data-calendar-view-panel="list"]');
+            const eventTrigger = listPanel
+                ? Array.from(listPanel.querySelectorAll('[data-calendar-event]')).find((event) => !event.hidden && eventMatchesStatus(event))
+                : null;
+            if (eventTrigger) {
+                eventTrigger.classList.add('calendar-status-jump-target');
+                eventTrigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                window.setTimeout(clearStatusJumpHighlight, 2400);
+                return;
+            }
+        }
+
+        if (filterEmpty && !filterEmpty.hidden) {
+            filterEmpty.classList.add('calendar-status-jump-empty');
+            filterEmpty.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            window.setTimeout(clearStatusJumpHighlight, 2400);
+        }
+    };
+
     const openDrawer = (template, trigger) => {
         if (!template || !drawerContent) {
             return;
@@ -304,12 +384,16 @@
         button.addEventListener('click', () => selectView(button.dataset.calendarViewButton));
     });
     statusFilterButtons.forEach((button) => {
+        const count = Number(button.dataset.calendarStatusCount || 0);
+        button.dataset.calendarZero = String(count === 0 && Boolean(button.dataset.calendarStatusFilter));
+
         button.addEventListener('click', () => {
             const requestedStatus = button.dataset.calendarStatusFilter || '';
             selectedStatus = requestedStatus && selectedStatus === requestedStatus
                 ? ''
                 : requestedStatus;
             applyStatusFilter();
+            window.requestAnimationFrame(jumpToSelectedStatus);
         });
     });
 

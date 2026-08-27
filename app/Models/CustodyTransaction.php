@@ -36,6 +36,9 @@ class CustodyTransaction extends Model
         'released_at',
         'prepared_at',
         'due_at',
+        'original_due_at',
+        'due_adjustment_reason',
+        'due_adjusted_at',
         'acknowledged_at',
         'closed_at',
     ];
@@ -50,6 +53,8 @@ class CustodyTransaction extends Model
             'released_at' => 'datetime',
             'prepared_at' => 'datetime',
             'due_at' => 'datetime',
+            'original_due_at' => 'datetime',
+            'due_adjusted_at' => 'datetime',
             'acknowledged_at' => 'datetime',
             'laundry_approved_at' => 'datetime',
             'closed_at' => 'datetime',

@@ -63,7 +63,7 @@
         <div class="scanned-pdf-stage">
             <iframe
                 class="scanned-pdf-frame"
-                src="{{ $previewUrl }}#toolbar=1&navpanes=1&scrollbar=1&view=FitH"
+                src="{{ $previewUrl }}#page=1&zoom=page-fit&toolbar=1&navpanes=0&scrollbar=1&view=Fit"
                 title="{{ $title }}"
             ></iframe>
         </div>

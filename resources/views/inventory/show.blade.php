@@ -34,17 +34,25 @@
     // The Action Officer may inspect all operational details, stock-card
     // movements, and borrowing history but must remain read-only.
     $canEditInventory = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
+
+    $requestedInventoryTab = (string) request('tab', 'overview');
+    $activeInventoryTab = in_array($requestedInventoryTab, [
+        'overview',
+        'stock-card',
+        'borrowing-history',
+        'item-information',
+    ], true) ? $requestedInventoryTab : 'overview';
 @endphp
 
 <section class="page-heading inventory-detail-heading">
     <div>
         <p class="eyebrow">{{ $isBorrower ? 'Inventory reference' : 'Inventory details' }}</p>
         <h1>{{ $item->unique_description }}</h1>
-        <p>{{ $item->category->category_name }} &middot; {{ $item->unit->unit_name }}</p>
+        <p>{{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }} &middot; {{ $item->category->category_name }} &middot; {{ $item->unit->unit_name }}</p>
     </div>
 
     <a class="button secondary ui-pressable" href="{{ route('inventory.index') }}">
-        Back to Inventory<span aria-hidden="true" style="margin-left: 7px;">→</span>
+        Back to Inventory
     </a>
 </section>
 
@@ -123,6 +131,37 @@
             </div>
         </div>
     @else
+        <section class="inventory-admin-summary" aria-label="Current inventory summary">
+            <div class="inventory-admin-summary-item">
+                <span>Total Stock</span>
+                <strong>{{ $total + 0 }}</strong>
+            </div>
+            <div class="inventory-admin-summary-item is-available">
+                <span>Available</span>
+                <strong>{{ $available + 0 }}</strong>
+            </div>
+            <div class="inventory-admin-summary-item">
+                <span>Reserved</span>
+                <strong>{{ $reserved + 0 }}</strong>
+            </div>
+            <div class="inventory-admin-summary-item">
+                <span>On Custody</span>
+                <strong>{{ $issued + 0 }}</strong>
+            </div>
+            <div class="inventory-admin-summary-item">
+                <span>Laundry / Incident</span>
+                <strong>{{ ($laundry + $incident) + 0 }}</strong>
+            </div>
+        </section>
+
+        <nav class="inventory-detail-tabs" aria-label="Inventory detail sections" role="tablist">
+            <button type="button" class="inventory-detail-tab {{ $activeInventoryTab === 'overview' ? 'is-active' : '' }}" data-inventory-tab="overview" role="tab" aria-selected="{{ $activeInventoryTab === 'overview' ? 'true' : 'false' }}">Overview</button>
+            <button type="button" class="inventory-detail-tab {{ $activeInventoryTab === 'stock-card' ? 'is-active' : '' }}" data-inventory-tab="stock-card" role="tab" aria-selected="{{ $activeInventoryTab === 'stock-card' ? 'true' : 'false' }}">Stock Card</button>
+            <button type="button" class="inventory-detail-tab {{ $activeInventoryTab === 'borrowing-history' ? 'is-active' : '' }}" data-inventory-tab="borrowing-history" role="tab" aria-selected="{{ $activeInventoryTab === 'borrowing-history' ? 'true' : 'false' }}">Borrowing History</button>
+            <button type="button" class="inventory-detail-tab {{ $activeInventoryTab === 'item-information' ? 'is-active' : '' }}" data-inventory-tab="item-information" role="tab" aria-selected="{{ $activeInventoryTab === 'item-information' ? 'true' : 'false' }}">Item Information</button>
+        </nav>
+
+        <section class="inventory-tab-panel inventory-tab-overview" data-inventory-panel="overview" role="tabpanel" @if($activeInventoryTab !== 'overview') hidden @endif>
         <div class="inventory-detail-grid">
             <article class="card">
                 <div class="card-header">
@@ -207,8 +246,9 @@
                 </dl>
             </article>
         </div>
+        </section>
 
-
+        <section class="inventory-tab-panel" data-inventory-panel="stock-card" role="tabpanel" @if($activeInventoryTab !== 'stock-card') hidden @endif>
         <article class="card inventory-borrowing-history-card" id="stock-card">
             <div class="card-header inventory-history-header">
                 <div>
@@ -238,7 +278,9 @@
                 </table>
             </div>
         </article>
+        </section>
 
+        <section class="inventory-tab-panel" data-inventory-panel="borrowing-history" role="tabpanel" @if($activeInventoryTab !== 'borrowing-history') hidden @endif>
         <article class="card inventory-borrowing-history-card" id="borrowing-history">
             <div class="card-header inventory-history-header">
                 <div>
@@ -256,6 +298,8 @@
                 action="{{ route('inventory.show', $item) }}"
                 class="inventory-history-filter"
             >
+                <input type="hidden" name="tab" value="borrowing-history">
+
                 <label>
                     From
                     <input
@@ -300,7 +344,7 @@
                     </button>
                     <a
                         class="button secondary ui-pressable"
-                        href="{{ route('inventory.show', $item) }}#borrowing-history"
+                        href="{{ route('inventory.show', ['inventory' => $item, 'tab' => 'borrowing-history']) }}"
                     >
                         Reset
                     </a>
@@ -453,7 +497,9 @@
                 </table>
             </div>
         </article>
+        </section>
 
+        <section class="inventory-tab-panel" data-inventory-panel="item-information" role="tabpanel" @if($activeInventoryTab !== 'item-information') hidden @endif>
         <article class="card inventory-master-detail-card">
             <div class="card-header">
                 <div>
@@ -489,11 +535,148 @@
                 <dd>{{ $item->laundry_required ? 'Required after use' : 'Not required' }}</dd>
             </dl>
         </article>
+        </section>
     @endif
 </section>
 
 
 <style>
+.inventory-admin-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    overflow: hidden;
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface, #fff);
+}
+
+.inventory-admin-summary-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 13px 16px;
+    border-right: 1px solid var(--border);
+}
+
+.inventory-admin-summary-item:last-child {
+    border-right: 0;
+}
+
+.inventory-admin-summary-item span {
+    color: var(--text-muted);
+    font-size: .78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .025em;
+}
+
+.inventory-admin-summary-item strong {
+    flex: 0 0 auto;
+    color: var(--text);
+    font-size: 1.16rem;
+}
+
+.inventory-admin-summary-item.is-available strong {
+    color: #157f3f;
+}
+
+.inventory-detail-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.inventory-detail-tab {
+    appearance: none;
+    position: relative;
+    min-width: 0;
+    min-height: 48px;
+    padding: 11px 16px;
+    border: 1px solid #c7d5e4;
+    border-radius: 10px;
+    background: #fff;
+    color: #334155;
+    font: inherit;
+    font-size: .88rem;
+    font-weight: 800;
+    line-height: 1.15;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.inventory-detail-tab::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 12px;
+    right: 12px;
+    height: 3px;
+    border-radius: 0 0 999px 999px;
+    background: transparent;
+    transition: background-color .16s ease;
+}
+
+.inventory-detail-tab:hover:not(.is-active) {
+    border-color: #9fc8ec;
+    background: #f4f9ff;
+    color: #075ea8;
+    box-shadow: 0 4px 12px rgba(15, 42, 67, .07);
+    transform: translateY(-1px);
+}
+
+.inventory-detail-tab:focus-visible {
+    outline: 3px solid rgba(37, 136, 214, .20);
+    outline-offset: 2px;
+}
+
+.inventory-detail-tab.is-active {
+    border-color: #9fc8ec;
+    background: #eaf5ff;
+    color: #075ea8;
+    box-shadow: 0 4px 12px rgba(7, 94, 168, .10);
+}
+
+.inventory-detail-tab.is-active::before {
+    background: #0b66c3;
+}
+
+.inventory-detail-tab.is-active:hover {
+    background: #e4f2ff;
+}
+
+@media (max-width: 900px) {
+    .inventory-detail-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .inventory-detail-tabs {
+        grid-template-columns: 1fr;
+    }
+}
+
+.inventory-tab-panel[hidden] {
+    display: none !important;
+}
+
+.inventory-tab-panel > .card,
+.inventory-tab-panel > .inventory-detail-grid {
+    margin-top: 0;
+}
+
+.inventory-tab-overview .inventory-detail-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr);
+    gap: 16px;
+}
+
 .inventory-detail-grid {
     align-items: stretch;
 }
@@ -670,6 +853,22 @@
 }
 
 @media (max-width: 1180px) {
+    .inventory-admin-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .inventory-admin-summary-item {
+        border-bottom: 1px solid var(--border);
+    }
+
+    .inventory-admin-summary-item:nth-child(3n) {
+        border-right: 0;
+    }
+
+    .inventory-tab-overview .inventory-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
     .inventory-ops-row {
         grid-template-columns: minmax(190px, 1fr) 70px minmax(180px, 1.2fr);
     }
@@ -689,6 +888,24 @@
 }
 
 @media (max-width: 700px) {
+    .inventory-admin-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .inventory-admin-summary-item,
+    .inventory-admin-summary-item:nth-child(3n) {
+        border-right: 1px solid var(--border);
+    }
+
+    .inventory-admin-summary-item:nth-child(2n) {
+        border-right: 0;
+    }
+
+    .inventory-detail-tab {
+        flex: 0 0 auto;
+        min-width: 132px;
+    }
+
     .inventory-ops-row {
         grid-template-columns: 1fr auto;
         gap: 4px 12px;
@@ -745,6 +962,53 @@
 }
 </style>
 
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const tabButtons = Array.from(document.querySelectorAll('[data-inventory-tab]'));
+    const tabPanels = Array.from(document.querySelectorAll('[data-inventory-panel]'));
+
+    if (!tabButtons.length || !tabPanels.length) {
+        return;
+    }
+
+    const validTabs = new Set(tabButtons.map((button) => button.dataset.inventoryTab));
+
+    const activateTab = (tabName, updateUrl = true) => {
+        if (!validTabs.has(tabName)) {
+            tabName = 'overview';
+        }
+
+        tabButtons.forEach((button) => {
+            const active = button.dataset.inventoryTab === tabName;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+
+        tabPanels.forEach((panel) => {
+            panel.hidden = panel.dataset.inventoryPanel !== tabName;
+        });
+
+        if (updateUrl) {
+            const url = new URL(window.location.href);
+            if (tabName === 'overview') {
+                url.searchParams.delete('tab');
+            } else {
+                url.searchParams.set('tab', tabName);
+            }
+            url.hash = '';
+            window.history.replaceState({}, '', url);
+        }
+    };
+
+    tabButtons.forEach((button) => {
+        button.addEventListener('click', () => activateTab(button.dataset.inventoryTab));
+    });
+
+    const initialTab = tabButtons.find((button) => button.classList.contains('is-active'))?.dataset.inventoryTab || 'overview';
+    activateTab(initialTab, false);
+});
+</script>
 
 {{-- BORROWER_INVENTORY_POLISH_V3_START --}}
 <style>

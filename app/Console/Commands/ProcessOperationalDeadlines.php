@@ -10,6 +10,7 @@ use App\Models\SystemSetting;
 use App\Services\AuditService;
 use App\Services\CustodyService;
 use App\Services\NotificationService;
+use App\Services\OperationalCalendarService;
 use Illuminate\Console\Command;
 
 class ProcessOperationalDeadlines extends Command
@@ -21,7 +22,8 @@ class ProcessOperationalDeadlines extends Command
     public function handle(
         CustodyService $custodyService,
         NotificationService $notifications,
-        AuditService $audit
+        AuditService $audit,
+        OperationalCalendarService $operationalCalendar
     ): int {
         $pickupExpired = $custodyService->expirePickupWindows();
         $issuanceLocked = 0;
@@ -56,7 +58,7 @@ class ProcessOperationalDeadlines extends Command
             ->whereIn('status', [
                 'ACTIVE',
                 'RETURN_PROCESSING',
-                
+
                 'OVERDUE',
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',
@@ -65,6 +67,9 @@ class ProcessOperationalDeadlines extends Command
             ->get();
 
         foreach ($openCustodies as $custody) {
+            $custody = $operationalCalendar->synchronizeCustodyDueDate($custody, $audit);
+            $custody->loadMissing('lines', 'borrower');
+
             $hasOutstanding = $custody->lines->contains(
                 fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
             );
@@ -92,7 +97,7 @@ class ProcessOperationalDeadlines extends Command
                     $notifications->send(
                         $eventCode,
                         collect([$custody->borrower]),
-                        "Custody {$custody->custody_no} is due {$label}, {$custody->due_at->format('F j, Y')}. The return rule is based on the calendar date, not a clock time.",
+                        "Custody {$custody->custody_no} is due {$label}, {$custody->due_at->format('F j, Y')}. This is the effective SPMU operational return date; approved closures automatically move the deadline to the next open return day.",
                         $custody
                     );
                     $dueSoon++;
@@ -101,7 +106,7 @@ class ProcessOperationalDeadlines extends Command
 
             /*
              * DATE-ONLY late rule:
-             * Expected Aug 18 + still outstanding on Aug 19 = late.
+             * Lateness begins after the effective operational return date. A closed original due date is first moved to the next open SPMU return day.
              */
             if (! $today->gt($dueDate)) {
                 continue;
@@ -157,7 +162,8 @@ class ProcessOperationalDeadlines extends Command
                     'CUSTODY_MARKED_OVERDUE',
                     $case,
                     after: [
-                        'expected_return_date' => $dueDate->toDateString(),
+                        'effective_return_date' => $dueDate->toDateString(),
+                        'original_expected_return_date' => $custody->original_due_at?->toDateString(),
                         'current_date' => $today->toDateString(),
                         'days_late' => $daysLate,
                         'rate_snapshot' => is_numeric($rate) ? (float) $rate : null,

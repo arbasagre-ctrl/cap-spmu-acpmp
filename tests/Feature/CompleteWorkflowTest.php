@@ -760,7 +760,10 @@ class CompleteWorkflowTest extends TestCase
                 route(
                     'requests.submit',
                     $request
-                )
+                ),
+                [
+                    'borrower_acknowledgement' => '1',
+                ]
             )
             ->assertSessionHasNoErrors();
 

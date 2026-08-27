@@ -416,6 +416,16 @@ class BorrowingRequestController extends Controller
         BorrowingRequest $borrowingRequest,
         RequestWorkflowService $workflow
     ): RedirectResponse {
+        $request->validate([
+            'borrower_acknowledgement' => [
+                'required',
+                'accepted',
+            ],
+        ], [
+            'borrower_acknowledgement.accepted' =>
+                'Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.',
+        ]);
+
         $workflow->submit(
             $borrowingRequest,
             $request->user()
@@ -615,7 +625,6 @@ class BorrowingRequestController extends Controller
             ],
 
             'represented_program_department' => [
-                'required_if:represents_student_activity,1',
                 'nullable',
                 'string',
                 'max:255',
@@ -649,6 +658,11 @@ class BorrowingRequestController extends Controller
             'intent' => [
                 'nullable',
                 Rule::in(['draft', 'submit']),
+            ],
+
+            'borrower_acknowledgement' => [
+                'nullable',
+                'boolean',
             ],
 
             /*
@@ -815,6 +829,16 @@ class BorrowingRequestController extends Controller
             ]);
         }
 
+        if (
+            ($data['intent'] ?? 'draft') === 'submit'
+            && ! $request->boolean('borrower_acknowledgement')
+        ) {
+            throw ValidationException::withMessages([
+                'borrower_acknowledgement' =>
+                    'Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.',
+            ]);
+        }
+
         return $data;
     }
 
@@ -884,14 +908,10 @@ class BorrowingRequestController extends Controller
                 ),
 
             'student_organization' =>
-                $data[
-                    'student_organization'
-                ] ?? null,
+                null,
 
             'represented_program_department' =>
-                $data[
-                    'represented_program_department'
-                ] ?? null,
+                null,
 
             'represented_year_level' =>
                 null,

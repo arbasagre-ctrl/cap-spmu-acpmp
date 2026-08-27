@@ -16,6 +16,41 @@
     html[data-theme="dark"] .dashboard-balanced-grid > .card {
         box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
     }
+    .borrower-active-card { margin-bottom: 18px; overflow: hidden; }
+    .borrower-active-card .card-header { align-items: center; }
+    .borrower-active-list { display: grid; gap: 8px; padding: 0 20px 18px; }
+    .borrower-active-row {
+        display: grid;
+        grid-template-columns: minmax(170px, 1.1fr) minmax(180px, 1fr) minmax(170px, .9fr) auto;
+        gap: 18px;
+        align-items: center;
+        min-height: 58px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface, #fff);
+    }
+    .borrower-active-row:hover { border-color: #a9c8ea; background: rgba(24, 119, 214, .025); }
+    .borrower-active-request { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .borrower-active-request strong { color: var(--text-strong, #0b2745); }
+    .borrower-active-request small,
+    .borrower-active-date { color: var(--muted); }
+    .borrower-active-purpose { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .borrower-active-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+    .borrower-active-state::before { content: ''; width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+    .borrower-active-state.tone-danger { color: #b42318; }
+    .borrower-active-state.tone-warning { color: #9a6700; }
+    .borrower-active-state.tone-success { color: #08783e; }
+    .borrower-active-state.tone-info { color: #1769aa; }
+    .borrower-active-state.tone-neutral { color: #53657a; }
+    .borrower-active-overflow { margin: 2px 20px 18px; color: var(--muted); font-size: .88rem; }
+    .borrower-active-empty { margin: 0 20px 18px; }
+    .dashboard-balanced-grid.borrower-actions-only { grid-template-columns: minmax(0, 1fr); }
+    @media (max-width: 900px) {
+        .borrower-active-row { grid-template-columns: 1fr auto; gap: 8px 12px; }
+        .borrower-active-state, .borrower-active-date { grid-column: 1; }
+        .borrower-active-row .button { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+    }
 </style>
 
 @php
@@ -25,7 +60,7 @@
         'BORROWER' => [
             'eyebrow' => 'Borrower overview',
             'title' => 'Welcome, '.$firstName,
-            'subtitle' => 'See what needs your attention, where your request is now, and when you need to pick up or return items.',
+            'subtitle' => 'See all ongoing requests at a glance and focus only on actions that require your attention.',
             'taskEyebrow' => 'What needs your attention',
             'taskTitle' => 'Your next actions',
         ],
@@ -71,7 +106,7 @@
             'Open Requests' => ['requests', 'info', route('requests.index')],
             'Active Borrowings' => ['custody', 'warning', route('custody.index')],
             'Due for Return' => ['calendar', 'danger', route('custody.index')],
-            'Needs My Action' => ['information', 'warning', route('requests.index')],
+            'Needs My Action' => ['information', 'warning', route('dashboard').'#borrower-actions'],
         ],
         'SPMU_OFFICER' => [
             'For Pickup Scheduling' => ['calendar', 'info', route('custody.index')],
@@ -142,20 +177,87 @@
     @endforeach
 </section>
 
-@if($dashboardMode === 'BORROWER' && $latestRequest)
-    <x-request-progress-tracker :request="$latestRequest" />
+@if($dashboardMode === 'BORROWER')
+    <article class="card borrower-active-card" aria-labelledby="active-requests-title">
+        <div class="card-header">
+            <div>
+                <p class="eyebrow">Current monitoring</p>
+                <h2 id="active-requests-title">Active requests</h2>
+                <p class="meta">Ongoing requests are prioritized by urgency. Open My Requests for complete tracking and history.</p>
+            </div>
+            <a class="dashboard-view-all" href="{{ route('requests.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
+        </div>
+
+        @if($activeRequestBars->isNotEmpty())
+            <div class="borrower-active-list">
+                @foreach($activeRequestBars as $activeRequest)
+                    @php
+                        $activeCustody = $activeRequest->custody;
+                        $activeCustodyStatus = strtoupper((string) ($activeCustody?->status ?? ''));
+
+                        [$activeStateLabel, $activeStateTone] = match (true) {
+                            $activeCustodyStatus === 'OVERDUE' => ['Overdue', 'danger'],
+                            $activeCustodyStatus === 'OBLIGATION_OPEN' => ['Obligation Open', 'danger'],
+                            $activeCustodyStatus === 'INCIDENT_OPEN' => ['Property Case Open', 'danger'],
+                            in_array($activeCustodyStatus, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => ['Return Processing', 'warning'],
+                            $activeCustody?->released_at !== null && $activeCustodyStatus !== 'CLOSED' => ['Items Released', 'success'],
+                            $activeRequest->status === App\Enums\RequestStatus::ReturnedForRevision => ['Revision Required', 'warning'],
+                            $activeCustody?->scheduled_release_at !== null && $activeCustody?->released_at === null => ['Pickup Scheduled', 'info'],
+                            $activeCustodyStatus === 'PREPARING_RELEASE' => ['Preparing Release', 'info'],
+                            in_array($activeRequest->status, [App\Enums\RequestStatus::FinalApprovedAwaitingDownload, App\Enums\RequestStatus::ApprovedReadyForRelease], true) => ['Approved', 'success'],
+                            $activeRequest->status === App\Enums\RequestStatus::UnderSpmu => ['Under SPMU Review', 'info'],
+                            in_array($activeRequest->status, [App\Enums\RequestStatus::Submitted, App\Enums\RequestStatus::Signed], true) => ['Submitted', 'info'],
+                            $activeRequest->status === App\Enums\RequestStatus::Draft => ['Draft', 'neutral'],
+                            default => [$activeRequest->status?->label() ?? 'In Progress', 'neutral'],
+                        };
+
+                        $activeDateText = match (true) {
+                            $activeCustody?->released_at !== null && $activeCustody?->due_at !== null => 'Return due '.$activeCustody->due_at->format('d M Y'),
+                            $activeCustody?->scheduled_release_at !== null && $activeCustody?->released_at === null => 'Pickup '.$activeCustody->scheduled_release_at->format('d M Y, g:i A'),
+                            $activeRequest->currentVersion?->return_date !== null => 'Expected return '.$activeRequest->currentVersion->return_date->format('d M Y'),
+                            $activeRequest->currentVersion?->needed_from !== null => 'Needed from '.$activeRequest->currentVersion->needed_from->format('d M Y'),
+                            default => 'Updated '.$activeRequest->updated_at->format('d M Y'),
+                        };
+
+                        $activeActionLabel = in_array($activeRequest->status, [App\Enums\RequestStatus::Draft, App\Enums\RequestStatus::ReturnedForRevision], true)
+                            ? 'Continue'
+                            : 'View';
+                    @endphp
+                    <div class="borrower-active-row">
+                        <div class="borrower-active-request">
+                            <strong>{{ $activeRequest->request_no }}</strong>
+                            <small class="borrower-active-purpose">{{ $activeRequest->currentVersion?->purpose_event ?: 'Borrowing request' }}</small>
+                        </div>
+                        <span class="borrower-active-state tone-{{ $activeStateTone }}">{{ $activeStateLabel }}</span>
+                        <span class="borrower-active-date">{{ $activeDateText }}</span>
+                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $activeRequest) }}">{{ $activeActionLabel }}</a>
+                    </div>
+                @endforeach
+            </div>
+
+            @if($activeRequestTotal > $activeRequestBars->count())
+                <p class="borrower-active-overflow">
+                    {{ $activeRequestTotal - $activeRequestBars->count() }} more ongoing {{ ($activeRequestTotal - $activeRequestBars->count()) === 1 ? 'request is' : 'requests are' }} available in My Requests.
+                </p>
+            @endif
+        @else
+            <div class="empty-state borrower-active-empty">
+                <strong>No active borrowing request.</strong>
+                <span>Start a new borrowing request when you need SPMU items.</span>
+            </div>
+        @endif
+    </article>
 @endif
 
-<section class="dashboard-grid dashboard-balanced-grid">
+@if($dashboardMode !== 'BORROWER' || $queue->isNotEmpty())
+<section id="{{ $dashboardMode === 'BORROWER' ? 'borrower-actions' : 'dashboard-actions' }}" class="dashboard-grid dashboard-balanced-grid {{ $dashboardMode === 'BORROWER' ? 'borrower-actions-only' : '' }}">
     <article class="card queue-card dashboard-panel-equal">
         <div class="card-header">
             <div>
                 <p class="eyebrow">{{ $copy['taskEyebrow'] }}</p>
                 <h2>{{ $copy['taskTitle'] }}</h2>
             </div>
-            @if($dashboardMode === 'BORROWER')
-                <a class="dashboard-view-all" href="{{ route('requests.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
-            @elseif($dashboardMode === 'SPMU_OFFICER')
+            @if($dashboardMode === 'SPMU_OFFICER')
                 <a class="dashboard-view-all" href="{{ route('custody.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
             @elseif($dashboardMode === 'SPMU_HEAD')
                 <a class="dashboard-view-all" href="{{ route('approvals.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
@@ -171,18 +273,16 @@
                         $custody = $record->custody;
                         $laundry = $custody?->laundryJob;
                         $nextAction = match(true) {
-                            $record->status === App\Enums\RequestStatus::Draft => 'Complete the draft, print the BR Letter, and upload the fully signed scan.',
+                            $record->status === App\Enums\RequestStatus::Draft => 'Complete the draft and submit the required signed documents to SPMU.',
                             $record->status === App\Enums\RequestStatus::ReturnedForRevision => 'Review the SPMU remarks, correct the request, and resubmit.',
-                            $record->status === App\Enums\RequestStatus::UnderSpmu => 'No action now. Your request is under SPMU review.',
-                            $laundry?->status === 'FOR_LAUNDRY' => 'Bring the used linen and printed Laundry Form to the Laundry Worker.',
-                            $laundry?->status === 'IN_PROCESS' => 'No action now. Laundry is processing your linen.',
-                            $laundry?->status === 'READY_FOR_SPMU_RETURN' => 'No action now. The Laundry Worker will bring the cleaned linen directly to SPMU.',
-                            $laundry?->status === 'AWAITING_FINAL_FORM_UPLOAD' => 'No action now. SPMU has accepted the linen; Laundry is uploading the fully signed form.',
-                            $custody?->scheduled_release_at && ! $custody?->released_at => 'Pick up the approved items on the scheduled pickup window.',
-                            $custody?->released_at && $custody?->status !== 'CLOSED' => 'Keep track of the return deadline and return the items to SPMU.',
-                            $custody?->status === 'CLOSED' => 'Completed. No further action is required.',
-                            default => 'Wait for the next SPMU update.',
+                            $laundry?->status === 'FOR_LAUNDRY' => 'Bring the used linen and physical Laundry Form to the Laundry Worker.',
+                            $custody?->scheduled_release_at && ! $custody?->released_at => 'Pick up the approved items during the scheduled pickup window.',
+                            default => 'Open the request to complete the required action.',
                         };
+
+                        $actionLabel = in_array($record->status, [App\Enums\RequestStatus::Draft, App\Enums\RequestStatus::ReturnedForRevision], true)
+                            ? 'Continue'
+                            : 'View';
                     @endphp
                     <article>
                         <div>
@@ -190,7 +290,7 @@
                             <span>{{ $record->currentVersion?->purpose_event ?: 'Borrowing request' }}</span>
                             <small>{{ $nextAction }}</small>
                         </div>
-                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $record) }}">View</a>
+                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $record) }}">{{ $actionLabel }}</a>
                     </article>
                 @elseif($dashboardMode === 'SPMU_OFFICER')
                     <article>
@@ -252,24 +352,9 @@
         </div>
     </article>
 
+    @if($dashboardMode !== 'BORROWER')
     <article class="card dashboard-panel-equal">
-        @if($dashboardMode === 'BORROWER')
-            <div class="card-header"><div><p class="eyebrow">Schedule</p><h2>Pickup and return dates</h2></div></div>
-            <div class="queue-list">
-                @forelse($nextCustodies as $custody)
-                    <article>
-                        <div>
-                            <strong>{{ $custody->request?->request_no }}</strong>
-                            <span>{{ $custody->scheduled_release_at ? 'Pickup '.$custody->scheduled_release_at->format('d M Y, g:i A') : 'Pickup not yet scheduled' }}</span>
-                            <small>{{ $custody->due_at ? 'Return due '.$custody->due_at->format('d M Y') : 'Return deadline will appear after release.' }}</small>
-                        </div>
-                        <a class="table-action" href="{{ route('custody.show', $custody) }}">View</a>
-                    </article>
-                @empty
-                    <div class="empty-state"><strong>No upcoming pickup or return schedule.</strong></div>
-                @endforelse
-            </div>
-        @elseif($dashboardMode === 'SPMU_OFFICER')
+        @if($dashboardMode === 'SPMU_OFFICER')
             <div class="card-header"><div><p class="eyebrow">Operational guide</p><h2>What happens after Head approval?</h2></div></div>
             <div class="workflow-mini-list">
                 <span><strong>1</strong> Receive the verified and approved request</span>
@@ -308,5 +393,7 @@
             <p class="meta top-gap">ICTU does not approve borrowing, release items, inspect returns, or process laundry.</p>
         @endif
     </article>
+    @endif
 </section>
+@endif
 @endsection

@@ -28,6 +28,7 @@ class RequestWorkflowService
         private DocumentService $documents,
         private NotificationService $notifications,
         private AuditService $audit,
+        private OperationalCalendarService $operationalCalendar,
     ) {}
 
     /**
@@ -62,11 +63,22 @@ class RequestWorkflowService
             abort(403);
         }
 
-        $outstandingCustody = CustodyTransaction::query()
+        $this->operationalCalendar->assertOpenFor(
+            OperationalCalendarService::REQUEST,
+            now(),
+            'submission'
+        );
+
+        /*
+         * A normal active borrowing is not itself a borrowing violation.
+         * Borrowers may have more than one legitimate request/custody at the
+         * same time; item availability is validated separately. Submission is
+         * blocked only when a custody has already become overdue or has an
+         * unresolved accountability obligation.
+         */
+        $blockingCustody = CustodyTransaction::query()
             ->where('borrower_user_id', $borrower->id)
             ->whereIn('status', [
-                'ACTIVE',
-                'RETURN_PROCESSING',
                 'OVERDUE',
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',
@@ -74,10 +86,10 @@ class RequestWorkflowService
             ->latest('id')
             ->first();
 
-        if ($outstandingCustody) {
+        if ($blockingCustody) {
             throw ValidationException::withMessages([
                 'restriction' =>
-                    "You cannot submit a new borrowing request while {$outstandingCustody->custody_no} has an outstanding return or unresolved obligation.",
+                    "You cannot submit a new borrowing request while {$blockingCustody->custody_no} has an overdue return or unresolved accountability obligation.",
             ]);
         }
 
@@ -129,6 +141,23 @@ class RequestWorkflowService
                     throw ValidationException::withMessages([
                         'schedule_date' =>
                             'Schedule Date must be a future calendar date and Return Date must be after Schedule Date.',
+                    ]);
+                }
+
+                if (! $this->operationalCalendar->isOpenFor(
+                    OperationalCalendarService::PICKUP,
+                    $scheduleDate
+                )) {
+                    $nextOpen = $this->operationalCalendar->nextOpenDate(
+                        OperationalCalendarService::PICKUP,
+                        $scheduleDate,
+                        true
+                    );
+
+                    throw ValidationException::withMessages([
+                        'schedule_date' =>
+                            'The selected Items Needed From / pickup date is closed for SPMU physical transactions. Next open pickup date: '
+                            .$nextOpen->format('F j, Y').'.',
                     ]);
                 }
 
@@ -1588,7 +1617,7 @@ class RequestWorkflowService
             if (! $hasPermission) {
                 throw ValidationException::withMessages([
                     'permission_to_conduct_letter' =>
-                        'The Permission to Conduct Letter is required for a student activity or organization request.',
+                        'The Permission to Conduct Letter is required when the request represents a student activity.',
                 ]);
             }
         }

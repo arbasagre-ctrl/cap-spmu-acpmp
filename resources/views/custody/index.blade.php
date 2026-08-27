@@ -14,7 +14,7 @@
             : ($mode === 'return' ? 'Return' : 'Release'));
 
     $pageCopy = match (true) {
-        $isBorrower => 'Use My Borrowings for pickup schedules, items issued to you, outstanding returns, linen/laundry progress, and final reconciliation. Request approval and documents stay under My Requests.',
+        $isBorrower => 'Track your pickup, issued items, returns, and completed borrowings. Request approval and documents stay under My Requests.',
         $mode === 'release' => 'Schedule pickup, confirm item preparation, print the required physical documents, and record the actual handover.',
         $mode === 'return' => 'Inspect physically returned items, record full-quantity accounting, monitor linen/laundry return, and complete reconciliation.',
         $isHead => 'Monitor release preparation, active custody, return processing, overdue or unresolved cases, and completed transactions.',
@@ -140,7 +140,7 @@
 
     .custody-oversight-filters {
         display: grid;
-        grid-template-columns: minmax(280px, 1.4fr) minmax(170px, .45fr) minmax(170px, .45fr) auto;
+        grid-template-columns: minmax(280px, 1.35fr) minmax(145px, .42fr) minmax(145px, .42fr) minmax(205px, .58fr) auto;
         gap: 10px;
         align-items: end;
     }
@@ -150,7 +150,8 @@
         margin: 0;
     }
 
-    .custody-oversight-filters input {
+    .custody-oversight-filters input,
+    .custody-oversight-filters select {
         width: 100%;
         margin-top: 7px;
     }
@@ -313,13 +314,23 @@
                 </label>
 
                 <label>
-                    Schedule from
+                    Date from
                     <input id="custody-oversight-from" type="date">
                 </label>
 
                 <label>
-                    Schedule to
+                    Date to
                     <input id="custody-oversight-to" type="date">
+                </label>
+
+                <label>
+                    Sort
+                    <select id="custody-oversight-sort">
+                        <option value="return-soonest">Return Date — Soonest</option>
+                        <option value="pickup-soonest">Pickup Date — Soonest</option>
+                        <option value="newest">Newest Transaction</option>
+                        <option value="oldest">Oldest Transaction</option>
+                    </select>
                 </label>
 
                 <button
@@ -337,7 +348,7 @@
                 role="alert"
                 hidden
             >
-                Schedule From cannot be later than Schedule To.
+                Date From cannot be later than Date To.
                 Adjust the dates or use Clear.
             </p>
 
@@ -412,6 +423,15 @@
                     data-created="{{ optional($custody->created_at)->timestamp ?? 0 }}"
                     data-search="{{ $searchText }}"
                     data-schedule="{{ optional($scheduleDate)->format('Y-m-d') }}"
+                    data-return="{{ optional($returnDate)->format('Y-m-d') }}"
+                    data-pickup="{{ optional($custody->scheduled_release_at)->format('Y-m-d') ?: optional($scheduleDate)->format('Y-m-d') }}"
+                    data-dates="{{ collect([
+                        optional($scheduleDate)->format('Y-m-d'),
+                        optional($returnDate)->format('Y-m-d'),
+                        optional($custody->scheduled_release_at)->format('Y-m-d'),
+                        optional($custody->released_at)->format('Y-m-d'),
+                        optional($custody->closed_at)->format('Y-m-d'),
+                    ])->filter()->unique()->implode(',') }}"
                 >
                     <span class="operational-record-primary">
                         <strong>{{ $custody->borrower?->full_name ?: 'Borrower' }}</strong>
@@ -434,7 +454,7 @@
                         </span>
 
                         <span>
-                            <small>Outstanding</small>
+                            <small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small>
                             <strong class="custody-outstanding-value {{ $outstanding > 0 ? 'has-outstanding' : '' }}">
                                 {{ $outstanding + 0 }}
                             </strong>
@@ -463,7 +483,7 @@
 
         <div id="custody-oversight-no-results" class="custody-oversight-no-results" hidden>
             <strong>No matching release or return transaction.</strong>
-            <span>Try another status tab, clear the search, or adjust the schedule dates.</span>
+            <span>Try another status tab, clear the search, or adjust the date range.</span>
         </div>
     </section>
 
@@ -481,6 +501,7 @@
             const search = document.getElementById('custody-oversight-search');
             const from = document.getElementById('custody-oversight-from');
             const to = document.getElementById('custody-oversight-to');
+            const sort = document.getElementById('custody-oversight-sort');
             const clear = document.getElementById('custody-oversight-clear');
             const noResults = document.getElementById('custody-oversight-no-results');
             const summary = document.getElementById('custody-oversight-result-summary');
@@ -488,19 +509,67 @@
 
             let activeTab = 'all';
 
-            records
-                .sort((left, right) => {
+            const compareDateValues = (leftValue, rightValue, direction = 'asc') => {
+                const leftMissing = !leftValue;
+                const rightMissing = !rightValue;
+
+                if (leftMissing && rightMissing) return 0;
+                if (leftMissing) return 1;
+                if (rightMissing) return -1;
+
+                return direction === 'desc'
+                    ? rightValue.localeCompare(leftValue)
+                    : leftValue.localeCompare(rightValue);
+            };
+
+            const sortRecords = () => {
+                const mode = sort?.value || 'return-soonest';
+
+                const ordered = [...records].sort((left, right) => {
+                    const leftCompleted = left.dataset.custodyGroup === 'completed';
+                    const rightCompleted = right.dataset.custodyGroup === 'completed';
+
+                    // Keep completed records after active operational work unless
+                    // the user explicitly opens the Completed tab.
+                    if (activeTab !== 'completed' && leftCompleted !== rightCompleted) {
+                        return leftCompleted ? 1 : -1;
+                    }
+
+                    if (mode === 'return-soonest') {
+                        const difference = compareDateValues(
+                            left.dataset.return || '',
+                            right.dataset.return || ''
+                        );
+                        if (difference !== 0) return difference;
+                    }
+
+                    if (mode === 'pickup-soonest') {
+                        const difference = compareDateValues(
+                            left.dataset.pickup || '',
+                            right.dataset.pickup || ''
+                        );
+                        if (difference !== 0) return difference;
+                    }
+
+                    if (mode === 'newest') {
+                        return Number(right.dataset.created || 0) - Number(left.dataset.created || 0);
+                    }
+
+                    if (mode === 'oldest') {
+                        return Number(left.dataset.created || 0) - Number(right.dataset.created || 0);
+                    }
+
                     const priorityDifference =
                         Number(left.dataset.custodyPriority || 99)
                         - Number(right.dataset.custodyPriority || 99);
 
-                    if (priorityDifference !== 0) {
-                        return priorityDifference;
-                    }
+                    if (priorityDifference !== 0) return priorityDifference;
 
                     return Number(right.dataset.created || 0) - Number(left.dataset.created || 0);
-                })
-                .forEach((record) => list.appendChild(record));
+                });
+
+                ordered.forEach((record) => list.appendChild(record));
+            };
 
             const matchesTab = (record) => {
                 const group = record.dataset.custodyGroup || 'active';
@@ -531,31 +600,33 @@
                     dateError.hidden = !invalidDateRange;
                 }
 
+                sortRecords();
+
                 let visible = 0;
 
                 records.forEach((record) => {
                     const recordSearch = record.dataset.search || '';
-                    const schedule = record.dataset.schedule || '';
+                    const relevantDates = (record.dataset.dates || '')
+                        .split(',')
+                        .filter(Boolean);
 
                     const searchMatches =
                         !query || recordSearch.includes(query);
 
-                    // Never silently apply an impossible date range.
-                    const fromMatches =
+                    // The neutral Date From/To filter matches any operational
+                    // date on the record: schedule, pickup, issue, return, or close.
+                    const dateMatches =
                         invalidDateRange
-                        || !fromDate
-                        || (schedule && schedule >= fromDate);
-
-                    const toMatches =
-                        invalidDateRange
-                        || !toDate
-                        || (schedule && schedule <= toDate);
+                        || (!fromDate && !toDate)
+                        || relevantDates.some((date) =>
+                            (!fromDate || date >= fromDate)
+                            && (!toDate || date <= toDate)
+                        );
 
                     const show =
                         matchesTab(record)
                         && searchMatches
-                        && fromMatches
-                        && toMatches;
+                        && dateMatches;
 
                     record.hidden = !show;
 
@@ -611,11 +682,13 @@
 
             from?.addEventListener('change', render);
             to?.addEventListener('change', render);
+            sort?.addEventListener('change', render);
 
             clear?.addEventListener('click', () => {
                 if (search) search.value = '';
                 if (from) from.value = '';
                 if (to) to.value = '';
+                if (sort) sort.value = 'return-soonest';
 
                 activeTab = 'all';
                 render();
@@ -709,11 +782,15 @@
                         @elseif($mode === 'return')
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: '—' }}</strong></span>
                             <span><small>Return Due</small><strong>{{ optional($returnDate)->format('d M Y') ?: '—' }}</strong></span>
-                            <span><small>Outstanding</small><strong>{{ $outstanding + 0 }}</strong></span>
+                            <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
                         @else
                             <span><small>Pickup</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong></span>
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: 'Not yet' }}</strong></span>
-                            <span><small>Outstanding</small><strong>{{ $outstanding + 0 }}</strong></span>
+                            @if($custody->status === 'CLOSED' || $custody->closed_at !== null)
+                                <span><small>Completed</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: 'Completed' }}</strong></span>
+                            @else
+                                <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
+                            @endif
                         @endif
                     </span>
 

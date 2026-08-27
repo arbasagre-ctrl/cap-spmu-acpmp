@@ -2,14 +2,54 @@
 @section('content')
 @php
     $humanizedKey = fn ($key) => ucwords(str_replace('_', ' ', (string) $key));
+
+    $configurationSection = request()->query('section');
+    $allowedConfigurationSections = [
+        'late-return-fee',
+        'template-billing-statement',
+        'template-laundry-form',
+        'template-gate-pass',
+    ];
+
+    if (! in_array($configurationSection, $allowedConfigurationSections, true)) {
+        $configurationSection = null;
+    }
+
+    $sectionMeta = [
+        'late-return-fee' => ['Return Policy', 'Late Return Policy', 'Review the date-based return rule and configure the financial assessment applied after the effective return deadline.'],
+        'template-billing-statement' => ['Controlled Documents', 'Billing Statement Template', 'Upload, version, and activate the approved Billing Statement template.'],
+        'template-laundry-form' => ['Controlled Documents', 'Laundry Form Template', 'Upload, version, and activate the approved Laundry Form template.'],
+        'template-gate-pass' => ['Controlled Documents', 'Gate Pass Template', 'Upload, version, and activate the approved Gate Pass template.'],
+    ];
+
+    $activeSectionMeta = $configurationSection ? $sectionMeta[$configurationSection] : null;
+
+    $templateSectionType = match($configurationSection) {
+        'template-billing-statement' => 'BILLING_STATEMENT',
+        'template-laundry-form' => 'LAUNDRY_FORM',
+        'template-gate-pass' => 'GATE_PASS',
+        default => null,
+    };
+
+    $visibleTemplateTypes = $templateSectionType
+        ? array_filter($templateTypes, fn ($label, $type) => $type === $templateSectionType, ARRAY_FILTER_USE_BOTH)
+        : $templateTypes;
+
+    $visibleSettings = $configurationSection === 'late-return-fee'
+        ? $settings->where('setting_key', 'daily_overdue_tariff')
+        : $settings;
 @endphp
 
-<section class="page-heading">
+<section class="page-heading settings-detail-heading">
     <div>
-        <p class="eyebrow">Effective operational configuration</p>
-        <h1>Operational configuration</h1>
-        <p>Manage approved policy values and controlled document templates. Every change is preserved in the audit trail.</p>
+        <p class="eyebrow">{{ $activeSectionMeta[0] ?? 'Effective operational configuration' }}</p>
+        <h1>{{ $activeSectionMeta[1] ?? 'Operational Configuration' }}</h1>
+        <p>{{ $activeSectionMeta[2] ?? 'Manage approved policy values and controlled document templates. Every change is preserved in the audit trail.' }}</p>
     </div>
+
+    @if($configurationSection)
+        <a class="button secondary ui-pressable" href="{{ route('policies.index') }}">Back to Operational Configuration</a>
+    @endif
 </section>
 
 @if(session('status'))
@@ -18,6 +58,7 @@
 </section>
 @endif
 
+@if(!$configurationSection || $configurationSection === 'late-return-fee')
 <section class="content-area">
     <div class="card return-policy-card">
         <div class="card-header">
@@ -30,24 +71,26 @@
         <div class="return-policy-grid">
             <div><span>Expected Return Date</span><strong>Return anytime on that calendar date</strong></div>
             <div><span>Reminder</span><strong>1 day before + on the due date</strong></div>
-            <div><span>Overdue begins</span><strong>Next calendar day if items remain outstanding</strong></div>
+            <div><span>Overdue begins</span><strong>After the effective return date if items remain outstanding</strong></div>
             <div><span>Grace period</span><strong>None</strong></div>
         </div>
-        <p class="meta">Example: Expected Return Date = 27 Aug 2026. The borrower may return on 27 Aug. If issued property is still outstanding on 28 Aug, the custody becomes overdue.</p>
+        <p class="meta">The Expected Return Date remains the audit date. If that date is closed through the Operational Calendar, the effective return deadline automatically moves to the next open SPMU return day. Late assessment starts only after that effective deadline.</p>
     </div>
 </section>
+@endif
 
+@if(!$configurationSection || $templateSectionType)
 <section class="content-area" id="document-templates">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Controlled document management</p>
-            <h2>Document templates</h2>
+            <h2>{{ $templateSectionType ? ($visibleTemplateTypes[$templateSectionType] ?? 'Document Template') : 'Document templates' }}</h2>
             <p>Upload a new approved template version without replacing historical versions. New generated documents are linked to the active version.</p>
         </div>
     </div>
 
-    <div class="template-config-grid">
-        @foreach($templateTypes as $type => $label)
+    <div class="template-config-grid {{ $templateSectionType ? 'template-config-grid-single' : '' }}">
+        @foreach($visibleTemplateTypes as $type => $label)
             @php
                 $history = $documentTemplates->get($type, collect());
                 $activeTemplate = $history->firstWhere('status', 'ACTIVE');
@@ -149,17 +192,19 @@
         @endforeach
     </div>
 </section>
+@endif
 
+@if(!$configurationSection || $configurationSection === 'late-return-fee')
 <section class="content-area">
     <div class="section-heading">
         <div>
-            <p class="eyebrow">Other configuration</p>
-            <h2>Policy and system settings</h2>
+            <p class="eyebrow">{{ $configurationSection === 'late-return-fee' ? 'Financial assessment' : 'Other configuration' }}</p>
+            <h2>{{ $configurationSection === 'late-return-fee' ? 'Late Return Fee' : 'Policy and system settings' }}</h2>
         </div>
     </div>
 
     <div class="settings-grid admin-settings-grid">
-        @foreach($settings as $setting)
+        @foreach($visibleSettings as $setting)
             @php
                 $dataType = strtoupper((string) ($setting->data_type ?: 'TEXT'));
                 $value = $setting->value_json;
@@ -221,7 +266,7 @@
 
                 <div class="settings-actions">
                     <button class="button primary ui-pressable" data-save-button type="submit" disabled>Save change</button>
-                    <a class="button secondary ui-pressable" href="{{ route('administration.index') }}">Back</a>
+                    <a class="button secondary ui-pressable" href="{{ $configurationSection ? route('policies.index') : route('administration.index') }}">Back</a>
                 </div>
 
                 <small class="audit-note">Changes are recorded in the audit trail.</small>
@@ -229,9 +274,10 @@
         @endforeach
     </div>
 </section>
+@endif
 
 <style>
-.template-config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.template-config-card{display:flex;flex-direction:column;gap:16px;min-width:0}.template-current-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px}.template-current-summary>div,.return-policy-grid>div{padding:13px 14px;border:1px solid var(--border,#d7e1eb);border-radius:10px;background:var(--surface-muted,#f7f9fb)}.template-current-summary span,.return-policy-grid span,.template-source-row small{display:block;color:var(--muted,#62758a);font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em}.template-current-summary strong,.return-policy-grid strong,.template-source-row strong{display:block;margin-top:4px}.template-source-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.template-upload-form{padding-top:14px;border-top:1px solid var(--border,#d7e1eb)}.template-upload-form textarea{min-height:92px}.template-history summary{cursor:pointer;font-weight:700}.template-history-list{display:grid;gap:8px;margin-top:10px}.template-history-list>div{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--border,#d7e1eb)}.template-history-list small{color:var(--muted,#62758a);text-align:right}.return-policy-card{gap:14px}.return-policy-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.callout.compact{padding:11px 12px}.callout.compact strong,.callout.compact span{display:block}.callout.compact span{margin-top:3px}.callout code{font-size:.84em}@media(max-width:1100px){.template-config-grid{grid-template-columns:1fr}.return-policy-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:680px){.template-current-summary,.return-policy-grid{grid-template-columns:1fr}.template-source-row,.template-history-list>div{align-items:flex-start;flex-direction:column}.template-history-list small{text-align:left}}
+.settings-detail-heading{align-items:flex-end}.settings-detail-heading .button{flex:0 0 auto}.template-config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.template-config-grid-single{grid-template-columns:minmax(0,760px)}.template-config-card{display:flex;flex-direction:column;gap:16px;min-width:0}.template-current-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px}.template-current-summary>div,.return-policy-grid>div{padding:13px 14px;border:1px solid var(--border,#d7e1eb);border-radius:10px;background:var(--surface-muted,#f7f9fb)}.template-current-summary span,.return-policy-grid span,.template-source-row small{display:block;color:var(--muted,#62758a);font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em}.template-current-summary strong,.return-policy-grid strong,.template-source-row strong{display:block;margin-top:4px}.template-source-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.template-upload-form{padding-top:14px;border-top:1px solid var(--border,#d7e1eb)}.template-upload-form textarea{min-height:92px}.template-history summary{cursor:pointer;font-weight:700}.template-history-list{display:grid;gap:8px;margin-top:10px}.template-history-list>div{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--border,#d7e1eb)}.template-history-list small{color:var(--muted,#62758a);text-align:right}.return-policy-card{gap:14px}.return-policy-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.callout.compact{padding:11px 12px}.callout.compact strong,.callout.compact span{display:block}.callout.compact span{margin-top:3px}.callout code{font-size:.84em}@media(max-width:1100px){.template-config-grid{grid-template-columns:1fr}.return-policy-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:680px){.settings-detail-heading{align-items:flex-start}.template-current-summary,.return-policy-grid{grid-template-columns:1fr}.template-source-row,.template-history-list>div{align-items:flex-start;flex-direction:column}.template-history-list small{text-align:left}}
 </style>
 
 <script>

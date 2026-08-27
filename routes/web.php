@@ -430,6 +430,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('incidents.bill');
 
+    Route::post('/incidents/{incident}/resolve', [AccountabilityController::class, 'resolveIncident'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.resolve');
+
     Route::post('/overdue/{overdue}/bill', [AccountabilityController::class, 'billOverdue'])
         ->middleware('workspace:SPMU')
         ->name('overdue.bill');
@@ -475,6 +479,27 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             '/administration/policies/sanctions/{offenseNo}',
             [PolicyController::class, 'updateSanctionRule']
         )->whereNumber('offenseNo')->name('policies.sanctions.update');
+
+        Route::put(
+            '/administration/policies/offense-application',
+            [PolicyController::class, 'updateOffenseApplication']
+        )->name('policies.offense-application.update');
+
+
+        Route::put(
+            '/administration/policies/weekly-schedule/{weekday}',
+            [PolicyController::class, 'updateWeeklySchedule']
+        )->whereNumber('weekday')->name('policies.weekly-schedule.update');
+
+        Route::post(
+            '/administration/policies/date-exceptions',
+            [PolicyController::class, 'storeDateException']
+        )->name('policies.date-exceptions.store');
+
+        Route::delete(
+            '/administration/policies/date-exceptions/{exception}',
+            [PolicyController::class, 'destroyDateException']
+        )->name('policies.date-exceptions.destroy');
     });
 
 

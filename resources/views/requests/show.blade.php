@@ -96,10 +96,22 @@
         <h1>{{ $borrowingRequest->request_no }}</h1>
         <p>{{ $v->purpose_event }}</p>
         @if($isBorrower)
-            <p class="meta">Request status, approval history, signed documents, and requested/approved items.</p>
+            <p class="meta">Review the request, documents, and current progress.</p>
         @endif
     </div>
-    <x-status-badge :status="$detailStatus" :label="$detailStatusLabel" />
+
+    <div class="request-heading-actions">
+        <x-status-badge :status="$detailStatus" :label="$detailStatusLabel" />
+
+        @if($isBorrower && $borrowingRequest->custody)
+            <a
+                class="button primary ui-pressable"
+                href="{{ route('custody.show', $borrowingRequest->custody) }}"
+            >
+                View Borrowing
+            </a>
+        @endif
+    </div>
 </section>
 
 @if($errors->any())
@@ -136,20 +148,20 @@
             @endif
 
             <div class="inline-actions top-gap">
-                <a
-                    class="button secondary ui-pressable"
-                    href="{{ route('requests.edit', $borrowingRequest) }}"
-                >
-                    {{ $submissionReady ? 'Review / Edit Draft' : 'Edit Draft & Upload Documents' }}
-                </a>
-
                 @if($submissionReady)
-                    <form method="post" action="{{ route('requests.submit', $borrowingRequest) }}">
-                        @csrf
-                        <button class="button primary ui-pressable" type="submit">
-                            Submit to SPMU
-                        </button>
-                    </form>
+                    <a
+                        class="button primary ui-pressable"
+                        href="{{ route('requests.edit', $borrowingRequest) }}"
+                    >
+                        Review & Submit
+                    </a>
+                @else
+                    <a
+                        class="button secondary ui-pressable"
+                        href="{{ route('requests.edit', $borrowingRequest) }}"
+                    >
+                        Edit Draft & Upload Documents
+                    </a>
                 @endif
             </div>
 
@@ -164,7 +176,9 @@
 </section>
 @endif
 
+@unless($isBorrower)
 <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
+@endunless
 
 @if($isUnderSpmuReview)
 <section class="content-area spmu-verification-workspace" data-spmu-verification-workspace>
@@ -374,7 +388,234 @@
 </section>
 @endif
 
-@unless($isUnderSpmuReview)
+@if($isBorrower)
+<div class="borrower-progress-always" aria-label="Current request progress">
+    <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
+</div>
+
+<section class="content-area borrower-request-workspace" data-borrower-request-tabs>
+    <div class="borrower-request-tabs" role="tablist" aria-label="Request details">
+        <button
+            type="button"
+            class="borrower-request-tab is-active"
+            role="tab"
+            aria-selected="true"
+            aria-controls="borrower-request-overview"
+            data-request-tab="overview"
+        >
+            Overview
+        </button>
+
+        <button
+            type="button"
+            class="borrower-request-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="borrower-request-documents"
+            data-request-tab="documents"
+        >
+            Documents
+        </button>
+
+    </div>
+
+    <div
+        id="borrower-request-overview"
+        class="borrower-request-panel"
+        role="tabpanel"
+        data-request-panel="overview"
+    >
+        <div class="borrower-overview-grid">
+            <article class="card">
+                <div class="card-header">
+                    <div>
+                        <p class="eyebrow">Request details</p>
+                        <h2>Borrowing information</h2>
+                    </div>
+                </div>
+
+                <div class="borrower-fact-grid">
+                    <div>
+                        <span>Office / Department</span>
+                        <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</strong>
+                    </div>
+                    <div>
+                        <span>Location</span>
+                        <strong>{{ $v->location }}</strong>
+                    </div>
+                    <div>
+                        <span>Scheduled Use</span>
+                        <strong>{{ optional($v->schedule_date ?: $v->needed_from)->format('d M Y') }}</strong>
+                    </div>
+                    <div>
+                        <span>Expected Return</span>
+                        <strong>{{ optional($v->return_date ?: $v->return_due_at)->format('d M Y') }}</strong>
+                    </div>
+                    <div>
+                        <span>Student Activity</span>
+                        <strong>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</strong>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                <div class="card-header">
+                    <div>
+                        <p class="eyebrow">Requested property</p>
+                        <div class="borrower-section-title-inline">
+                            <h2>Items</h2>
+                            <span class="borrower-item-count">{{ $v->items->count() }} {{ $v->items->count() === 1 ? 'item' : 'items' }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="borrower-item-list">
+                    @foreach($v->items as $item)
+                        @php
+                            $requestedQty = $item->requested_quantity + 0;
+                            $approvedQty = $item->approved_quantity === null
+                                ? null
+                                : $item->approved_quantity + 0;
+                            $quantityChanged = $approvedQty !== null
+                                && (float) $approvedQty !== (float) $requestedQty;
+                        @endphp
+
+                        <div class="borrower-item-row">
+                            <div>
+                                <strong>{{ $item->description_snapshot }}</strong>
+                                <small>{{ str($item->use_location)->replace('_',' ')->title() }}</small>
+                            </div>
+
+                            <div class="borrower-item-quantity">
+                                @if($approvedQty === null)
+                                    <strong>{{ $requestedQty }} {{ $item->unit_snapshot }}</strong>
+                                    <small>Pending SPMU approval</small>
+                                @elseif($quantityChanged)
+                                    <strong>{{ $approvedQty }} {{ $item->unit_snapshot }}</strong>
+                                    <small>Requested {{ $requestedQty }} {{ $item->unit_snapshot }}</small>
+                                @else
+                                    <strong>{{ $approvedQty }} {{ $item->unit_snapshot }}</strong>
+                                    <small>Approved quantity</small>
+                                @endif
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </article>
+        </div>
+    </div>
+
+    <div
+        id="borrower-request-documents"
+        class="borrower-request-panel"
+        role="tabpanel"
+        data-request-panel="documents"
+        hidden
+    >
+        <div class="borrower-documents-grid">
+            <article class="card">
+                <div class="card-header">
+                    <div>
+                        <p class="eyebrow">Supporting documents</p>
+                        <h2>Uploaded scans</h2>
+                    </div>
+                </div>
+
+                @forelse($currentDocs as $doc)
+                    <div class="evidence-row">
+                        <div>
+                            <strong>
+                                {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER
+                                    ? 'Approved Borrowing Request Letter'
+                                    : 'Permission to Conduct Letter' }}
+                            </strong>
+                            <small>
+                                Version {{ $doc->version_no }}
+                                ·
+                                {{ str($doc->verification_status)->replace('_',' ')->title() }}
+                            </small>
+                        </div>
+
+                        <a
+                            class="button secondary small ui-pressable"
+                            href="{{ route('files.show', $doc->file, false) }}"
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            View
+                        </a>
+                    </div>
+                @empty
+                    <div class="empty-state">
+                        <strong>No uploaded supporting documents.</strong>
+                    </div>
+                @endforelse
+            </article>
+
+            <article class="card">
+                <div class="card-header">
+                    <div>
+                        <p class="eyebrow">Operational documents</p>
+                        <div class="borrower-section-title-inline">
+                            <h2>Forms for physical processing</h2>
+                            <p class="meta">Download the applicable forms.</p>
+                        </div>
+                    </div>
+                </div>
+
+                @if($borrowingRequest->custody && $borrowingRequest->final_approved_at)
+                    <div class="document-list borrower-document-list">
+                        <article>
+                            <div>
+                                <strong>Borrower Slip</strong>
+                                <small>Required for physical handover.</small>
+                            </div>
+                            @if($borrowerSlipDocument)
+                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
+                            @else
+                                <span class="status-badge status-neutral">Preparing</span>
+                            @endif
+                        </article>
+
+                        <article>
+                            <div>
+                                <strong>Laundry Form</strong>
+                                <small>{{ $requestHasLaundry ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
+                            </div>
+                            @if(!$requestHasLaundry)
+                                <span class="status-badge status-neutral">Not applicable</span>
+                            @elseif($laundryFormDocument)
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
+                            @else
+                                <span class="status-badge status-neutral">Preparing</span>
+                            @endif
+                        </article>
+
+                        <article>
+                            <div>
+                                <strong>Gate Pass</strong>
+                                <small>{{ $requestHasOffCampus ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
+                            </div>
+                            @if(!$requestHasOffCampus)
+                                <span class="status-badge status-neutral">Not applicable</span>
+                            @elseif($gatePassDocument)
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download / Print</a>
+                            @else
+                                <span class="status-badge status-neutral">Preparing</span>
+                            @endif
+                        </article>
+                    </div>
+                @else
+                    <div class="empty-state">
+                        <strong>Operational forms are available after SPMU approval.</strong>
+                    </div>
+                @endif
+            </article>
+        </div>
+    </div>
+
+</section>
+@elseif(!$isUnderSpmuReview)
 <section class="content-grid two">
     <article class="card">
         <div class="card-header">
@@ -394,7 +635,7 @@
             <dt>Event Details</dt>
             <dd>{{ $v->purpose_event }}</dd>
 
-<dt>Location</dt>
+            <dt>Location</dt>
             <dd>{{ $v->location }}</dd>
 
             <dt>Schedule Date</dt>
@@ -408,7 +649,6 @@
         </dl>
     </article>
 
-    @unless($isUnderSpmuReview)
     <article class="card">
         <div class="card-header">
             <div>
@@ -446,14 +686,7 @@
                 <strong>No current scanned supporting document.</strong>
             </div>
         @endforelse
-
-        @if(!$isBorrower || !$requestIsCompleted)
-            <p class="meta">
-                The uploaded letter is evidence/notice of the institutionally approved request. It does not reserve inventory until SPMU verifies and approves it in the system.
-            </p>
-        @endif
     </article>
-    @endunless
 </section>
 
 <section class="content-area">
@@ -471,8 +704,8 @@
                     <tr>
                         <th>Item</th>
                         <th>Requested</th>
-                        <th>{{ $requestIsCompleted ? 'Approved' : 'Approved / Reserved' }}</th>
-                        <th>Use</th>
+                        <th>Approved Quantity</th>
+                        <th>Premises</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -482,7 +715,7 @@
                         <td>{{ $item->requested_quantity + 0 }} {{ $item->unit_snapshot }}</td>
                         <td>
                             {{ $item->approved_quantity === null
-                                ? 'Not reserved yet'
+                                ? 'Not approved yet'
                                 : ($item->approved_quantity + 0).' '.$item->unit_snapshot }}
                         </td>
                         <td>{{ str($item->use_location)->replace('_',' ')->title() }}</td>
@@ -495,79 +728,22 @@
 </section>
 @endif
 
-@if($isBorrower && $borrowingRequest->custody && $borrowingRequest->final_approved_at)
-<section class="content-area" id="borrower-operational-documents">
-    <article class="card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Approved operational documents</p>
-                <h2>Print the forms you need for physical processing</h2>
-                <p class="meta">These forms are generated after SPMU approval. Print the applicable documents and bring them for the required handwritten signatures and physical processing.</p>
-            </div>
-        </div>
 
-        <div class="document-list">
-            <article>
-                <div>
-                    <strong>Borrower Slip</strong>
-                    <small>Print and sign the borrower portion, then bring it to SPMU for physical handover and the required SPMU signature.</small>
-                </div>
-                @if($borrowerSlipDocument)
-                    <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
-                @else
-                    <span class="status-badge status-neutral">Preparing document</span>
-                @endif
-            </article>
 
-            <article>
-                <div>
-                    <strong>Laundry Form</strong>
-                    <small>{{ $requestHasLaundry ? 'Required because this borrowing includes linen / laundry-required items.' : 'Not applicable to this borrowing.' }}</small>
-                </div>
-                @if(!$requestHasLaundry)
-                    <span class="status-badge status-neutral">Locked · Not applicable</span>
-                @elseif($laundryFormDocument)
-                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
-                @else
-                    <span class="status-badge status-neutral">Preparing document</span>
-                @endif
-            </article>
-
-            <article>
-                <div>
-                    <strong>Gate Pass</strong>
-                    <small>{{ $requestHasOffCampus ? 'Required because the approved borrowing includes off-campus use.' : 'Not applicable to this borrowing.' }}</small>
-                </div>
-                @if(!$requestHasOffCampus)
-                    <span class="status-badge status-neutral">Locked · Not applicable</span>
-                @elseif($gatePassDocument)
-                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download / Print</a>
-                @else
-                    <span class="status-badge status-neutral">Preparing document</span>
-                @endif
-            </article>
-        </div>
-    </article>
-</section>
-@endif
-
-@if($borrowingRequest->custody)
+@if($borrowingRequest->custody && !$isBorrower)
 <section class="content-area">
     <div class="action-panel action-neutral">
         <div>
-            <p class="eyebrow">My Borrowings</p>
-            <h2>{{ $requestIsCompleted ? 'View the completed borrowing record' : 'Continue to pickup / custody details' }}</h2>
-            <p>
-                My Borrowings contains the pickup schedule, issued and returned quantities, outstanding items,
-                linen/laundry progress, and final return reconciliation. Those operational details are not repeated on this request page.
-            </p>
+            <p class="eyebrow">Operational record</p>
+            <h2>{{ $requestIsCompleted ? 'Completed custody record' : 'Release & Return Record' }}</h2>
+            <p>Open the linked custody record for release, physical return processing, and final reconciliation.</p>
         </div>
 
         <a
             class="button primary ui-pressable"
             href="{{ route('custody.show', $borrowingRequest->custody) }}"
         >
-            View My Borrowing
+            View Custody Record
         </a>
     </div>
 </section>
@@ -705,6 +881,68 @@
 </section>
 @endif
 
+
+
+@if($isBorrower)
+<script>
+(() => {
+    const initializeBorrowerRequestTabs = () => {
+        const workspace = document.querySelector('[data-borrower-request-tabs]');
+
+        if (!workspace || workspace.dataset.tabsInitialized === '1') {
+            return;
+        }
+
+        const tabs = [...workspace.querySelectorAll('[data-request-tab]')];
+        const panels = [...workspace.querySelectorAll('[data-request-panel]')];
+
+        if (!tabs.length || !panels.length) {
+            return;
+        }
+
+        workspace.dataset.tabsInitialized = '1';
+
+        const activate = (name, updateHash = true) => {
+            const target = panels.find((panel) => panel.dataset.requestPanel === name);
+
+            if (!target) {
+                return;
+            }
+
+            tabs.forEach((tab) => {
+                const active = tab.dataset.requestTab === name;
+                tab.classList.toggle('is-active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+
+            panels.forEach((panel) => {
+                panel.hidden = panel !== target;
+            });
+
+            if (updateHash && window.history?.replaceState) {
+                window.history.replaceState(null, '', `#request-${name}`);
+            }
+        };
+
+        tabs.forEach((tab) => {
+            tab.addEventListener('click', () => activate(tab.dataset.requestTab));
+        });
+
+        const hashMatch = window.location.hash.match(/^#request-(overview|documents)$/);
+
+        if (hashMatch) {
+            activate(hashMatch[1], false);
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeBorrowerRequestTabs, { once: true });
+    } else {
+        initializeBorrowerRequestTabs();
+    }
+})();
+</script>
+@endif
 
 {{-- BORROWER_REQUEST_CANCEL_FIX_V1_START --}}
 <script>
@@ -1675,7 +1913,7 @@
         min-width: 0;
     }
 
-    /* Scanned request: readable immediately without making the whole page tiny. */
+    /* Scanned request: show the complete page immediately; users may zoom only when needed. */
     .spmu-scan-slot {
         min-width: 0;
     }
@@ -1908,7 +2146,10 @@
 
         viewer.dataset.spmuReadableZoomApplied = '1';
         const base = current.split('#')[0];
-        viewer.setAttribute(attr, `${base}#page=1&zoom=125`);
+        viewer.setAttribute(
+            attr,
+            `${base}#page=1&zoom=page-fit&toolbar=1&navpanes=0&scrollbar=1&view=Fit`
+        );
     };
 
     if (document.readyState === 'loading') {
@@ -2235,5 +2476,293 @@ dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
 }
 </style>
 {{-- BORROWER_CANCEL_DIALOG_POSITION_FIX_END --}}
+
+
+@if($isBorrower)
+<style>
+.request-heading-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.borrower-request-workspace {
+    display: grid;
+    gap: 14px;
+}
+
+/* Borrower monitoring is always visible above the detail tabs. */
+.borrower-progress-always > .request-tracker-card {
+    margin-top: 0;
+}
+
+.borrower-progress-always .request-tracker__header {
+    padding-bottom: 12px;
+}
+
+.borrower-progress-always .request-tracker__intro {
+    display: none;
+}
+
+.borrower-progress-always .request-tracker__scroll {
+    padding-top: 18px;
+    padding-bottom: 8px;
+}
+
+.borrower-progress-always .request-tracker__marker {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 8px;
+}
+
+.borrower-progress-always .request-tracker__step::after {
+    top: 20px;
+    left: calc(50% + 20px);
+    width: calc(100% - 40px);
+}
+
+.borrower-progress-always .request-tracker__copy small {
+    display: none;
+}
+
+.borrower-progress-always .request-tracker__step.is-current .request-tracker__copy small,
+.borrower-progress-always .request-tracker__step.is-warning .request-tracker__copy small,
+.borrower-progress-always .request-tracker__step.is-stopped .request-tracker__copy small {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.borrower-progress-always .request-tracker__hint {
+    margin-top: 0;
+    padding-top: 9px;
+}
+
+.borrower-request-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 7px;
+    border: 1px solid #cbd8e6;
+    border-radius: 14px;
+    background: #f4f8fc;
+}
+
+.borrower-request-tab {
+    min-height: 46px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: #30465f;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
+}
+
+.borrower-request-tab:hover {
+    border-color: #b9cce0;
+    background: #ffffff;
+    color: #0b4f92;
+}
+
+.borrower-request-tab.is-active {
+    border-color: #1769e0;
+    background: #ffffff;
+    color: #0b5cab;
+    box-shadow: 0 2px 8px rgba(16, 61, 103, .08);
+}
+
+.borrower-request-panel[hidden] {
+    display: none !important;
+}
+
+.borrower-overview-grid,
+.borrower-documents-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: stretch;
+}
+
+/* Keep paired borrower cards equal in height. The taller card sets the row height,
+   while long office/item/document text wraps instead of widening the column. */
+.borrower-overview-grid > .card,
+.borrower-documents-grid > .card {
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.borrower-overview-grid > .card *,
+.borrower-documents-grid > .card * {
+    min-width: 0;
+}
+
+.borrower-fact-grid strong,
+.borrower-item-row strong,
+.borrower-item-row small,
+.borrower-documents-grid strong,
+.borrower-documents-grid small {
+    overflow-wrap: anywhere;
+    word-break: normal;
+}
+
+.borrower-documents-grid > .card > .empty-state {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    align-content: center;
+}
+
+.borrower-fact-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+}
+
+.borrower-fact-grid > div {
+    display: grid;
+    gap: 4px;
+    padding: 12px 0;
+    border-bottom: 1px solid #e1e8f0;
+}
+
+.borrower-fact-grid > div:nth-child(odd) {
+    padding-right: 18px;
+}
+
+.borrower-fact-grid > div:nth-child(even) {
+    padding-left: 18px;
+    border-left: 1px solid #e1e8f0;
+}
+
+.borrower-fact-grid span,
+.borrower-item-row small {
+    color: #667a91;
+    font-size: 12px;
+}
+
+.borrower-fact-grid strong {
+    color: #102b4e;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.borrower-item-list {
+    display: grid;
+    max-height: 330px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 6px;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+}
+
+/* The card header remains fixed while only long item lists scroll.
+   With a few items there is no scrollbar; it appears only when needed. */
+.borrower-item-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.borrower-item-list::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #c5d2e0;
+}
+
+.borrower-item-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.borrower-section-title-inline {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.borrower-section-title-inline h2,
+.borrower-section-title-inline .meta {
+    margin: 0;
+}
+
+.borrower-item-count {
+    color: #667a91;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.borrower-item-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px;
+    align-items: center;
+    padding: 13px 0;
+    border-bottom: 1px solid #e1e8f0;
+}
+
+.borrower-item-row:last-child {
+    border-bottom: 0;
+}
+
+.borrower-item-row > div:first-child,
+.borrower-item-quantity {
+    display: grid;
+    gap: 3px;
+}
+
+.borrower-item-quantity {
+    min-width: 150px;
+    text-align: right;
+}
+
+.borrower-document-list article {
+    min-height: 64px;
+}
+
+
+@media (max-width: 980px) {
+    .borrower-overview-grid,
+    .borrower-documents-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 680px) {
+    .request-heading-actions {
+        justify-content: flex-start;
+    }
+
+    .borrower-request-tabs {
+        grid-template-columns: 1fr;
+    }
+
+    .borrower-fact-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .borrower-fact-grid > div:nth-child(odd),
+    .borrower-fact-grid > div:nth-child(even) {
+        padding-left: 0;
+        padding-right: 0;
+        border-left: 0;
+    }
+
+    .borrower-item-row {
+        grid-template-columns: 1fr;
+    }
+
+    .borrower-item-quantity {
+        min-width: 0;
+        text-align: left;
+    }
+}
+</style>
+@endif
 
 @endsection

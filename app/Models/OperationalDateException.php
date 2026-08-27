@@ -5,27 +5,27 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class SanctionRule extends Model
+class OperationalDateException extends Model
 {
     protected $fillable = [
-        'offense_no',
-        'sanction_code',
-        'sanction_label',
-        'duration_mode',
-        'duration_value',
+        'exception_date',
         'status',
-        'effective_from',
-        'effective_to',
+        'accepts_requests',
+        'allows_pickup',
+        'allows_return',
+        'open_time',
+        'close_time',
+        'reason',
         'configured_by_user_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'offense_no' => 'integer',
-            'duration_value' => 'integer',
-            'effective_from' => 'date',
-            'effective_to' => 'date',
+            'exception_date' => 'date',
+            'accepts_requests' => 'boolean',
+            'allows_pickup' => 'boolean',
+            'allows_return' => 'boolean',
         ];
     }
 

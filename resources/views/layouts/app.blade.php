@@ -445,6 +445,7 @@
                     ['requests.index', 'requests.*', 'Request Records', 'requests'],
                     ['custody.index', 'custody.*', 'Release & Return Oversight', 'custody'],
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
+                    ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
                     ['reports.index', 'reports.index', 'Reports & Analytics', 'reports'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
@@ -457,7 +458,7 @@
                     ['laundry.spmu.index', 'laundry.spmu.*', 'Laundry Final Acceptance', 'custody'],
                     ['gate-passes.index', 'gate-passes.*', 'Gate Pass', 'custody'],
                     ['inventory.index', 'inventory.*', 'Inventory', 'inventory'],
-                    ['calendar.index', 'calendar.*', 'Borrowing Calendar', 'calendar'],
+                    ['calendar.index', 'calendar.*', 'Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Return Issues', 'accountability'],
                 ],
             'ICTU' => [

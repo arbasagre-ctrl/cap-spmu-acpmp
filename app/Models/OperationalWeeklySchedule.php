@@ -5,27 +5,27 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class SanctionRule extends Model
+class OperationalWeeklySchedule extends Model
 {
     protected $fillable = [
-        'offense_no',
-        'sanction_code',
-        'sanction_label',
-        'duration_mode',
-        'duration_value',
-        'status',
-        'effective_from',
-        'effective_to',
+        'weekday',
+        'is_open',
+        'accepts_requests',
+        'allows_pickup',
+        'allows_return',
+        'open_time',
+        'close_time',
         'configured_by_user_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'offense_no' => 'integer',
-            'duration_value' => 'integer',
-            'effective_from' => 'date',
-            'effective_to' => 'date',
+            'weekday' => 'integer',
+            'is_open' => 'boolean',
+            'accepts_requests' => 'boolean',
+            'allows_pickup' => 'boolean',
+            'allows_return' => 'boolean',
         ];
     }
 

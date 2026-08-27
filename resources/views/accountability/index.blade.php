@@ -12,7 +12,24 @@
     $openOverdueCases = $overdueCases->whereNotIn('status', ['RESOLVED']);
     $openIncidents = $incidents->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
     $openBillings = $billings->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
-    $pendingViolations = $isHead ? $violations->where('status', 'PENDING_REVIEW') : collect();
+    $propertyCustodyIds = $openIncidents
+        ->pluck('custody_transaction_id')
+        ->filter()
+        ->map(fn ($id) => (int) $id)
+        ->unique();
+    $pendingViolations = $isHead
+        ? $violations->where('status', 'PENDING_REVIEW')->reject(
+            fn ($violation) => $propertyCustodyIds->contains((int) $violation->custody_transaction_id)
+        )
+        : collect();
+    $headReviewIncidents = $isHead
+        ? $openIncidents->whereNotIn('status', ['BILLING_PENDING', 'FOR_BILLING', 'COMPLIANCE_REQUIRED'])
+        : collect();
+    $headReviewCount = $pendingViolations->count() + $headReviewIncidents->count();
+    $headView = $isHead ? request('view', $headReviewCount > 0 ? 'head_review' : 'cases') : null;
+    if ($isHead && ! in_array($headView, ['head_review', 'cases', 'billings', 'restrictions'], true)) {
+        $headView = 'cases';
+    }
     $openCaseCount = $openOverdueCases->count() + $openIncidents->count();
     $borrowerRecordCount = $openOverdueCases->count()
         + $openIncidents->count()
@@ -33,6 +50,115 @@
         || $pendingViolations->isNotEmpty();
 @endphp
 
+@once
+<style>
+.borrower-obligation-banner { border-left: 4px solid #d08a16; }
+.borrower-next-action {
+    display: grid;
+    gap: 6px;
+    margin-top: 2px;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: var(--surface-subtle);
+}
+.borrower-next-action__heading { display: grid; gap: 2px; }
+.borrower-next-action__heading > span {
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+.borrower-next-action__heading > strong { color: var(--text-primary); font-size: 12px; }
+.borrower-next-action > p { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
+.borrower-next-action > small { color: var(--text-muted); font-size: 10px; }
+.borrower-next-action--info { border-left-color: #2b78c5; background: #f5f9fd; }
+.borrower-next-action--warning { border-left-color: #d08a16; background: #fffaf0; }
+.borrower-next-action--danger { border-left-color: #c4493d; background: #fff7f6; }
+
+.head-accountability-card {
+    position: relative;
+    display: grid;
+    gap: 6px;
+    min-height: 150px;
+    padding: 18px 20px;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
+}
+.head-accountability-card:hover {
+    transform: translateY(-1px);
+    border-color: #8abbe8;
+    box-shadow: 0 8px 20px rgba(15, 74, 125, .08);
+}
+.head-accountability-card.is-active {
+    border-color: #1d6fb8;
+    background: #f4f9fe;
+    box-shadow: inset 0 3px 0 #1d6fb8;
+}
+.head-accountability-card .kpi-icon { margin-bottom: 4px; }
+.head-control-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.head-control-heading > div { min-width:0; }
+.head-control-heading h2 { margin:2px 0 4px; }
+.head-control-heading p { margin:0; color:var(--text-muted); }
+.head-case-card { overflow:hidden; }
+.head-case-summary {
+    display:grid;
+    grid-template-columns: repeat(4, minmax(0,1fr));
+    gap:1px;
+    margin:14px 0 0;
+    border:1px solid var(--border);
+    border-radius:10px;
+    overflow:hidden;
+    background:var(--border);
+}
+.head-case-summary > div { padding:12px 14px; background:var(--surface); min-width:0; }
+.head-case-summary dt { margin:0 0 4px; color:var(--text-muted); font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+.head-case-summary dd { margin:0; color:var(--text-primary); font-weight:700; overflow-wrap:anywhere; }
+.head-case-lines { margin-top:14px; }
+.head-review-disclosure { margin-top:14px; border-top:1px solid var(--border); padding-top:14px; }
+.head-review-disclosure > summary {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-height:40px;
+    padding:0 16px;
+    border:1px solid #1d6fb8;
+    border-radius:9px;
+    color:#155d9d;
+    background:#fff;
+    cursor:pointer;
+    font-weight:800;
+    list-style:none;
+}
+.head-review-disclosure > summary::-webkit-details-marker { display:none; }
+.head-review-disclosure[open] > summary { background:#eef6fd; }
+.head-decision-panel { margin-top:14px; padding:16px; border:1px solid #c9dff2; border-radius:10px; background:#f8fbfe; }
+.head-decision-panel h4 { margin:0 0 5px; }
+.head-decision-panel > p { margin:0 0 14px; color:var(--text-secondary); }
+.head-decision-hint { display:grid; gap:5px; margin-top:12px; padding:11px 12px; border-left:4px solid #d08a16; background:#fffaf0; border-radius:7px; color:var(--text-secondary); font-size:11px; }
+.head-status-note { margin-top:12px; padding:11px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface-subtle); }
+.head-status-note strong { display:block; margin-bottom:3px; }
+.head-linked-case { font-weight:800; color:#155d9d; }
+.head-offense-panel { display:grid; gap:11px; margin-top:14px; padding:14px; border:1px solid #d6e1ec; border-radius:10px; background:#fff; }
+.head-offense-panel__heading { display:grid; gap:3px; }
+.head-offense-panel__heading span { color:var(--text-muted); font-size:10px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; }
+.head-offense-toggle { display:flex !important; align-items:flex-start; gap:9px !important; padding:11px 12px; border:1px solid #b9d4ec; border-radius:9px; background:#f5f9fd; color:var(--text-primary) !important; font-weight:800 !important; }
+.head-offense-toggle input { width:18px !important; height:18px; margin:1px 0 0 !important; flex:0 0 auto; }
+.head-offense-preview { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; border:1px solid var(--border); border-radius:9px; overflow:hidden; background:var(--border); }
+.head-offense-preview > div { display:grid; gap:3px; padding:10px 11px; background:var(--surface); }
+.head-offense-preview small { color:var(--text-muted); font-size:9px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+.head-offense-preview strong { font-size:11px; overflow-wrap:anywhere; }
+.head-offense-note { margin:0; color:var(--text-secondary); font-size:11px; line-height:1.5; }
+.head-offense-state { padding:11px 12px; border-left:4px solid #1d6fb8; border-radius:8px; background:#f5f9fd; }
+.head-offense-state strong { display:block; margin-bottom:3px; }
+@media (max-width: 900px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr 1fr; } }
+@media (max-width: 560px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr; } }
+</style>
+@endonce
+
 <section class="page-heading">
     <div>
         <p class="eyebrow">Financial and property accountability</p>
@@ -48,12 +174,27 @@
 </section>
 
 @if($workspace === 'BORROWER' && $activeRestrictions->isNotEmpty())
+@php
+    $borrowerGuidanceTitle = 'Borrowing is currently restricted';
+    $borrowerGuidanceText = 'Review the open obligation below. Your borrowing access will remain restricted until SPMU records the case as resolved.';
+
+    if ($openBillings->isNotEmpty()) {
+        $borrowerGuidanceTitle = 'Action required: settle the open billing';
+        $borrowerGuidanceText = 'Download the Billing Statement below, settle it through the CSPC Cashier, then present the paid official receipt to SPMU. SPMU uploads and verifies the receipt; you do not upload payment evidence yourself.';
+    } elseif ($openOverdueCases->isNotEmpty()) {
+        $borrowerGuidanceTitle = 'Action required: return the outstanding items';
+        $borrowerGuidanceText = 'Bring all outstanding issued items to SPMU for physical return inspection. Any applicable late-return billing is determined through the accountability process after the return is physically recorded.';
+    } elseif ($openIncidents->isNotEmpty()) {
+        $borrowerGuidanceTitle = 'No payment action required yet';
+        $borrowerGuidanceText = 'An unresolved property case is under SPMU processing. Wait for the SPMU decision. If no charge is required, the SPMU Head resolves the case and its linked restriction is lifted. If a Billing Statement is issued, the restriction is lifted after verified settlement or an authorized waiver.';
+    }
+@endphp
 <section class="content-area">
-    <div class="action-panel action-warning">
+    <div class="action-panel action-warning borrower-obligation-banner">
         <div>
             <p class="eyebrow">Borrowing eligibility</p>
-            <h2>Borrowing is currently restricted</h2>
-            <p>Resolve the outstanding obligation shown below before submitting another request.</p>
+            <h2>{{ $borrowerGuidanceTitle }}</h2>
+            <p>{{ $borrowerGuidanceText }}</p>
         </div>
         <x-status-badge status="ACTIVE" />
     </div>
@@ -111,48 +252,76 @@
             <small>Borrowing restrictions currently in force</small>
         </button>
     @elseif($isHead)
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="review" aria-pressed="false">
+        <a
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning head-accountability-card {{ $headView === 'head_review' ? 'is-active' : '' }}"
+            href="{{ route('accountability.index', ['view' => 'head_review']) }}"
+            aria-current="{{ $headView === 'head_review' ? 'page' : 'false' }}"
+        >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
-            <strong class="kpi-value">{{ $pendingViolations->count() }}</strong>
+            <strong class="kpi-value">{{ $headReviewCount }}</strong>
             <span class="kpi-label">Needs Head Review</span>
-            <small>{{ $pendingViolations->count() ? 'Administrative decision pending' : 'No pending administrative decision' }}</small>
-        </button>
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-spmu-filter-card" data-spmu-accountability-filter="cases" aria-pressed="false">
+            <small>{{ $headReviewCount ? 'Formal case decision pending' : 'No pending administrative decision' }}</small>
+        </a>
+        <a
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger head-accountability-card {{ $headView === 'cases' ? 'is-active' : '' }}"
+            href="{{ route('accountability.index', ['view' => 'cases']) }}"
+            aria-current="{{ $headView === 'cases' ? 'page' : 'false' }}"
+        >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="custody" size="18" /></span>
             <strong class="kpi-value">{{ $openCaseCount }}</strong>
             <span class="kpi-label">Open Cases</span>
             <small>{{ $openOverdueCases->count() }} overdue · {{ $openIncidents->count() }} property</small>
-        </button>
-    @else
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-spmu-filter-card" data-spmu-accountability-filter="overdue" aria-pressed="false">
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
-            <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
-            <span class="kpi-label">Overdue Returns</span>
-            <small>Unresolved date-based lateness</small>
-        </button>
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="property" aria-pressed="false">
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
-            <strong class="kpi-value">{{ $openIncidents->count() }}</strong>
-            <span class="kpi-label">Property Cases</span>
-            <small>Damage, loss, or accountability findings</small>
-        </button>
-    @endif
-
-    @unless($isBorrower)
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-spmu-filter-card" data-spmu-accountability-filter="billing" aria-pressed="false">
+        </a>
+        <a
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info head-accountability-card {{ $headView === 'billings' ? 'is-active' : '' }}"
+            href="{{ route('accountability.index', ['view' => 'billings']) }}"
+            aria-current="{{ $headView === 'billings' ? 'page' : 'false' }}"
+        >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
             <small>Awaiting settlement or disposition</small>
-        </button>
-
-        <button type="button" class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-spmu-filter-card" data-spmu-accountability-filter="restriction" aria-pressed="false">
+        </a>
+        <a
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning head-accountability-card {{ $headView === 'restrictions' ? 'is-active' : '' }}"
+            href="{{ route('accountability.index', ['view' => 'restrictions']) }}"
+            aria-current="{{ $headView === 'restrictions' ? 'page' : 'false' }}"
+        >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
             <small>Borrowing restrictions currently in force</small>
-        </button>
-    @endunless
+        </a>
+    @else
+        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger">
+            <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
+            <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
+            <span class="kpi-label">Overdue Returns</span>
+            <small>Unresolved date-based lateness</small>
+        </article>
+        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning">
+            <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
+            <strong class="kpi-value">{{ $openIncidents->count() }}</strong>
+            <span class="kpi-label">Property Cases</span>
+            <small>Damage, loss, or accountability findings</small>
+        </article>
+    @endif
+
+    @if(! $isBorrower && ! $isHead)
+        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info">
+            <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
+            <strong class="kpi-value">{{ $openBillings->count() }}</strong>
+            <span class="kpi-label">Open Billings</span>
+            <small>Awaiting settlement or disposition</small>
+        </article>
+
+        <article class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning">
+            <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
+            <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
+            <span class="kpi-label">Active Restrictions</span>
+            <small>Borrowing restrictions currently in force</small>
+        </article>
+    @endif
 </section>
 
 @if($isBorrower)
@@ -230,6 +399,13 @@
                     <span><small>Late fee rate</small><strong>{{ $overdue->rate_snapshot === null ? 'Not configured' : 'PHP '.number_format((float) $overdue->rate_snapshot, 2) }}</strong></span>
                     <span><small>Accrued amount</small><strong>{{ $overdue->rate_snapshot === null ? 'Not determined' : 'PHP '.number_format((float) $overdue->accrued_amount, 2) }}</strong></span>
                 </div>
+                <div class="borrower-next-action borrower-next-action--warning">
+                    <div class="borrower-next-action__heading">
+                        <span>What you need to do</span>
+                        <strong>Return the outstanding items to SPMU</strong>
+                    </div>
+                    <p>Bring the issued items to SPMU for physical return inspection as soon as possible. Do not record the return yourself; the SPMU Action Officer confirms the actual quantities and condition during handover.</p>
+                </div>
                 <p class="meta">Late status begins on the calendar day after the Expected Return Date.</p>
             </article>
         @endforeach
@@ -238,6 +414,38 @@
             @php
                 $recordDate = $incident->reported_at ?: $incident->created_at;
                 $incidentType = str($incident->incident_type)->replace('_', ' ')->title();
+                $incidentBilling = $openBillings->first(fn ($billing) => $billing->lines->contains(
+                    fn ($line) => (int) $line->incident_id === (int) $incident->id
+                ));
+                $incidentRestriction = $activeRestrictions->first(
+                    fn ($restriction) => (int) $restriction->incident_id === (int) $incident->id
+                );
+                $incidentNextActionTitle = 'No action required yet';
+                $incidentNextActionText = 'SPMU is processing this property case. Wait for a formal billing, waiver, compliance, or case-resolution instruction before taking any payment action.';
+                $incidentNextActionClass = 'borrower-next-action--info';
+
+                if ($incident->status === 'COMPLIANCE_REQUIRED') {
+                    $incidentNextActionTitle = 'Coordinate the required compliance with SPMU';
+                    $incidentNextActionText = 'The SPMU Head requires repair, replacement, or another compliance action for this property case. Coordinate directly with SPMU and complete the required action. Your linked borrowing restriction remains active until SPMU verifies completion.';
+                    $incidentNextActionClass = 'borrower-next-action--warning';
+                } elseif ($incident->status === 'FOR_BILLING') {
+                    $incidentNextActionTitle = 'Wait for the Billing Statement';
+                    $incidentNextActionText = 'The SPMU Head determined that this case requires billing/payment processing. No payment is due until SPMU issues the Billing Statement with the approved amount and basis.';
+                    $incidentNextActionClass = 'borrower-next-action--warning';
+                }
+
+                if ($incidentBilling) {
+                    if ($incidentBilling->status === 'RECEIPT_SUBMITTED') {
+                        $incidentNextActionTitle = 'Wait for SPMU receipt verification';
+                        $incidentNextActionText = 'The paid CSPC Cashier receipt has already been recorded by SPMU and is awaiting verification. No additional borrower upload is required.';
+                        $incidentNextActionClass = 'borrower-next-action--info';
+                    } else {
+                        $incidentNextActionTitle = 'Settle the issued Billing Statement';
+                        $incidentNextActionText = 'Download the Billing Statement, pay through the CSPC Cashier, and present the paid official receipt to SPMU. SPMU will scan, upload, and verify the receipt.';
+                        $incidentNextActionClass = 'borrower-next-action--warning';
+                    }
+                }
+
                 $searchText = strtolower(implode(' ', [
                     'property case',
                     $incident->incident_no,
@@ -281,6 +489,16 @@
                         @endforeach
                     </div>
                 @endif
+                <div class="borrower-next-action {{ $incidentNextActionClass }}">
+                    <div class="borrower-next-action__heading">
+                        <span>What you need to do</span>
+                        <strong>{{ $incidentNextActionTitle }}</strong>
+                    </div>
+                    <p>{{ $incidentNextActionText }}</p>
+                    @if($incidentRestriction)
+                        <small>Borrowing restriction: active until this accountability case is resolved.</small>
+                    @endif
+                </div>
                 <p class="meta">{{ $incident->remarks ?: 'No additional remarks.' }}</p>
             </article>
         @endforeach
@@ -288,6 +506,21 @@
         @foreach($openBillings as $billing)
             @php
                 $recordDate = $billing->issued_at ?: $billing->created_at;
+                $latestPayment = $billing->payments->sortByDesc(fn ($payment) => $payment->submitted_at ?: $payment->created_at)->first();
+                $billingActionTitle = 'Settle this Billing Statement';
+                $billingActionText = 'Download the Billing Statement, pay the amount through the CSPC Cashier, then present the paid official receipt to SPMU. SPMU records and verifies the receipt in the system.';
+                $billingActionClass = 'borrower-next-action--warning';
+
+                if ($billing->status === 'RECEIPT_SUBMITTED') {
+                    $billingActionTitle = 'Receipt submitted — wait for verification';
+                    $billingActionText = 'SPMU has recorded the paid CSPC Cashier receipt. No borrower upload is required while the payment evidence is being verified.';
+                    $billingActionClass = 'borrower-next-action--info';
+                } elseif ($latestPayment?->status === 'REJECTED') {
+                    $billingActionTitle = 'Present the corrected paid receipt to SPMU';
+                    $billingActionText = 'The previous receipt record requires correction. Bring the correct CSPC Cashier official receipt to SPMU so the payment evidence can be recorded again.';
+                    $billingActionClass = 'borrower-next-action--danger';
+                }
+
                 $searchText = strtolower(implode(' ', [
                     'billing statement',
                     $billing->billing_no,
@@ -328,9 +561,17 @@
                         </p>
                     @endforeach
                 </div>
+                <div class="borrower-next-action {{ $billingActionClass }}">
+                    <div class="borrower-next-action__heading">
+                        <span>What you need to do</span>
+                        <strong>{{ $billingActionTitle }}</strong>
+                    </div>
+                    <p>{{ $billingActionText }}</p>
+                    <small>Payment evidence is handled by SPMU after you present the paid CSPC Cashier official receipt.</small>
+                </div>
                 <div class="actions">
                     @foreach($billing->documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']) as $document)
-                        <a class="button secondary small" href="{{ route('documents.download', $document) }}">Download Billing Statement / Assessment</a>
+                        <a class="button secondary small" href="{{ route('documents.download', $document) }}">Download Billing Statement</a>
                     @endforeach
                 </div>
                 <div class="payment-history">
@@ -381,6 +622,13 @@
                     <span><small>Reason</small><strong>{{ $restriction->reason }}</strong></span>
                     <span><small>Effective period</small><strong>{{ optional($restriction->effective_from)->format('d M Y') ?: '—' }}{{ $restriction->effective_to ? ' – '.$restriction->effective_to->format('d M Y') : ' until resolved' }}</strong></span>
                 </div>
+                <div class="borrower-next-action borrower-next-action--info">
+                    <div class="borrower-next-action__heading">
+                        <span>Restriction status</span>
+                        <strong>Temporary until the related obligation is cleared</strong>
+                    </div>
+                    <p>You cannot submit a new borrowing request while this restriction is active. Your borrowing eligibility returns when SPMU resolves the linked case, or when any related Billing Statement is verified as settled or formally waived. Other active restrictions, if any, remain in effect.</p>
+                </div>
             </article>
         @endforeach
     </div>
@@ -405,8 +653,8 @@
 </section>
 @endif
 
-@if($isHead && $pendingViolations->isNotEmpty())
-<section class="content-area" data-spmu-accountability-section="review">
+@if($isHead && $headView === 'head_review' && $pendingViolations->isNotEmpty())
+<section class="content-area">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Administrative accountability</p>
@@ -437,13 +685,18 @@
                 </div>
             </dl>
 
+            <div class="callout info top-gap">
+                <strong>Connected to Operational Configuration → Sanction Rules.</strong>
+                <p>Leave Administrative Action on the configured-rule option to apply the active 1st, 2nd, or 3rd offense default. The SPMU Head may still record a justified case-specific override.</p>
+            </div>
+
             <form method="post" action="{{ route('accountability.violations.review', $violation) }}" class="form-grid top-gap">
                 @csrf
                 <div class="form-columns">
                     <label>
                         Administrative Action
                         <select name="sanction_code">
-                            <option value="">Use configured offense rule</option>
+                            <option value="">Use configured 1st / 2nd / 3rd offense rule</option>
                             <option value="NOTICE">Notice</option>
                             <option value="WRITTEN_REPRIMAND">Written Reprimand</option>
                             <option value="BORROWING_SUSPENSION">Borrowing Suspension</option>
@@ -453,7 +706,7 @@
                     <label>
                         Suspension Until
                         <input type="date" name="effective_to" min="{{ now()->toDateString() }}">
-                        <small>Required only for Borrowing Suspension.</small>
+                        <small>Optional override. Leave blank to use the configured duration (for example: 2nd offense = 1 month; 3rd offense = until semester end).</small>
                     </label>
                 </div>
                 <label>
@@ -474,8 +727,8 @@
 </section>
 @endif
 
-@if(! $isBorrower && $openOverdueCases->isNotEmpty())
-<section class="content-area" data-spmu-accountability-section="overdue cases">
+@if(! $isBorrower && $openOverdueCases->isNotEmpty() && (! $isHead || $headView === 'cases'))
+<section class="content-area">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Date-based lateness</p>
@@ -494,27 +747,264 @@
 </section>
 @endif
 
-@if(! $isBorrower && $openIncidents->isNotEmpty())
-<section class="content-area" data-spmu-accountability-section="property cases">
-    <div class="section-heading">
+@php
+    $displayIncidents = $isHead && $headView === 'head_review'
+        ? $headReviewIncidents
+        : $openIncidents;
+@endphp
+@if(! $isBorrower && $displayIncidents->isNotEmpty() && (! $isHead || in_array($headView, ['head_review', 'cases'], true)))
+<section class="content-area">
+    <div class="section-heading head-control-heading">
         <div>
             <p class="eyebrow">Property accountability</p>
-            <h2>Property Accountability Cases</h2>
+            <h2>{{ $isHead && $headView === 'head_review' ? 'Cases Awaiting Head Decision' : 'Property Accountability Cases' }}</h2>
+            <p>{{ $isHead && $headView === 'head_review'
+                ? 'Review the recorded physical findings and enter the formal SPMU Head decision. Cases already routed to billing or compliance are shown under Open Cases.'
+                : 'Open property cases remain visible until the required decision, compliance, billing settlement, or formal clearance is completed.' }}</p>
         </div>
     </div>
-    @foreach($openIncidents as $incident)
-<article class="card top-gap"><div class="card-header"><div><strong>{{ $incident->incident_no }}</strong><h3>{{ str($incident->incident_type)->replace('_',' ')->title() }}</h3></div><x-status-badge :status="$incident->status" /></div><p>{{ $incident->remarks ?: 'No additional remarks.' }}</p>
-<div class="table-wrap"><table><thead><tr><th>Qty</th><th>Finding</th><th>Disposition</th></tr></thead><tbody>@foreach($incident->lines as $line)<tr><td>{{ $line->quantity+0 }}</td><td>{{ str($line->observed_condition)->replace('_',' ')->title() }}</td><td>{{ str($line->disposition_state)->replace('_',' ')->title() }}</td></tr>@endforeach</tbody></table></div>
-@if($isOfficer && !Illuminate\Support\Facades\DB::table('billing_lines')->where('incident_id',$incident->id)->exists() && !in_array($incident->status,['RESOLVED','CLOSED','VOID_CORRECTION'],true))
-<form method="post" action="{{ route('incidents.bill',$incident) }}" class="form-grid top-gap">@csrf<div class="form-columns"><label>Accountability charge<input type="number" step="0.01" min="0.01" name="amount" required></label><label>Payment due date<input type="date" name="due_at"></label></div><label>Assessment basis<textarea name="basis" required></textarea></label><button class="button primary">Generate Billing Statement</button></form>
-@endif
-</article>
+
+    @foreach($displayIncidents as $incident)
+        @php
+            $incidentHasBilling = Illuminate\Support\Facades\DB::table('billing_lines')->where('incident_id', $incident->id)->exists();
+            $requestNo = $incident->custody?->request?->request_no ?: '—';
+            $custodyNo = $incident->custody?->custody_no ?: '—';
+            $incidentRestriction = $activeRestrictions->firstWhere('incident_id', $incident->id);
+            $isAwaitingDecision = $isHead && $headReviewIncidents->contains('id', $incident->id);
+            $isForBilling = $incident->status === 'FOR_BILLING';
+            $isComplianceRequired = $incident->status === 'COMPLIANCE_REQUIRED';
+            $offensePreview = $incidentOffensePreviews[$incident->id] ?? null;
+        @endphp
+        <article class="card top-gap head-case-card" id="incident-{{ $incident->id }}">
+            <div class="card-header">
+                <div>
+                    <p class="eyebrow">Property Case</p>
+                    <strong>{{ $incident->incident_no }}</strong>
+                    <h3>{{ str($incident->incident_type)->replace('_',' ')->title() }}</h3>
+                    <small>Reported {{ optional($incident->reported_at)->format('d M Y, g:i A') ?: '—' }}</small>
+                </div>
+                <x-status-badge :status="$incident->status" />
+            </div>
+
+            <dl class="head-case-summary">
+                <div>
+                    <dt>Borrower</dt>
+                    <dd>{{ $incident->borrower?->full_name ?: '—' }}</dd>
+                </div>
+                <div>
+                    <dt>Request</dt>
+                    <dd>{{ $requestNo }}</dd>
+                </div>
+                <div>
+                    <dt>Custody</dt>
+                    <dd>{{ $custodyNo }}</dd>
+                </div>
+                <div>
+                    <dt>Restriction</dt>
+                    <dd>{{ $incidentRestriction ? 'Active until resolved' : 'No active linked restriction' }}</dd>
+                </div>
+            </dl>
+
+            <div class="table-wrap head-case-lines">
+                <table>
+                    <thead>
+                        <tr><th>Item</th><th>Qty</th><th>Finding</th><th>Disposition</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach($incident->lines as $line)
+                            @php
+                                $custodyLine = $incident->custody?->lines?->firstWhere('id', $line->custody_line_id);
+                                $itemDescription = $custodyLine?->requestItem?->description_snapshot ?: 'Inventory item';
+                            @endphp
+                            <tr>
+                                <td>{{ $itemDescription }}</td>
+                                <td>{{ $line->quantity + 0 }}</td>
+                                <td>{{ str($line->observed_condition)->replace('_',' ')->title() }}</td>
+                                <td>{{ str($line->disposition_state)->replace('_',' ')->title() }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+            @if($incident->supporting_evidence_file_id || $incident->police_blotter_reference)
+                <div class="actions top-gap">
+                    @if($incident->supporting_evidence_file_id)
+                        <a class="button secondary small" href="{{ route('files.show', $incident->supporting_evidence_file_id, false) }}" target="_blank">View Supporting Evidence</a>
+                    @endif
+                    @if($incident->police_blotter_reference)
+                        <span class="meta">Police blotter reference: <strong>{{ $incident->police_blotter_reference }}</strong></span>
+                    @endif
+                </div>
+            @endif
+
+            @if($incident->remarks)
+                <div class="head-status-note">
+                    <strong>Recorded remarks</strong>
+                    <span>{!! nl2br(e($incident->remarks)) !!}</span>
+                </div>
+            @endif
+
+            @if($isOfficer && ! $incidentHasBilling && $incident->status === 'FOR_BILLING')
+                <div class="action-panel top-gap">
+                    <div>
+                        <p class="eyebrow">Action Officer</p>
+                        <h4>{{ $isForBilling ? 'Head decision: billing / payment required' : 'Financial assessment, when required' }}</h4>
+                        <p>{{ $isForBilling
+                            ? 'The SPMU Head has routed this case for billing. Record the approved accountability amount and basis, then generate the Billing Statement.'
+                            : 'Generate a Billing Statement only when the approved accountability decision requires payment. Cases without a financial charge remain for Head resolution.' }}</p>
+                    </div>
+                </div>
+                <form method="post" action="{{ route('incidents.bill',$incident) }}" class="form-grid top-gap">
+                    @csrf
+                    <div class="form-columns">
+                        <label>Accountability charge<input type="number" step="0.01" min="0.01" name="amount" required></label>
+                        <label>Payment due date<input type="date" name="due_at"></label>
+                    </div>
+                    <label>Assessment basis<textarea name="basis" required></textarea></label>
+                    <button class="button primary">Generate Billing Statement</button>
+                </form>
+            @endif
+
+            @if($isHead && ! $incidentHasBilling && !in_array($incident->status,['RESOLVED','CLOSED','VOID_CORRECTION'],true))
+                @if($isComplianceRequired)
+                    <div class="head-status-note">
+                        <strong>Current Head decision: Compliance required</strong>
+                        <span>The borrower remains restricted while repair, replacement, or another required compliance action is outstanding.</span>
+                    </div>
+                    <details class="head-review-disclosure">
+                        <summary>Verify Compliance</summary>
+                        <div class="head-decision-panel">
+                            <h4>Confirm that the required compliance is complete</h4>
+                            <p>Use this only after SPMU has physically verified the repair, replacement, or other required compliance. Completing this action resolves the case and lifts only the restriction linked to this incident.</p>
+                            <form method="post" action="{{ route('incidents.resolve', $incident) }}" class="form-grid">
+                                @csrf
+                                <input type="hidden" name="resolution_outcome" value="COMPLIANCE_COMPLETED">
+                                <label>
+                                    Verification / resolution remarks
+                                    <textarea name="resolution_remarks" maxlength="2000" required placeholder="Describe what was completed and how SPMU verified it."></textarea>
+                                </label>
+                                <button class="button primary">Confirm Compliance & Resolve Case</button>
+                            </form>
+                        </div>
+                    </details>
+                @elseif($isForBilling)
+                    <div class="head-status-note">
+                        <strong>Current Head decision: Billing / payment required</strong>
+                        <span>The case has been routed for financial assessment. The linked restriction remains active until the Billing Statement is settled or formally waived.</span>
+                    </div>
+                @elseif($isAwaitingDecision)
+                    <details class="head-review-disclosure">
+                        <summary>Review Case</summary>
+                        <div class="head-decision-panel">
+                            <p class="eyebrow">SPMU Head Decision</p>
+                            <h4>Record the formal accountability decision</h4>
+                            <p>Choose the required outcome based on the physical findings and supporting evidence. The system will keep or lift the linked borrowing restriction according to the selected decision.</p>
+                            <form method="post" action="{{ route('incidents.resolve', $incident) }}" class="form-grid">
+                                @csrf
+                                <label>
+                                    Decision / Required Action
+                                    <select name="resolution_outcome" required>
+                                        <option value="">Select decision</option>
+                                        <option value="NO_BORROWER_CHARGE">No borrower liability / no charge</option>
+                                        <option value="COMPLIANCE_REQUIRED">Repair / replacement / compliance required</option>
+                                        <option value="BILLING_REQUIRED">Billing / payment required</option>
+                                        <option value="ADMINISTRATIVELY_CLEARED">Administratively cleared</option>
+                                    </select>
+                                </label>
+                                @if($offensePreview)
+                                    <div class="head-offense-panel">
+                                        <div class="head-offense-panel__heading">
+                                            <span>Administrative Offense</span>
+                                            <strong>Decide separately whether this property case counts toward the borrower's offense history.</strong>
+                                        </div>
+
+                                        @if($offensePreview['existing_sanction'])
+                                            <div class="head-offense-state">
+                                                <strong>Already counted as {{ $offensePreview['existing_sanction']->offense_no }} offense</strong>
+                                                <span>{{ $offensePreview['existing_sanction']->sanction_label }}. This property decision will not create another offense for the same borrowing transaction.</span>
+                                            </div>
+                                        @elseif($offensePreview['is_eligible'])
+                                            <input type="hidden" name="count_as_offense" value="0">
+                                            <label class="head-offense-toggle">
+                                                <input type="checkbox" name="count_as_offense" value="1" @disabled(! $offensePreview['can_confirm'])>
+                                                <span>Count this case as a confirmed administrative offense</span>
+                                            </label>
+
+                                            <div class="head-offense-preview">
+                                                <div>
+                                                    <small>Previous confirmed offenses</small>
+                                                    <strong>{{ $offensePreview['previous_confirmed_offenses'] }} this academic period</strong>
+                                                </div>
+                                                <div>
+                                                    <small>If confirmed</small>
+                                                    <strong>{{ $offensePreview['next_offense_label'] }}</strong>
+                                                </div>
+                                                <div>
+                                                    <small>Configured sanction</small>
+                                                    <strong>{{ $offensePreview['configured_sanction_label'] }}</strong>
+                                                </div>
+                                                <div>
+                                                    <small>Restriction effect</small>
+                                                    <strong>{{ $offensePreview['restriction_preview'] }}</strong>
+                                                </div>
+                                            </div>
+
+                                            <p class="head-offense-note">
+                                                Applicable finding(s):
+                                                <strong>{{ collect($offensePreview['eligible_types'])->map(fn ($type) => str($type)->replace('_', ' ')->title())->join(', ') }}</strong>.
+                                                Academic period: <strong>{{ $offensePreview['academic_period_label'] }}</strong>.
+                                                The property accountability outcome above remains separate from this administrative sanction decision.
+                                            </p>
+
+                                            @if(! $offensePreview['can_confirm'])
+                                                <div class="head-status-note">
+                                                    <strong>Administrative offense cannot be confirmed yet.</strong>
+                                                    <span>Activate the applicable Academic Period or review the existing administrative decision first.</span>
+                                                </div>
+                                            @endif
+                                        @else
+                                            <div class="head-offense-state">
+                                                <strong>Not enabled as an administrative offense type</strong>
+                                                <span>This property case can still be resolved normally. To allow this finding to count as an offense, enable the corresponding case type under Operational Configuration → Sanction Rules → Offense Application.</span>
+                                            </div>
+                                        @endif
+                                    </div>
+                                @endif
+                                <label>
+                                    Decision remarks
+                                    <textarea name="resolution_remarks" maxlength="2000" required placeholder="Record the basis, instruction, or reason for the Head decision."></textarea>
+                                </label>
+                                <div class="head-decision-hint">
+                                    <strong>Decision effect</strong>
+                                    <span>No liability / Administratively cleared → resolves the case and lifts its linked restriction.</span>
+                                    <span>Compliance required / Billing required → keeps the case and restriction open until the required follow-up is verified.</span>
+                                    <span>Administrative offense checkbox → separately applies the configured 1st / 2nd / 3rd offense sanction when explicitly confirmed by the Head.</span>
+                                </div>
+                                <button class="button primary">Confirm Head Decision</button>
+                            </form>
+                        </div>
+                    </details>
+                @endif
+            @endif
+        </article>
     @endforeach
+</section>
+@elseif($isHead && in_array($headView, ['head_review', 'cases'], true))
+<section class="content-area">
+    <article class="card">
+        <div class="empty-state">
+            <div>
+                <strong>{{ $headView === 'head_review' ? 'No property cases are waiting for a Head decision.' : 'No open property accountability cases.' }}</strong>
+                <p>{{ $headView === 'head_review' ? 'Cases already routed to billing or compliance remain under Open Cases.' : 'There are no unresolved property cases in this view.' }}</p>
+            </div>
+        </div>
+    </article>
 </section>
 @endif
 
-@if(! $isBorrower && $openBillings->isNotEmpty())
-<section class="content-area" data-spmu-accountability-section="billing">
+@if(! $isBorrower && $openBillings->isNotEmpty() && (! $isHead || $headView === 'billings'))
+<section class="content-area">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Cashier payment evidence</p>
@@ -541,8 +1031,21 @@
 </section>
 @endif
 
-@if(! $isBorrower && $activeRestrictions->isNotEmpty())
-<section class="content-area" data-spmu-accountability-section="restriction">
+@if($isHead && $headView === 'billings' && $openBillings->isEmpty())
+<section class="content-area">
+    <article class="card">
+        <div class="empty-state">
+            <div>
+                <strong>No open Billing Statements.</strong>
+                <p>Property cases routed for payment will appear here after the Action Officer records the approved charge and generates the Billing Statement.</p>
+            </div>
+        </div>
+    </article>
+</section>
+@endif
+
+@if(! $isBorrower && $activeRestrictions->isNotEmpty() && (! $isHead || $headView === 'restrictions'))
+<section class="content-area">
     <article class="card">
         <div class="card-header">
             <div>
@@ -553,12 +1056,24 @@
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Restriction</th><th>Reason</th><th>Effective</th><th>Status</th></tr>
+                    <tr><th>Restriction</th>@if($isHead)<th>Linked Case</th>@endif<th>Reason</th><th>Effective</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                     @foreach($activeRestrictions as $restriction)
+                        @php
+                            $linkedIncident = $restriction->incident_id ? $incidents->firstWhere('id', $restriction->incident_id) : null;
+                        @endphp
                         <tr>
                             <td>{{ str($restriction->restriction_type)->replace('_',' ')->title() }}</td>
+                            @if($isHead)
+                                <td>
+                                    @if($linkedIncident)
+                                        <a class="head-linked-case" href="{{ route('accountability.index', ['view' => 'cases']).'#incident-'.$linkedIncident->id }}">{{ $linkedIncident->incident_no }}</a>
+                                    @else
+                                        —
+                                    @endif
+                                </td>
+                            @endif
                             <td>{{ $restriction->reason }}</td>
                             <td>{{ optional($restriction->effective_from)->format('d M Y') }}{{ $restriction->effective_to ? ' – '.$restriction->effective_to->format('d M Y') : ' until resolved' }}</td>
                             <td><x-status-badge :status="$restriction->status" /></td>
@@ -571,27 +1086,20 @@
 </section>
 @endif
 
-@unless($isBorrower)
-<section class="content-area" id="accountability-filter-result" hidden>
-    <div class="empty-state"><strong data-accountability-filter-empty-title>No matching accountability records.</strong><span>Select another accountability category.</span></div>
+@if($isHead && $headView === 'restrictions' && $activeRestrictions->isEmpty())
+<section class="content-area">
+    <article class="card">
+        <div class="empty-state">
+            <div>
+                <strong>No active borrowing restrictions.</strong>
+                <p>Restrictions linked to resolved, settled, waived, or cleared obligations no longer appear in this active list.</p>
+            </div>
+        </div>
+    </article>
 </section>
-<style>
-.accountability-spmu-filter-card{appearance:none;text-align:left;cursor:pointer;width:100%;font:inherit;color:inherit}
-.accountability-spmu-filter-card.is-active{outline:2px solid var(--primary);outline-offset:2px}
-</style>
-<script>
-(() => {
- const cards=[...document.querySelectorAll('[data-spmu-accountability-filter]')];
- const sections=[...document.querySelectorAll('[data-spmu-accountability-section]')];
- const empty=document.getElementById('accountability-filter-result');
- if(!cards.length)return;
- const show=(filter)=>{cards.forEach(c=>{const a=c.dataset.spmuAccountabilityFilter===filter;c.classList.toggle('is-active',a);c.setAttribute('aria-pressed',a?'true':'false')});let visible=0;sections.forEach(section=>{const cats=(section.dataset.spmuAccountabilitySection||'').split(/\s+/);const match=filter==='cases'?cats.includes('cases'):cats.includes(filter);section.hidden=!match;if(match)visible++});if(empty){empty.hidden=visible>0;empty.querySelector('[data-accountability-filter-empty-title]').textContent=filter==='cases'?'No open overdue or property cases.':'No records in this category.';} const target=sections.find(s=>!s.hidden)||empty;if(target&&!target.hidden)target.scrollIntoView({behavior:'smooth',block:'start'});};
- cards.forEach(c=>c.addEventListener('click',()=>show(c.dataset.spmuAccountabilityFilter)));
-})();
-</script>
-@endunless
+@endif
 
-@if(($isHead || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
+@if((($isHead && $headView === 'head_review') || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
 <section class="content-area">
     <article class="card">
         <div class="card-header">
