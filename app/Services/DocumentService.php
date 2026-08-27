@@ -2728,8 +2728,8 @@ HTML;
             .field-label{margin-bottom:2px;color:#4a5967;font-size:7.8px;font-weight:bold;text-transform:uppercase;letter-spacing:.18px}
             .field-value{color:#26394d;font-size:10px;line-height:1.3}
             .laundry-intro{margin:1px 0 10px;color:#2e3d4c;font-size:9.5px;line-height:1.48;text-align:justify}
-            .laundry-items-table,.laundry-worker-table{width:100%;border-collapse:collapse;table-layout:fixed}
-            .laundry-items-table th,.laundry-items-table td,.laundry-worker-table th,.laundry-worker-table td{border:1px solid #8d9aa6;padding:5px 7px;vertical-align:middle}
+            .laundry-items-table{width:100%;border-collapse:collapse;table-layout:fixed}
+            .laundry-items-table th,.laundry-items-table td{border:1px solid #8d9aa6;padding:5px 7px;vertical-align:middle}
             .laundry-items-table thead th{background:#e9edf1;color:#273b4f;font-size:8px;font-weight:bold;text-transform:uppercase;letter-spacing:.2px;text-align:center}
             .laundry-items-table thead th:nth-child(2){text-align:left}
             .laundry-items-table td{font-size:9.5px;color:#26394d}
@@ -2752,9 +2752,6 @@ HTML;
             .signature-date{margin-top:3px;font-size:7.8px;color:#5f6f7e}
             .signature-integrity,.signature-note{margin-top:2px;font-size:6.9px;color:#7a8793}
             .signature-note{font-style:italic}
-            .laundry-worker-table{margin-top:1px;page-break-inside:avoid}
-            .laundry-worker-table th{width:18%;background:#f3f5f7;color:#44576a;text-align:left;font-size:7.8px;font-weight:bold;text-transform:uppercase;letter-spacing:.15px}
-            .laundry-worker-table td{height:32px;font-size:9px;color:#26394d}
             .write-line{background:#fff}
             .condition-cell{height:34px}
             .check-box{font-family:DejaVu Sans,sans-serif;font-size:12px;vertical-align:-1px}

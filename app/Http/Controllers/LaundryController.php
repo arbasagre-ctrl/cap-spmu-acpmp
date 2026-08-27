@@ -25,7 +25,7 @@ class LaundryController extends Controller
 {
     public function index(Request $request): View
     {
-        $this->authorizeLaundryWorker($request);
+        $this->authorizeSpmuActionOfficer($request);
 
         return view('laundry.index', [
             'jobs' => LaundryJob::query()
@@ -51,7 +51,7 @@ class LaundryController extends Controller
 
     public function completed(Request $request): View
     {
-        $this->authorizeLaundryWorker($request);
+        $this->authorizeSpmuActionOfficer($request);
 
         return view('laundry.completed', [
             'jobs' => LaundryJob::query()
@@ -68,11 +68,7 @@ class LaundryController extends Controller
 
     public function spmuIndex(Request $request): View
     {
-        abort_unless(
-            $request->user()->access_classification === AccessClassification::SpmuOfficer,
-            403,
-            'Laundry final acceptance is an SPMU Action Officer operation.'
-        );
+        $this->authorizeSpmuActionOfficer($request);
 
         return view('laundry.spmu-index', [
             'jobs' => LaundryJob::query()
@@ -92,13 +88,13 @@ class LaundryController extends Controller
         ]);
     }
 
-    public function spmuShow(Request $request, LaundryJob $laundryJob): View
+    public function spmuShow(Request $request, LaundryJob $laundryJob): View|RedirectResponse
     {
-        abort_unless(
-            $request->user()->access_classification === AccessClassification::SpmuOfficer,
-            403,
-            'Laundry final acceptance is an SPMU Action Officer operation.'
-        );
+        $this->authorizeSpmuActionOfficer($request);
+
+        if (in_array($laundryJob->status, ['FOR_LAUNDRY', 'IN_PROCESS'], true)) {
+            return redirect()->route('laundry.show', $laundryJob);
+        }
 
         $laundryJob->load([
             'custody.borrower',
@@ -120,7 +116,7 @@ class LaundryController extends Controller
         AuditService $audit,
         NotificationService $notifications
     ): RedirectResponse {
-        $this->authorizeLaundryWorker($request);
+        $this->authorizeSpmuActionOfficer($request);
 
         $data = $request->validate([
             'borrower_turnover_signature_confirmed' => ['required', 'accepted'],
@@ -221,9 +217,17 @@ class LaundryController extends Controller
         return back()->with('status', 'Used linen and signed turnover form received. Laundry processing may begin.');
     }
 
-    public function show(Request $request, LaundryJob $laundryJob): View
+    public function show(Request $request, LaundryJob $laundryJob): View|RedirectResponse
     {
-        $this->authorizeLaundryWorker($request);
+        $this->authorizeSpmuActionOfficer($request);
+
+        if (in_array($laundryJob->status, [
+            'READY_FOR_SPMU_RETURN',
+            'AWAITING_FINAL_FORM_UPLOAD',
+            'FORM_REPLACEMENT_REQUIRED',
+        ], true)) {
+            return redirect()->route('laundry.spmu.show', $laundryJob);
+        }
 
         $laundryJob->load([
             'custody.borrower',
@@ -244,7 +248,7 @@ class LaundryController extends Controller
         AuditService $audit,
         NotificationService $notifications
     ): RedirectResponse {
-        $this->authorizeLaundryWorker($request);
+        $this->authorizeSpmuActionOfficer($request);
 
         $data = $request->validate([
             'worker_remarks' => ['nullable', 'string', 'max:2000'],
@@ -343,14 +347,14 @@ class LaundryController extends Controller
                 after: [
                     'status' => 'READY_FOR_SPMU_RETURN',
                     'worker_completed_at' => now()->toIso8601String(),
-                    'worker_user_id' => $request->user()->id,
+                    'spmu_action_officer_user_id' => $request->user()->id,
                 ]
             );
 
             $notifications->send(
                 'LAUNDRY_READY_FOR_SPMU_RETURN',
                 $this->spmuRecipients(),
-                "Laundry completed processing for {$job->custody->custody_no}. The Laundry Worker will bring the cleaned linen and the same physical Laundry Form to SPMU for final quantity/condition inspection and authorized SPMU signature.",
+                "The SPMU Action Officer recorded laundry processing completion for {$job->custody->custody_no}. The cleaned linen and physical Laundry Form are ready for the existing final SPMU quantity/condition inspection and authorized signature.",
                 $job,
                 ['SYSTEM']
             );
@@ -358,7 +362,7 @@ class LaundryController extends Controller
             $notifications->send(
                 'LAUNDRY_PROCESSING_COMPLETE',
                 collect([$job->custody->borrower]),
-                "Laundry processing for {$job->custody->custody_no} is complete. No borrower pickup is required; the Laundry Worker will return the cleaned linen directly to SPMU.",
+                "Laundry processing for {$job->custody->custody_no} is complete. No borrower pickup is required; SPMU will continue with final physical acceptance.",
                 $job,
                 ['SYSTEM', 'EMAIL']
             );
@@ -570,11 +574,12 @@ class LaundryController extends Controller
         ]);
     }
 
-    private function authorizeLaundryWorker(Request $request): void
+    private function authorizeSpmuActionOfficer(Request $request): void
     {
         abort_unless(
-            $request->user()->access_classification === AccessClassification::LaundryWorker,
-            403
+            $request->user()->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Laundry operations are restricted to the SPMU Action Officer.'
         );
     }
 

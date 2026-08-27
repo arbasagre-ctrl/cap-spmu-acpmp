@@ -11,3 +11,5 @@ storage/framework/views/*
 storage/logs/*
 tests
 work
+
+bootstrap/cache/*.php

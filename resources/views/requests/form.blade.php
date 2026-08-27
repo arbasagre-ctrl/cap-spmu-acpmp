@@ -4,6 +4,7 @@
 
 @php
     $editing = $borrowingRequest->exists;
+    $hasCurrentESignature = auth()->user()->currentSignature()->whereHas('file')->exists();
 
     $selectedItems = $version->exists
         ? $version->items->keyBy('inventory_item_id')
@@ -1163,14 +1164,17 @@
                 <div class="inventory-search-shell">
                     <label for="inventory-search" class="inventory-search-label">
                         Search inventory
-                        <input
-                            id="inventory-search"
-                            type="search"
-                            placeholder="Start typing an item name, category, description, or unit..."
-                            autocomplete="off"
-                            aria-autocomplete="list"
-                            aria-controls="catalog-list"
-                        >
+                        <span class="search-input-shell">
+                            <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                            <input
+                                id="inventory-search"
+                                type="search"
+                                placeholder="Start typing an item name, category, description, or unit..."
+                                autocomplete="off"
+                                aria-autocomplete="list"
+                                aria-controls="catalog-list"
+                            >
+                        </span>
                     </label>
 
                     <div class="catalog-shell" id="catalog-shell" hidden>
@@ -1622,8 +1626,28 @@
                             I acknowledge responsibility for the proper use, custody, and timely return of all approved items in accordance
                             with SPMU policies and procedures.
                         </small>
+                    </span>                </label>
+
+                <label class="final-confirmation">
+                    <input
+                        id="e-signature-confirmation"
+                        type="checkbox"
+                        name="confirm_e_signature"
+                        value="1"
+                        @checked(old('confirm_e_signature'))
+                        @disabled(!$hasCurrentESignature)
+                        required
+                    >
+                    <span>
+                        <strong>E-signature Authorization</strong>
+                        <small>
+                            I explicitly authorize the system to apply my registered
+                            E-signature to this exact borrowing request version when
+                            I submit it to SPMU.
+                        </small>
                     </span>
                 </label>
+
                 <p class="field-help acknowledgement-help">
 
                 </p>
@@ -1633,6 +1657,17 @@
                 <p class="field-error" id="final-confirmation-error" hidden>
                     Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.
                 </p>
+                @error('confirm_e_signature')<p class="field-error">{{ $message }}</p>@enderror
+                @error('signature')<p class="field-error">{{ $message }}</p>@enderror
+
+                @if($hasCurrentESignature)
+                    <p class="meta">Your current registered E-signature will be captured as an immutable snapshot only when you submit.</p>
+                @else
+                    <div class="callout warning">
+                        <strong>E-signature required</strong>
+                        <p>Save this draft, then <a href="{{ route('profile.show') }}">register your E-signature in Account Settings</a> before submitting.</p>
+                    </div>
+                @endif
             </div>
         </section>
 
@@ -1661,7 +1696,7 @@
                     name="intent"
                     value="submit"
                 >
-                    Submit to SPMU
+                    E-sign &amp; Submit to SPMU
                 </button>
             </div>
         </div>
@@ -1676,6 +1711,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveDraftButton = document.getElementById('request-save-draft-button');
     const finalConfirmation = document.getElementById('final-confirmation');
     const finalConfirmationError = document.getElementById('final-confirmation-error');
+    const eSignatureConfirmation = document.getElementById('e-signature-confirmation');
+    const signatureReady = {{ $hasCurrentESignature ? 'true' : 'false' }};
 
     const scheduleDate = document.getElementById('schedule_date');
     const returnDate = document.getElementById('return_date');
@@ -2264,8 +2301,11 @@ document.addEventListener('DOMContentLoaded', () => {
             count === 0 || offCampusInvalid || (availabilityLoaded && conflict);
 
         if (submitButton) {
-            submitButton.disabled = itemSelectionInvalid || !finalConfirmation?.checked;
-        }
+            submitButton.disabled =
+                itemSelectionInvalid ||
+                !signatureReady ||
+                !finalConfirmation?.checked ||
+                !eSignatureConfirmation?.checked;        }
 
         if (saveDraftButton) {
             saveDraftButton.disabled = itemSelectionInvalid;
@@ -2583,6 +2623,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (finalConfirmationError) {
             finalConfirmationError.hidden = Boolean(finalConfirmation.checked);
         }
+        syncSelectedItems();
+    });
+
+    eSignatureConfirmation?.addEventListener('change', () => {
         syncSelectedItems();
     });
 

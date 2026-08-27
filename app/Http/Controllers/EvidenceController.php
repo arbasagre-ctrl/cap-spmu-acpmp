@@ -40,7 +40,7 @@ class EvidenceController extends Controller
             ) {
                 abort(
                     403,
-                    'The active Laundry Form is uploaded by the Laundry Worker through the simple Laundry portal.'
+                    'The active Laundry Form is archived by the SPMU Action Officer through Laundry Operations after final physical acceptance.'
                 );
             }
 

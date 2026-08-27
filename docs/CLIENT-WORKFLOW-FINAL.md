@@ -6,8 +6,7 @@ This document is the current implementation baseline for the `client-workflow-up
 
 - Borrower — only classification allowed to borrow.
 - SPMU Admin / Head — SPMU verification/decision authority and oversight.
-- SPMU Action Officer — pickup, exact preparation, release/return and operations; SPMU decision only with valid delegation.
-- Laundry Worker — linen-only work queue and accomplished Laundry Form upload.
+- SPMU Action Officer — pickup, exact preparation, release/return, laundry operations and evidence; SPMU decision only with valid delegation.
 - ICTU Maintainer — accounts, configuration, audit and technical operations.
 
 ## GSU / VPAF treatment
@@ -37,16 +36,16 @@ Old GSU/VPAF account records are deactivated and hidden from active User Adminis
 - Signatures on these forms are physical handwritten/wet signatures.
 - SPMU records physical release; no online e-signature is required.
 
-## Linen / Laundry Worker
+## Linen / Laundry Operations
 
 When released custody contains a laundry-required linen item:
 
-1. a Laundry Job appears in the Laundry Worker portal;
+1. a Laundry Job appears under SPMU Action Officer Laundry Operations;
 2. borrower brings used linen and the physical Laundry Form to Laundry after use;
-3. Laundry Worker processes the linen and uploads the accomplished wet-signed form;
-4. Laundry Worker releases the clean linen to the borrower;
-5. SPMU verifies/encodes the form and performs final physical return inspection;
-6. linen returns to Available only after final SPMU completion.
+3. the SPMU Action Officer records turnover and laundry processing details;
+4. cleaned linen and the same form continue directly into the existing SPMU Return & Inspection flow;
+5. the authorized SPMU signatory completes final acceptance where required, and the Action Officer archives the accomplished form;
+6. linen returns to Available only through final SPMU physical return completion.
 
 ## Compatibility
 

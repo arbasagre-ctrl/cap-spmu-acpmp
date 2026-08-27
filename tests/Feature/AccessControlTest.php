@@ -113,7 +113,6 @@ class AccessControlTest extends TestCase
         $classification = match ($roleCode) {
             UserRole::Borrower => AccessClassification::BorrowerOnly,
             UserRole::Spmu => AccessClassification::SpmuOfficer,
-            UserRole::Laundry => AccessClassification::LaundryWorker,
             UserRole::Ictu => AccessClassification::IctuMaintainer,
             UserRole::Gsu, UserRole::Vpaf => throw new \InvalidArgumentException(
                 'Retired GSU/VPAF roles cannot be created as active test users.'

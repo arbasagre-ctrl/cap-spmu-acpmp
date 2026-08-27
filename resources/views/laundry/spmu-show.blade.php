@@ -63,9 +63,9 @@
         </article>
 
         <article class="card">
-            <div class="card-header"><div><p class="eyebrow">Recorded by Laundry</p><h2>Laundry details</h2></div></div>
+            <div class="card-header"><div><p class="eyebrow">Processing record</p><h2>Laundry details</h2></div></div>
             <dl class="detail-list">
-                <dt>Laundry Worker</dt><dd>{{ $job->worker_name ?: 'Not recorded' }}</dd>
+                <dt>Recorded by SPMU Action Officer</dt><dd>{{ $job->worker_name ?: 'Not recorded' }}</dd>
                 <dt>Date received</dt><dd>{{ optional($job->worker_received_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
                 <dt>Date completed</dt><dd>{{ optional($job->worker_completed_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
                 <dt>Total items received</dt><dd>{{ $totalReceived + 0 }}</dd>

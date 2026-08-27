@@ -14,7 +14,7 @@
 <section class="content-area gate-pass-browser" data-gate-pass-browser>
     <style>
         .gate-pass-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 190px 170px;gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
-        .gate-pass-toolbar label{margin:0;min-width:0}.gate-pass-toolbar input,.gate-pass-toolbar select{width:100%;margin-top:6px}
+        .gate-pass-toolbar label{margin:0;min-width:0}.gate-pass-toolbar input,.gate-pass-toolbar select{width:100%}.gate-pass-toolbar select,.gate-pass-toolbar .search-input-shell{margin-top:6px}
         .gate-pass-list{display:grid;gap:9px}.gate-pass-record[hidden]{display:none!important}.gate-pass-record{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.9fr) auto;gap:18px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:11px;background:var(--surface);color:inherit;text-decoration:none}
         .gate-pass-record strong,.gate-pass-record small{display:block}.gate-pass-record small{margin-top:3px;color:var(--text-muted)}.gate-pass-action{display:flex;align-items:center;gap:10px;white-space:nowrap}.gate-pass-empty{padding:28px;text-align:center;border:1px dashed var(--border);border-radius:12px;color:var(--text-muted)}
         @media(max-width:800px){.gate-pass-toolbar{grid-template-columns:1fr}.gate-pass-record{grid-template-columns:1fr}.gate-pass-action{justify-content:space-between}}
@@ -22,7 +22,10 @@
 
     <div class="gate-pass-toolbar">
         <label>Search
-            <input type="search" placeholder="Request, borrower, custody, destination..." data-gate-pass-search autocomplete="off">
+            <span class="search-input-shell">
+                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                <input type="search" placeholder="Request, borrower, custody, destination..." data-gate-pass-search autocomplete="off">
+            </span>
         </label>
         <label>Status
             <select data-gate-pass-status>

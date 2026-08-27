@@ -399,8 +399,8 @@ HTML;
             'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the required physical documents. Property is issued only after all release requirements are completed.',
             'PICKUP_EXPIRED' => 'Coordinate with SPMU if the borrowing requirement is still active. An expired pickup reservation is not treated as a completed issuance.',
             'ITEMS_RELEASED' => 'Please keep the issued property in proper custody and return all items on or before the expected return date. Follow applicable Gate Pass or Laundry requirements when relevant.',
-            'LINEN_FOR_LAUNDRY' => 'Laundry personnel should await the borrower’s used linen and physical Laundry Form after the activity, complete the laundry process, and bring the cleaned linen and the same physical form directly to SPMU for final acceptance.',
-            'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry processing is in progress. After cleaning, the Laundry Worker should bring the cleaned linen and the same physical Laundry Form directly to SPMU for final acceptance and signature.',
+            'LINEN_FOR_LAUNDRY' => 'The SPMU Action Officer should receive the borrower’s used linen and physical Laundry Form after the activity, record the laundry process, and retain the cleaned linen and the same physical form for final SPMU acceptance.',
+            'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry processing is in progress. After cleaning, the SPMU Action Officer continues with final SPMU acceptance and signature using the same physical Laundry Form.',
             'LAUNDRY_READY_FOR_PICKUP', 'LAUNDRY_PROCESSING_COMPLETED' => 'The cleaned linen and the physical Laundry Form should be brought directly to SPMU for final inspection and form completion.',
             'RETURN_RECORDED' => 'SPMU has recorded the returned property. Any remaining obligations, discrepancies, or follow-up processing will continue through the appropriate workflow.',
             'RETURN_INSPECTED' => 'SPMU has completed the inspection of the returned property. If no additional obligations remain, the transaction may proceed to completion.',
@@ -818,6 +818,11 @@ HTML;
             'TRANSACTION_CLOSED' =>
                 'All required return and post-return obligations for this borrowing transaction have been completed. The transaction is now officially closed in SPMU-ACPMP.',
 
+            'EARLY_RETURN_REQUESTED' =>
+                $isBorrower
+                    ? 'Your Early Return coordination notice has been recorded. Bring only the proposed items and quantities to SPMU at the agreed handover schedule. Inventory and custody quantities remain unchanged until SPMU completes the physical Return & Inspection.'
+                    : 'An Early Return coordination notice has been recorded for this custody transaction. Review the proposed schedule and quantities, then use the existing physical Return & Inspection workflow when the items are handed over.',
+
             /*
              * -----------------------------------------------------
              * OVERDUE
@@ -846,7 +851,7 @@ HTML;
 
             'LAUNDRY_PROCESSING_COMPLETED',
             'LAUNDRY_READY_FOR_PICKUP' =>
-                'Laundry processing has been completed for the listed linen items. The Laundry Worker must bring the cleaned linen and the same physical Laundry Form directly to SPMU for final quantity and condition inspection.',
+                'Laundry processing has been completed for the listed linen items. The SPMU Action Officer must continue with final quantity and condition inspection using the same physical Laundry Form.',
 
             'LAUNDRY_FORM_PENDING_SPMU_VERIFICATION' =>
                 'The completed Laundry Form and related linen transaction are ready for SPMU review. Final settlement remains pending until the required physical acceptance and document verification are completed.',

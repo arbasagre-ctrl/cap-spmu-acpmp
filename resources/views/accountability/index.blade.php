@@ -403,12 +403,15 @@
     <div class="borrower-accountability-toolbar" aria-label="Search and filter accountability records">
         <label class="borrower-accountability-search">
             Search
-            <input
-                type="search"
-                placeholder="Search reference, type, status, or details..."
-                autocomplete="off"
-                data-accountability-search
-            >
+            <span class="search-input-shell">
+                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                <input
+                    type="search"
+                    placeholder="Search reference, type, status, or details..."
+                    autocomplete="off"
+                    data-accountability-search
+                >
+            </span>
         </label>
         <label>
             Status
@@ -428,16 +431,6 @@
                 <option value="oldest">Oldest first</option>
             </select>
         </label>
-        <button class="button secondary small borrower-accountability-clear" type="button" data-accountability-clear>
-            Clear filters
-        </button>
-    </div>
-
-    <div class="borrower-accountability-results" aria-live="polite">
-        <span data-accountability-result-count>
-            Showing {{ $borrowerRecordCount }} {{ \Illuminate\Support\Str::plural('record', $borrowerRecordCount) }}
-        </span>
-        <span>Open accountability records</span>
     </div>
 
     <div class="borrower-accountability-records" data-accountability-records>
@@ -1261,4 +1254,32 @@
     </article>
 </section>
 @endif
+
+{{-- BORROWER_ACCOUNTABILITY_CLEAN_FILTER_LAYOUT --}}
+<style>
+@media (min-width: 901px) {
+    .borrower-accountability-toolbar {
+        grid-template-columns:
+            minmax(320px, 1fr)
+            minmax(170px, 220px)
+            minmax(145px, 180px) !important;
+    }
+}
+
+@media (min-width: 621px) and (max-width: 900px) {
+    .borrower-accountability-toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .borrower-accountability-search {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 620px) {
+    .borrower-accountability-toolbar {
+        grid-template-columns: 1fr !important;
+    }
+}
+</style>
 @endsection

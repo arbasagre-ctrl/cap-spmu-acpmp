@@ -90,7 +90,7 @@ class User extends Authenticatable
             return null;
         }
 
-        return $classification->primaryWorkspace()->value;
+        return $classification->primaryWorkspace()?->value;
     }
 
     public function mayBorrow(): bool

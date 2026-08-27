@@ -18,7 +18,7 @@
         <div class="card-header"><div><p class="eyebrow">Physical form</p><h2>Laundry Form</h2></div></div>
         <p>
             Use the same printed form from borrower turnover through SPMU final acceptance.
-            It must contain the Borrower signature, Laundry Worker signature, and final SPMU authorized signature before the final scan is uploaded.
+            It must contain the Borrower signature, the required laundry-service acknowledgement, and final authorized SPMU signature before the final scan is archived.
         </p>
         @if($job->document)
             <a class="button secondary ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">View / Print Laundry Form</a>
@@ -53,7 +53,7 @@
 
         <div class="callout info">
             <strong>Borrower turnover only.</strong>
-            <p>The Borrower signs the physical turnover portion, then hands all used linen and the same printed Laundry Form to you. Record the actual quantity you physically receive.</p>
+            <p>The Borrower signs the physical turnover portion, then hands over all used linen and the same printed Laundry Form. The SPMU Action Officer records the actual quantity physically received for processing.</p>
         </div>
 
         <div class="table-wrap">
@@ -114,7 +114,7 @@
 
         <div class="callout info">
             <strong>Process all linen physically received.</strong>
-            <p>Complete the Laundry Worker portion of the physical form, sign it, and record the completed quantities/condition below. The Borrower does not collect the cleaned linen.</p>
+            <p>Complete the laundry-service portion of the physical form and record the completed quantities and condition below. The Borrower does not collect the cleaned linen.</p>
         </div>
 
         <div class="table-wrap">
@@ -185,7 +185,7 @@
         </div>
 
         <label>
-            Laundry Worker Remarks
+            SPMU Action Officer Remarks
             <textarea name="worker_remarks" placeholder="Optional notes about the laundry process">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
         </label>
 
@@ -206,7 +206,7 @@
             <p>Bring the cleaned linen and the same physical Laundry Form directly to SPMU. Do not release the linen back to the Borrower.</p>
         </div>
         <p>
-            SPMU will perform the final quantity/condition inspection. The SPMU Head or authorized SPMU signatory signs the final receiving/acceptance portion of the physical form. The SPMU Action Officer will archive the fully accomplished form after final acceptance.
+            Continue to the final quantity/condition inspection. The SPMU Head or authorized SPMU signatory signs the final receiving/acceptance portion of the physical form. The SPMU Action Officer archives the fully accomplished form after final acceptance.
         </p>
     </article>
 </section>
@@ -219,7 +219,7 @@
             <div><p class="eyebrow">Final archive</p><h2>SPMU is completing the Laundry record</h2></div>
             <x-status-badge :status="$job->status" />
         </div>
-        <p>The final accomplished Laundry Form is archived by the SPMU Action Officer after the cleaned linen has been physically accepted. No further Laundry Worker upload is required.</p>
+        <p>The final accomplished Laundry Form is archived by the SPMU Action Officer after the cleaned linen has been physically accepted. No separate role upload is required.</p>
     </article>
 </section>
 @endif

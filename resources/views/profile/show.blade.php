@@ -30,6 +30,40 @@
     .profile-photo-remove-form { margin: 0; }
     .profile-photo-remove { color: #b42318; border-color: #f2b8b5; background: #fff7f6; }
     .profile-photo-remove:hover { color: #8f1d14; border-color: #e49a96; background: #fff1ef; }
+    .profile-layout {
+        align-items: start !important;
+    }
+
+    .profile-layout > .account-settings-form {
+        align-self: start !important;
+        align-content: start !important;
+        height: fit-content !important;
+        min-height: 0 !important;
+        grid-auto-rows: max-content;
+    }
+
+    .profile-layout > .profile-side-column {
+        align-self: start !important;
+        height: fit-content !important;
+        min-height: 0 !important;
+    }
+
+    .signature-card { display: grid; gap: 14px; }
+    .signature-preview {
+        display: grid;
+        min-height: 132px;
+        place-items: center;
+        padding: 16px;
+        overflow: hidden;
+        border: 1px dashed var(--border-strong);
+        border-radius: 10px;
+        background: var(--surface-subtle);
+    }
+    .signature-preview img { display: block; max-width: 100%; max-height: 100px; object-fit: contain; }
+    .signature-preview span { color: var(--text-muted); font-size: 12px; text-align: center; }
+    .signature-upload-form { display: grid; gap: 10px; }
+    .signature-upload-form label { display: grid; gap: 7px; }
+    .signature-upload-form input[type="file"] { width: 100%; }
     html[data-theme="dark"] .profile-photo-preview { border-color: rgba(255,255,255,.10); }
     html[data-theme="dark"] .profile-photo-remove { color: #ffb4ad; border-color: #6f3a38; background: #321d1c; }
     @media (max-width: 640px) { .profile-photo-layout { grid-template-columns: 1fr; } }
@@ -61,45 +95,64 @@
                         <input name="employee_no" value="{{ old('employee_no', $user->employee_no) }}" required maxlength="80" autocomplete="off">
                         @error('employee_no')<small class="field-error">{{ $message }}</small>@enderror
                     </label>
-                    <label>Office / Department
-                        <select name="organizational_unit_id" required>
-                            <option value="">Select office or department</option>
-                            @foreach($borrowerUnits as $unit)
-                                <option value="{{ $unit->id }}" @selected((string) old('organizational_unit_id', $user->organizational_unit_id) === (string) $unit->id)>{{ $unit->unit_name }}</option>
-                            @endforeach
-                        </select>
-                        @error('organizational_unit_id')<small class="field-error">{{ $message }}</small>@enderror
+
+                    <label>Designation
+                        <input name="designation" value="{{ old('designation', $user->designation) }}" autocomplete="organization-title">
+                        @error('designation')<small class="field-error">{{ $message }}</small>@enderror
                     </label>
                 </div>
+
+                <label>Full name
+                    <input name="full_name" value="{{ old('full_name', $user->full_name) }}" required autocomplete="name">
+                    @error('full_name')<small class="field-error">{{ $message }}</small>@enderror
+                </label>
+
+                <label>Office / Department
+                    <select name="organizational_unit_id" required>
+                        <option value="">Select office or department</option>
+                        @foreach($borrowerUnits as $unit)
+                            <option value="{{ $unit->id }}" @selected((string) old('organizational_unit_id', $user->organizational_unit_id) === (string) $unit->id)>{{ $unit->unit_name }}</option>
+                        @endforeach
+                    </select>
+                    @error('organizational_unit_id')<small class="field-error">{{ $message }}</small>@enderror
+                </label>
             @else
                 <div class="profile-readonly-grid">
                     <div><span>Employee Number</span><strong>{{ $user->employee_no }}</strong></div>
                     <div><span>Office / Department</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
                 </div>
-                <p class="field-help">Institutional identifiers and organizational assignments are maintained by ICTU because they determine portal authority, approval routing, and delegation eligibility.</p>
-            @endif
 
-            <div class="form-columns">
-                <label>Full name
-                    <input name="full_name" value="{{ old('full_name', $user->full_name) }}" required autocomplete="name">
-                    @error('full_name')<small class="field-error">{{ $message }}</small>@enderror
-                </label>
-                <label>Designation
-                    <input name="designation" value="{{ old('designation', $user->designation) }}" autocomplete="organization-title">
-                    @error('designation')<small class="field-error">{{ $message }}</small>@enderror
-                </label>
-            </div>
+                <p class="field-help">Institutional identifiers and organizational assignments are maintained by ICTU because they determine portal authority, approval routing, and delegation eligibility.</p>
+
+                <div class="form-columns">
+                    <label>Full name
+                        <input name="full_name" value="{{ old('full_name', $user->full_name) }}" required autocomplete="name">
+                        @error('full_name')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <label>Designation
+                        <input name="designation" value="{{ old('designation', $user->designation) }}" autocomplete="organization-title">
+                        @error('designation')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+                </div>
+            @endif
         </section>
 
         <section class="account-settings-section" aria-labelledby="contact-information-heading">
             <div class="section-heading"><div><p class="eyebrow">Communication</p><h2 id="contact-information-heading">Contact Information</h2></div></div>
-            <div class="profile-readonly-grid single-row">
-                <div class="full-span"><span>Official email</span><strong>{{ $user->email }}</strong></div>
+            <div class="form-columns profile-contact-inline">
+                <div class="profile-readonly-grid single-row">
+                    <div class="full-span">
+                        <span>Official email</span>
+                        <strong>{{ $user->email }}</strong>
+                    </div>
+                </div>
+
+                <label>Contact number
+                    <input name="mobile_no" value="{{ old('mobile_no', $user->mobile_no) }}" maxlength="30" autocomplete="tel">
+                    @error('mobile_no')<small class="field-error">{{ $message }}</small>@enderror
+                </label>
             </div>
-            <label>Contact number
-                <input name="mobile_no" value="{{ old('mobile_no', $user->mobile_no) }}" maxlength="30" autocomplete="tel">
-                @error('mobile_no')<small class="field-error">{{ $message }}</small>@enderror
-            </label>
             <fieldset>
                 <legend>Notification preferences</legend>
                 <p class="meta">Choose how the system may send account and transaction updates.</p>
@@ -172,31 +225,75 @@
             </div>
         </article>
 
-        <article class="card appearance-settings-card" aria-labelledby="appearance-heading">
-            <div class="card-header">
-                <div><p class="eyebrow">Display preference</p><h2 id="appearance-heading">Appearance</h2></div>
-            </div>
-            <label for="appearance-select">Theme
-                <select id="appearance-select" data-appearance-select>
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                    <option value="system">Default</option>
-                </select>
-            </label>
-            <p class="meta" data-appearance-status aria-live="polite">Default follows this device’s light or dark preference.</p>
-        </article>
 
         <article class="card signature-card" aria-labelledby="signature-heading">
             <div class="card-header">
-                <div><p class="eyebrow">Document policy</p><h2 id="signature-heading">Physical Signatures</h2></div>
-                <x-status-badge status="ACTIVE" label="Wet signatures" />
+                <div><p class="eyebrow">Authenticated signing</p><h2 id="signature-heading">E-signature</h2></div>
+                <x-status-badge
+                    :status="$user->currentSignature ? 'ACTIVE' : 'PENDING'"
+                    :label="$user->currentSignature ? 'Registered' : 'Setup required'"
+                />
             </div>
-            <p>Borrowing Request Letters, Borrower Slips, Gate Passes, Laundry Forms, and other required operational documents use handwritten/wet signatures on printed copies. No e-signature upload is required for the active borrowing workflow.</p>
-            <div class="callout account-information-callout">
-                <x-icon name="information" />
-                <div><strong>Document evidence</strong><p>Where required, the fully accomplished physical document is scanned and uploaded to the related transaction for SPMU verification and audit history.</p></div>
+
+            <div class="signature-preview" data-signature-preview aria-label="Current E-signature preview">
+                @if($user->currentSignature?->file)
+                    <img
+                        src="{{ route('files.show', $user->currentSignature->file, false) }}?v={{ $user->currentSignature->updated_at?->timestamp ?? time() }}"
+                        alt="Current E-signature of {{ $user->full_name }}"
+                    >
+                @else
+                    <span>No E-signature registered yet.</span>
+                @endif
             </div>
+
+            @if($user->currentSignature)
+                <p class="meta">Registered {{ $user->currentSignature->effective_from?->format('d M Y, g:i A') }}</p>
+            @endif
+
+            <form
+                method="post"
+                action="{{ route('profile.signature') }}"
+                enctype="multipart/form-data"
+                class="signature-upload-form"
+            >
+                @csrf
+                <label for="profile-signature-input">
+                    {{ $user->currentSignature ? 'Replace E-signature' : 'Upload E-signature' }}
+                    <input
+                        id="profile-signature-input"
+                        type="file"
+                        name="signature"
+                        accept="image/png,image/jpeg,image/webp"
+                        required
+                        data-signature-input
+                    >
+                </label>
+                <small class="field-help">PNG, JPG, JPEG, or WebP. Maximum {{ $signatureMaxUploadMb }} MB.</small>
+                @error('signature')<small class="field-error">{{ $message }}</small>@enderror
+                <button class="button primary ui-pressable" type="submit">
+                    {{ $user->currentSignature ? 'Save New E-signature' : 'Register E-signature' }}
+                </button>
+                <p class="field-note profile-signature-note">
+                    ⓘ Your registered signature is used only when you explicitly confirm an authorized signing action. Replacing it affects future actions only.
+                </p>
+            </form>
+
+
         </article>
+
+        <article class="card appearance-settings-card" aria-labelledby="appearance-heading">
+                    <div class="card-header">
+                        <div><p class="eyebrow">Display preference</p><h2 id="appearance-heading">Appearance</h2></div>
+                    </div>
+                    <label for="appearance-select">Theme
+                        <select id="appearance-select" data-appearance-select>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="system">Default</option>
+                        </select>
+                    </label>
+                    <p class="meta" data-appearance-status aria-live="polite">Default follows this device’s light or dark preference.</p>
+                </article>
     </div>
 </section>
 <script>
@@ -204,21 +301,60 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.querySelector('[data-profile-photo-input]');
     const preview = document.querySelector('[data-profile-photo-preview]');
 
-    if (!input || !preview) return;
+    if (input && preview) {
+        input.addEventListener('change', () => {
+            const file = input.files?.[0];
+            if (!file || !file.type.startsWith('image/')) return;
 
-    input.addEventListener('change', () => {
-        const file = input.files?.[0];
-        if (!file || !file.type.startsWith('image/')) return;
+            const url = URL.createObjectURL(file);
+            preview.innerHTML = '';
+            const image = document.createElement('img');
+            image.src = url;
+            image.alt = 'Selected profile picture preview';
+            image.onload = () => URL.revokeObjectURL(url);
+            preview.appendChild(image);
+        });
+    }
+
+    const signatureInput = document.querySelector('[data-signature-input]');
+    const signaturePreview = document.querySelector('[data-signature-preview]');
+
+    signatureInput?.addEventListener('change', () => {
+        const file = signatureInput.files?.[0];
+        if (!file || !file.type.startsWith('image/') || !signaturePreview) return;
 
         const url = URL.createObjectURL(file);
-        preview.innerHTML = '';
+        signaturePreview.innerHTML = '';
         const image = document.createElement('img');
         image.src = url;
-        image.alt = 'Selected profile picture preview';
+        image.alt = 'Selected E-signature preview';
         image.onload = () => URL.revokeObjectURL(url);
-        preview.appendChild(image);
+        signaturePreview.appendChild(image);
     });
 });
 </script>
 
+
+{{-- PROFILE_ACCOUNT_LAYOUT_REFINEMENT --}}
+<style>
+.profile-contact-inline {
+    align-items: end;
+}
+
+.profile-contact-inline > .profile-readonly-grid {
+    width: 100%;
+    margin: 0;
+}
+
+.profile-contact-inline > label {
+    width: 100%;
+    margin: 0;
+}
+
+.profile-signature-note {
+    margin-top: 10px;
+    margin-bottom: 0;
+    font-size: 11px;
+}
+</style>
 @endsection

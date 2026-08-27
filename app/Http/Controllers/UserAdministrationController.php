@@ -86,7 +86,7 @@ class UserAdministrationController extends Controller
 
             $audit->record('USER_ACCOUNT_CREATED', $user, after: [
                 'access_classification' => $classification->value,
-                'portal' => $classification->primaryWorkspace()->value,
+                'portal' => $classification->primaryWorkspace()?->value,
                 'employee_no' => $user->employee_no,
             ]);
 
@@ -142,6 +142,7 @@ class UserAdministrationController extends Controller
         return view('administration.users.form', [
             'user' => $user,
             'units' => OrganizationalUnit::where('active', true)
+                ->where('unit_code', '!=', 'LAUNDRY')
                 ->orderBy('unit_name')
                 ->get(),
             'classifications' => AccessClassification::assignableCases(),
@@ -161,7 +162,9 @@ class UserAdministrationController extends Controller
             'organizational_unit_id' => [
                 'required',
                 Rule::exists('organizational_units', 'id')
-                    ->where(fn ($query) => $query->where('active', true)),
+                    ->where(fn ($query) => $query
+                        ->where('active', true)
+                        ->where('unit_code', '!=', 'LAUNDRY')),
             ],
             'employee_no' => [
                 'required',
@@ -197,7 +200,6 @@ class UserAdministrationController extends Controller
             AccessClassification::SpmuHead,
             AccessClassification::SpmuOfficer => 'SPMU',
             AccessClassification::IctuMaintainer => 'ICTU',
-            AccessClassification::LaundryWorker => 'LAUNDRY',
             AccessClassification::BorrowerOnly => null,
             default => null,
         };

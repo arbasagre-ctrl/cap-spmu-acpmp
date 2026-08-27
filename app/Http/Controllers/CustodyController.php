@@ -120,6 +120,14 @@ class CustodyController extends Controller
             $relations[] = 'laundryJob.formVerifier';
         }
 
+        if (Schema::hasTable('early_return_requests')) {
+            $relations[] = Schema::hasTable('early_return_request_lines')
+                ? 'earlyReturnRequests.lines.custodyLine.requestItem'
+                : 'earlyReturnRequests';
+        } else {
+            $custody->setRelation('earlyReturnRequests', collect());
+        }
+
         $custody->load($relations);
 
         $incidentIds = Incident::query()
@@ -303,7 +311,7 @@ class CustodyController extends Controller
          *
          * Non-linen is always eligible for ordinary SPMU return inspection
          * while it has an outstanding quantity. Linen is eligible only when
-         * the Laundry Worker has brought the cleaned linen back to SPMU
+         * laundry processing has been recorded and the cleaned linen is ready for SPMU
          * (READY_FOR_SPMU_RETURN), except for legacy records without a
          * LaundryJob.
          */
@@ -394,6 +402,37 @@ class CustodyController extends Controller
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
             ->with('status', 'Return inspection recorded. The remaining return or Laundry status is shown beside the inspection panel.');
+    }
+
+    public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
+    {
+        $this->authorizeCustody($request, $custody);
+
+        abort_unless(
+            strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER'
+                && $custody->borrower_user_id === $request->user()?->id,
+            403
+        );
+
+        $data = $request->validate([
+            'proposed_return_at' => ['required', 'date', 'after:now'],
+            'quantities' => ['required', 'array', 'min:1'],
+            'quantities.*' => ['required', 'integer', 'min:0'],
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $service->requestEarlyReturn(
+            $custody,
+            $request->user(),
+            $data['quantities'],
+            $data['proposed_return_at'],
+            $data['reason'] ?? null
+        );
+
+        return back()->with(
+            'status',
+            'Early Return coordination sent to SPMU. Inventory will change only after physical Return & Inspection.'
+        );
     }
 
     private function authorizeSpmuOfficer(Request $request): void

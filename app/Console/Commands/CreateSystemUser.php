@@ -23,8 +23,8 @@ class CreateSystemUser extends Command
         {--employee-no= : Employee / borrower number}
         {--employment-type=STAFF : EMPLOYEE, FACULTY, or STAFF}
         {--unit= : Organizational unit code; inferred for staff roles when omitted}
-        {--role=BORROWER : BORROWER, SPMU, LAUNDRY, or ICTU}
-        {--classification= : BORROWER_ONLY, SPMU_HEAD, SPMU_OFFICER, LAUNDRY_WORKER, or ICTU_MAINTAINER}
+        {--role=BORROWER : BORROWER, SPMU, or ICTU}
+        {--classification= : BORROWER_ONLY, SPMU_HEAD, SPMU_OFFICER, or ICTU_MAINTAINER}
         {--password= : Password; prompted securely when omitted}';
 
     protected $description = 'Create or update an authorized SPMU-ACPMP account';
@@ -42,7 +42,6 @@ class CreateSystemUser extends Command
         $activeRoles = [
             UserRole::Borrower,
             UserRole::Spmu,
-            UserRole::Laundry,
             UserRole::Ictu,
         ];
 
@@ -53,7 +52,7 @@ class CreateSystemUser extends Command
         ) {
             $this->error(
                 'Employment type or active role is invalid. '
-                .'Allowed roles: BORROWER, SPMU, LAUNDRY, ICTU.'
+                .'Allowed roles: BORROWER, SPMU, ICTU.'
             );
 
             return SymfonyCommand::INVALID;
@@ -67,7 +66,6 @@ class CreateSystemUser extends Command
             ? AccessClassification::tryFrom($requestedClassification)
             : match ($roleCode) {
                 UserRole::Spmu => AccessClassification::SpmuOfficer,
-                UserRole::Laundry => AccessClassification::LaundryWorker,
                 UserRole::Ictu => AccessClassification::IctuMaintainer,
                 default => AccessClassification::BorrowerOnly,
             };
@@ -93,7 +91,6 @@ class CreateSystemUser extends Command
             $unitCode = match ($classification) {
                 AccessClassification::SpmuHead,
                 AccessClassification::SpmuOfficer => 'SPMU',
-                AccessClassification::LaundryWorker => 'LAUNDRY',
                 AccessClassification::IctuMaintainer => 'ICTU',
                 default => 'CCS',
             };

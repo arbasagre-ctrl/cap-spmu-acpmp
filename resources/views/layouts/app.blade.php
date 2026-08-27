@@ -31,8 +31,8 @@
 
     <style>
         .app-sidebar {
-            background: #f6faff !important;
-            border-right: 1px solid #d7e6f5 !important;
+            background: #E5F2FC !important;
+            border-right: 1px solid #d6e8f5 !important;
             color: #17324d !important;
         }
 
@@ -125,7 +125,6 @@
             justify-content: center;
             width: 18px;
             min-width: 18px;
-            color: inherit;
         }
 
         .sidebar-nav a svg {
@@ -133,41 +132,21 @@
             stroke: currentColor;
         }
 
-        .sidebar-nav a:nth-child(1) .nav-icon,
-        .sidebar-nav a:nth-child(1) svg {
-            color: #1f6fe5;
-            stroke: currentColor;
-        }
+        .sidebar-nav .nav-icon-dashboard { color: #1f6fe5; }
+        .sidebar-nav .nav-icon-approval { color: #19a36b; }
+        .sidebar-nav .nav-icon-upload { color: #e9870c; }
+        .sidebar-nav .nav-icon-custody { color: #7a5af8; }
+        .sidebar-nav .nav-icon-success { color: #00a3bf; }
+        .sidebar-nav .nav-icon-requests { color: #e55353; }
+        .sidebar-nav .nav-icon-inventory { color: #0f9488; }
+        .sidebar-nav .nav-icon-calendar { color: #2f80ed; }
+        .sidebar-nav .nav-icon-accountability { color: #d97706; }
 
-        .sidebar-nav a:nth-child(2) .nav-icon,
-        .sidebar-nav a:nth-child(2) svg {
-            color: #19a36b;
-            stroke: currentColor;
-        }
-
-        .sidebar-nav a:nth-child(3) .nav-icon,
-        .sidebar-nav a:nth-child(3) svg {
-            color: #f39c12;
-            stroke: currentColor;
-        }
-
-        .sidebar-nav a:nth-child(4) .nav-icon,
-        .sidebar-nav a:nth-child(4) svg {
-            color: #7a5af8;
-            stroke: currentColor;
-        }
-
-        .sidebar-nav a:nth-child(5) .nav-icon,
-        .sidebar-nav a:nth-child(5) svg {
-            color: #00a3bf;
-            stroke: currentColor;
-        }
-
-        .sidebar-nav a:nth-child(6) .nav-icon,
-        .sidebar-nav a:nth-child(6) svg {
-            color: #e55353;
-            stroke: currentColor;
-        }
+        /* Additional sidebar module icon colors */
+        .sidebar-nav .nav-icon-users { color: #7A5AF8; }
+        .sidebar-nav .nav-icon-settings { color: #0F9488; }
+        .sidebar-nav .nav-icon-reports { color: #2F80ED; }
+        .sidebar-nav .nav-icon-notifications { color: #E9870C; }
 
         .sidebar-nav a.active .nav-icon,
         .sidebar-nav a[aria-current="page"] .nav-icon,
@@ -182,7 +161,7 @@
             padding: 16px 18px 18px !important;
             border-top: 1px solid #e6eff8 !important;
             color: #6c7f96 !important;
-            background: #f6faff !important;
+            background: #E5F2FC !important;
         }
 
         .sidebar-foot span {
@@ -203,8 +182,8 @@
 
         /* DARK MODE: sidebar follows the selected appearance */
         html[data-theme="dark"] .app-sidebar {
-            background: #081a2f !important;
-            border-right-color: #20364f !important;
+            background: #E5F2FC !important;
+            border-right-color: #d6e8f5 !important;
             color: #eaf2fb !important;
         }
 
@@ -254,7 +233,7 @@
         }
 
         html[data-theme="dark"] .sidebar-foot {
-            background: #081a2f !important;
+            background: #E5F2FC !important;
             border-top-color: #1b324b !important;
             color: #8fa7c3 !important;
         }
@@ -290,7 +269,22 @@
                 padding-inline: 8px;
             }
         }
-    </style>
+
+        /* SIDEBAR HIDDEN SCROLLBAR
+           Keep scrolling functional without showing a slider. */
+        .app-sidebar,
+        .sidebar-nav {
+            scrollbar-width: none !important;
+            -ms-overflow-style: none !important;
+        }
+
+        .app-sidebar::-webkit-scrollbar,
+        .sidebar-nav::-webkit-scrollbar {
+            width: 0 !important;
+            height: 0 !important;
+            display: none !important;
+        }
+</style>
 
     @guest
         <style>
@@ -419,7 +413,22 @@
                     margin-left: auto;
                 }
             }
-        </style>
+
+        /* SIDEBAR HIDDEN SCROLLBAR
+           Keep scrolling functional without showing a slider. */
+        .app-sidebar,
+        .sidebar-nav {
+            scrollbar-width: none !important;
+            -ms-overflow-style: none !important;
+        }
+
+        .app-sidebar::-webkit-scrollbar,
+        .sidebar-nav::-webkit-scrollbar {
+            width: 0 !important;
+            height: 0 !important;
+            display: none !important;
+        }
+</style>
     @endguest
 </head>
 <body>
@@ -452,11 +461,11 @@
                 ]
                 : [
                     ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],
-                    ['requests.index', 'requests.*', 'Borrowing Records', 'requests'],
-                    ['custody.release.index', 'custody.release.*', 'Release', 'custody'],
+                    ['requests.index', 'requests.*', 'Approved Requests', 'approval'],
+                    ['custody.release.index', 'custody.release.*', 'Release', 'upload'],
                     ['custody.return.index', 'custody.return.*', 'Return', 'custody'],
-                    ['laundry.spmu.index', 'laundry.spmu.*', 'Laundry Processing', 'custody'],
-                    ['gate-passes.index', 'gate-passes.*', 'Gate Pass', 'custody'],
+                    ['laundry.index', 'laundry.*', 'Laundry Operations', 'success'],
+                    ['gate-passes.index', 'gate-passes.*', 'Gate Pass', 'requests'],
                     ['inventory.index', 'inventory.*', 'Inventory', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Processing', 'accountability'],
@@ -467,11 +476,6 @@
                 ['administration.settings.index', 'administration.settings.*', 'System Settings', 'settings'],
                 ['reports.audit', 'reports.audit', 'Audit Trail', 'reports'],
                 ['reports.notifications', 'reports.notifications', 'Delivery Records', 'notifications'],
-            ],
-            'LAUNDRY' => [
-                ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],
-                ['laundry.index', 'laundry.index', 'Laundry Requests', 'custody'],
-                ['laundry.completed', 'laundry.completed', 'Completed', 'success'],
             ],
             default => [],
         };
@@ -492,11 +496,11 @@
             <nav class="sidebar-nav" aria-label="Primary navigation">
                 @foreach($navigation as [$routeName, $routePattern, $label, $icon])
                     <a class="interactive {{ request()->routeIs($routePattern) ? 'active' : '' }}" href="{{ route($routeName) }}" @if(request()->routeIs($routePattern)) aria-current="page" @endif>
-                        <span class="nav-icon"><x-icon :name="$icon" /></span><span>{{ $label }}</span>
+                        <span class="nav-icon nav-icon-{{ $icon }}"><x-icon :name="$icon" /></span><span>{{ $label }}</span>
                     </a>
                 @endforeach
             </nav>
-            <div class="sidebar-foot"><span>Supply and Property Management Unit</span><small>Camarines Sur Polytechnic Colleges</small></div>
+
         </aside>
         <button class="sidebar-backdrop" type="button" aria-label="Close main menu" tabindex="-1" data-sidebar-close></button>
         <div class="app-stage">

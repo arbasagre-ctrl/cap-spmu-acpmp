@@ -82,6 +82,10 @@ class BorrowingRequestController extends Controller
     ): RedirectResponse {
         $data = $this->validateRequest($request);
 
+        if ($request->input('intent') === 'submit') {
+            $this->validateESignatureConfirmation($request);
+        }
+
         $user = $request->user();
 
         if ($user->activeRestrictions()->exists()) {
@@ -157,14 +161,15 @@ class BorrowingRequestController extends Controller
         if ($request->input('intent') === 'submit') {
             $workflow->submit(
                 $borrowingRequest->fresh(),
-                $user
+                $user,
+                $request->boolean('confirm_e_signature')
             );
 
             return redirect()
                 ->route('requests.show', $borrowingRequest)
                 ->with(
                     'status',
-                    'Request and required scanned document(s) submitted to SPMU for verification.'
+                    'Request version E-signed and submitted with the required scanned document(s) to SPMU for verification.'
                 );
         }
 
@@ -302,6 +307,10 @@ class BorrowingRequestController extends Controller
         $data =
             $this->validateRequest($request);
 
+        if ($request->input('intent') === 'submit') {
+            $this->validateESignatureConfirmation($request);
+        }
+
         DB::transaction(
             function () use (
                 $borrowingRequest,
@@ -392,14 +401,15 @@ class BorrowingRequestController extends Controller
         if ($request->input('intent') === 'submit') {
             $workflow->submit(
                 $borrowingRequest->fresh(),
-                $request->user()
+                $request->user(),
+                $request->boolean('confirm_e_signature')
             );
 
             return redirect()
                 ->route('requests.show', $borrowingRequest)
                 ->with(
                     'status',
-                    'Request and required scanned document(s) submitted to SPMU for verification.'
+                    'Request version E-signed and submitted with the required scanned document(s) to SPMU for verification.'
                 );
         }
 
@@ -425,16 +435,44 @@ class BorrowingRequestController extends Controller
             'borrower_acknowledgement.accepted' =>
                 'Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.',
         ]);
+        $this->validateESignatureConfirmation($request);
 
         $workflow->submit(
             $borrowingRequest,
-            $request->user()
+            $request->user(),
+            $request->boolean('confirm_e_signature')
         );
 
         return back()->with(
             'status',
-            'Request and scanned approved document(s) submitted to SPMU for verification. No inventory reservation has been created yet.'
+            'Request version E-signed and submitted with the scanned approved document(s) to SPMU for verification. No inventory reservation has been created yet.'
         );
+    }
+
+    private function validateESignatureConfirmation(Request $request): void
+    {
+        $request->validate([
+            'confirm_e_signature' => ['required', 'accepted'],
+        ], [
+            'confirm_e_signature.accepted' => 'Confirm that you want to apply your registered E-signature before submitting.',
+            'confirm_e_signature.required' => 'Confirm that you want to apply your registered E-signature before submitting.',
+        ]);
+
+        $hasCurrentSignature = $request->user()
+            ->currentSignature()
+            ->whereHas('file')
+            ->where('effective_from', '<=', now())
+            ->where(function ($query): void {
+                $query->whereNull('effective_to')
+                    ->orWhere('effective_to', '>', now());
+            })
+            ->exists();
+
+        if (! $hasCurrentSignature) {
+            throw ValidationException::withMessages([
+                'signature' => 'Register an E-signature in Account Settings before submitting this request.',
+            ]);
+        }
     }
 
 

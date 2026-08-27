@@ -121,6 +121,10 @@
             .borrower-inventory-browser-toolbar input,
             .borrower-inventory-browser-toolbar select {
                 width: 100%;
+            }
+
+            .borrower-inventory-browser-toolbar select,
+            .borrower-inventory-browser-toolbar .search-input-shell {
                 margin-top: 7px;
             }
 
@@ -361,12 +365,17 @@
         >
             <label class="borrower-inventory-search-field">
                 Search
-                <input
-                    id="borrower-inventory-search"
-                    type="search"
-                    placeholder="Search Item ID, article, description, category, or unit..."
-                    autocomplete="off"
-                >
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true">
+                        <x-icon name="search" />
+                    </span>
+                    <input
+                        id="borrower-inventory-search"
+                        type="search"
+                        placeholder="Search Item ID, article, description, category, or unit..."
+                        autocomplete="off"
+                    >
+                </span>
             </label>
 
             <label>
@@ -859,6 +868,10 @@
             .spmu-inventory-browser-toolbar input,
             .spmu-inventory-browser-toolbar select {
                 width: 100%;
+            }
+
+            .spmu-inventory-browser-toolbar select,
+            .spmu-inventory-browser-toolbar .search-input-shell {
                 margin-top: 7px;
             }
 
@@ -985,12 +998,15 @@
         >
             <label>
                 Search inventory
-                <input
-                    id="spmu-inventory-search"
-                    type="search"
-                    placeholder="Search Item ID, item, category, description, or unit..."
-                    autocomplete="off"
-                >
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                    <input
+                        id="spmu-inventory-search"
+                        type="search"
+                        placeholder="Search Item ID, item, category, description, or unit..."
+                        autocomplete="off"
+                    >
+                </span>
             </label>
 
             <label>

@@ -86,6 +86,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::put('/profile', [ProfileController::class, 'update'])
         ->name('profile.update');
 
+    Route::post('/profile/signature', [ProfileController::class, 'signature'])
+        ->name('profile.signature');
+
     Route::get('/profile/picture', [ProfilePictureController::class, 'show'])
         ->name('profile.picture.show');
 
@@ -325,6 +328,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('custody.return');
 
+    Route::post('/custody/{custody}/early-return', [CustodyController::class, 'requestEarlyReturn'])
+        ->middleware('workspace:BORROWER')
+        ->name('custody.early-return');
+
 
     /*
     |--------------------------------------------------------------------------
@@ -364,20 +371,20 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     /*
     |--------------------------------------------------------------------------
-    | Simple Laundry Worker Portal
+    | SPMU Laundry Operations
     |--------------------------------------------------------------------------
     |
-    | Laundry Worker responsibility:
+    | SPMU Action Officer responsibility:
     | - receive used linen + the borrower-signed physical Laundry Form
     | - record actual receipt and laundry completion details
-    | - bring cleaned linen + the same form directly to SPMU
+    | - keep the cleaned linen + the same form in the SPMU return process
     | - upload the fully signed form after SPMU final acceptance
     |
     | The Borrower does not collect cleaned linen or encode laundry quantities.
     |
     */
 
-    Route::middleware('workspace:LAUNDRY')->group(function (): void {
+    Route::middleware('workspace:SPMU')->group(function (): void {
         Route::get('/laundry', [LaundryController::class, 'index'])
             ->name('laundry.index');
 

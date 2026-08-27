@@ -31,7 +31,6 @@ class SinglePortalRoleIsolationTest extends TestCase
             AccessClassification::SpmuHead->value => ['SPMU', false],
             AccessClassification::SpmuOfficer->value => ['SPMU', false],
             AccessClassification::IctuMaintainer->value => ['ICTU', false],
-            AccessClassification::LaundryWorker->value => ['LAUNDRY', false],
         ];
 
         foreach ($expectations as $classification => [$portal, $mayBorrow]) {
@@ -46,7 +45,7 @@ class SinglePortalRoleIsolationTest extends TestCase
             $activeRoles = $user->roles()
                 ->wherePivotNull('revoked_at')
                 ->get()
-                ->map(fn (Role $role) => $role->role_code->value)
+                ->map(fn (Role $role) => (string) $role->role_code)
                 ->all();
 
             $this->assertSame([$portal], $activeRoles);
@@ -58,7 +57,6 @@ class SinglePortalRoleIsolationTest extends TestCase
         $borrower = $this->classificationUser(AccessClassification::BorrowerOnly);
         $spmuOfficer = $this->classificationUser(AccessClassification::SpmuOfficer);
         $ictu = $this->classificationUser(AccessClassification::IctuMaintainer);
-        $laundry = $this->classificationUser(AccessClassification::LaundryWorker);
 
         $this->withSession(['active_workspace' => 'BORROWER'])
             ->actingAs($spmuOfficer)
@@ -78,14 +76,6 @@ class SinglePortalRoleIsolationTest extends TestCase
             ->get(route('administration.users.index'))
             ->assertForbidden();
 
-        $this->actingAs($laundry)
-            ->get(route('approvals.index'))
-            ->assertForbidden();
-
-        $this->actingAs($laundry)
-            ->get(route('administration.users.index'))
-            ->assertForbidden();
-
         $this->withSession(['active_workspace' => 'BORROWER'])
             ->actingAs($spmuOfficer)
             ->get(route('dashboard'))
@@ -102,7 +92,6 @@ class SinglePortalRoleIsolationTest extends TestCase
             'spmu-head@spmu.test' => 'SPMU',
             'spmu@spmu.test' => 'SPMU',
             'ictu@spmu.test' => 'ICTU',
-            'laundry@spmu.test' => 'LAUNDRY',
         ];
 
         foreach ($expectations as $email => $portal) {
@@ -205,7 +194,7 @@ class SinglePortalRoleIsolationTest extends TestCase
         $activeRoles = $officer->roles()
             ->wherePivotNull('revoked_at')
             ->get()
-            ->map(fn (Role $role) => $role->role_code->value)
+            ->map(fn (Role $role) => (string) $role->role_code)
             ->all();
 
         $this->assertSame(['SPMU'], $activeRoles);
@@ -219,7 +208,7 @@ class SinglePortalRoleIsolationTest extends TestCase
     }
 
 
-    public function test_user_administration_hides_retired_signatory_accounts_and_lists_laundry_worker(): void
+    public function test_user_administration_hides_retired_non_portal_accounts(): void
     {
         $ictu = $this->classificationUser(AccessClassification::IctuMaintainer);
         $institution = OrganizationalUnit::query()
@@ -244,10 +233,19 @@ class SinglePortalRoleIsolationTest extends TestCase
             'account_status' => 'INACTIVE',
         ]);
 
+        User::factory()->create([
+            'organizational_unit_id' => $institution->id,
+            'employee_no' => 'RETIRED-LAUNDRY-'.uniqid(),
+            'email' => 'retired-laundry-'.uniqid().'@example.test',
+            'full_name' => 'Retired Laundry Account',
+            'access_classification' => AccessClassification::RetiredInactive,
+            'account_status' => 'INACTIVE',
+        ]);
+
         $this->actingAs($ictu)
             ->get(route('administration.users.index'))
             ->assertOk()
-            ->assertSee('Laundry Worker Demo')
+            ->assertDontSee('Retired Laundry Account')
             ->assertDontSee('Legacy GSU Account')
             ->assertDontSee('Legacy VPAF Account');
     }

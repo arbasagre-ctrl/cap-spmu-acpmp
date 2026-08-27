@@ -51,7 +51,6 @@
         'GSU_HEAD' => 'Retired Signatory Record',
         'VPAF_HEAD' => 'Retired Signatory Record',
         'ICTU_MAINTAINER' => 'ICTU Maintainer',
-        'LAUNDRY_WORKER' => 'Laundry Worker',
         'FOR_LAUNDRY' => 'Awaiting Borrower Drop-off',
         'IN_PROCESS' => 'Received / In Process',
         'VERIFIED_BY_ACTION_OFFICER' => 'Verified by Action Officer',

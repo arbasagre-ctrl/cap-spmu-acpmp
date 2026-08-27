@@ -4,14 +4,13 @@ SPMU Asset Custody and Performance Monitoring Program is a Laravel 13 system for
 
 ## Final active access model
 
-The application has one requester portal and four active staff classifications:
+The application has one requester portal and three active staff classifications:
 
 | Access | Purpose |
 |---|---|
 | Borrower | Creates borrowing requests and tracks personal requests/custody. Only Borrower accounts may borrow. |
 | SPMU Admin / Head | SPMU verification/decision authority, oversight, reports, and authorized controls. |
-| SPMU Action Officer | Pickup scheduling, exact-quantity preparation, physical release/return, evidence and operational processing. May make an SPMU decision only under a valid formal delegation. |
-| Laundry Worker | Handles linen jobs only: views assigned laundry work, uploads the accomplished signed Laundry Form, and records cleaned linen release for final SPMU checking. |
+| SPMU Action Officer | Pickup scheduling, exact-quantity preparation, physical release/return, laundry operations, evidence and operational processing. May make an SPMU decision only under a valid formal delegation. |
 | ICTU Maintainer | User accounts, classifications, system settings, audit trail, delivery records, deployment and technical operations. |
 
 **GSU and VPAF are not application roles, portals, approval queues, or system approvers.** When required by the institutional Borrowing Request Letter, they are **physical signatories only**. The borrower prints the letter, obtains the required handwritten/wet signatures, scans the accomplished document, and uploads it to SPMU for verification.
@@ -27,7 +26,7 @@ The application has one requester portal and four active staff classifications:
 7. SPMU Action Officer schedules pickup, confirms the exact approved quantity, and generates the Borrower Slip plus only the applicable physical Gate Pass and/or Laundry Form.
 8. Required signatures on operational forms are handwritten/wet signatures. The system records process confirmation/evidence; it does not create electronic-signature snapshots.
 9. SPMU records physical release and return. Off-campus Gate Pass and linen Laundry Form evidence are uploaded/verified as required.
-10. When released custody includes linen, a Laundry Job is created for the Laundry Worker. The worker uploads the accomplished signed form and records cleaned linen release; SPMU performs the final verification/return step before linen becomes available again.
+10. When released custody includes linen, a Laundry Job is handled by the SPMU Action Officer, who records turnover and processing, continues the linen through final SPMU return inspection, and archives the accomplished signed form. Linen becomes available only through that existing return flow.
 
 ## Other implemented controls
 
@@ -65,7 +64,6 @@ Local demo password: `SPMU-Demo-2026!`
 | Borrower | `borrower@spmu.test` |
 | SPMU Action Officer | `spmu@spmu.test` |
 | SPMU Admin / Head | `spmu-head@spmu.test` |
-| Laundry Worker | `laundry@spmu.test` |
 | ICTU Maintainer | `ictu@spmu.test` |
 
 There are intentionally **no GSU or VPAF login accounts** in the current demo seeder.

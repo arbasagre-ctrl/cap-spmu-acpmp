@@ -8,12 +8,12 @@ enum AccessClassification: string
     case SpmuHead = 'SPMU_HEAD';
     case SpmuOfficer = 'SPMU_OFFICER';
     case IctuMaintainer = 'ICTU_MAINTAINER';
-    case LaundryWorker = 'LAUNDRY_WORKER';
 
     /*
      * Legacy values are retained only so old database/history records can
      * still be read safely. They are not assignable and cannot open a portal.
      */
+    case RetiredInactive = 'RETIRED_INACTIVE';
     case GsuHead = 'GSU_HEAD';
     case VpafHead = 'VPAF_HEAD';
 
@@ -24,7 +24,7 @@ enum AccessClassification: string
             self::SpmuHead => 'SPMU Admin / Head',
             self::SpmuOfficer => 'SPMU Action Officer',
             self::IctuMaintainer => 'ICTU Maintainer',
-            self::LaundryWorker => 'Laundry Worker',
+            self::RetiredInactive => 'Retired / Inactive Account',
             self::GsuHead => 'Retired Signatory-Only Record',
             self::VpafHead => 'Retired Signatory-Only Record',
         };
@@ -32,8 +32,8 @@ enum AccessClassification: string
 
     /**
      * User-facing choices for new/edited accounts.
-     * Borrower is a requester user type; the four staff roles are:
-     * SPMU Admin/Head, SPMU Action Officer, Laundry Worker, and ICTU.
+     * Borrower is a requester user type; active staff roles are SPMU
+     * Admin/Head, SPMU Action Officer, and ICTU Maintainer.
      *
      * @return list<self>
      */
@@ -43,7 +43,6 @@ enum AccessClassification: string
             self::BorrowerOnly,
             self::SpmuHead,
             self::SpmuOfficer,
-            self::LaundryWorker,
             self::IctuMaintainer,
         ];
     }
@@ -60,15 +59,15 @@ enum AccessClassification: string
             self::BorrowerOnly => [UserRole::Borrower],
             self::SpmuHead, self::SpmuOfficer => [UserRole::Spmu],
             self::IctuMaintainer => [UserRole::Ictu],
-            self::LaundryWorker => [UserRole::Laundry],
+            self::RetiredInactive => [],
             self::GsuHead => [UserRole::Gsu],
             self::VpafHead => [UserRole::Vpaf],
         };
     }
 
-    public function primaryWorkspace(): UserRole
+    public function primaryWorkspace(): ?UserRole
     {
-        return $this->roles()[0];
+        return $this->roles()[0] ?? null;
     }
 
     /** @return list<string> */

@@ -82,16 +82,6 @@
         </div>
     </div>
 
-    <div class="calendar-legend" aria-label="Calendar legend">
-        <span><i class="legend-mark scheduled" aria-hidden="true"></i>Pickup / Release</span>
-        <span><i class="legend-mark due" aria-hidden="true"></i>Return due</span>
-        <span><i class="legend-mark adjusted" aria-hidden="true"></i>Adjusted return</span>
-        <span><i class="legend-mark overdue" aria-hidden="true"></i>Overdue</span>
-        <span><i class="legend-mark returned" aria-hidden="true"></i>Returned</span>
-        <span><i class="legend-mark operational-closed" aria-hidden="true"></i>SPMU closed</span>
-        <span><i class="legend-mark operational-special" aria-hidden="true"></i>Special open day</span>
-    </div>
-
     <div data-calendar-view-panel="month">
         <div class="calendar-month-scroll">
             <div class="calendar-month" role="grid" aria-label="{{ $month->format('F Y') }} borrowing calendar">

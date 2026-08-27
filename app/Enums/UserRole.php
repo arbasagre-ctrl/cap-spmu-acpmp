@@ -13,7 +13,6 @@ enum UserRole: string
     case Gsu = 'GSU';
     case Vpaf = 'VPAF';
     case Ictu = 'ICTU';
-    case Laundry = 'LAUNDRY';
 
     public function label(): string
     {
@@ -23,7 +22,6 @@ enum UserRole: string
             self::Gsu => 'Retired Signatory-Only Role',
             self::Vpaf => 'Retired Signatory-Only Role',
             self::Ictu => 'Information and Communications Technology Unit',
-            self::Laundry => 'Laundry Service',
         };
     }
 }

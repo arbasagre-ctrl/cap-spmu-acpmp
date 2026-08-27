@@ -225,19 +225,19 @@
             $returnDescription = match ($laundryStatus) {
 
                 'FOR_LAUNDRY'
-                    => 'Waiting for the borrower to turn over the used linen and borrower-signed physical Laundry Form to the Laundry Worker.',
+                    => 'Waiting for the borrower to turn over the used linen and borrower-signed physical Laundry Form to the SPMU Action Officer.',
 
                 'IN_PROCESS'
-                    => 'The Laundry Worker is processing the linen. No borrower system input is required.',
+                    => 'Laundry processing is recorded by the SPMU Action Officer. No borrower system input is required.',
 
                 'READY_FOR_SPMU_RETURN'
-                    => 'Laundry processing is complete. The Laundry Worker will return the cleaned linen and physical form directly to SPMU.',
+                    => 'Laundry processing is complete. SPMU will continue with final linen and physical-form acceptance.',
 
                 'AWAITING_FINAL_FORM_UPLOAD'
-                    => 'SPMU final physical acceptance is complete. Waiting for the Laundry Worker to upload the fully signed Laundry Form.',
+                    => 'SPMU final physical acceptance is complete. Waiting for the SPMU Action Officer to archive the fully signed Laundry Form.',
 
                 'FORM_REPLACEMENT_REQUIRED'
-                    => 'A clear fully signed Laundry Form must be uploaded by the Laundry Worker.',
+                    => 'A clear fully signed Laundry Form must be uploaded by the SPMU Action Officer.',
 
                 'LAUNDRY_COMPLETED'
                     => 'The linen/laundry process is complete and the final signed Laundry Form is archived.',
@@ -827,10 +827,21 @@
 
                             @if($stepState === 'is-complete')
 
-                                <x-icon
-                                    name="success"
-                                    size="22"
-                                />
+                                <svg
+                                    width="25"
+                                    height="25"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    aria-hidden="true"
+                                >
+                                    <path
+                                        d="M5 12.5L9.5 17L19 7.5"
+                                        stroke="currentColor"
+                                        stroke-width="3.2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    />
+                                </svg>
 
                             @elseif($stepState === 'is-stopped')
 
@@ -853,7 +864,15 @@
 
                         {{-- Text --}}
 
-                        <div class="request-tracker__copy">
+                        <div
+                            class="request-tracker__copy workflow-tracker__interactive"
+                            data-workflow-step
+                            data-workflow-title="{{ $step['label'] }}"
+                            data-workflow-meta="{{ $step['time'] ? $formatDateTime($step['time']) : 'Pending' }}"
+                            data-workflow-description="{{ $step['description'] }}"
+                            tabindex="0"
+                            aria-label="{{ $step['label'] }}. {{ $step['time'] ? $formatDateTime($step['time']) : 'Pending' }}. {{ $step['description'] }}"
+                        >
 
                             <strong>
                                 {{ $step['label'] }}
@@ -888,11 +907,6 @@
                                 </span>
 
                             @endif
-
-
-                            <small>
-                                {{ $step['description'] }}
-                            </small>
 
                         </div>
 
@@ -936,3 +950,5 @@
 
     </article>
 </section>
+
+<x-workflow-tracker-interactions />

@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\UserRole;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -15,7 +14,7 @@ class Role extends Model
 
     protected function casts(): array
     {
-        return ['role_code' => UserRole::class, 'active' => 'boolean'];
+        return ['active' => 'boolean'];
     }
 
     public function users(): BelongsToMany

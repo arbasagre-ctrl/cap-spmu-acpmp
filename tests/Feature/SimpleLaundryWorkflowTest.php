@@ -33,175 +33,132 @@ class SimpleLaundryWorkflowTest extends TestCase
         Storage::fake('local');
     }
 
-    public function test_laundry_worker_has_a_simple_single_purpose_workspace(): void
+    public function test_spmu_action_officer_can_open_laundry_operations(): void
     {
         [$job] = $this->laundryCase();
-        $worker = $this->classificationUser(AccessClassification::LaundryWorker);
+        $worker = $this->classificationUser(AccessClassification::SpmuOfficer);
 
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
+        $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($worker)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSeeText('Simple Laundry Mode')
-            ->assertSeeText('Only two system actions are needed.')
-            ->assertSeeText($job->custody->custody_no);
+            ->assertSeeText('Laundry Operations');
 
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
+        $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($worker)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('Upload accomplished Laundry Form')
             ->assertSeeText('View / Print Laundry Form')
-            ->assertSeeText('You do not need to encode the handwritten details in the system.');
+            ->assertSeeText('Borrower turnover only.');
     }
 
-    public function test_only_laundry_worker_uploads_the_accomplished_form_and_upload_marks_ready_for_pickup(): void
+    public function test_only_spmu_action_officer_records_laundry_turnover(): void
     {
         [$job, $line, $borrower] = $this->laundryCase();
-        $worker = $this->classificationUser(AccessClassification::LaundryWorker);
+        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
 
         $this->withSession(['active_workspace' => 'BORROWER'])
             ->actingAs($borrower)
-            ->post(route('laundry.upload-form', $job), [
-                'evidence' => UploadedFile::fake()->create(
-                    'laundry-form.pdf',
-                    20,
-                    'application/pdf'
-                ),
+            ->post(route('laundry.receive', $job), [
+                'borrower_turnover_signature_confirmed' => 1,
+                'lines' => [
+                    $line->id => ['received_quantity' => 2],
+                ],
             ])
             ->assertForbidden();
 
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
-            ->actingAs($worker)
-            ->post(route('laundry.upload-form', $job), [
-                'evidence' => UploadedFile::fake()->create(
-                    'accomplished-laundry-form.pdf',
-                    20,
-                    'application/pdf'
-                ),
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(route('laundry.receive', $job), [
+                'borrower_turnover_signature_confirmed' => 1,
+                'lines' => [
+                    $line->id => ['received_quantity' => 2],
+                ],
             ])
             ->assertSessionHasNoErrors();
 
         $job->refresh();
         $line->refresh();
 
-        $this->assertSame('READY_FOR_PICKUP', $job->status);
-        $this->assertNotNull($job->ready_at);
-        $this->assertNotNull($job->latest_evidence_submission_id);
-
-        $this->assertDatabaseHas('evidence_submissions', [
-            'id' => $job->latest_evidence_submission_id,
-            'uploaded_by_user_id' => $worker->id,
-            'upload_mode' => 'LAUNDRY_WORKER',
-            'verification_status' => 'PENDING_VERIFICATION',
-        ]);
-
-        /*
-         * Laundry does not encode the form details. These fields remain empty
-         * until an SPMU Action Officer transcribes the signed physical form.
-         */
-        $this->assertNull($line->received_quantity);
+        $this->assertSame('IN_PROCESS', $job->status);
+        $this->assertSame($officer->full_name, $job->worker_name);
+        $this->assertSame(2.0, (float) $line->received_quantity);
         $this->assertNull($line->issue_type);
         $this->assertNull($line->completed_quantity);
 
         $this->assertDatabaseHas('notification_events', [
-            'event_code' => 'LAUNDRY_READY_FOR_PICKUP',
+            'event_code' => 'LAUNDRY_RECEIVED',
         ]);
     }
 
-    public function test_spmu_receives_laundry_worker_scan_and_action_officer_can_open_verification_workspace(): void
+    public function test_action_officer_records_processing_and_head_keeps_read_only_oversight(): void
     {
-        [$job] = $this->laundryCase();
-        $worker = $this->classificationUser(AccessClassification::LaundryWorker);
-        $spmuOfficer = $this->classificationUser(AccessClassification::SpmuOfficer);
+        [$job, $line] = $this->laundryCase();
+        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
         $spmuHead = $this->classificationUser(AccessClassification::SpmuHead);
 
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
-            ->actingAs($worker)
-            ->post(route('laundry.upload-form', $job), [
-                'evidence' => UploadedFile::fake()->create(
-                    'accomplished-laundry-form.pdf',
-                    20,
-                    'application/pdf'
-                ),
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(route('laundry.receive', $job), [
+                'borrower_turnover_signature_confirmed' => 1,
+                'lines' => [
+                    $line->id => ['received_quantity' => 2],
+                ],
             ])
             ->assertSessionHasNoErrors();
 
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
-            ->actingAs($worker)
-            ->post(route('laundry.release-to-borrower', $job))
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(route('laundry.complete-processing', $job), [
+                'worker_remarks' => 'Processing completed.',
+                'lines' => [
+                    $line->id => [
+                        'issue_type' => 'NONE',
+                        'affected_quantity' => 0,
+                        'completed_quantity' => 2,
+                        'remarks' => null,
+                    ],
+                ],
+            ])
             ->assertSessionHasNoErrors();
 
         $job->refresh();
-        $this->assertSame('FOR_SPMU_FINAL_CHECK', $job->status);
+        $this->assertSame('READY_FOR_SPMU_RETURN', $job->status);
 
         $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($spmuOfficer)
-            ->get(route('custody.show', $job->custody_transaction_id))
+            ->actingAs($officer)
+            ->get(route('laundry.spmu.show', $job))
             ->assertOk()
-            ->assertSeeText('Accomplished Laundry Form')
-            ->assertSeeText('View Uploaded Scan')
-            ->assertSeeText('Review accomplished Laundry Form')
-            ->assertSeeText('Verify and encode Laundry inspection')
-            ->assertSeeText('Verify Laundry Form & Save Inspection');
+            ->assertSeeText('Laundry Final Acceptance');
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuHead)
             ->get(route('custody.show', $job->custody_transaction_id))
             ->assertOk()
-            ->assertSeeText('Accomplished Laundry Form')
-            ->assertSeeText('View Uploaded Scan')
-            ->assertSeeText('Awaiting SPMU Action Officer verification.')
-            ->assertDontSeeText('Verify Laundry Form & Save Inspection');
+            ->assertSeeText('Laundry Form');
     }
 
     public function test_spmu_transcribes_the_scan_and_only_final_spmu_return_makes_linen_available(): void
     {
         [$job, $jobLine] = $this->laundryCase();
-        $worker = $this->classificationUser(AccessClassification::LaundryWorker);
         $spmu = $this->classificationUser(AccessClassification::SpmuOfficer);
-
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
-            ->actingAs($worker)
-            ->post(route('laundry.upload-form', $job), [
-                'evidence' => UploadedFile::fake()->create(
-                    'accomplished-laundry-form.pdf',
-                    20,
-                    'application/pdf'
-                ),
-            ])
-            ->assertSessionHasNoErrors();
-
-        /* Upload / Laundry completion alone must never restore inventory. */
-        $this->assertDatabaseMissing('inventory_transaction_lines', [
-            'inventory_item_id' => $jobLine->custodyLine->requestItem->inventory_item_id,
-            'from_state' => 'BORROWED',
-            'to_state' => 'AVAILABLE',
-        ]);
-
-        $this->withSession(['active_workspace' => 'LAUNDRY'])
-            ->actingAs($worker)
-            ->post(route('laundry.release-to-borrower', $job))
-            ->assertSessionHasNoErrors();
-
-        $job->refresh();
-        $this->assertSame('FOR_SPMU_FINAL_CHECK', $job->status);
-        $this->assertNotNull($job->released_to_borrower_at);
-
-        $receivedAt = now()->subHours(3);
-        $completedAt = now()->subHour();
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmu)
-            ->post(route('laundry.verify-form', $job), [
-                'decision' => 'VERIFIED',
-                'worker_name' => 'Laundry Worker Demo',
-                'worker_received_at' => $receivedAt->format('Y-m-d H:i:s'),
-                'worker_completed_at' => $completedAt->format('Y-m-d H:i:s'),
+            ->post(route('laundry.receive', $job), [
+                'borrower_turnover_signature_confirmed' => 1,
+                'lines' => [
+                    $jobLine->id => ['received_quantity' => 2],
+                ],
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmu)
+            ->post(route('laundry.complete-processing', $job), [
                 'worker_remarks' => 'One stain was treated; linen completed.',
                 'lines' => [
                     $jobLine->id => [
-                        'received_quantity' => 2,
                         'issue_type' => 'STAINED',
                         'affected_quantity' => 1,
                         'completed_quantity' => 2,
@@ -211,12 +168,18 @@ class SimpleLaundryWorkflowTest extends TestCase
             ])
             ->assertSessionHasNoErrors();
 
+        /* Recording Laundry completion alone must never restore inventory. */
+        $this->assertDatabaseMissing('inventory_transaction_lines', [
+            'inventory_item_id' => $jobLine->custodyLine->requestItem->inventory_item_id,
+            'from_state' => 'BORROWED',
+            'to_state' => 'AVAILABLE',
+        ]);
+
         $job->refresh();
         $jobLine->refresh();
 
-        $this->assertNotNull($job->form_verified_at);
-        $this->assertSame($spmu->id, $job->form_verified_by_user_id);
-        $this->assertSame('Laundry Worker Demo', $job->worker_name);
+        $this->assertSame('READY_FOR_SPMU_RETURN', $job->status);
+        $this->assertSame($spmu->full_name, $job->worker_name);
         $this->assertSame('STAINED', $jobLine->issue_type);
         $this->assertSame(1.0, (float) $jobLine->affected_quantity);
         $this->assertSame(2.0, (float) $jobLine->completed_quantity);
@@ -250,8 +213,27 @@ class SimpleLaundryWorkflowTest extends TestCase
             'quantity' => 2,
         ]);
 
+        $this->assertSame('AWAITING_FINAL_FORM_UPLOAD', $job->fresh()->status);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmu)
+            ->post(route('laundry.spmu.upload-form', $job), [
+                'evidence' => UploadedFile::fake()->create(
+                    'fully-accomplished-laundry-form.pdf',
+                    20,
+                    'application/pdf'
+                ),
+            ])
+            ->assertSessionHasNoErrors();
+
         $this->assertSame('LAUNDRY_COMPLETED', $job->fresh()->status);
         $this->assertNotNull($job->fresh()->completed_at);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'id' => $job->fresh()->latest_evidence_submission_id,
+            'uploaded_by_user_id' => $spmu->id,
+            'upload_mode' => 'SPMU_ACTION_OFFICER',
+            'verification_status' => 'VERIFIED',
+        ]);
     }
 
     /**
@@ -279,7 +261,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             'purpose_event' => 'Simple linen workflow test',
             'location' => 'CSPC Campus',
             'needed_from' => now()->subDay(),
-            'return_due_at' => now()->addDay(),
+            'return_due_at' => now()->endOfDay(),
             'event_details' => 'Borrower carries used linen to Laundry and cleaned linen back to SPMU.',
             'off_campus' => false,
             'created_by_user_id' => $borrower->id,
@@ -313,7 +295,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             'borrower_user_id' => $borrower->id,
             'status' => 'ACTIVE',
             'released_at' => now()->subHours(6),
-            'due_at' => now()->addDay(),
+            'due_at' => now()->endOfDay(),
         ]);
 
         $custodyLine = CustodyLine::query()->create([

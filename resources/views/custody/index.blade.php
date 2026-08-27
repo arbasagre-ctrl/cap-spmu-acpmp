@@ -153,6 +153,10 @@
     .custody-oversight-filters input,
     .custody-oversight-filters select {
         width: 100%;
+    }
+
+    .custody-oversight-filters select,
+    .custody-oversight-filters .search-input-shell {
         margin-top: 7px;
     }
 
@@ -305,12 +309,15 @@
             <div class="custody-oversight-filters">
                 <label class="custody-oversight-search">
                     Search
-                    <input
-                        id="custody-oversight-search"
-                        type="search"
-                        placeholder="Search borrower, request no., custody no., or event..."
-                        autocomplete="off"
-                    >
+                    <span class="search-input-shell">
+                        <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                        <input
+                            id="custody-oversight-search"
+                            type="search"
+                            placeholder="Search borrower, request no., custody no., or event..."
+                            autocomplete="off"
+                        >
+                    </span>
                 </label>
 
                 <label>
@@ -709,7 +716,10 @@
         @if(in_array($mode, ['release','return'], true))
         <div class="operational-browser-toolbar">
             <label>Search
-                <input type="search" id="operational-search" placeholder="Search borrower, request no., custody no., or event..." autocomplete="off">
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                    <input type="search" id="operational-search" placeholder="Search borrower, request no., custody no., or event..." autocomplete="off">
+                </span>
             </label>
             <label>Status
                 <select id="operational-status"><option value="all">All statuses</option></select>

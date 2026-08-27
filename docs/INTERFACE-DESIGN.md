@@ -21,13 +21,10 @@ The interface uses a compact navy role menu, white work area, clear status badge
 - Inventory
 - Borrowing Calendar
 - Release and Return
+- Laundry Operations
 - Accountability
 - Reports
 - Configuration (as authorized)
-
-### Laundry Worker
-- Dashboard / Laundry Requests
-- Active linen job details and accomplished Laundry Form upload only
 
 ### ICTU
 - Dashboard

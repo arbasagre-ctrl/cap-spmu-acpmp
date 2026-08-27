@@ -3,33 +3,31 @@
 @section('content')
 
 <section class="page-heading approval-queue-heading">
-    <div>
+    <div class="approval-heading-main">
         <p class="eyebrow">SPMU approval review</p>
 
         <h1>Requests for Approval</h1>
 
-        <p>
-            Review the submitted request, signed supporting documents,
-            requested quantities, borrowing dates, and current availability.
-            Approval performs the final availability check, allocates and holds
-            the approved quantities for pickup, and generates the Borrower Slip
-            plus any applicable Laundry Form or Gate Pass. Physical issuance
-            happens later through the SPMU Action Officer.
-        </p>
-    </div>
+        <p>Review submitted borrowing requests, verify item availability and quantities, then approve requests for release.</p>
 
-    <a
-        class="button secondary ui-pressable"
-        href="{{ route('requests.index') }}"
-    >
-        View Request Records
-    </a>
+        <div class="approval-heading-actions">
+            <a
+                class="button secondary ui-pressable"
+                href="{{ route('requests.index') }}"
+            >
+                View Request Records
+            </a>
+        </div>
+    </div>
 </section>
 
 <section class="content-area">
     <div class="approval-browser-toolbar">
         <label>Search
-            <input type="search" id="approval-search" placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+            <span class="search-input-shell">
+                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                <input type="search" id="approval-search" placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+            </span>
         </label>
         <label>Sort
             <select id="approval-sort"><option value="oldest">Oldest submitted</option><option value="newest">Newest submitted</option></select>
@@ -199,4 +197,24 @@
 <script>
 (() => { const list=document.querySelector('.approval-queue-list'); const rows=[...document.querySelectorAll('[data-approval-record]')]; const search=document.getElementById('approval-search'); const sort=document.getElementById('approval-sort'); const empty=document.getElementById('approval-filter-empty'); if(!list||!rows.length||!search||!sort)return; const render=()=>{const q=search.value.trim().toLowerCase();const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1));ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=!q||r.dataset.search.includes(q);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);sort.addEventListener('change',render);render(); })();
 </script>
+
+{{-- APPROVAL_HEADING_ACTION_LAYOUT --}}
+<style>
+.approval-queue-heading .approval-heading-main {
+    width: 100%;
+}
+
+.approval-heading-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+}
+
+@media (max-width: 700px) {
+    .approval-heading-actions {
+        justify-content: flex-start;
+        margin-top: 12px;
+    }
+}
+</style>
 @endsection

@@ -13,7 +13,6 @@ class RoleSeeder extends Seeder
         $activeRoles = [
             UserRole::Borrower,
             UserRole::Spmu,
-            UserRole::Laundry,
             UserRole::Ictu,
         ];
 
@@ -29,7 +28,11 @@ class RoleSeeder extends Seeder
 
         // Historical compatibility only. These are no longer active system roles.
         Role::query()
-            ->whereIn('role_code', [UserRole::Gsu->value, UserRole::Vpaf->value])
+            ->whereIn('role_code', [
+                UserRole::Gsu->value,
+                UserRole::Vpaf->value,
+                'LAUNDRY',
+            ])
             ->update(['active' => false]);
     }
 }

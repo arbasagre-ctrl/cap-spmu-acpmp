@@ -330,12 +330,15 @@
 
                 <label class="inventory-history-search-field">
                     Search
-                    <input
-                        type="search"
-                        name="history_search"
-                        value="{{ $historySearch }}"
-                        placeholder="Borrower, office, request, custody, purpose..."
-                    >
+                    <span class="search-input-shell">
+                        <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                        <input
+                            type="search"
+                            name="history_search"
+                            value="{{ $historySearch }}"
+                            placeholder="Borrower, office, request, custody, purpose..."
+                        >
+                    </span>
                 </label>
 
                 <div class="inventory-history-filter-actions">

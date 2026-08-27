@@ -10,10 +10,10 @@
         default => 1,
     };
     $steps = [
-        1 => ['Borrower Turnover', 'Borrower signs the physical turnover portion and brings used linen + the printed Laundry Form to Laundry.'],
-        2 => ['Laundry Processing', 'Laundry records actual receipt, processes the linen, completes quantities/condition, and signs the form.'],
-        3 => ['Return to SPMU', 'Laundry Worker brings cleaned linen + the same physical form directly to SPMU for final inspection and signature.'],
-        4 => ['Final Form Upload', 'After SPMU signs, the form is returned to Laundry for the final scan/upload.'],
+        1 => ['Borrower Turnover', 'Borrower signs the physical turnover portion and brings used linen + the printed Laundry Form to the SPMU Action Officer.'],
+        2 => ['Laundry Processing', 'The SPMU Action Officer records actual receipt, processing results, quantities, and condition.'],
+        3 => ['Final SPMU Acceptance', 'SPMU performs final inspection and obtains the required authorized signature on the same physical form.'],
+        4 => ['Final Form Upload', 'The SPMU Action Officer scans and archives the fully signed form.'],
         5 => ['Completed', 'Final signed form is archived and the Laundry transaction is settled.'],
     ];
 @endphp
@@ -35,8 +35,23 @@
             @endphp
             <li class="laundry-progress-step is-{{ $state }}" @if($state === 'current') aria-current="step" @endif>
                 <span class="laundry-progress-marker">{{ $state === 'complete' ? '✓' : $index }}</span>
-                <div><strong>{{ $label }}</strong><small>{{ $description }}</small></div>
+                <div
+                    class="workflow-tracker__interactive"
+                    data-workflow-step
+                    data-workflow-title="{{ $label }}"
+                    data-workflow-meta="{{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}"
+                    data-workflow-description="{{ $description }}"
+                    tabindex="0"
+                    aria-label="{{ $label }}. {{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}. {{ $description }}"
+                >
+                    <strong>{{ $label }}</strong>
+                    <span class="workflow-tracker__meta">
+                        {{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}
+                    </span>
+                </div>
             </li>
         @endforeach
     </ol>
 </article>
+
+<x-workflow-tracker-interactions />

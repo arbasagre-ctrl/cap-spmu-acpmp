@@ -37,9 +37,8 @@ Local demo password: `SPMU-Demo-2026!`
 | Access | Email | Main work |
 |---|---|---|
 | Borrower | `borrower@spmu.test` | Available items, calendar, requests, custody and accountability |
-| SPMU Action Officer | `spmu@spmu.test` | Pickup scheduling, exact preparation, release/return and evidence |
+| SPMU Action Officer | `spmu@spmu.test` | Pickup scheduling, release/return, laundry operations and evidence |
 | SPMU Admin / Head | `spmu-head@spmu.test` | SPMU verification decisions, oversight and authorized controls |
-| Laundry Worker | `laundry@spmu.test` | Linen jobs and accomplished Laundry Form upload |
 | ICTU Maintainer | `ictu@spmu.test` | Accounts, settings, audit and technical operations |
 
 GSU and VPAF do not have system logins. They are physical signatories on the printed Borrowing Request Letter when required by the institutional form.
@@ -55,7 +54,7 @@ GSU and VPAF do not have system logins. They are physical signatories on the pri
 7. **SPMU Action Officer:** schedule pickup and confirm the exact approved quantities. The system generates the Borrower Slip and only the applicable Gate Pass/Laundry Form.
 8. Complete required signatures physically with pen; upload/verify accomplished evidence where required.
 9. **SPMU Action Officer:** record physical release and later the physical return/condition.
-10. If linen was released, **Laundry Worker** receives a Laundry Job, uploads the accomplished signed Laundry Form, and records cleaned linen release. **SPMU** performs final verification before linen returns to Available.
+10. If linen was released, the **SPMU Action Officer** records the Laundry Job turnover and processing details, continues the cleaned linen through the existing final return inspection, and archives the accomplished Laundry Form. **SPMU Admin / Head** retains final acceptance and oversight where required.
 
 There is no electronic-signature workflow and no GSU/VPAF in-system approval stage.
 

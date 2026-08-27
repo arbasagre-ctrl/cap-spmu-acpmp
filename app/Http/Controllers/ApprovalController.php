@@ -109,6 +109,7 @@ class ApprovalController extends Controller
                 'signatures_present' => ['required', 'accepted'],
                 'document_readable' => ['required', 'accepted'],
                 'availability_verified' => ['required', 'accepted'],
+                'confirm_e_signature' => ['required', 'accepted'],
             ]);
         }
 
@@ -117,6 +118,7 @@ class ApprovalController extends Controller
             'signatures_present.accepted' => 'Confirm that the required handwritten signatures are present.',
             'document_readable.accepted' => 'Confirm that the uploaded scan is clear and readable.',
             'availability_verified.accepted' => 'Confirm that the requested quantities and current availability were checked.',
+            'confirm_e_signature.accepted' => 'Confirm that you want to apply your registered E-signature to this approval.',
             'remarks.required' => 'Remarks are required when returning or rejecting the request.',
         ]);
 
@@ -124,11 +126,12 @@ class ApprovalController extends Controller
             $borrowingRequest,
             $request->user(),
             $data['decision'],
-            $data['remarks'] ?? null
+            $data['remarks'] ?? null,
+            $request->boolean('confirm_e_signature')
         );
 
         $message = match ($data['decision']) {
-            'APPROVED' => 'Request verified and approved by the SPMU Head. Approved quantities are allocated/held for pickup, and the Borrower Slip plus any applicable Laundry Form or Gate Pass are now generated for physical processing.',
+            'APPROVED' => 'Request E-signed, verified, and approved by the authorized SPMU signatory. The approved quantity is allocated/held for pickup, and the Action Officer may now schedule pickup and process release.',
             'RETURNED_FOR_REVISION' => 'Request returned for revision. No inventory allocation was created.',
             default => 'Request rejected. No inventory allocation was created.',
         };

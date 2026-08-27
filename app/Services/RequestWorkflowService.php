@@ -25,6 +25,7 @@ class RequestWorkflowService
     public function __construct(
         private InventoryService $inventory,
         private CustodyService $custody,
+        private SignatureService $signatures,
         private DocumentService $documents,
         private NotificationService $notifications,
         private AuditService $audit,
@@ -40,7 +41,8 @@ class RequestWorkflowService
      */
     public function submit(
         BorrowingRequest $request,
-        User $borrower
+        User $borrower,
+        bool $signatureConfirmed
     ): void {
         if (! $borrower->mayBorrow()) {
             abort(
@@ -68,6 +70,11 @@ class RequestWorkflowService
             now(),
             'submission'
         );
+        if (! $signatureConfirmed) {
+            throw ValidationException::withMessages([
+                'confirm_e_signature' => 'Confirm that you want to apply your registered E-signature before submitting.',
+            ]);
+        }
 
         $outstandingCustody = CustodyTransaction::query()
             ->where('borrower_user_id', $borrower->id)
@@ -118,6 +125,15 @@ class RequestWorkflowService
                     throw ValidationException::withMessages([
                         'items' =>
                             'Add at least one inventory item before submission.',
+                    ]);
+                }
+
+                if (
+                    $version->borrower_signature_snapshot_id
+                    || $version->signed_at
+                ) {
+                    throw ValidationException::withMessages([
+                        'signature' => 'This request version is already signed. Open the returned request for editing so the correction is saved as a new version before signing again.',
                     ]);
                 }
 
@@ -204,23 +220,29 @@ class RequestWorkflowService
                     $version
                 );
 
-                /*
-                 * No electronic signature is created.
-                 *
-                 * Authentication, request version,
-                 * submission timestamp, status history,
-                 * and audit history identify the borrower
-                 * who submitted the transaction.
-                 */
+                $signatureSnapshot = $this->signatures->snapshot(
+                    $borrower,
+                    'BORROWER_REQUEST_CERTIFICATION',
+                    UserRole::Borrower->value,
+                    $version,
+                    [
+                        'request_id' => $request->id,
+                        'request_no' => $request->request_no,
+                        'request_version_id' => $version->id,
+                        'request_version_no' => $version->version_no,
+                        'action' => 'SIGN_AND_SUBMIT',
+                    ]
+                );
+
                 $version->update([
                     'borrower_signature_snapshot_id' =>
-                        null,
+                        $signatureSnapshot->id,
 
                     'accuracy_certified' =>
                         true,
 
                     'signed_at' =>
-                        null,
+                        $signatureSnapshot->captured_at,
 
                     'submitted_at' =>
                         now(),
@@ -288,14 +310,22 @@ class RequestWorkflowService
                     $request,
                     RequestStatus::UnderSpmu,
                     $borrower,
-                    'Borrowing request and approved scanned supporting document(s) submitted to SPMU for verification.'
+                    'E-signed borrowing request version and approved scanned supporting document(s) submitted to SPMU for verification.'
                 );
 
                 $this->audit->record(
                     'REQUEST_SUBMITTED',
                     $request,
                     reason:
-                        'Request routed to SPMU for document and inventory verification. No reservation was created at submission.'
+                        'E-signed request version routed to SPMU for document and inventory verification. No reservation was created at submission.',
+                    after: [
+                        'request_version_id' => $version->id,
+                        'request_version_no' => $version->version_no,
+                        'signer_user_id' => $borrower->id,
+                        'signature_snapshot_id' => $signatureSnapshot->id,
+                        'signed_at' => $signatureSnapshot->captured_at?->toIso8601String(),
+                        'reservation_created' => false,
+                    ]
                 );
 
                 $heads = User::query()
@@ -334,7 +364,8 @@ class RequestWorkflowService
         BorrowingRequest $request,
         User $approver,
         string $decision,
-        ?string $remarks
+        ?string $remarks,
+        bool $signatureConfirmed
     ): void {
         $decision = strtoupper($decision);
 
@@ -419,6 +450,12 @@ class RequestWorkflowService
             throw ValidationException::withMessages([
                 'remarks' =>
                     'Remarks are required when rejecting or returning a request for revision.',
+            ]);
+        }
+
+        if ($decision === 'APPROVED' && ! $signatureConfirmed) {
+            throw ValidationException::withMessages([
+                'confirm_e_signature' => 'Confirm that you want to apply your registered E-signature to this approval.',
             ]);
         }
 
@@ -709,17 +746,31 @@ class RequestWorkflowService
                 }
 
                 /*
-                 * Reservation succeeded.
+                 * Reservation succeeded. The authenticated authorized
+                 * approver now explicitly signs this exact approval step.
                  */
+                $signatureSnapshot = $this->signatures->snapshot(
+                    $approver,
+                    'SPMU_REQUEST_APPROVAL',
+                    $temporaryDelegationId ? 'SPMU_DELEGATE' : 'SPMU_HEAD',
+                    $step,
+                    [
+                        'request_id' => $request->id,
+                        'request_no' => $request->request_no,
+                        'request_version_id' => $version->id,
+                        'request_version_no' => $version->version_no,
+                        'approval_step_id' => $step->id,
+                        'temporary_delegation_id' => $temporaryDelegationId,
+                        'action' => 'SIGN_AND_APPROVE',
+                    ]
+                );
+
                 $step->update([
                     'approver_user_id' =>
                         $approver->id,
 
-                    /*
-                     * No e-signature snapshot.
-                     */
                     'signature_snapshot_id' =>
-                        null,
+                        $signatureSnapshot->id,
 
                     'received_at' =>
                         $step->received_at
@@ -729,7 +780,7 @@ class RequestWorkflowService
                         'APPROVED',
 
                     'decided_at' =>
-                        now(),
+                        $signatureSnapshot->captured_at,
 
                     'remarks' =>
                         $remarks,
@@ -902,6 +953,21 @@ class RequestWorkflowService
 
                         'reservation_created' =>
                             true,
+
+                        'request_id' =>
+                            $request->id,
+
+                        'request_version_id' =>
+                            $version->id,
+
+                        'signer_user_id' =>
+                            $approver->id,
+
+                        'signature_snapshot_id' =>
+                            $signatureSnapshot->id,
+
+                        'signed_at' =>
+                            $signatureSnapshot->captured_at?->toIso8601String(),
                     ]
                 );
             },

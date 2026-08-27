@@ -71,34 +71,20 @@ class RoleWorkspaceSmokeTest extends TestCase
         ]);
     }
 
-    public function test_laundry_workspace_pages_render(): void
-    {
-        $this->assertPagesRender(UserRole::Laundry, [
-            '/dashboard',
-            '/profile',
-            '/notifications',
-            '/laundry',
-        ]);
-    }
-
     public function test_each_active_workspace_has_a_focused_role_specific_menu(): void
     {
         $expectations = [
             UserRole::Borrower->value => [
-                'see' => ['Inventory', 'My Requests', 'My Borrowings', 'Accountability'],
-                'hide' => ['Approval Queue', 'User Accounts', 'Laundry Requests'],
+                'see' => ['Available Items', 'My Requests', 'My Borrowings', 'My Obligations'],
+                'hide' => ['For Approval', 'User Accounts', 'Laundry Operations'],
             ],
             UserRole::Spmu->value => [
-                'see' => ['Approval Queue', 'Inventory', 'Release and Return', 'Reports', 'Configuration'],
-                'hide' => ['User Accounts', 'Laundry Requests'],
+                'see' => ['For Approval', 'Inventory Overview', 'Release & Return Oversight', 'Reports & Analytics', 'Operational Configuration'],
+                'hide' => ['User Accounts', 'Laundry Operations'],
             ],
             UserRole::Ictu->value => [
-                'see' => ['User Accounts', 'Delegated Approvers', 'System Settings', 'Audit Trail', 'Delivery Records'],
-                'hide' => ['Borrowing Calendar', 'Approval Queue', 'Laundry Requests'],
-            ],
-            UserRole::Laundry->value => [
-                'see' => ['Laundry Requests', 'Simple Laundry Mode', 'Open laundry requests'],
-                'hide' => ['Approval Queue', 'Inventory', 'Release and Return', 'Reports', 'Configuration'],
+                'see' => ['User Accounts', 'System Settings', 'Audit Trail', 'Delivery Records'],
+                'hide' => ['Borrowing Calendar', 'For Approval', 'Laundry Operations'],
             ],
         ];
 
@@ -119,6 +105,17 @@ class RoleWorkspaceSmokeTest extends TestCase
                 $response->assertDontSee($label);
             }
         }
+
+        $actionOfficer = User::query()
+            ->where('access_classification', AccessClassification::SpmuOfficer->value)
+            ->firstOrFail();
+
+        $this->withSession(['active_workspace' => UserRole::Spmu->value])
+            ->actingAs($actionOfficer)
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Laundry Operations')
+            ->assertDontSee('User Accounts');
     }
 
     /** @param array<int, string> $paths */

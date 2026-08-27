@@ -51,7 +51,6 @@ class DemoUserSeeder extends Seeder
             [AccessClassification::SpmuOfficer, 'spmu@spmu.test', 'DEMO-SPMU', 'SPMU Action Officer Demo', 'SPMU', EmploymentType::Staff],
             [AccessClassification::SpmuHead, 'spmu-head@spmu.test', 'DEMO-SPMU-HEAD', 'SPMU Head Demo', 'SPMU', EmploymentType::Employee],
             [AccessClassification::IctuMaintainer, 'ictu@spmu.test', 'DEMO-ICTU', 'ICTU Maintainer Demo', 'ICTU', EmploymentType::Staff],
-            [AccessClassification::LaundryWorker, 'laundry@spmu.test', 'DEMO-LAUNDRY', 'Laundry Worker Demo', 'LAUNDRY', EmploymentType::Staff],
         ];
     }
 }

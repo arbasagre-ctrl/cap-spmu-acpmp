@@ -807,6 +807,28 @@ input, select, textarea {
     font-weight: 400;
     transition: border-color var(--motion) ease, box-shadow var(--motion) ease, background-color var(--motion) ease;
 }
+.search-input-shell {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-width: 0;
+}
+.search-input-shell > input[type="search"] { display: block; padding-left: 40px; }
+.search-input-icon {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    z-index: 1;
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+.search-input-icon > svg { width: 18px; height: 18px; }
 textarea { min-height: 96px; resize: vertical; }
 input[type="checkbox"], input[type="radio"] { width: 17px; min-height: 17px; padding: 0; }
 input[type="file"] { padding: 7px; }
@@ -3846,7 +3868,7 @@ body > main + footer {
     .dashboard-panel-equal { min-height: auto; }
 }
 
-/* Laundry worker four-step tracker ---------------------------------------- */
+/* Laundry operations four-step tracker ------------------------------------ */
 .laundry-progress-card { margin-top: 0; }
 .laundry-progress-rail {
     display: grid;

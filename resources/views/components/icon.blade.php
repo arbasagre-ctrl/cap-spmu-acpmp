@@ -92,6 +92,9 @@
         @case('help')
             <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17v.01" />
             @break
+        @case('search')
+            <circle cx="11" cy="11" r="7" /><path d="m20 20-4.4-4.4" />
+            @break
         @default
             <circle cx="12" cy="12" r="9" />
     @endswitch

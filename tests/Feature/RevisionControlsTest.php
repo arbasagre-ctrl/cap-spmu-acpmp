@@ -35,8 +35,9 @@ class RevisionControlsTest extends TestCase
         $this->assertClassification(AccessClassification::BorrowerOnly, true, ['BORROWER']);
         $this->assertClassification(AccessClassification::SpmuHead, false, ['SPMU']);
         $this->assertClassification(AccessClassification::SpmuOfficer, false, ['SPMU']);
-        $this->assertClassification(AccessClassification::LaundryWorker, false, ['LAUNDRY']);
         $this->assertClassification(AccessClassification::IctuMaintainer, false, ['ICTU']);
+        $this->assertFalse(AccessClassification::RetiredInactive->isPortalEnabled());
+        $this->assertSame([], AccessClassification::RetiredInactive->workspaces());
 
         $this->assertFalse(AccessClassification::GsuHead->isPortalEnabled());
         $this->assertFalse(AccessClassification::VpafHead->isPortalEnabled());
@@ -148,12 +149,11 @@ class RevisionControlsTest extends TestCase
         app(RequestWorkflowService::class)->recordApprovedLetterDownload($request, $letter, $borrower, '127.0.0.1', 'test');
         $custody = $request->fresh()->custody;
 
-        $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'BORROWER_SLIP', 'status' => 'FINAL']);
         $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'GATE_PASS', 'status' => 'FINAL']);
         $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'LAUNDRY_FORM', 'status' => 'FINAL']);
-        $this->withSession(['active_workspace' => 'BORROWER'])->actingAs($borrower)->get(route('custody.show', $custody))->assertOk()->assertSee('Reserved / issued property');
+        $this->withSession(['active_workspace' => 'BORROWER'])->actingAs($borrower)->get(route('custody.show', $custody))->assertOk()->assertSee('Approved items for pickup');
         $spmuOfficer = User::where('access_classification', AccessClassification::SpmuOfficer->value)->firstOrFail();
-        $this->withSession(['active_workspace' => 'SPMU'])->actingAs($spmuOfficer)->get(route('custody.show', $custody))->assertOk()->assertSee('Prepare exact approved quantity');
+        $this->withSession(['active_workspace' => 'SPMU'])->actingAs($spmuOfficer)->get(route('custody.release.show', $custody))->assertOk()->assertSee('Schedule pickup and notify the borrower');
 
         [$ordinaryRequest, $ordinaryLetter] = $this->approvedRequestWithItems(false, false, 'BR-ORDINARY-001');
         app(RequestWorkflowService::class)->recordApprovedLetterDownload($ordinaryRequest, $ordinaryLetter, $ordinaryRequest->borrower, '127.0.0.1', 'test');
@@ -162,9 +162,9 @@ class RevisionControlsTest extends TestCase
         $this->assertDatabaseMissing('generated_documents', ['subject_id' => $ordinaryCustody->id, 'document_type' => 'LAUNDRY_FORM']);
     }
 
-    public function test_early_return_route_is_removed_from_current_policy(): void
+    public function test_early_return_route_is_available_under_the_current_policy(): void
     {
-        $this->assertFalse(app('router')->has('custody.early-return'));
+        $this->assertTrue(app('router')->has('custody.early-return'));
     }
 
     private function assertClassification(AccessClassification $classification, bool $mayBorrow, array $workspaces): void

@@ -1,10 +1,10 @@
-@extends('layouts.app', ['title' => 'Laundry Requests'])
+@extends('layouts.app', ['title' => 'Laundry Operations'])
 @section('content')
 <section class="page-heading">
     <div>
-        <p class="eyebrow">Laundry Worker</p>
-        <h1>Laundry Requests</h1>
-        <p>Process linen from borrower turnover through direct return to SPMU and final signed-form upload.</p>
+        <p class="eyebrow">SPMU Action Officer</p>
+        <h1>Laundry Operations</h1>
+        <p>Record linen turnover and processing, then continue through final SPMU acceptance and signed-form archiving.</p>
     </div>
     <a class="button secondary ui-pressable" href="{{ route('laundry.completed') }}">Completed</a>
 </section>
@@ -13,7 +13,7 @@
     <article class="card">
         <div class="callout info">
             <strong>Final linen custody chain</strong>
-            <p>1) Borrower signs and hands used linen + physical Laundry Form to Laundry. 2) Laundry records receipt, processes, and signs. 3) Laundry Worker brings cleaned linen + same form directly to SPMU. 4) SPMU signs final acceptance. 5) Laundry uploads the fully signed form to complete/settle the Laundry transaction.</p>
+            <p>1) The Borrower signs and hands over used linen with the physical Laundry Form. 2) The SPMU Action Officer records receipt and laundry processing. 3) The same Action Officer continues the cleaned linen through final SPMU inspection. 4) The authorized SPMU signatory signs final acceptance. 5) The Action Officer archives the fully signed form to settle the Laundry transaction.</p>
         </div>
 
         <div class="document-list top-gap">

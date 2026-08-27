@@ -18,9 +18,9 @@ class FoundationTest extends TestCase
         $this->get('/')
             ->assertOk()
             ->assertSee('SPMU-ACPMP')
-            ->assertSee('SPMU verification')
-            ->assertSee('Required institutional signatures are completed physically')
-            ->assertSee('GSU/VPAF institutional signatures')
+            ->assertSee('SPMU verifies the request')
+            ->assertSee('obtain wet signatures')
+            ->assertSee('Laundry workflow')
             ->assertDontSee('GSU Approval')
             ->assertDontSee('VPAF Approval');
     }
@@ -34,18 +34,18 @@ class FoundationTest extends TestCase
         }
 
         $this->assertSame(
-            ['BORROWER', 'ICTU', 'LAUNDRY', 'SPMU'],
+            ['BORROWER', 'ICTU', 'SPMU'],
             Role::query()
                 ->where('active', true)
                 ->orderBy('role_code')
                 ->pluck('role_code')
-                ->map(fn ($role) => is_object($role) ? $role->value : (string) $role)
+                ->map(fn ($role) => (string) $role)
                 ->all()
         );
 
         $this->assertFalse(
             Role::query()
-                ->whereIn('role_code', ['GSU', 'VPAF'])
+                ->whereIn('role_code', ['GSU', 'VPAF', 'LAUNDRY'])
                 ->where('active', true)
                 ->exists()
         );

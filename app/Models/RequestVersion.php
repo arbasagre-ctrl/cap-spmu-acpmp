@@ -46,12 +46,10 @@ class RequestVersion extends Model
         'remarks',
 
         /*
-         * Legacy digital-signature fields remain in the schema
-         * so historical records from the old pushed system can
-         * still be read.
-         *
-         * New scanned-letter workflow does not require borrower
-         * e-signature submission.
+         * The borrower's explicit submission captures an immutable
+         * E-signature snapshot for this exact request version. Corrected
+         * resubmissions create a new version and never overwrite the prior
+         * signed evidence.
          */
         'signed_at',
         'submitted_at',

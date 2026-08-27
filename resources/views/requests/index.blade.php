@@ -27,17 +27,13 @@
 @if($isBorrower)
 
     <section class="request-browser" aria-label="Borrowing request controls">
-        <div class="request-browser-copy">
-            <p class="eyebrow">Request history</p>
-            <h2>Track your requests</h2>
-            <p>Search by request number or purpose, then filter the records by their current stage.</p>
-        </div>
-
         <div class="request-browser-controls">
             <label class="request-search-field">
                 <span>Search requests</span>
                 <span class="request-control-shell">
-                    <x-icon name="search" size="17" />
+                    <span class="search-input-icon" aria-hidden="true">
+                        <x-icon name="search" />
+                    </span>
                     <input
                         id="request-search"
                         type="search"
@@ -406,7 +402,10 @@
 
     <div class="record-browser-toolbar" data-record-browser-toolbar>
         <label class="record-browser-search">Search
-            <input type="search" data-record-search placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+            <span class="search-input-shell">
+                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
+                <input type="search" data-record-search placeholder="Search request no., borrower, event, or item..." autocomplete="off">
+            </span>
         </label>
         <label>Status
             <select data-record-status-filter><option value="all">All statuses</option></select>
@@ -571,10 +570,7 @@
 @if($isBorrower)
 <style>
     .request-browser {
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 24px;
+        display: block;
         margin-bottom: 14px;
         padding: 16px 17px;
         background: var(--surface-elevated);
@@ -583,27 +579,11 @@
         box-shadow: var(--shadow-sm);
     }
 
-    .request-browser-copy {
-        display: grid;
-        max-width: 520px;
-        gap: 3px;
-    }
-
-    .request-browser-copy h2,
-    .request-browser-copy p {
-        margin: 0;
-    }
-
-    .request-browser-copy p:last-child {
-        color: var(--text-muted);
-        font-size: 12px;
-    }
-
     .request-browser-controls {
         display: grid;
-        grid-template-columns: minmax(220px, 1fr) minmax(170px, .65fr);
-        gap: 10px;
-        width: min(540px, 100%);
+        grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+        gap: 12px;
+        width: 100%;
     }
 
     .request-search-field,
@@ -617,11 +597,9 @@
     }
 
     .request-control-shell {
-        display: flex;
+        position: relative;
+        display: block;
         min-height: 40px;
-        align-items: center;
-        gap: 8px;
-        padding: 0 11px;
         background: var(--surface-elevated);
         border: 1px solid var(--border);
         border-radius: 7px;
@@ -632,15 +610,11 @@
         box-shadow: var(--focus-ring);
     }
 
-    .request-control-shell .ui-icon {
-        flex: 0 0 auto;
-        color: var(--text-muted);
-    }
-
     .request-control-shell input {
         width: 100%;
+        min-height: 38px;
         min-width: 0;
-        padding: 0;
+        padding: 0 11px 0 40px;
         background: transparent;
         border: 0;
         box-shadow: none;
@@ -757,15 +731,6 @@
             justify-content: flex-end;
             padding-top: 8px;
             border-top: 1px solid var(--border);
-        }
-
-        .request-browser {
-            align-items: stretch;
-            flex-direction: column;
-        }
-
-        .request-browser-copy {
-            max-width: none;
         }
 
         .request-browser-controls {

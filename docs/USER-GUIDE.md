@@ -3,8 +3,8 @@
 ## Access rules
 
 - Only Borrower accounts may create borrowing requests.
-- Active staff classifications are SPMU Admin / Head, SPMU Action Officer, Laundry Worker and ICTU Maintainer.
-- SPMU, Laundry and ICTU accounts cannot borrow.
+- Active staff classifications are SPMU Admin / Head, SPMU Action Officer and ICTU Maintainer.
+- SPMU and ICTU accounts cannot borrow.
 - GSU and VPAF are not system accounts/portals/approvers. They are physical institutional signatories on the printed Borrowing Request Letter when required.
 - No electronic signature is used. Required signatures are handwritten/wet signatures on printed documents; accomplished scans/evidence are uploaded and verified.
 - A formal SPMU delegation gives only the recorded decision authority and uses the delegate's own account.
@@ -40,23 +40,12 @@
 - Generate the Borrower Slip and applicable Gate Pass/Laundry Form.
 - Confirm required handwritten/wet signatures are physically complete before release.
 - Record physical release, returns, conditions, evidence, incidents, billing/accountability and applicable Gate Pass/Laundry evidence.
-
-## Laundry Worker
-
-The Laundry portal is deliberately simple and linen-specific.
-
-1. Open **Laundry Requests** to see active linen jobs.
-2. Open a job to see the custody/request and linen lines.
-3. Process the linen physically.
-4. Upload the accomplished handwritten/wet-signed Laundry Form.
-5. Mark cleaned linen released for the next SPMU verification step.
-6. SPMU performs the final check/return. Linen becomes Available only after that final SPMU completion.
-
-Laundry Worker cannot access borrowing, SPMU approval, ICTU administration, or unrelated custody functions.
+- Open **Laundry Operations** to record borrower turnover and physical processing for linen jobs.
+- Continue cleaned linen through the existing SPMU Return & Inspection flow and archive the accomplished Laundry Form after final acceptance.
 
 ## ICTU Maintainer
 
-- Create/manage active Borrower, SPMU Admin / Head, SPMU Action Officer, Laundry Worker and ICTU accounts.
+- Create/manage active Borrower, SPMU Admin / Head, SPMU Action Officer and ICTU accounts.
 - Retired GSU/VPAF records are hidden from the active User Accounts list and cannot be assigned.
 - Manage system configuration, audit trail, delivery records, deployment, scheduler and technical operations.
 - ICTU does not approve borrowing requests or perform SPMU custody work.

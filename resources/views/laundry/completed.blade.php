@@ -2,7 +2,7 @@
 @section('content')
 <section class="page-heading">
     <div>
-        <p class="eyebrow">Laundry Worker</p>
+        <p class="eyebrow">SPMU Action Officer</p>
         <h1>Completed</h1>
         <p>Settled Laundry cases with SPMU final acceptance and a fully accomplished form archived in the system.</p>
     </div>

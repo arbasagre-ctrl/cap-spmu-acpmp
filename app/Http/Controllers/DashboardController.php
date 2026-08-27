@@ -209,15 +209,15 @@ class DashboardController extends Controller
                 ->whereIn('status', ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE'])
                 ->count();
 
-            $laundryVerification = LaundryJob::query()
-                ->where('status', 'READY_FOR_SPMU_RETURN')
+            $laundryOperations = LaundryJob::query()
+                ->where('status', '!=', 'LAUNDRY_COMPLETED')
                 ->count();
 
             $statistics = [
                 'For Pickup Scheduling' => $forPickupScheduling,
                 'Ready for Release' => $readyForRelease,
                 'For Return Check' => $forReturnCheck,
-                'Laundry Final Acceptance' => $laundryVerification,
+                'Laundry Operations' => $laundryOperations,
             ];
 
             $queue = CustodyTransaction::query()
@@ -280,38 +280,6 @@ class DashboardController extends Controller
                 ->whereNotIn('status', ['CLOSED'])
                 ->orderBy('due_at')
                 ->limit(5)
-                ->get();
-        } elseif ($workspace === 'LAUNDRY') {
-            $dashboardMode = 'LAUNDRY';
-
-            $statistics = [
-                'Awaiting Drop-off' => LaundryJob::query()->where('status', 'FOR_LAUNDRY')->count(),
-                'In Process' => LaundryJob::query()->where('status', 'IN_PROCESS')->count(),
-                'For SPMU Return' => LaundryJob::query()->where('status', 'READY_FOR_SPMU_RETURN')->count(),
-                'Final Form Upload' => LaundryJob::query()->whereIn('status', ['AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'])->count(),
-            ];
-
-            $queue = LaundryJob::query()
-                ->with([
-                    'custody.borrower',
-                    'custody.request',
-                    'lines.custodyLine.requestItem.inventoryItem.unit',
-                ])
-                ->whereIn('status', [
-                    'FOR_LAUNDRY',
-                    'IN_PROCESS',
-                    'READY_FOR_SPMU_RETURN',
-                    'AWAITING_FINAL_FORM_UPLOAD',
-                    'FORM_REPLACEMENT_REQUIRED',
-                ])
-                ->orderByRaw("CASE
-                    WHEN status = 'FOR_LAUNDRY' THEN 1
-                    WHEN status = 'IN_PROCESS' THEN 2
-                    WHEN status = 'READY_FOR_SPMU_RETURN' THEN 3
-                    WHEN status IN ('AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED') THEN 4
-                    ELSE 5 END")
-                ->oldest('updated_at')
-                ->limit(8)
                 ->get();
         } elseif ($workspace === 'ICTU') {
             $dashboardMode = 'ICTU';

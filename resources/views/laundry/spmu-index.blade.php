@@ -4,7 +4,7 @@
     <div>
         <p class="eyebrow">SPMU Action Officer</p>
         <h1>Laundry Final Acceptance</h1>
-        <p>Receive cleaned linen from the Laundry Worker, review the recorded laundry details, complete the final physical acceptance, and archive the fully accomplished Laundry Form.</p>
+        <p>Review recorded laundry details, complete final physical acceptance, and archive the fully accomplished Laundry Form.</p>
     </div>
 </section>
 <section class="content-area">

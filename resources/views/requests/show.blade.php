@@ -5,6 +5,7 @@
     $workspace = session('active_workspace');
     $isBorrower = $workspace === 'BORROWER';
     $isSpmu = $workspace === 'SPMU';
+    $hasCurrentESignature = auth()->user()->currentSignature()->whereHas('file')->exists();
     $currentDocs = $v->supportingDocuments->where('is_current', true);
     $requestLetterDoc = $currentDocs->firstWhere(
         'document_type',
@@ -36,6 +37,7 @@
             ],
             true
         );
+    $requiresNewRevisionVersion = $borrowingRequest->status === App\Enums\RequestStatus::ReturnedForRevision;
 
     $signedRequestLetterReady = (bool) $requestLetterDoc;
     $ptcRequired = (bool) $v->represents_student_activity;
@@ -133,7 +135,10 @@
         <div>
             <p class="eyebrow">Current action</p>
 
-            @if(!$submissionReady)
+            @if($requiresNewRevisionVersion)
+                <h2>Create the corrected request version</h2>
+                <p>Open the returned request, apply the required corrections, and save a new version before E-signing and resubmitting. The prior signed version remains unchanged.</p>
+            @elseif(!$submissionReady)
                 <h2>Complete the required request documents</h2>
                 <p>
                     Your draft is saved. Upload the already approved and fully signed Borrowing Request Letter
@@ -148,20 +153,31 @@
             @endif
 
             <div class="inline-actions top-gap">
-                @if($submissionReady)
-                    <a
-                        class="button primary ui-pressable"
-                        href="{{ route('requests.edit', $borrowingRequest) }}"
-                    >
-                        Review & Submit
-                    </a>
-                @else
-                    <a
-                        class="button secondary ui-pressable"
-                        href="{{ route('requests.edit', $borrowingRequest) }}"
-                    >
-                        Edit Draft & Upload Documents
-                    </a>
+                <a
+                    class="button secondary ui-pressable"
+                    href="{{ route('requests.edit', $borrowingRequest) }}"
+                >
+                    {{ $requiresNewRevisionVersion ? 'Create Corrected Version' : ($submissionReady ? 'Review / Edit Draft' : 'Edit Draft & Upload Documents') }}
+                </a>
+
+                @if($submissionReady && !$requiresNewRevisionVersion)
+                    <form method="post" action="{{ route('requests.submit', $borrowingRequest) }}" class="form-grid">
+                        @csrf
+                        @if($hasCurrentESignature)
+                            <label class="checkbox">
+                                <input type="checkbox" name="confirm_e_signature" value="1" required>
+                                I confirm this submission and authorize use of my registered E-signature for this request version.
+                            </label>
+                            <button class="button primary ui-pressable" type="submit">
+                                E-sign &amp; Submit to SPMU
+                            </button>
+                        @else
+                            <div class="callout warning">
+                                <strong>E-signature required</strong>
+                                <p><a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> before submitting.</p>
+                            </div>
+                        @endif
+                    </form>
                 @endif
             </div>
 
@@ -179,6 +195,147 @@
 @unless($isBorrower)
 <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
 @endunless
+
+@if($isBorrower)
+<style>
+.request-tracker-card {
+    margin-top: 14px;
+}
+
+.request-tracker-card .request-tracker {
+    overflow: visible;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.request-tracker-card .request-tracker__header {
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 0;
+}
+
+.request-tracker-card .request-tracker__header h2 {
+    margin: 1px 0 2px;
+}
+
+.request-tracker-card .request-tracker__scroll {
+    width: 100%;
+    margin: 0;
+    padding: 18px 0 12px;
+    overflow: visible;
+    overscroll-behavior-inline: auto;
+    scrollbar-width: auto;
+}
+
+.request-tracker-card .request-tracker__rail {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.request-tracker-card .request-tracker__step {
+    padding-inline: 6px;
+}
+
+.request-tracker-card .request-tracker__copy small {
+    display: block;
+    overflow: visible;
+    max-width: 150px;
+    -webkit-line-clamp: unset;
+}
+
+.request-tracker-card .request-tracker__step.is-complete::after {
+    background: linear-gradient(90deg, #31B700 0%, #159000 100%);
+}
+
+.request-tracker-card .request-tracker__step.is-complete .request-tracker__marker {
+    color: #fff;
+    background: linear-gradient(180deg, #39E600 0%, #31B700 55%, #159000 100%);
+    border-color: #159000;
+    box-shadow: none;
+}
+
+.request-tracker-card .request-tracker__step.is-complete .request-tracker__marker .ui-icon {
+    color: #fff;
+}
+
+.request-tracker-card .request-tracker__hint {
+    margin-top: 8px;
+    padding-top: 10px;
+    background: transparent;
+    border: 0;
+    border-top: 1px solid var(--row-border);
+    border-radius: 0;
+    box-shadow: none;
+}
+
+@media (max-width: 1024px) {
+    .request-tracker-card .request-tracker__rail {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        row-gap: 26px;
+    }
+
+    .request-tracker-card .request-tracker__step:nth-child(4n)::after {
+        display: none;
+    }
+}
+
+@media (max-width: 620px) {
+    .request-tracker-card .request-tracker__header {
+        gap: 6px;
+    }
+
+    .request-tracker-card .request-tracker__scroll {
+        padding-top: 14px;
+    }
+
+    .request-tracker-card .request-tracker__rail {
+        grid-template-columns: 1fr;
+        row-gap: 0;
+    }
+
+    .request-tracker-card .request-tracker__step {
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr);
+        gap: 11px;
+        padding: 0 0 18px;
+        text-align: left;
+    }
+
+    .request-tracker-card .request-tracker__marker {
+        width: 38px;
+        height: 38px;
+        margin: 0;
+    }
+
+    .request-tracker-card .request-tracker__copy {
+        justify-items: start;
+        gap: 2px;
+        padding-top: 1px;
+    }
+
+    .request-tracker-card .request-tracker__copy small {
+        max-width: none;
+    }
+
+    .request-tracker-card .request-tracker__step::after,
+    .request-tracker-card .request-tracker__step:nth-child(4n)::after {
+        display: block;
+        top: 38px;
+        left: 18px;
+        width: 2px;
+        height: calc(100% - 38px);
+    }
+
+    .request-tracker-card .request-tracker__step:last-child::after {
+        display: none;
+    }
+}
+</style>
+@endif
 
 @if($isUnderSpmuReview)
 <section class="content-area spmu-verification-workspace" data-spmu-verification-workspace>
@@ -249,6 +406,26 @@
                             <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
                             <span><strong>Requested quantities and availability checked</strong><small>Current inventory and selected schedule can support the signed requested quantities.</small></span>
                         </label>
+                        <label class="spmu-check-row">
+                            <input
+                                type="checkbox"
+                                name="confirm_e_signature"
+                                value="1"
+                                data-verification-check
+                                @checked(old('confirm_e_signature'))
+                                @disabled(!$hasCurrentESignature)
+                            >
+                            <span>
+                                <strong>Apply my E-signature to this approval</strong>
+                                <small>
+                                    @if($hasCurrentESignature)
+                                        Approval will capture an immutable snapshot of your own registered E-signature.
+                                    @else
+                                        <a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> to enable approval.
+                                    @endif
+                                </small>
+                            </span>
+                        </label>
                     </div>
 
                     <p class="field-error top-gap" data-verification-inline-error hidden></p>
@@ -262,7 +439,7 @@
                                 data-approve-button
                                 disabled
                             >
-                                Verify &amp; Approve
+                                E-sign, Verify &amp; Approve
                             </button>
 
                             <button
@@ -1623,9 +1800,9 @@
 
     const decisionCopy = {
         APPROVED: {
-            title: 'Verify and approve this request?',
-            message: 'The request will be approved and the approved quantities will be allocated/held for this borrower. They are not yet physically issued. The SPMU Action Officer will schedule pickup and complete the physical handover.',
-            confirm: 'Yes, Verify & Approve',
+            title: 'E-sign, verify, and approve this request?',
+            message: 'Your registered E-signature will be bound to this exact approval step. The approved quantities will be allocated/held for this borrower, but they are not yet physically issued.',
+            confirm: 'Yes, E-sign & Approve',
             tone: 'primary',
         },
         RETURNED_FOR_REVISION: {
@@ -1644,7 +1821,7 @@
 
     const checklistComplete = () =>
         requiredSupportingPresent &&
-        checks.length === 4 &&
+        checks.length === 5 &&
         checks.every((checkbox) => checkbox.checked);
 
     const updateApproveState = () => {
@@ -1736,7 +1913,7 @@
             if (decision === 'APPROVED' && !checklistComplete()) {
                 showInlineError(
                     requiredSupportingPresent
-                        ? 'Complete all four verification checks before approving.'
+                        ? 'Complete all verification and E-signature confirmations before approving.'
                         : 'The required supporting document is missing. Approval is unavailable until the required document is attached.'
                 );
                 return;

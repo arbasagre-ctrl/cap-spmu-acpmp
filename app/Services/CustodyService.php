@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Enums\AccessClassification;
+use App\Enums\UserRole;
 use App\Models\BorrowerRestriction;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
+use App\Models\EarlyReturnRequest;
 use App\Models\GeneratedDocument;
 use App\Models\GatePass;
 use App\Models\Incident;
@@ -649,7 +651,7 @@ class CustodyService
             /*
              * The Laundry Form is a physical working document. It is generated
              * by SPMU and travels with the borrower to Laundry; it is not
-             * digitally approved by the Laundry Worker or borrower.
+             * digitally approved by an operational portal user or borrower.
              */
             $laundryDocument = GeneratedDocument::query()
                 ->where('subject_type', CustodyTransaction::class)
@@ -815,18 +817,18 @@ class CustodyService
             $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Effective Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
 
             if ($hasLinen) {
-                $laundryWorkers = User::query()
+                $spmuActionOfficers = User::query()
                     ->where(
                         'access_classification',
-                        AccessClassification::LaundryWorker->value
+                        AccessClassification::SpmuOfficer->value
                     )
                     ->where('account_status', 'ACTIVE')
                     ->get();
 
-                if ($laundryWorkers->isNotEmpty()) {
+                if ($spmuActionOfficers->isNotEmpty()) {
                     $this->notifications->send(
                         'LINEN_FOR_LAUNDRY',
-                        $laundryWorkers,
+                        $spmuActionOfficers,
                         "A linen transaction under {$custody->custody_no} is for Laundry. The borrower will bring the used linen and physical Laundry Form after use.",
                         $custody,
                         ['SYSTEM']
@@ -850,12 +852,22 @@ class CustodyService
                 'return'
             );
 
-            if (! in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE', 'INCIDENT_OPEN'], true)) {
+            if (! in_array($custody->status, ['ACTIVE', 'RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'OVERDUE', 'INCIDENT_OPEN'], true)) {
                 throw ValidationException::withMessages(['return' => 'This custody record is no longer open for a physical return.']);
             }
 
             $custody->setRelation('lines', $custody->lines()->with('requestItem.inventoryItem')->lockForUpdate()->get());
             $custody->loadMissing('borrower');
+
+            $activeEarlyReturns = EarlyReturnRequest::query()
+                ->with('lines')
+                ->where('custody_transaction_id', $custody->id)
+                ->where('status', 'REQUESTED')
+                ->lockForUpdate()
+                ->get();
+
+            $isEarlyReturn = $activeEarlyReturns->isNotEmpty()
+                && (! $custody->due_at || now()->lte($custody->due_at));
 
             /*
              * DATE-BASED RETURN POLICY
@@ -865,7 +877,7 @@ class CustodyService
              * If property remains outstanding on the following calendar day,
              * the deadline processor marks the custody OVERDUE.
              */
-            if ($custody->due_at && now()->startOfDay()->lt($custody->due_at->copy()->startOfDay())) {
+            if (! $isEarlyReturn && $custody->due_at && now()->startOfDay()->lt($custody->due_at->copy()->startOfDay())) {
                 throw ValidationException::withMessages([
                     'return' => 'Return inspection may be recorded only on the Expected Return Date or after it.',
                 ]);
@@ -929,8 +941,8 @@ class CustodyService
             /*
              * Non-linen can be finalized immediately at SPMU. Linen becomes
              * eligible only after Laundry has finished processing it and the
-             * Laundry Worker is ready to hand the cleaned linen plus the same
-             * physical Laundry Form directly to SPMU. The form upload happens
+             * SPMU Action Officer has recorded completed laundry processing
+             * and the cleaned linen is ready for final inspection. Form upload happens
              * only AFTER SPMU final physical acceptance/signature.
              */
             $eligibleLines = $custody->lines->filter(function ($line) use ($laundryJob): bool {
@@ -1035,7 +1047,7 @@ class CustodyService
                 'return_no' => 'RET-'.now()->format('YmdHis').'-'.$custody->id,
                 'custody_transaction_id' => $custody->id,
                 'received_by_user_id' => $spmu->id,
-                'return_type' => 'NORMAL',
+                'return_type' => $isEarlyReturn ? 'EARLY' : 'NORMAL',
                 'received_at' => now(),
                 'status' => 'INSPECTED',
                 'remarks' => $remarks,
@@ -1053,9 +1065,9 @@ class CustodyService
                 if ($item->laundry_required && $laundryJob) {
                     /*
                      * Current linen flow:
-                     * Borrower -> Laundry Worker -> SPMU Action Officer archive.
-                     * The Laundry Worker returns the cleaned linen and the same
-                     * physical form directly to SPMU. SPMU performs the final
+                     * Borrower turnover -> SPMU-recorded laundry processing ->
+                     * SPMU final acceptance. The SPMU Action Officer maintains
+                     * the same physical form throughout. SPMU performs the final
                      * physical quantity/condition inspection before the worker
                      * uploads the fully signed form for settlement.
                      */
@@ -1183,6 +1195,23 @@ class CustodyService
 
             $custody->refresh()->load('lines.requestItem.inventoryItem');
 
+            foreach ($activeEarlyReturns as $activeEarlyReturn) {
+                $noticeCompleted = $activeEarlyReturn->lines->isNotEmpty()
+                    && $activeEarlyReturn->lines->every(function ($noticeLine) use ($custody): bool {
+                        $custodyLine = $custody->lines->firstWhere('id', $noticeLine->custody_line_id);
+
+                        return $custodyLine
+                            && (float) $custodyLine->returned_quantity >= (float) $noticeLine->proposed_quantity;
+                    });
+
+                if ($noticeCompleted) {
+                    $activeEarlyReturn->update([
+                        'status' => 'COMPLETED',
+                        'completed_at' => now(),
+                    ]);
+                }
+            }
+
             if ($laundryJob) {
                 $allLaundryReturned = $custody->lines
                     ->filter(
@@ -1199,9 +1228,9 @@ class CustodyService
                 if ($allLaundryReturned) {
                     /*
                      * SPMU has now physically accepted/accounted for all linen.
-                     * The SPMU Action Officer archives the accomplished physical Laundry
-                     * Form as the supporting document. Laundry is not settled
-                     * until that final form is successfully uploaded.
+                     * The physical form remains with SPMU for the final
+                     * scan/upload. Laundry is not settled until that
+                     * fully signed form is successfully uploaded.
                      */
                     $laundryJob->update([
                         'status' => 'AWAITING_FINAL_FORM_UPLOAD',
@@ -1355,6 +1384,180 @@ class CustodyService
 
             return $return;
         }, 3);
+    }
+
+    public function requestEarlyReturn(CustodyTransaction $custody, User $borrower, array $quantities, string $proposedReturnAt, ?string $reason): EarlyReturnRequest
+    {
+        $earlyReturn = DB::transaction(function () use ($custody, $borrower, $quantities, $proposedReturnAt, $reason): EarlyReturnRequest {
+            $custody = CustodyTransaction::query()
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
+
+            abort_unless($custody->borrower_user_id === $borrower->id, 403);
+
+            if (! $custody->released_at || $custody->status !== 'ACTIVE' || $custody->closed_at) {
+                throw ValidationException::withMessages([
+                    'early_return' => 'Early Return is available only for an active, open custody transaction.',
+                ]);
+            }
+
+            $now = CarbonImmutable::now(config('app.timezone'));
+            $dueAt = $custody->due_at
+                ? CarbonImmutable::instance($custody->due_at)
+                : null;
+            $proposedAt = CarbonImmutable::parse(
+                $proposedReturnAt,
+                config('app.timezone')
+            );
+
+            if (! $dueAt || ! $now->lt($dueAt)) {
+                throw ValidationException::withMessages([
+                    'proposed_return_at' => 'Early Return can be requested only before the original return deadline.',
+                ]);
+            }
+
+            if (! $proposedAt->gt($now)) {
+                throw ValidationException::withMessages([
+                    'proposed_return_at' => 'The proposed handover date and time must be in the future.',
+                ]);
+            }
+
+            if ($proposedAt->gt($dueAt)) {
+                throw ValidationException::withMessages([
+                    'proposed_return_at' => 'The proposed handover must be on or before the original return deadline.',
+                ]);
+            }
+
+            if (EarlyReturnRequest::query()
+                ->where('custody_transaction_id', $custody->id)
+                ->where('status', 'REQUESTED')
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'early_return' => 'An active Early Return request already exists for this custody transaction.',
+                ]);
+            }
+
+            $custodyLines = $custody->lines()
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            $hasOutstandingItems = $custodyLines->contains(
+                fn ($line) => (float) $line->actual_released_quantity > (float) $line->returned_quantity
+            );
+
+            if (! $hasOutstandingItems) {
+                throw ValidationException::withMessages([
+                    'early_return' => 'This custody transaction has no outstanding items to return.',
+                ]);
+            }
+
+            $selectedQuantities = [];
+
+            foreach ($quantities as $lineId => $rawQuantity) {
+                if (! ctype_digit((string) $lineId)) {
+                    throw ValidationException::withMessages([
+                        'quantities' => 'An invalid custody item was submitted.',
+                    ]);
+                }
+
+                $quantity = filter_var($rawQuantity, FILTER_VALIDATE_INT);
+
+                if ($quantity === false || $quantity < 0) {
+                    throw ValidationException::withMessages([
+                        'quantities.'.$lineId => 'Early Return quantities must be whole numbers of zero or more.',
+                    ]);
+                }
+
+                $line = $custodyLines->get((int) $lineId);
+
+                if (! $line) {
+                    throw ValidationException::withMessages([
+                        'quantities.'.$lineId => 'The selected item does not belong to this custody transaction.',
+                    ]);
+                }
+
+                $outstanding = max(
+                    0,
+                    (float) $line->actual_released_quantity
+                        - (float) $line->returned_quantity
+                );
+
+                if ($quantity > $outstanding) {
+                    throw ValidationException::withMessages([
+                        'quantities.'.$lineId => 'The Early Return quantity cannot exceed the outstanding issued quantity.',
+                    ]);
+                }
+
+                if ($quantity > 0) {
+                    $selectedQuantities[(int) $lineId] = $quantity;
+                }
+            }
+
+            if ($selectedQuantities === []) {
+                throw ValidationException::withMessages([
+                    'early_return' => 'Enter a quantity greater than zero for at least one outstanding item.',
+                ]);
+            }
+
+            $earlyReturn = EarlyReturnRequest::query()->create([
+                'early_return_no' => 'ER-'.now()->format('YmdHis').'-'.$custody->id,
+                'custody_transaction_id' => $custody->id,
+                'requested_by_user_id' => $borrower->id,
+                'proposed_return_at' => $proposedAt,
+                'reason' => $reason,
+                'status' => 'REQUESTED',
+                'requested_at' => now(),
+            ]);
+
+            foreach ($selectedQuantities as $lineId => $quantity) {
+                $earlyReturn->lines()->create([
+                    'custody_line_id' => $lineId,
+                    'proposed_quantity' => $quantity,
+                ]);
+            }
+
+            return $earlyReturn->load('lines');
+        }, 3);
+
+        try {
+            $this->audit->record(
+                'EARLY_RETURN_REQUESTED',
+                $earlyReturn,
+                reason: $reason,
+                after: [
+                    'custody_transaction_id' => $custody->id,
+                    'proposed_return_at' => $earlyReturn->proposed_return_at?->toIso8601String(),
+                    'quantities' => $earlyReturn->lines
+                        ->pluck('proposed_quantity', 'custody_line_id')
+                        ->all(),
+                ]
+            );
+        } catch (Throwable $exception) {
+            Log::warning('Early Return audit recording failed after persistence.', [
+                'early_return_id' => $earlyReturn->id,
+                'exception' => $exception->getMessage(),
+            ]);
+        }
+
+        try {
+            $this->notifications->send(
+                'EARLY_RETURN_REQUESTED',
+                $this->spmuRecipients()
+                    ->merge([$borrower])
+                    ->unique('id'),
+                "Early Return {$earlyReturn->early_return_no} was requested for {$custody->custody_no}. Inventory and custody quantities remain unchanged until SPMU physically receives and inspects the items.",
+                $custody,
+                ['SYSTEM', 'EMAIL']
+            );
+        } catch (Throwable $exception) {
+            Log::warning('Early Return notification failed after persistence.', [
+                'early_return_id' => $earlyReturn->id,
+                'exception' => $exception->getMessage(),
+            ]);
+        }
+
+        return $earlyReturn;
     }
 
 

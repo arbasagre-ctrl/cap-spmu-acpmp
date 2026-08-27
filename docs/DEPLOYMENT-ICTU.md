@@ -35,7 +35,7 @@ docker compose exec app php artisan spmu:user ictu.admin@cspc.edu.ph --name="ICT
 
 The command securely prompts for a 12+ character password with uppercase, lowercase, number, and symbol.
 
-8. Sign in and create only the approved Borrower, SPMU Admin / Head, SPMU Action Officer, Laundry Worker, and ICTU accounts. GSU/VPAF do not receive application accounts; their request-letter signatures are obtained physically outside the system.
+8. Sign in and create only the approved Borrower, SPMU Admin / Head, SPMU Action Officer, and ICTU accounts. GSU/VPAF do not receive application accounts; their request-letter signatures are obtained physically outside the system.
 9. Reconcile opening inventory and all values in the Configuration Register before production acceptance.
 
 ## Email and SMS

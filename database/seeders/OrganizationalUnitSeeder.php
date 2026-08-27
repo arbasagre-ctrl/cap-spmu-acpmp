@@ -35,7 +35,7 @@ class OrganizationalUnitSeeder extends Seeder
          * They are not active system portals or account-assignment units.
          */
         OrganizationalUnit::query()
-            ->whereIn('unit_code', ['GSU', 'VPAF'])
+            ->whereIn('unit_code', ['GSU', 'VPAF', 'LAUNDRY'])
             ->update(['active' => false]);
 
         foreach ($this->borrowerColleges() as $code => $name) {
@@ -57,7 +57,6 @@ class OrganizationalUnitSeeder extends Seeder
         return [
             'SPMU' => 'Supply and Property Management Unit',
             'ICTU' => 'Information and Communications Technology Unit',
-            'LAUNDRY' => 'Laundry Service Area',
         ];
     }
 

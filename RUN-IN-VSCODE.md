@@ -43,7 +43,6 @@ All demo accounts use `SPMU-Demo-2026!`.
 | Borrower | `borrower@spmu.test` |
 | SPMU Action Officer | `spmu@spmu.test` |
 | SPMU Admin / Head | `spmu-head@spmu.test` |
-| Laundry Worker | `laundry@spmu.test` |
 | ICTU Maintainer | `ictu@spmu.test` |
 
 GSU and VPAF intentionally have no system login/portal. Their required signatures are handwritten/wet signatures on the physical Borrowing Request Letter before the borrower uploads the accomplished scan to SPMU.
