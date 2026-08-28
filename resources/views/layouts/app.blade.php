@@ -550,5 +550,135 @@
 @endauth
 <script src="{{ asset('vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
 <script src="{{ asset('js/app.js') }}?v={{ filemtime(public_path('js/app.js')) }}" defer></script>
+    {{-- SPMU-ACPMP ANTI-DUPLICATE-SUBMISSION START --}}
+    <script>
+    (() => {
+        'use strict';
+
+        const TOKEN_NAME = '_action_token';
+
+        function createActionToken() {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                return window.crypto.randomUUID();
+            }
+
+            return [
+                Date.now().toString(36),
+                Math.random().toString(36).slice(2),
+                Math.random().toString(36).slice(2)
+            ].join('-');
+        }
+
+        function ensureActionToken(form) {
+            let input = form.querySelector(`input[name="${TOKEN_NAME}"]`);
+            if (!input) {
+                input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = TOKEN_NAME;
+                input.value = createActionToken();
+                form.appendChild(input);
+            }
+            if (!input.value) input.value = createActionToken();
+            return input.value;
+        }
+
+        function isStateChangingForm(form) {
+            return (form.getAttribute('method') || 'GET').toUpperCase() !== 'GET';
+        }
+
+        function lockForm(form, submitter) {
+            form.dataset.submitLocked = '1';
+            form.setAttribute('aria-busy', 'true');
+
+            form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach((control) => {
+                control.style.pointerEvents = 'none';
+                control.setAttribute('aria-disabled', 'true');
+            });
+
+            if (!submitter) return;
+
+            if (submitter.tagName === 'BUTTON') {
+                if (!submitter.dataset.originalSubmitHtml) {
+                    submitter.dataset.originalSubmitHtml = submitter.innerHTML;
+                }
+                submitter.innerHTML = 'Processing...';
+            } else if (submitter.tagName === 'INPUT' && submitter.type === 'submit') {
+                if (!submitter.dataset.originalSubmitValue) {
+                    submitter.dataset.originalSubmitValue = submitter.value;
+                }
+                submitter.value = 'Processing...';
+            }
+        }
+
+        function unlockForm(form) {
+            delete form.dataset.submitLocked;
+            form.removeAttribute('aria-busy');
+
+            form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach((control) => {
+                control.style.pointerEvents = '';
+                control.removeAttribute('aria-disabled');
+
+                if (control.tagName === 'BUTTON' && control.dataset.originalSubmitHtml) {
+                    control.innerHTML = control.dataset.originalSubmitHtml;
+                    delete control.dataset.originalSubmitHtml;
+                }
+
+                if (control.tagName === 'INPUT' && control.dataset.originalSubmitValue) {
+                    control.value = control.dataset.originalSubmitValue;
+                    delete control.dataset.originalSubmitValue;
+                }
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('form').forEach((form) => {
+                if (isStateChangingForm(form)) ensureActionToken(form);
+            });
+        });
+
+        document.addEventListener('submit', (event) => {
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            if (!isStateChangingForm(form)) return;
+            if (form.dataset.allowRepeatedSubmit === 'true') return;
+
+            ensureActionToken(form);
+
+            if (form.dataset.submitLocked === '1') {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
+
+            lockForm(form, event.submitter || null);
+        }, true);
+
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (!(node instanceof Element)) return;
+                    if (node.matches('form') && isStateChangingForm(node)) ensureActionToken(node);
+                    node.querySelectorAll?.('form').forEach((form) => {
+                        if (isStateChangingForm(form)) ensureActionToken(form);
+                    });
+                });
+            });
+        });
+
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+
+        window.addEventListener('pageshow', (event) => {
+            if (!event.persisted) return;
+
+            document.querySelectorAll('form[data-submit-locked="1"]').forEach((form) => {
+                unlockForm(form);
+                const token = form.querySelector(`input[name="${TOKEN_NAME}"]`);
+                if (token) token.value = createActionToken();
+            });
+        });
+    })();
+    </script>
+    {{-- SPMU-ACPMP ANTI-DUPLICATE-SUBMISSION END --}}
 </body>
 </html>
+
