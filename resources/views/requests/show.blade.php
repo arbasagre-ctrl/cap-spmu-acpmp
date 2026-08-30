@@ -74,6 +74,14 @@
         fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
     ) ?? false;
 
+    $gatePassFinalized = $requestHasOffCampus
+        && in_array(
+            $custody?->gatePass?->status,
+            ['READY_FOR_PRINTING', 'VERIFIED'],
+            true
+        )
+        && (bool) $gatePassDocument;
+
     if ($custody) {
         $preparationComplete = (bool) $custody->prepared_at;
         $hasPickupSchedule = (bool) $custody->scheduled_release_at
@@ -360,7 +368,6 @@
 
                 <p class="meta spmu-review-summary">
                     Verify the signed documents, request details, dates, quantities, and system availability.
-                    <strong>Verify &amp; Approve</strong> reserves the approved quantities for pickup; it does not physically issue the items.
                 </p>
 
                 @if($v->represents_student_activity)
@@ -383,50 +390,34 @@
                     class="spmu-verification-form top-gap"
                     data-verification-form
                     data-required-supporting-present="{{ ($requestLetterDoc && (!$v->represents_student_activity || $permissionToConductDoc)) ? '1' : '0' }}"
+                    data-has-current-e-signature="{{ $hasCurrentESignature ? '1' : '0' }}"
                 >
                     @csrf
 
                     <input type="hidden" name="decision" value="" data-verification-decision>
                     <input type="hidden" name="remarks" value="{{ old('remarks') }}" data-verification-remarks>
+                    <input type="hidden" name="confirm_e_signature" value="" data-verification-e-signature>
 
                     <div class="spmu-checklist">
                         <label class="spmu-check-row">
                             <input type="checkbox" name="details_complete" value="1" data-verification-check @checked(old('details_complete'))>
-                            <span><strong>Request details match the signed letter</strong><small>Borrower, event, dates, location, items, and quantities are consistent.</small></span>
+                            <span><strong>Request details match the signed letter</strong></span>
                         </label>
                         <label class="spmu-check-row">
-                            <input type="checkbox" name="signatures_present" value="1" data-verification-check @checked(old('signatures_present'))>
-                            <span><strong>Required wet signatures are present</strong><small>Required handwritten signatures / endorsements are visible on the scan.</small></span>
-                        </label>
-                        <label class="spmu-check-row">
-                            <input type="checkbox" name="document_readable" value="1" data-verification-check @checked(old('document_readable'))>
-                            <span><strong>Uploaded document is clear and readable</strong><small>The scan can be verified without guessing or missing content.</small></span>
+                            <input type="checkbox" name="documents_complete" value="1" data-verification-check @checked(old('documents_complete'))>
+                            <span><strong>Required signatures and documents are complete</strong></span>
                         </label>
                         <label class="spmu-check-row">
                             <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
-                            <span><strong>Requested quantities and availability checked</strong><small>Current inventory and selected schedule can support the signed requested quantities.</small></span>
-                        </label>
-                        <label class="spmu-check-row">
-                            <input
-                                type="checkbox"
-                                name="confirm_e_signature"
-                                value="1"
-                                data-verification-check
-                                @checked(old('confirm_e_signature'))
-                                @disabled(!$hasCurrentESignature)
-                            >
-                            <span>
-                                <strong>Apply my E-signature to this approval</strong>
-                                <small>
-                                    @if($hasCurrentESignature)
-                                        Approval will capture an immutable snapshot of your own registered E-signature.
-                                    @else
-                                        <a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> to enable approval.
-                                    @endif
-                                </small>
-                            </span>
+                            <span><strong>Inventory availability is verified</strong></span>
                         </label>
                     </div>
+
+                    @unless($hasCurrentESignature)
+                        <p class="field-error top-gap">
+                            <a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> to enable approval.
+                        </p>
+                    @endunless
 
                     <p class="field-error top-gap" data-verification-inline-error hidden></p>
 
@@ -767,14 +758,22 @@
                         <article>
                             <div>
                                 <strong>Gate Pass</strong>
-                                <small>{{ $requestHasOffCampus ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
+                                <small>
+                                    @if(!$requestHasOffCampus)
+                                        Not applicable.
+                                    @elseif($gatePassFinalized)
+                                        Finalized by SPMU after Physical Release.
+                                    @else
+                                        Pending SPMU verification. SPMU will finalize and print the Gate Pass during Physical Release.
+                                    @endif
+                                </small>
                             </div>
                             @if(!$requestHasOffCampus)
                                 <span class="status-badge status-neutral">Not applicable</span>
-                            @elseif($gatePassDocument)
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download / Print</a>
+                            @elseif($gatePassFinalized)
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">View Final Gate Pass</a>
                             @else
-                                <span class="status-badge status-neutral">Preparing</span>
+                                <span class="status-badge status-warning">Pending SPMU Verification</span>
                             @endif
                         </article>
                     </div>
@@ -1782,6 +1781,7 @@
     const approveButton = form.querySelector('[data-approve-button]');
     const decisionInput = form.querySelector('[data-verification-decision]');
     const remarksInput = form.querySelector('[data-verification-remarks]');
+    const eSignatureInput = form.querySelector('[data-verification-e-signature]');
     const inlineError = form.querySelector('[data-verification-inline-error]');
     const triggers = [...form.querySelectorAll('[data-decision-trigger]')];
 
@@ -1796,6 +1796,7 @@
     const remarksError = dialog.querySelector('[data-confirm-remarks-error]');
 
     const requiredSupportingPresent = form.dataset.requiredSupportingPresent === '1';
+    const hasCurrentESignature = form.dataset.hasCurrentESignature === '1';
     let pendingDecision = '';
 
     const decisionCopy = {
@@ -1821,7 +1822,8 @@
 
     const checklistComplete = () =>
         requiredSupportingPresent &&
-        checks.length === 5 &&
+        hasCurrentESignature &&
+        checks.length === 3 &&
         checks.every((checkbox) => checkbox.checked);
 
     const updateApproveState = () => {
@@ -1882,7 +1884,10 @@
         }
 
         if (decision === 'APPROVED') {
-            if (window.confirm(`${copy.title}\n\n${copy.message}`)) form.submit();
+            if (window.confirm(`${copy.title}\n\n${copy.message}`)) {
+                if (eSignatureInput) eSignatureInput.value = '1';
+                form.submit();
+            }
             return;
         }
 
@@ -1912,9 +1917,11 @@
 
             if (decision === 'APPROVED' && !checklistComplete()) {
                 showInlineError(
-                    requiredSupportingPresent
-                        ? 'Complete all verification and E-signature confirmations before approving.'
-                        : 'The required supporting document is missing. Approval is unavailable until the required document is attached.'
+                    !requiredSupportingPresent
+                        ? 'The required supporting document is missing. Approval is unavailable until the required document is attached.'
+                        : !hasCurrentESignature
+                            ? 'Register your E-signature in Account Settings before approving.'
+                            : 'Complete all verification checks before approving.'
                 );
                 return;
             }
@@ -1934,6 +1941,7 @@
         if (!pendingDecision) return;
 
         if (pendingDecision !== 'APPROVED') {
+            if (eSignatureInput) eSignatureInput.value = '';
             const value = remarksField.value.trim();
 
             if (!value) {
@@ -1949,6 +1957,7 @@
             remarksInput.value = value;
         } else {
             remarksInput.value = '';
+            if (eSignatureInput) eSignatureInput.value = '1';
         }
 
         confirmSubmit.disabled = true;
@@ -2303,36 +2312,6 @@
 /* SPMU_CANONICAL_REVIEW_LAYOUT_END */
 </style>
 
-{{-- SPMU_CANONICAL_PDF_ZOOM_START --}}
-<script>
-(() => {
-    const applyReadablePdfZoom = () => {
-        const scope = document.querySelector('.spmu-scan-slot');
-        if (!scope) return;
-
-        const viewer = scope.querySelector('iframe[src], embed[src], object[data]');
-        if (!viewer || viewer.dataset.spmuReadableZoomApplied === '1') return;
-
-        const attr = viewer.tagName === 'OBJECT' ? 'data' : 'src';
-        const current = viewer.getAttribute(attr);
-        if (!current) return;
-
-        viewer.dataset.spmuReadableZoomApplied = '1';
-        const base = current.split('#')[0];
-        viewer.setAttribute(
-            attr,
-            `${base}#page=1&zoom=page-fit&toolbar=1&navpanes=0&scrollbar=1&view=Fit`
-        );
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', applyReadablePdfZoom, { once: true });
-    } else {
-        applyReadablePdfZoom();
-    }
-})();
-</script>
-{{-- SPMU_CANONICAL_PDF_ZOOM_END --}}
 
 
 <style>
@@ -2420,7 +2399,7 @@
 }
 
 /*
- * Verify & Approve must still visually show disabled until all four
+ * Verify & Approve must still visually show disabled until all three
  * verification checks are complete. Restore the intended disabled opacity.
  */
 .spmu-review-top-row .spmu-decision-actions > .button:disabled {

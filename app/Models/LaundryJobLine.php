@@ -21,10 +21,10 @@ class LaundryJobLine extends Model
     protected function casts(): array
     {
         return [
-            'issued_quantity' => 'decimal:3',
-            'received_quantity' => 'decimal:3',
-            'affected_quantity' => 'decimal:3',
-            'completed_quantity' => 'decimal:3',
+            'issued_quantity' => 'integer',
+            'received_quantity' => 'integer',
+            'affected_quantity' => 'integer',
+            'completed_quantity' => 'integer',
         ];
     }
 

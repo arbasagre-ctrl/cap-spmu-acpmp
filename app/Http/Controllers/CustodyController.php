@@ -21,7 +21,7 @@ class CustodyController extends Controller
 {
     public function index(Request $request): View
     {
-        $query = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem'])->latest();
+        $query = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'])->latest();
         if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
             $query->where('borrower_user_id', $request->user()->id);
         }
@@ -49,10 +49,41 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
-        $custodies = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem'])
+        $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'];
+        $hasEarlyReturnTable = Schema::hasTable('early_return_requests');
+
+        if ($hasEarlyReturnTable) {
+            $relations['earlyReturnRequests'] = fn ($query) => $query
+                ->where('status', 'REQUESTED')
+                ->latest('requested_at');
+        }
+
+        $custodies = CustodyTransaction::with($relations)
             ->whereNotNull('released_at')
             ->latest()
             ->get();
+
+        if (! $hasEarlyReturnTable) {
+            $custodies->each(
+                fn (CustodyTransaction $custody) => $custody->setRelation('earlyReturnRequests', collect())
+            );
+        }
+
+        /*
+         * Put active Early Return requests first so the Action Officer can
+         * notice them immediately, while retaining the normal newest-first
+         * order within the Early Return and regular-return groups.
+         */
+        $custodies = $custodies->sort(function (CustodyTransaction $left, CustodyTransaction $right): int {
+            $leftEarly = $left->earlyReturnRequests->isNotEmpty() ? 1 : 0;
+            $rightEarly = $right->earlyReturnRequests->isNotEmpty() ? 1 : 0;
+
+            if ($leftEarly !== $rightEarly) {
+                return $rightEarly <=> $leftEarly;
+            }
+
+            return ($right->updated_at?->timestamp ?? 0) <=> ($left->updated_at?->timestamp ?? 0);
+        })->values();
 
         return view('custody.index', [
             'custodies' => $custodies,
@@ -225,7 +256,11 @@ class CustodyController extends Controller
 
     public function quantities(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
     {
-        $data = $request->validate(['quantities' => ['required', 'array'], 'reasons' => ['nullable', 'array']]);
+        $data = $request->validate([
+            'quantities' => ['required', 'array'],
+            'quantities.*' => ['required', 'integer', 'min:0'],
+            'reasons' => ['nullable', 'array'],
+        ]);
         $service->updateReceiptQuantities($custody, $request->user(), $data['quantities'], $data['reasons'] ?? []);
 
         return back()->with('status', 'Quantity to receive saved. SPMU must verify any reduction before acknowledgement.');
@@ -235,7 +270,7 @@ class CustodyController extends Controller
     {
         $data = $request->validate([
             'quantities' => ['required', 'array'],
-            'quantities.*' => ['required', 'numeric', 'min:0'],
+            'quantities.*' => ['required', 'integer', 'min:0'],
         ]);
 
         $service->prepare($custody, $request->user(), $data['quantities']);
@@ -260,6 +295,8 @@ class CustodyController extends Controller
         $data = $request->validate([
             'physical_signatures_confirmed' => ['required', 'accepted'],
             'remarks' => ['nullable', 'string', 'max:2000'],
+        ], [
+            'physical_signatures_confirmed.accepted' => 'Confirm that the physical handover and applicable handwritten acknowledgements were completed.',
         ]);
 
         $service->release(
@@ -267,6 +304,17 @@ class CustodyController extends Controller
             $request->user(),
             $data['remarks'] ?? null
         );
+
+        $freshCustody = $custody->fresh('gatePass');
+
+        if ($freshCustody?->gatePass?->status === 'READY_FOR_PRINTING') {
+            return redirect()
+                ->route('gate-passes.show', $freshCustody->gatePass)
+                ->with(
+                    'status',
+                    'Physical release completed. The FINAL Gate Pass is ready for SPMU printing. Give the printed copy to the borrower before the property exits the campus.'
+                );
+        }
 
         return redirect()
             ->route('custody.return.show', $custody)
@@ -282,16 +330,16 @@ class CustodyController extends Controller
             // Current full-accounting UI: one condition breakdown per custody line.
             'accounting' => ['nullable', 'array'],
             'accounting.*' => ['nullable', 'array'],
-            'accounting.*.FINE' => ['nullable', 'numeric', 'min:0'],
-            'accounting.*.DAMAGED' => ['nullable', 'numeric', 'min:0'],
-            'accounting.*.DESTROYED' => ['nullable', 'numeric', 'min:0'],
-            'accounting.*.MISSING' => ['nullable', 'numeric', 'min:0'],
-            'accounting.*.LOST' => ['nullable', 'numeric', 'min:0'],
-            'accounting.*.STOLEN' => ['nullable', 'numeric', 'min:0'],
+            'accounting.*.FINE' => ['nullable', 'integer', 'min:0'],
+            'accounting.*.DAMAGED' => ['nullable', 'integer', 'min:0'],
+            'accounting.*.DESTROYED' => ['nullable', 'integer', 'min:0'],
+            'accounting.*.MISSING' => ['nullable', 'integer', 'min:0'],
+            'accounting.*.LOST' => ['nullable', 'integer', 'min:0'],
+            'accounting.*.STOLEN' => ['nullable', 'integer', 'min:0'],
 
             // Legacy payload support for existing tests/API clients.
             'quantities' => ['nullable', 'array'],
-            'quantities.*' => ['nullable', 'numeric', 'min:0'],
+            'quantities.*' => ['nullable', 'integer', 'min:0'],
             'conditions' => ['nullable', 'array'],
             'conditions.*' => ['nullable', Rule::in(['FINE', 'DAMAGED', 'DESTROYED', 'MISSING', 'LOST', 'STOLEN'])],
             'police_blotter_references' => ['nullable', 'array'],
@@ -304,19 +352,13 @@ class CustodyController extends Controller
         /*
          * RETURN INPUT SANITIZATION
          * -------------------------
-         * The Return page is stateful: a line can become fully accounted or a
-         * linen line can move between Laundry stages while an older browser
-         * form is still open. Never let stale values from an already-completed
-         * line produce a misleading "complete Laundry workflow" error.
-         *
-         * Non-linen is always eligible for ordinary SPMU return inspection
-         * while it has an outstanding quantity. Linen is eligible only when
-         * laundry processing has been recorded and the cleaned linen is ready for SPMU
-         * (READY_FOR_SPMU_RETURN), except for legacy records without a
-         * LaundryJob.
+         * Every outstanding issued line, including linen, is inspected when
+         * the borrower physically returns it. Linen no longer waits for the
+         * washing cycle before SPMU can record return condition. The separate
+         * Laundry step only confirms that Laundry Personnel physically received
+         * the returned linen and wet-signed the same printed Laundry Form.
          */
         $custody->loadMissing('lines.requestItem.inventoryItem', 'laundryJob');
-        $laundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
         $eligibleLineIds = [];
 
         foreach ($custody->lines as $line) {
@@ -336,41 +378,6 @@ class CustodyController extends Controller
                 );
 
                 continue;
-            }
-
-            $isLinen = (bool) $line->requestItem?->inventoryItem?->laundry_required;
-            $isEligible = ! $isLinen
-                || ! $laundryJob
-                || $laundryJob->status === 'READY_FOR_SPMU_RETURN';
-
-            $breakdown = $data['accounting'][$lineId] ?? [];
-            $entered = is_array($breakdown)
-                ? collect($breakdown)->sum(fn ($value) => max(0, (float) $value))
-                : 0;
-
-            // Legacy payload support.
-            $entered = max($entered, (float) ($data['quantities'][$lineId] ?? 0));
-
-            if (! $isEligible) {
-                // Nothing was actually submitted for this linen line: simply
-                // leave it under the Laundry subprocess without an error.
-                if ($entered <= 0) {
-                    unset(
-                        $data['accounting'][$lineId],
-                        $data['quantities'][$lineId],
-                        $data['conditions'][$lineId],
-                        $data['police_blotter_references'][$lineId]
-                    );
-
-                    continue;
-                }
-
-                $description = $line->requestItem?->description_snapshot ?: 'Linen item';
-
-                throw ValidationException::withMessages([
-                    'return' => $description
-                        .': this linen is still in the required Laundry subprocess and is not yet ready for SPMU final inspection.',
-                ]);
             }
 
             $eligibleLineIds[] = $lineId;
@@ -401,7 +408,7 @@ class CustodyController extends Controller
 
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
-            ->with('status', 'Return inspection recorded. The remaining return or Laundry status is shown beside the inspection panel.');
+            ->with('status', 'Return inspection recorded. For linen, continue in Laundry Operations after Laundry Personnel signs Received by on the same printed form.');
     }
 
     public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
@@ -416,22 +423,19 @@ class CustodyController extends Controller
 
         $data = $request->validate([
             'proposed_return_at' => ['required', 'date', 'after:now'],
-            'quantities' => ['required', 'array', 'min:1'],
-            'quantities.*' => ['required', 'integer', 'min:0'],
             'reason' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $service->requestEarlyReturn(
             $custody,
             $request->user(),
-            $data['quantities'],
             $data['proposed_return_at'],
             $data['reason'] ?? null
         );
 
         return back()->with(
             'status',
-            'Early Return coordination sent to SPMU. Inventory will change only after physical Return & Inspection.'
+            'Early Return coordination sent to SPMU. Actual quantities and conditions will be recorded only during physical Return & Inspection.'
         );
     }
 

@@ -106,18 +106,16 @@ class ApprovalController extends Controller
         if (strtoupper((string) $request->input('decision')) === 'APPROVED') {
             $rules = array_merge($rules, [
                 'details_complete' => ['required', 'accepted'],
-                'signatures_present' => ['required', 'accepted'],
-                'document_readable' => ['required', 'accepted'],
+                'documents_complete' => ['required', 'accepted'],
                 'availability_verified' => ['required', 'accepted'],
                 'confirm_e_signature' => ['required', 'accepted'],
             ]);
         }
 
         $data = $request->validate($rules, [
-            'details_complete.accepted' => 'Confirm that the request details match the signed Borrowing Request Letter.',
-            'signatures_present.accepted' => 'Confirm that the required handwritten signatures are present.',
-            'document_readable.accepted' => 'Confirm that the uploaded scan is clear and readable.',
-            'availability_verified.accepted' => 'Confirm that the requested quantities and current availability were checked.',
+            'details_complete.accepted' => 'Confirm that the request details match the signed letter.',
+            'documents_complete.accepted' => 'Confirm that the required signatures and documents are complete.',
+            'availability_verified.accepted' => 'Confirm that inventory availability is verified.',
             'confirm_e_signature.accepted' => 'Confirm that you want to apply your registered E-signature to this approval.',
             'remarks.required' => 'Remarks are required when returning or rejecting the request.',
         ]);

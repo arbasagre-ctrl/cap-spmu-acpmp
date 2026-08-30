@@ -597,6 +597,10 @@
 
             if (!submitter) return;
 
+            // Some forms should keep their original action label while the
+            // duplicate-submission lock is still active (e.g. Sign in/Log out).
+            if (form.dataset.preserveSubmitLabel === 'true') return;
+
             if (submitter.tagName === 'BUTTON') {
                 if (!submitter.dataset.originalSubmitHtml) {
                     submitter.dataset.originalSubmitHtml = submitter.innerHTML;

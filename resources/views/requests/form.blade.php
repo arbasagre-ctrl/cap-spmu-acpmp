@@ -44,60 +44,21 @@
         'RESEARCH_INNOVATION_COLLABORATION' => 'Research, Innovation and Collaboration',
     ];
 
-    $officeUnitsByDivision = [
-        'ADMINISTRATION' => [
-            'Office of the President',
-            'Office of the Vice President for Administration and Finance',
-            'Office of the Vice President for Academic Affairs',
-            'Office of the Vice President for Research, Innovation and Collaboration',
-            'Internal Audit Unit',
-            'Legal Affairs Office',
-            'Institutional Planning and Development Unit',
-            'Board Secretary',
-            'Human Resource Management Office',
-            'Budget Office',
-            'Accounting Office',
-            "Cashier's Office",
-            'Procurement Office',
-            'Supply and Property Management Unit',
-            'General Services',
-            'Physical Planning and Development Office',
-            'Records Management / College Archives',
-            'Safety and Security Services',
-            "Registrar's Office",
-            'Library',
-            'Guidance and Counseling Office',
-            'Student Affairs and Services',
-            'Medical and Dental Services',
-            'Center for International Relations and Linkages',
-        ],
-        'ACADEMIC' => [
-            'Graduate School',
-            'College of Arts and Sciences',
-            'College of Computer Studies',
-            'College of Engineering and Architecture',
-            'College of Health Sciences',
-            'College of Technological and Developmental Education',
-            'College of Tourism, Hospitality and Business Management',
-        ],
-        'RESEARCH_INNOVATION_COLLABORATION' => [
-            'Research and Development Services Office (RDSO)',
-            'Extension and Community Services Office (ECSO)',
-            'Production and Auxiliary Services (PAxS)',
-            'Technology Transfer Office (TechTro)',
-            'AI Research Center for Community Development (AIRCoDe)',
-            'Center for Future Energy and Sustainable Technology (CFEST)',
-            'Center for Future Thinking and Strategic Foresight (CFTSF)',
-            'Center for Research in Integrative, Social and Special Sciences and Policy (CRIS3P)',
-            'Center for Rinconada Culture and Arts (CRCA)',
-            'Rinconada Center for Environmental Sustainability (RiCES)',
-            'Research Ethics Board',
-        ],
-    ];
+    /*
+     * Canonical Office/Academic/Research Unit list comes from the
+     * controller (BorrowingRequestController::officeUnitsByDivision()) so
+     * this form can never drift from what the backend actually accepts.
+     */
+    $officeUnitsByDivision = $officeUnitsByDivision ?? [];
 
-
-    $selectedDivision = old('division_code', $version->division_code ?? '');
-    $selectedOfficeUnit = old('office_unit', $version->office_unit ?? '');
+    $selectedDivision = old(
+        'division_code',
+        $version->division_code ?? ($prefillDivisionCode ?? '')
+    );
+    $selectedOfficeUnit = old(
+        'office_unit',
+        $version->office_unit ?? ($prefillOfficeUnit ?? '')
+    );
 
     $oldLocations = collect(old('locations', []));
     $requestUsesOffCampus = $oldLocations->contains('OFF_CAMPUS')

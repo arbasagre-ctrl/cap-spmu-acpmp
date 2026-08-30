@@ -30,8 +30,15 @@ class ProfileController extends Controller
     {
         $user = $request->user()->load('organizationalUnit', 'currentSignature.file');
 
+        $profileDesignation = trim((string) $user->designation);
+        if ($user->access_classification === AccessClassification::BorrowerOnly
+            && strcasecmp($profileDesignation, AccessClassification::BorrowerOnly->label()) === 0) {
+            $profileDesignation = '';
+        }
+
         return view('profile.show', [
             'user' => $user,
+            'profileDesignation' => $profileDesignation,
             'signatureMaxUploadMb' => max(1, (int) SystemSetting::value('max_upload_mb', 5)),
             'borrowerUnits' => $user->access_classification === AccessClassification::BorrowerOnly
                 ? OrganizationalUnit::query()
@@ -74,6 +81,11 @@ class ProfileController extends Controller
         }
 
         $data = $request->validate($rules);
+
+        if ($isBorrower
+            && strcasecmp(trim((string) ($data['designation'] ?? '')), AccessClassification::BorrowerOnly->label()) === 0) {
+            $data['designation'] = null;
+        }
 
         $updatedFields = ['full_name', 'designation', 'mobile_no', 'notification_preferences'];
         $updates = [

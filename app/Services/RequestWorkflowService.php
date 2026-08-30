@@ -851,6 +851,12 @@ class RequestWorkflowService
                     'gatePass',
                 ]);
 
+                /*
+                 * The borrower's uploaded, fully signed scanned Borrowing
+                 * Request Letter remains the official Request Letter. The
+                 * system does not generate a duplicate or "approved" letter;
+                 * only the operational release documents are generated here.
+                 */
                 $this->documents->borrowerSlip($custody);
                 $generatedOperationalDocuments = ['BORROWER_SLIP'];
 
@@ -861,22 +867,30 @@ class RequestWorkflowService
                 );
 
                 if ($offCampusLine) {
-                    $gatePassDocument = $this->documents->conditionalForm(
-                        $custody,
-                        'GATE_PASS'
-                    );
-
-                    $generatedOperationalDocuments[] = 'GATE_PASS';
-
+                    /*
+                     * Create the Gate Pass transaction after Head approval, but
+                     * do NOT generate a printable Gate Pass yet. The borrower's
+                     * request page shows only "Pending SPMU Verification".
+                     *
+                     * At the actual Physical Release, the Action Officer's
+                     * registered E-signature is captured and the system creates
+                     * the single FINAL Gate Pass carrying borrower + Action
+                     * Officer + Head E-signatures. SPMU prints that final copy
+                     * and gives it to the borrower for the guard.
+                     */
                     GatePass::query()->updateOrCreate(
                         ['custody_transaction_id' => $custody->id],
                         [
                             'custody_line_id' => $offCampusLine->id,
-                            'pass_document_id' => $gatePassDocument->id,
+                            'pass_document_id' => null,
                             'bearer_name' => $request->borrower->full_name,
                             'destination' => $version->location,
                             'purpose' => $version->purpose_event,
                             'status' => 'PENDING',
+                            'approved_by_user_id' => $approver->id,
+                            'approver_signature_snapshot_id' => $signatureSnapshot->id,
+                            'temporary_delegation_id' => $temporaryDelegationId,
+                            'approved_at' => $signatureSnapshot->captured_at,
                         ]
                     );
                 }
@@ -925,7 +939,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was verified and approved by the SPMU Head. Your Borrower Slip and any applicable Laundry Form or Gate Pass are now available in the request for printing.",
+                    "Request {$request->request_no} was verified and approved by the SPMU Head. Your Borrower Slip and any applicable Laundry Form are now available. If off-campus use applies, the Gate Pass will be finalized and printed by SPMU during Physical Release.",
                     $request
                 );
 

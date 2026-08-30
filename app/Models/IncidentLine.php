@@ -10,6 +10,6 @@ class IncidentLine extends Model
 
     protected function casts(): array
     {
-        return ['quantity' => 'decimal:3', 'assessed_value' => 'decimal:2'];
+        return ['quantity' => 'integer', 'assessed_value' => 'decimal:2'];
     }
 }

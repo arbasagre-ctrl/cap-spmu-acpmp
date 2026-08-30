@@ -28,7 +28,7 @@ class DemoUserSeeder extends Seeder
                 'organizational_unit_id' => $unit->id,
                 'employee_no' => $employeeNo,
                 'full_name' => $name,
-                'designation' => $classification->label(),
+                'designation' => $classification === AccessClassification::BorrowerOnly ? null : $classification->label(),
                 'employment_type' => $employment,
                 'mobile_no' => '09170000000',
                 'notification_preferences' => ['system' => true, 'email' => true, 'sms' => true],

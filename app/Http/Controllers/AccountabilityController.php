@@ -9,6 +9,7 @@ use App\Models\BorrowerViolation;
 use App\Models\BorrowerRestriction;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
+use App\Models\LaundryJob;
 use App\Models\LaundryRecord;
 use App\Models\OverdueCase;
 use App\Models\Payment;
@@ -16,6 +17,7 @@ use App\Models\Penalty;
 use App\Models\Sanction;
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\CustodyService;
 use App\Services\DocumentService;
 use App\Services\NotificationService;
 use App\Services\ProtectedFileService;
@@ -690,39 +692,10 @@ class AccountabilityController extends Controller
 
     private function attemptCloseCustody(int $custodyId): void
     {
-        $custody = CustodyTransaction::query()->with('lines')->find($custodyId);
+        $custody = CustodyTransaction::query()->find($custodyId);
 
-        if (
-            ! $custody
-            || ! $custody->lines->every(
-                fn ($line) => (float) $line->returned_quantity >= (float) $line->actual_released_quantity
-            )
-        ) {
-            return;
-        }
-
-        $openIncident = Incident::query()
-            ->where('custody_transaction_id', $custodyId)
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->exists();
-
-        $openLaundry = LaundryRecord::query()
-            ->whereHas('returnLine.custodyLine', fn ($query) => $query->where('custody_transaction_id', $custodyId))
-            ->whereNotIn('status', ['VERIFIED', 'VOID_CORRECTION'])
-            ->exists();
-
-        $openOverdue = OverdueCase::query()
-            ->where('custody_transaction_id', $custodyId)
-            ->where('status', '!=', 'RESOLVED')
-            ->exists();
-
-        $openGatePass = $custody->gatePass()->whereNotIn('status', ['VERIFIED', 'VOID'])->exists();
-
-        if (! $openIncident && ! $openLaundry && ! $openOverdue && ! $openGatePass) {
-            $custody->update([
-                'status' => 'CLOSED',
-                'closed_at' => now(),
-            ]);
+        if ($custody) {
+            app(CustodyService::class)->reconcileTransactionStatus($custody);
         }
     }
 

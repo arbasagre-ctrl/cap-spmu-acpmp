@@ -7,7 +7,7 @@
     <div>
         <p class="eyebrow">SPMU Action Officer</p>
         <h1>Gate Pass</h1>
-        <p>Off-campus borrowings appear here. Open a record to review the generated Gate Pass and upload the fully accomplished scan after off-campus release.</p>
+        <p>Off-campus borrowings appear here. A Gate Pass stays pending after Head approval, is finalized by the Action Officer at Physical Release, then is printed by SPMU for the borrower and later archived after guard processing.</p>
     </div>
 </section>
 

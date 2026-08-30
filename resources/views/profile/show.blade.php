@@ -96,8 +96,8 @@
                         @error('employee_no')<small class="field-error">{{ $message }}</small>@enderror
                     </label>
 
-                    <label>Designation
-                        <input name="designation" value="{{ old('designation', $user->designation) }}" autocomplete="organization-title">
+                    <label>Designation / Position
+                        <input name="designation" value="{{ old('designation', $profileDesignation) }}" placeholder="e.g. Instructor I, Administrative Officer IV" autocomplete="organization-title">
                         @error('designation')<small class="field-error">{{ $message }}</small>@enderror
                     </label>
                 </div>

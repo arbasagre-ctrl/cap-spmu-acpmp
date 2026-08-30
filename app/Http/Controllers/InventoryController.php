@@ -732,7 +732,7 @@ class InventoryController extends Controller
             ],
             'total_quantity' => [
                 'required',
-                'numeric',
+                'integer',
                 'min:0',
             ],
             'condition_code' => [

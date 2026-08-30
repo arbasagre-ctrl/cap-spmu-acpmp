@@ -11,7 +11,7 @@ class EarlyReturnRequestLine extends Model
 
     protected function casts(): array
     {
-        return ['proposed_quantity' => 'decimal:3'];
+        return ['proposed_quantity' => 'integer'];
     }
 
     public function custodyLine(): BelongsTo

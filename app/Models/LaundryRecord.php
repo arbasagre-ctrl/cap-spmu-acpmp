@@ -34,9 +34,9 @@ class LaundryRecord extends Model
             'uploaded_at' => 'datetime',
             'worker_received_at' => 'datetime',
             'worker_completed_at' => 'datetime',
-            'quantity_received' => 'decimal:3',
-            'cleaned_quantity' => 'decimal:3',
-            'damaged_quantity' => 'decimal:3',
+            'quantity_received' => 'integer',
+            'cleaned_quantity' => 'integer',
+            'damaged_quantity' => 'integer',
             'verified_at' => 'datetime',
         ];
     }

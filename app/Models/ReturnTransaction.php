@@ -12,6 +12,7 @@ class ReturnTransaction extends Model
         'return_no',
         'custody_transaction_id',
         'received_by_user_id',
+        'inspection_signature_snapshot_id',
         'confirmed_by_user_id',
         'return_type',
         'received_at',
@@ -42,6 +43,15 @@ class ReturnTransaction extends Model
     public function receivedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'received_by_user_id');
+    }
+
+    /**
+     * Immutable E-signature snapshot of the SPMU Action Officer who recorded
+     * this physical return inspection.
+     */
+    public function inspectionSignature(): BelongsTo
+    {
+        return $this->belongsTo(SignatureSnapshot::class, 'inspection_signature_snapshot_id');
     }
 
     public function confirmedBy(): BelongsTo

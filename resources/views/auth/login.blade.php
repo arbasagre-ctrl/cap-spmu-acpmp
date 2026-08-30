@@ -68,7 +68,7 @@
         </div>
 
 
-        <form method="POST" action="{{ route('login') }}" class="login-form">
+        <form method="POST" action="{{ route('login') }}" class="login-form" data-preserve-submit-label="true">
             @csrf
 
             {{-- EMAIL --}}

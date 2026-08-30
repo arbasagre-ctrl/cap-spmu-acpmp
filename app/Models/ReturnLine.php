@@ -22,7 +22,7 @@ class ReturnLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity_received' => 'decimal:3',
+            'quantity_received' => 'integer',
         ];
     }
 

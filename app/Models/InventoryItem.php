@@ -19,7 +19,7 @@ class InventoryItem extends Model
     protected function casts(): array
     {
         return [
-            'total_quantity' => 'decimal:3',
+            'total_quantity' => 'integer',
             'borrowable' => 'boolean',
             'off_campus_allowed' => 'boolean',
             'laundry_required' => 'boolean',

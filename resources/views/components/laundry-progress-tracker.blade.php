@@ -3,18 +3,23 @@
     $status = (string) $job->status;
     $current = match($status) {
         'FOR_LAUNDRY' => 1,
-        'IN_PROCESS' => 2,
-        'READY_FOR_SPMU_RETURN' => 3,
-        'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED' => 4,
-        'LAUNDRY_COMPLETED' => 5,
+        'TURNED_OVER_TO_LAUNDRY' => 2,
+        'LAUNDRY_COMPLETED' => 3,
         default => 1,
     };
     $steps = [
-        1 => ['Borrower Turnover', 'Borrower signs the physical turnover portion and brings used linen + the printed Laundry Form to the SPMU Action Officer.'],
-        2 => ['Laundry Processing', 'The SPMU Action Officer records actual receipt, processing results, quantities, and condition.'],
-        3 => ['Final SPMU Acceptance', 'SPMU performs final inspection and obtains the required authorized signature on the same physical form.'],
-        4 => ['Final Form Upload', 'The SPMU Action Officer scans and archives the fully signed form.'],
-        5 => ['Completed', 'Final signed form is archived and the Laundry transaction is settled.'],
+        1 => [
+            'Return Inspection & Laundry Turnover',
+            'SPMU records the borrower return condition. The same printed Laundry Form is then handed to Laundry Personnel for the handwritten Received by signature.',
+        ],
+        2 => [
+            'Borrower Cleared / Internal Laundry',
+            'Laundry Personnel have physically received the linen. The borrower no longer waits for washing; processing continues inside the Laundry Area.',
+        ],
+        3 => [
+            'Laundry Completed / Available',
+            'Laundry processing is complete and clean/serviceable linen is Available for future borrowing in the Laundry Area.',
+        ],
     ];
 @endphp
 

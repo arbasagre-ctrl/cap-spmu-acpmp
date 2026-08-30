@@ -23,6 +23,97 @@ use Illuminate\View\View;
 
 class BorrowingRequestController extends Controller
 {
+    /**
+     * Canonical Office / Academic Unit / Research Unit list per division.
+     *
+     * Single source of truth reused by both server-side validation and the
+     * Create/Edit Request form, so the form's selectable options can never
+     * drift from what the backend accepts. Academic-unit spelling matches
+     * OrganizationalUnitSeeder / ProfileController::BORROWER_DEPARTMENT_NAMES.
+     *
+     * @return array<string, list<string>>
+     */
+    private static function officeUnitsByDivision(): array
+    {
+        return [
+            'ADMINISTRATION' => [
+                'Office of the President',
+                'Office of the Vice President for Administration and Finance',
+                'Office of the Vice President for Academic Affairs',
+                'Office of the Vice President for Research, Innovation and Collaboration',
+                'Internal Audit Unit',
+                'Legal Affairs Office',
+                'Institutional Planning and Development Unit',
+                'Board Secretary',
+                'Human Resource Management Office',
+                'Budget Office',
+                'Accounting Office',
+                "Cashier's Office",
+                'Procurement Office',
+                'Supply and Property Management Unit',
+                'General Services',
+                'Physical Planning and Development Office',
+                'Records Management / College Archives',
+                'Safety and Security Services',
+                "Registrar's Office",
+                'Library',
+                'Guidance and Counseling Office',
+                'Student Affairs and Services',
+                'Medical and Dental Services',
+                'Center for International Relations and Linkages',
+            ],
+            'ACADEMIC' => [
+                'Graduate School',
+                'College of Arts and Sciences',
+                'College of Computer Studies',
+                'College of Engineering and Architecture',
+                'College of Health and Sciences',
+                'College of Technological Developmental Education',
+                'College of Tourism, Hospitality and Business Management',
+            ],
+            'RESEARCH_INNOVATION_COLLABORATION' => [
+                'Research and Development Services Office (RDSO)',
+                'Extension and Community Services Office (ECSO)',
+                'Production and Auxiliary Services (PAxS)',
+                'Technology Transfer Office (TechTro)',
+                'AI Research Center for Community Development (AIRCoDe)',
+                'Center for Future Energy and Sustainable Technology (CFEST)',
+                'Center for Future Thinking and Strategic Foresight (CFTSF)',
+                'Center for Research in Integrative, Social and Special Sciences and Policy (CRIS3P)',
+                'Center for Rinconada Culture and Arts (CRCA)',
+                'Rinconada Center for Environmental Sustainability (RiCES)',
+                'Research Ethics Board',
+            ],
+        ];
+    }
+
+    /**
+     * Reverse-lookup: given a borrower's home organizational-unit name,
+     * find which division key (if any) contains a matching office/unit
+     * entry, so a brand-new request can be prefilled instead of forcing
+     * the borrower to retype what is already on their profile.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private static function divisionAndOfficeUnitFor(?string $unitName): array
+    {
+        $unitName = trim((string) $unitName);
+
+        if ($unitName === '') {
+            return [null, null];
+        }
+
+        foreach (self::officeUnitsByDivision() as $division => $units) {
+            foreach ($units as $unit) {
+                if (strcasecmp($unit, $unitName) === 0) {
+                    return [$division, $unit];
+                }
+            }
+        }
+
+        return [null, null];
+    }
+
     public function index(Request $request): View
     {
         $query = BorrowingRequest::query()
@@ -56,13 +147,29 @@ class BorrowingRequestController extends Controller
         );
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
+        /*
+         * Prefill Division / Office from the borrower's own profile so they
+         * are not asked to retype information already on file. This is only
+         * a default: the field stays editable and is still snapshotted onto
+         * the request version, since a specific borrowing can legitimately
+         * be attributed to a different unit than the borrower's home office.
+         */
+        $borrower = $request->user()->loadMissing('organizationalUnit');
+        [$prefillDivisionCode, $prefillOfficeUnit] = self::divisionAndOfficeUnitFor(
+            $borrower->organizationalUnit?->unit_name
+        );
+
         return view(
             'requests.form',
             [
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
+
+                'officeUnitsByDivision' => self::officeUnitsByDivision(),
+                'prefillDivisionCode' => $prefillDivisionCode,
+                'prefillOfficeUnit' => $prefillOfficeUnit,
 
                 'items' => InventoryItem::with(['unit', 'category'])
                     ->where('active', true)
@@ -95,11 +202,31 @@ class BorrowingRequestController extends Controller
             ]);
         }
 
+        $isSubmission = $request->input('intent') === 'submit';
+
+        /*
+         * DUPLICATE-REQUEST PROTECTION
+         * ----------------------------
+         * Creation, supporting-document upload, and submission are ONE atomic
+         * unit. Submission can still fail validation for reasons that are only
+         * known at that point (missing scanned letter, active restriction,
+         * outstanding custody, closed pickup date, item no longer serviceable).
+         *
+         * Previously the request row was already committed when that happened,
+         * so the borrower was returned to the form with an orphaned DRAFT and
+         * every corrected retry created another borrowing request. Rolling the
+         * whole unit back means a failed submission leaves no request at all,
+         * and the borrower's retry creates exactly one.
+         */
         $borrowingRequest = DB::transaction(
             function () use (
                 $data,
                 $user,
-                $inventory
+                $inventory,
+                $request,
+                $files,
+                $workflow,
+                $isSubmission
             ): BorrowingRequest {
                 $borrowingRequest =
                     BorrowingRequest::query()->create([
@@ -139,32 +266,32 @@ class BorrowingRequestController extends Controller
                     $inventory
                 );
 
+                $borrowingRequest->load('currentVersion');
+
+                $this->syncSupportingDocuments(
+                    $request,
+                    $borrowingRequest,
+                    $files,
+                    (bool) (
+                        $data['represents_student_activity']
+                        ?? false
+                    )
+                );
+
+                if ($isSubmission) {
+                    $workflow->submit(
+                        $borrowingRequest->fresh(),
+                        $request->user(),
+                        $request->boolean('confirm_e_signature')
+                    );
+                }
+
                 return $borrowingRequest;
             },
             3
         );
 
-        $borrowingRequest->load(
-            'currentVersion'
-        );
-
-        $this->syncSupportingDocuments(
-            $request,
-            $borrowingRequest,
-            $files,
-            (bool) (
-                $data['represents_student_activity']
-                ?? false
-            )
-        );
-
-        if ($request->input('intent') === 'submit') {
-            $workflow->submit(
-                $borrowingRequest->fresh(),
-                $user,
-                $request->boolean('confirm_e_signature')
-            );
-
+        if ($isSubmission) {
             return redirect()
                 ->route('requests.show', $borrowingRequest)
                 ->with(
@@ -269,6 +396,10 @@ class BorrowingRequestController extends Controller
 
                 'version' =>
                     $borrowingRequest->currentVersion,
+
+                'officeUnitsByDivision' => self::officeUnitsByDivision(),
+                'prefillDivisionCode' => null,
+                'prefillOfficeUnit' => null,
 
                 'items' =>
                     InventoryItem::with(['unit', 'category'])
@@ -805,60 +936,9 @@ class BorrowingRequestController extends Controller
         }
 
 
-        $allowedOfficeUnits = [
-            'ADMINISTRATION' => [
-                'Office of the President',
-                'Office of the Vice President for Administration and Finance',
-                'Office of the Vice President for Academic Affairs',
-                'Office of the Vice President for Research, Innovation and Collaboration',
-                'Internal Audit Unit',
-                'Legal Affairs Office',
-                'Institutional Planning and Development Unit',
-                'Board Secretary',
-                'Human Resource Management Office',
-                'Budget Office',
-                'Accounting Office',
-                "Cashier's Office",
-                'Procurement Office',
-                'Supply and Property Management Unit',
-                'General Services',
-                'Physical Planning and Development Office',
-                'Records Management / College Archives',
-                'Safety and Security Services',
-                "Registrar's Office",
-                'Library',
-                'Guidance and Counseling Office',
-                'Student Affairs and Services',
-                'Medical and Dental Services',
-                'Center for International Relations and Linkages',
-            ],
-            'ACADEMIC' => [
-                'Graduate School',
-                'College of Arts and Sciences',
-                'College of Computer Studies',
-                'College of Engineering and Architecture',
-                'College of Health Sciences',
-                'College of Technological and Developmental Education',
-                'College of Tourism, Hospitality and Business Management',
-            ],
-            'RESEARCH_INNOVATION_COLLABORATION' => [
-                'Research and Development Services Office (RDSO)',
-                'Extension and Community Services Office (ECSO)',
-                'Production and Auxiliary Services (PAxS)',
-                'Technology Transfer Office (TechTro)',
-                'AI Research Center for Community Development (AIRCoDe)',
-                'Center for Future Energy and Sustainable Technology (CFEST)',
-                'Center for Future Thinking and Strategic Foresight (CFTSF)',
-                'Center for Research in Integrative, Social and Special Sciences and Policy (CRIS3P)',
-                'Center for Rinconada Culture and Arts (CRCA)',
-                'Rinconada Center for Environmental Sustainability (RiCES)',
-                'Research Ethics Board',
-            ],
-        ];
-
         if (! in_array(
             $data['office_unit'],
-            $allowedOfficeUnits[$data['division_code']] ?? [],
+            self::officeUnitsByDivision()[$data['division_code']] ?? [],
             true
         )) {
             throw ValidationException::withMessages([

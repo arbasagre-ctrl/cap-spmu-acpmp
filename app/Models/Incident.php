@@ -30,6 +30,15 @@ class Incident extends Model
         return $this->belongsTo(StoredFile::class, 'supporting_evidence_file_id');
     }
 
+    /**
+     * SPMU Action Officer who inspected the property and reported this case.
+     * Printed on the RSLDDP as the named reporting signatory.
+     */
+    public function reportedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reported_by_user_id');
+    }
+
     public function lines(): HasMany
     {
         return $this->hasMany(IncidentLine::class);

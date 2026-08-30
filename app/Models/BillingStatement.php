@@ -21,6 +21,15 @@ class BillingStatement extends Model
         return $this->belongsTo(User::class, 'borrower_user_id');
     }
 
+    /**
+     * SPMU officer accountable for issuing this Billing Statement. Printed on
+     * the statement as the named signatory for the handwritten signature.
+     */
+    public function responsibleSpmuUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_spmu_user_id');
+    }
+
     public function lines(): HasMany
     {
         return $this->hasMany(BillingLine::class);

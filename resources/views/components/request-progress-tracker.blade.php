@@ -209,7 +209,7 @@
      */
     if ($isClosed) {
         $returnDescription = $laundry
-            ? 'SPMU completed final return reconciliation after the required linen/laundry process was settled.'
+            ? 'SPMU completed the borrower return reconciliation after the linen was physically turned over to Laundry. Internal washing may continue separately.'
             : 'SPMU completed the return inspection and final reconciliation.';
     }
 
@@ -225,22 +225,16 @@
             $returnDescription = match ($laundryStatus) {
 
                 'FOR_LAUNDRY'
-                    => 'Waiting for the borrower to turn over the used linen and borrower-signed physical Laundry Form to the SPMU Action Officer.',
+                    => 'Return the linen with the same printed Laundry Form. SPMU records return condition, then Laundry Personnel wet-signs Received by.',
 
-                'IN_PROCESS'
-                    => 'Laundry processing is recorded by the SPMU Action Officer. No borrower system input is required.',
-
-                'READY_FOR_SPMU_RETURN'
-                    => 'Laundry processing is complete. SPMU will continue with final linen and physical-form acceptance.',
-
-                'AWAITING_FINAL_FORM_UPLOAD'
-                    => 'SPMU final physical acceptance is complete. Waiting for the SPMU Action Officer to archive the fully signed Laundry Form.',
-
-                'FORM_REPLACEMENT_REQUIRED'
-                    => 'A clear fully signed Laundry Form must be uploaded by the SPMU Action Officer.',
+                'TURNED_OVER_TO_LAUNDRY'
+                    => 'Laundry Personnel have physically received the linen. The borrower no longer waits for the washing cycle; processing continues internally in the Laundry Area.',
 
                 'LAUNDRY_COMPLETED'
-                    => 'The linen/laundry process is complete and the final signed Laundry Form is archived.',
+                    => 'Internal laundry processing is complete and clean linen has been restored to stock.',
+
+                'IN_PROCESS', 'READY_FOR_SPMU_RETURN', 'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'
+                    => 'This Laundry record is being aligned to the simplified turnover workflow.',
 
                 default
                     => 'The required linen/laundry return process is in progress.',
@@ -576,20 +570,12 @@
             => 'Awaiting Laundry Turnover',
 
         $isReleased
-            && $laundryStatus === 'IN_PROCESS'
-            => 'In Laundry Process',
+            && $laundryStatus === 'TURNED_OVER_TO_LAUNDRY'
+            => 'Linen Turned Over to Laundry',
 
         $isReleased
-            && $laundryStatus === 'READY_FOR_SPMU_RETURN'
-            => 'Laundry Returning to SPMU',
-
-        $isReleased
-            && $laundryStatus === 'AWAITING_FINAL_FORM_UPLOAD'
-            => 'Awaiting Final Laundry Form',
-
-        $isReleased
-            && $laundryStatus === 'FORM_REPLACEMENT_REQUIRED'
-            => 'Final Laundry Form Required',
+            && in_array($laundryStatus, ['IN_PROCESS', 'READY_FOR_SPMU_RETURN', 'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'], true)
+            => 'Laundry Workflow Updating',
 
         $isReleased
             => 'Return / Custody In Progress',

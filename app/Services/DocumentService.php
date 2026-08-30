@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Enums\UserRole;
 use App\Models\BillingStatement;
@@ -11,11 +12,14 @@ use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
 use App\Models\RequestVersion;
+use App\Models\SignatureSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class DocumentService
 {
@@ -72,8 +76,10 @@ class DocumentService
 
         $generatedAt = ($generatedAt ?? now())->setTimezone('Asia/Manila');
         $borrowerDesignation = trim((string) $request->borrower->designation);
-        if ($borrowerDesignation === '' || $borrowerDesignation === $request->borrower->access_classification?->label()) {
-            $borrowerDesignation = UserRole::Borrower->label();
+        if ($borrowerDesignation === ''
+            || strcasecmp($borrowerDesignation, AccessClassification::BorrowerOnly->label()) === 0
+            || $borrowerDesignation === $request->borrower->access_classification?->label()) {
+            $borrowerDesignation = '';
         }
 
         return view('documents.borrowing-request-letter', [
@@ -128,8 +134,11 @@ class DocumentService
     {
         $custody->loadMissing([
             'request.borrower',
-            'request.currentVersion',
+            'request.currentVersion.borrowerSignature.file',
             'lines.requestItem.inventoryItem',
+            'returns.receivedBy',
+            'returns.inspectionSignature.file',
+            'returns.lines.custodyLine.requestItem',
         ]);
 
         /*
@@ -169,7 +178,95 @@ class DocumentService
             : '<div style="font-weight:bold;font-size:8pt;">CSPC</div>';
 
         $borrowerName = e((string) $borrower->full_name);
+        $borrowerDesignationValue = trim((string) $borrower->designation);
+        if ($borrowerDesignationValue === ''
+            || strcasecmp($borrowerDesignationValue, AccessClassification::BorrowerOnly->label()) === 0
+            || $borrowerDesignationValue === $borrower->access_classification?->label()) {
+            $borrowerDesignationValue = '';
+        }
+        $borrowerDesignation = e($borrowerDesignationValue);
         $purpose = e((string) ($version?->purpose_event ?: ''));
+
+        $requestNo = e((string) ($custody->request->request_no ?? ''));
+        $custodyNo = e((string) $custody->custody_no);
+
+        /*
+         * Borrower's/accountable person's E-signature for the "Very truly
+         * yours / Signature over Printed Name" block. This is the borrower's
+         * request certification E-signature captured at submission — it is
+         * NOT "BORROWER'S SIGNATURE UPON RECEIPT OF ITEMS" in the item table
+         * below, which stays blank for the actual person who physically
+         * receives the items (who may be a different, authorized person).
+         */
+        $borrowerSlipSignature = $this->signatureImage(
+            $version?->borrowerSignature,
+            140,
+            22
+        );
+
+        /*
+         * "APPROVED:" is the SPMU Head's approval E-signature for this exact
+         * request version. Physical Release issuer identity is kept in the
+         * system only (released_by_user_id / released_at / audit trail) and is
+         * intentionally not printed as an ISSUED BY block on the Borrower's Slip.
+         *
+         * This does not replace the borrower's handwritten receipt signature in
+         * the item table or the handwritten undertaking above; those stay blank.
+         */
+        $approval = $this->approvalSignatory($version);
+        $approverName = e((string) $approval['name']);
+        $approverDesignation = e((string) $approval['designation']);
+        $approverSignature = $this->signatureImage($approval['snapshot'], 150, 38);
+
+        /*
+         * Physical Release issuer information is system-only on the Borrower's
+         * Slip. The Action Officer remains fully traceable through the custody
+         * release user/timestamp, inventory movement, and audit trail. Gate Pass
+         * keeps its separate Action Officer E-signature when applicable.
+         */
+
+        /*
+         * A physical return is established by the persisted ReturnTransaction
+         * record, not by any signature — Return Inspection does not capture
+         * an Action Officer E-signature (see receiveReturn()). Before any
+         * return is recorded, keep the original blank remark lines for the
+         * physical form. Remarks show only adverse findings and stay
+         * completely blank when everything returned is Fine/Good; EARLY/
+         * NORMAL/OVERDUE is a system/audit classification only and is never
+         * printed here.
+         */
+        $returnInspection = $this->returnInspectionData($custody);
+        $returnRemarksBlock =
+            '<div style="width:88%;height:16pt;border-bottom:1px solid #111;"></div>'
+            .'<div style="width:88%;height:16pt;border-bottom:1px solid #111;"></div>'
+            .'<div style="width:88%;height:16pt;border-bottom:1px solid #111;"></div>';
+
+        if ($returnInspection['exists']) {
+            /*
+             * The printed remarks area shows ONLY the structured adverse
+             * findings derived from recorded condition quantities (e.g.
+             * "Microphones — 1 damaged"). The generic free-text
+             * ReturnTransaction.remarks field is never rendered here, even
+             * when an adverse finding exists — it remains persisted for
+             * internal Action Officer/audit use only.
+             */
+            $findingRows = collect($returnInspection['findings'])
+                ->map(
+                    fn (string $finding): string =>
+                        '<div style="margin:0 0 2pt;">'.e($finding).'</div>'
+                )
+                ->implode('');
+
+            $dateReturned = $returnInspection['signed_at']
+                ? e($returnInspection['signed_at']->format('F j, Y'))
+                : '';
+
+            $returnRemarksBlock =
+                '<div style="width:88%;min-height:14pt;border-bottom:1px solid #111;padding:1pt 0 4pt;font-size:7.3pt;line-height:1.22;">'
+                .$findingRows
+                .'</div>'
+                .'<div style="width:88%;margin-top:6pt;font-size:8pt;"><strong>Date Returned:</strong> '.$dateReturned.'</div>';
+        }
 
         $formDate = $custody->scheduled_release_at
             ? $custody->scheduled_release_at->format('m-d-Y')
@@ -320,13 +417,28 @@ class DocumentService
 
     <div style="
         width:93%;
-        margin:0 auto 29pt;
+        margin:0 auto 4pt;
         text-align:center;
         font-size:11pt;
         line-height:1;
         font-weight:bold;
     ">
         BORROWER'S SLIP
+    </div>
+
+    <!--
+        Reference number the SPMU Action Officer uses to verify that this
+        presented slip matches the approved request in the system.
+    -->
+    <div style="
+        width:93%;
+        margin:0 auto 25pt;
+        text-align:center;
+        font-size:8pt;
+        font-weight:bold;
+        letter-spacing:0.3pt;
+    ">
+        Reference No.: {$custodyNo} &nbsp;|&nbsp; Request No.: {$requestNo}
     </div>
 
 
@@ -550,23 +662,7 @@ class DocumentService
                 </div>
 
 
-                <div style="
-                    width:88%;
-                    height:16pt;
-                    border-bottom:1px solid #111;
-                "></div>
-
-                <div style="
-                    width:88%;
-                    height:16pt;
-                    border-bottom:1px solid #111;
-                "></div>
-
-                <div style="
-                    width:88%;
-                    height:16pt;
-                    border-bottom:1px solid #111;
-                "></div>
+                {$returnRemarksBlock}
 
             </td>
 
@@ -594,9 +690,15 @@ class DocumentService
                 </div>
 
 
-                <!-- blank handwritten signature space -->
+                <!--
+                    Borrower's/accountable person's E-signature: the immutable
+                    snapshot captured when the borrower request-certified and
+                    submitted this exact version. Empty for historical records
+                    generated before this rendering existed, which keep this
+                    blank handwritten signature space.
+                -->
 
-                <div style="height:24pt;"></div>
+                <div style="height:24pt;">{$borrowerSlipSignature}</div>
 
 
                 <!-- signature line -->
@@ -633,15 +735,20 @@ class DocumentService
                 </div>
 
 
-                <!-- designation space -->
+                <!-- actual institutional designation from the borrower profile -->
 
-                <div style="height:34pt;"></div>
+                <div style="height:24pt;"></div>
 
                 <div style="
                     border-bottom:1px solid #111;
                     margin:0 14pt;
-                    height:1pt;
-                "></div>
+                    min-height:12pt;
+                    padding-bottom:1pt;
+                    font-size:8.5pt;
+                    font-weight:bold;
+                    line-height:1.05;
+                    text-transform:uppercase;
+                ">{$borrowerDesignation}</div>
 
                 <div style="
                     margin-top:1pt;
@@ -672,15 +779,21 @@ class DocumentService
         <div style="
             font-size:9.5pt;
             font-weight:bold;
-            margin-bottom:25pt;
+            margin-bottom:6pt;
         ">
             APPROVED:
         </div>
 
 
-        <!-- blank handwritten signature -->
+        <!--
+            SPMU Head approval E-signature for this exact request version.
+            Renders the immutable snapshot captured at approval time, so a later
+            replacement of the approver's registered signature cannot alter this
+            document. Empty for historical records, which keep the blank
+            handwritten signature space.
+        -->
 
-        <div style="height:19pt;"></div>
+        <div style="height:38pt;">{$approverSignature}</div>
 
 
         <div style="
@@ -693,8 +806,9 @@ class DocumentService
             margin-top:3pt;
             font-size:9.5pt;
             font-weight:bold;
+            text-transform:uppercase;
         ">
-            ANGELICA P. REGONDOLA, PhD
+            {$approverName}
         </div>
 
 
@@ -702,7 +816,7 @@ class DocumentService
             margin-top:1pt;
             font-size:8pt;
         ">
-            Administrative Officer V
+            {$approverDesignation}
         </div>
 
     </div>
@@ -768,10 +882,16 @@ HTML;
         $custody->loadMissing([
             'request.borrower',
             'request.currentVersion',
+            'request.currentVersion.borrowerSignature.file',
+            'request.currentVersion.approvalSteps.approver',
+            'request.currentVersion.approvalSteps.signatureSnapshot.file',
             'lines.requestItem.inventoryItem',
             'gatePass.preparedVerifier',
+            'gatePass.preparedVerifierSignature.file',
             'gatePass.approver',
+            'gatePass.approverSignature.file',
             'gatePass.delegation',
+            'releaseSignature.file',
             'borrower',
         ]);
 
@@ -856,6 +976,18 @@ HTML;
             ? $custody->scheduled_release_at->format('m-d-Y')
             : now()->format('m-d-Y');
 
+        /*
+         * The final Gate Pass carries three immutable system E-signatures:
+         *
+         * - Bearer / Accountable Person: the borrower signature captured when
+         *   the approved request version was E-signed and submitted.
+         * - "Verified By": the SPMU Action Officer who verifies the actual
+         *   off-campus handover at Physical Release.
+         * - "Approved By": the SPMU Head whose approval authorized the request
+         *   and therefore the off-campus movement.
+         *
+         * The guard's "Released by" line remains handwritten at the gate.
+         */
         $verifiedName = $gatePass?->preparedVerifier?->full_name
             ? e((string) $gatePass->preparedVerifier->full_name)
             : 'SPMU ACTION OFFICER';
@@ -863,6 +995,24 @@ HTML;
         $approvedName = $gatePass?->approver?->full_name
             ? e((string) $gatePass->approver->full_name)
             : 'SPMU HEAD';
+
+        $verifiedSignature = $this->signatureImage(
+            $gatePass?->preparedVerifierSignature,
+            140,
+            26
+        );
+
+        $approvedSignature = $this->signatureImage(
+            $gatePass?->approverSignature,
+            140,
+            26
+        );
+
+        $borrowerSignature = $this->signatureImage(
+            $version?->borrowerSignature,
+            150,
+            30
+        );
 
         $offCampusLines = $custody->lines->filter(
             fn ($line) =>
@@ -1120,7 +1270,10 @@ HTML;
         <div style="
             height:30px;
             border-bottom:1px solid #111;
-        "></div>
+            display:flex;
+            align-items:flex-end;
+            justify-content:center;
+        ">{$borrowerSignature}</div>
 
         <div style="
             text-align:center;
@@ -1149,14 +1302,14 @@ HTML;
                 padding-right:30px;
             ">
 
-                <div style="font-weight:bold;margin-bottom:24px;">
+                <div style="font-weight:bold;margin-bottom:4px;">
                     Verified By:
                 </div>
 
                 <div style="
-                    height:24px;
+                    height:26px;
                     border-bottom:1px solid #111;
-                "></div>
+                ">{$verifiedSignature}</div>
 
                 <div style="
                     text-align:center;
@@ -1181,14 +1334,14 @@ HTML;
                 padding-left:30px;
             ">
 
-                <div style="font-weight:bold;margin-bottom:24px;">
+                <div style="font-weight:bold;margin-bottom:4px;">
                     Approved By:
                 </div>
 
                 <div style="
-                    height:24px;
+                    height:26px;
                     border-bottom:1px solid #111;
-                "></div>
+                ">{$approvedSignature}</div>
 
                 <div style="
                     text-align:center;
@@ -1331,6 +1484,37 @@ HTML;
 
         $requestNumber = e((string) $custody->request->request_no);
         $borrowerName = e((string) $borrower->full_name);
+
+        /*
+         * SIGNATURE / CONTROL MATRIX SIGNATORIES
+         * --------------------------------------
+         * Requested by : Borrower — request certification E-signature
+         * Approved By  : SPMU Head — approval E-signature for this version
+         * Issued by    : Laundry Personnel — HANDWRITTEN/WET signature at pickup
+         * Received by  : Laundry Personnel — HANDWRITTEN/WET signature when the
+         *                same linen and the same printed Laundry Form are returned.
+         *
+         * Laundry Personnel are not system users, so the application must never
+         * place the SPMU Action Officer's E-signature in either physical Laundry
+         * signature cell.
+         */
+        $laundryApproval = $this->approvalSignatory($version);
+        $laundryApproverName = e((string) $laundryApproval['name']);
+        $laundryApproverSignature = $this->signatureImage($laundryApproval['snapshot'], 110, 20);
+
+        $laundryBorrowerSignature = $this->signatureImage(
+            $version?->borrowerSignature,
+            110,
+            20
+        );
+
+        $laundryBorrowerDesignationValue = trim((string) ($borrower?->designation ?? ''));
+        if ($laundryBorrowerDesignationValue === ''
+            || strcasecmp($laundryBorrowerDesignationValue, AccessClassification::BorrowerOnly->label()) === 0
+            || $laundryBorrowerDesignationValue === $borrower?->access_classification?->label()) {
+            $laundryBorrowerDesignationValue = '';
+        }
+        $laundryBorrowerDesignation = e($laundryBorrowerDesignationValue);
 
 
         /*
@@ -1947,12 +2131,16 @@ HTML;
             </td>
 
 
+            <!-- Requested by: borrower request certification E-signature -->
+            <td style="border:1px solid #222;padding:1pt;vertical-align:middle;">{$laundryBorrowerSignature}</td>
+
+            <!-- Approved By: SPMU Head approval E-signature -->
+            <td style="border:1px solid #222;padding:1pt;vertical-align:middle;">{$laundryApproverSignature}</td>
+
+            <!-- Issued by: handwritten/wet signature of Laundry Personnel at pickup -->
             <td style="border:1px solid #222;"></td>
 
-            <td style="border:1px solid #222;"></td>
-
-            <td style="border:1px solid #222;"></td>
-
+            <!-- Received by: handwritten/wet signature of Laundry Personnel at return -->
             <td style="border:1px solid #222;"></td>
 
 
@@ -2004,11 +2192,13 @@ HTML;
                 line-height:1;
                 letter-spacing:0;
                 white-space:nowrap;
-            ">ANGELICA P. REGONDOLA, PhD</td>
+            ">{$laundryApproverName}</td>
 
 
+            <!-- Laundry Personnel writes/prints their name physically. -->
             <td style="border:1px solid #222;"></td>
 
+            <!-- Laundry Personnel writes/prints their name physically. -->
             <td style="border:1px solid #222;"></td>
 
 
@@ -2032,10 +2222,15 @@ HTML;
             </td>
 
 
-            <!-- Requested By designation:
-                 blank because the system must not invent one. -->
-
-            <td style="border:1px solid #222;"></td>
+            <!-- Requested By designation from the borrower's actual profile. -->
+            <td style="
+                border:1px solid #222;
+                padding:1pt 2pt;
+                text-align:center;
+                vertical-align:middle;
+                font-size:6.5pt;
+                line-height:1.05;
+            ">{$laundryBorrowerDesignation}</td>
 
 
             <td style="
@@ -2199,12 +2394,21 @@ HTML;
             ? '<img class="packet-logo" src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
             : '<div class="seal">CSPC</div>';
 
+        /*
+         * Each cell renders the immutable snapshot captured for its own action
+         * and role. No snapshot is reused across cells: the borrower's cell is
+         * the request certification, and each SPMU cell is that approval step's
+         * own signature. Cells with no snapshot keep the previous placeholder.
+         */
+        $borrowerSnapshot = $version?->borrowerSignature;
+
         $signatureCells = [[
             'label' => 'Accountable Borrower',
             'name' => $borrower->full_name,
-            'role' => 'Borrower',
+            'role' => 'Borrower — Request Certification',
             'time' => $version?->submitted_at,
-            'visual' => '<div class="signature-placeholder">See uploaded wet-signed request letter</div>',
+            'visual' => $this->signatureImage($borrowerSnapshot, 150, 42)
+                ?: '<div class="signature-placeholder">See uploaded wet-signed request letter</div>',
         ]];
 
         foreach (
@@ -2214,11 +2418,29 @@ HTML;
             as $step
         ) {
             $signatureCells[] = [
-                'label' => 'SPMU Verification',
+                'label' => 'SPMU Verification and Approval',
                 'name' => $step->approver?->full_name ?: 'Authorized SPMU reviewer',
                 'role' => UserRole::Spmu->label(),
                 'time' => $step->decided_at,
-                'visual' => '<div class="signature-placeholder">System verification record</div>',
+                'visual' => $this->signatureImage($step->signatureSnapshot, 150, 42)
+                    ?: '<div class="signature-placeholder">System verification record</div>',
+            ];
+        }
+
+        /*
+         * The SPMU Action Officer's issuance signature only exists once the
+         * property has been physically released.
+         */
+        if ($custody->released_at && $custody->releaseSignature) {
+            $issuance = $this->issuanceSignatory($custody);
+
+            $signatureCells[] = [
+                'label' => 'Issued by (Physical Release)',
+                'name' => $issuance['name'] ?: 'SPMU Action Officer',
+                'role' => 'SPMU Action Officer — '.$issuance['designation'],
+                'time' => $issuance['signed_at'],
+                'visual' => $this->signatureImage($issuance['snapshot'], 150, 42)
+                    ?: '<div class="signature-placeholder">Physical issuance record</div>',
             ];
         }
 
@@ -2304,7 +2526,11 @@ HTML;
     {
         $custody->loadMissing([
             'request.borrower', 'request.currentVersion.approvalSteps.approver',
+            'request.currentVersion.borrowerSignature.file',
+            'request.currentVersion.approvalSteps.signatureSnapshot.file',
             'lines.requestItem.inventoryItem', 'gatePass.preparedVerifier', 'gatePass.approver',
+            'gatePass.preparedVerifierSignature.file', 'gatePass.approverSignature.file',
+            'releaseSignature.file',
         ]);
         if (! $custody->acknowledged_at) {
             return null;
@@ -2342,7 +2568,7 @@ HTML;
 
     public function billingStatement(BillingStatement $billing): GeneratedDocument
     {
-        $billing->loadMissing(['borrower', 'lines']);
+        $billing->loadMissing(['borrower', 'lines', 'responsibleSpmuUser']);
         $lines = [
             'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
             'BILLING STATEMENT - PENALTIES AND PROPERTY CHARGES ONLY',
@@ -2357,6 +2583,20 @@ HTML;
         $lines[] = '';
         $lines[] = 'TOTAL: PHP '.number_format((float) $billing->total_amount, 2);
         $lines[] = 'Payment is processed externally through Accounting/Cashier. Submit Official Receipt evidence to SPMU for verification.';
+
+        /*
+         * A Billing Statement is a printed, handwritten-signed instrument that
+         * the borrower carries to the CSPC Cashier, so this is a named wet
+         * signature block rather than an embedded E-signature. Previously the
+         * statement carried no signature area at all.
+         */
+        $lines[] = '';
+        $lines[] = 'ISSUED BY (Supply and Property Management Unit):';
+        $lines[] = '';
+        $lines[] = '_________________________________________';
+        $lines[] = strtoupper((string) ($billing->responsibleSpmuUser?->full_name ?: 'Authorized SPMU Signatory'));
+        $lines[] = (string) ($billing->responsibleSpmuUser?->designation ?: 'Supply and Property Management Unit');
+        $lines[] = 'Signature over Printed Name / Date';
 
         $activeTemplate = $this->activeTemplate('BILLING_STATEMENT');
 
@@ -2395,6 +2635,25 @@ HTML;
         foreach ($incident->lines as $line) {
             $lines[] = sprintf('Custody line %s | Quantity: %s | Condition: %s', $line->custody_line_id, $line->quantity + 0, $line->observed_condition);
         }
+
+        /*
+         * The RSLDDP is a printed controlled report. It is reported by the SPMU
+         * Action Officer who inspected the property and noted by the SPMU Head.
+         * Both are handwritten signatures on the printed report; previously the
+         * report carried no signature area at all.
+         */
+        $incident->loadMissing('reportedBy');
+
+        $lines[] = '';
+        $lines[] = 'REPORTED BY (SPMU Action Officer):';
+        $lines[] = '_________________________________________';
+        $lines[] = strtoupper((string) ($incident->reportedBy?->full_name ?: 'SPMU Action Officer'));
+        $lines[] = 'Signature over Printed Name / Date';
+        $lines[] = '';
+        $lines[] = 'NOTED BY (Head, Supply and Property Management Unit):';
+        $lines[] = '_________________________________________';
+        $lines[] = 'Signature over Printed Name / Date';
+
         $document = $this->save(
             'RSLDDP',
             $lines,
@@ -2561,6 +2820,178 @@ HTML;
         return $documentShell
             ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
             : $body;
+    }
+
+    /**
+     * Render one immutable signature snapshot as an embedded image.
+     *
+     * The snapshot file is a byte-for-byte copy captured at signing time, so a
+     * later replacement of the signer's registered E-signature can never change
+     * a document that was already generated.
+     *
+     * Returns an empty string when there is no snapshot, so every caller keeps
+     * its existing blank handwritten-signature space. Historical records that
+     * predate role-based E-signature capture therefore render unchanged.
+     */
+    private function signatureImage(
+        ?SignatureSnapshot $snapshot,
+        int $maxWidthPt = 150,
+        int $maxHeightPt = 40
+    ): string {
+        if (! $snapshot) {
+            return '';
+        }
+
+        $snapshot->loadMissing('file');
+        $file = $snapshot->file;
+
+        if (! $file) {
+            return '';
+        }
+
+        try {
+            $bytes = $this->files->bytes($file);
+        } catch (Throwable $exception) {
+            /*
+             * A controlled document must never fail to generate because one
+             * signature image is unreadable. Fall back to the blank signature
+             * space and leave the printed name/date intact.
+             */
+            Log::warning('Signature snapshot file unavailable during document rendering.', [
+                'signature_snapshot_id' => $snapshot->id,
+                'stored_file_id' => $file->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return '';
+        }
+
+        return '<img src="data:'.e($file->mime_type ?: 'image/png').';base64,'.base64_encode($bytes).'"'
+            .' alt="" style="display:block;margin:0 auto;'
+            .'max-width:'.$maxWidthPt.'pt;max-height:'.$maxHeightPt.'pt;object-fit:contain;">';
+    }
+
+    /**
+     * Resolve the SPMU Head (or formally delegated officer) who approved this
+     * request version, together with the immutable approval snapshot.
+     *
+     * This is the single approval action that authorizes the borrowing, the
+     * off-campus movement, and the linen processing, so it is the correct
+     * "Approved By" signatory on the Borrower Slip, Gate Pass, and Laundry Form.
+     *
+     * @return array{name: string, designation: string, snapshot: ?SignatureSnapshot, signed_at: ?CarbonInterface}
+     */
+    private function approvalSignatory(?RequestVersion $version): array
+    {
+        $step = $version?->approvalSteps
+            ?->first(
+                fn ($candidate) => $candidate->stage_code?->value === 'SPMU'
+                    && $candidate->decision === 'APPROVED'
+            );
+
+        $approver = $step?->approver;
+        $designation = trim((string) $approver?->designation);
+
+        return [
+            'name' => $approver?->full_name ?: '',
+            'designation' => $designation,
+            'snapshot' => $step?->signatureSnapshot,
+            'signed_at' => $step?->decided_at,
+        ];
+    }
+
+    /**
+     * Resolve the SPMU Action Officer who physically issued the property.
+     *
+     * This is deliberately separate from the approval signatory above and from
+     * the borrower's handwritten receipt signature.
+     *
+     * @return array{name: string, designation: string, snapshot: ?SignatureSnapshot, signed_at: ?CarbonInterface}
+     */
+    private function issuanceSignatory(CustodyTransaction $custody): array
+    {
+        $officer = $custody->releasedBy;
+        $designation = trim((string) $officer?->designation);
+
+        return [
+            'name' => $officer?->full_name ?: '',
+            'designation' => $designation !== '' ? $designation : 'SPMU Action Officer',
+            'snapshot' => $custody->releaseSignature,
+            'signed_at' => $custody->released_at,
+        ];
+    }
+
+    /**
+     * Resolve the most recent physical-return inspection recorded for this
+     * custody transaction, for Borrower's Slip rendering. Return existence is
+     * established by the persisted ReturnTransaction record itself — Return
+     * Inspection does not capture any Action Officer E-signature, so this
+     * never depends on a signature snapshot. Findings are filtered to actual
+     * adverse conditions only (Fine/Good quantities are omitted); EARLY/
+     * NORMAL/OVERDUE remains a system/audit classification and is not part of
+     * this rendering data.
+     *
+     * ReturnTransaction.remarks (the Action Officer's generic free-text note)
+     * is deliberately excluded from this return value — it stays persisted
+     * for internal/audit use but is never printed on the Borrower's Slip.
+     *
+     * @return array{
+     *     exists: bool,
+     *     signed_at: ?CarbonInterface,
+     *     findings: list<string>
+     * }
+     */
+    private function returnInspectionData(CustodyTransaction $custody): array
+    {
+        $return = $custody->returns
+            ->sortByDesc(fn ($candidate) => $candidate->received_at?->getTimestamp() ?? 0)
+            ->first();
+
+        $conditionLabels = [
+            'DAMAGED' => 'damaged',
+            'DESTROYED' => 'destroyed',
+            'MISSING' => 'missing',
+            'LOST' => 'lost',
+            'STOLEN' => 'stolen',
+        ];
+
+        $findings = $return?->lines
+            ?->groupBy('custody_line_id')
+            ->map(function ($lines) use ($conditionLabels): ?string {
+                $firstLine = $lines->first();
+                $description = trim((string) $firstLine?->custodyLine?->requestItem?->description_snapshot);
+                $description = $description !== '' ? $description : 'Returned item';
+
+                $breakdown = $lines
+                    ->groupBy(fn ($line) => strtoupper((string) $line->condition_code))
+                    ->map(fn ($conditionLines) => $conditionLines->sum(fn ($line) => (float) $line->quantity_received));
+
+                $parts = $breakdown
+                    ->except('FINE')
+                    ->filter(fn ($quantity) => (float) $quantity > 0)
+                    ->map(function ($quantity, $condition) use ($conditionLabels): string {
+                        $displayQuantity = (float) $quantity;
+                        $displayQuantity = floor($displayQuantity) === $displayQuantity
+                            ? (string) (int) $displayQuantity
+                            : rtrim(rtrim(number_format($displayQuantity, 3, '.', ''), '0'), '.');
+                        $label = $conditionLabels[$condition] ?? str($condition)->replace('_', ' ')->lower();
+
+                        return $displayQuantity.' '.$label;
+                    })
+                    ->values()
+                    ->implode('; ');
+
+                return $parts !== '' ? $description.' — '.$parts : null;
+            })
+            ->filter()
+            ->values()
+            ->all() ?? [];
+
+        return [
+            'exists' => $return !== null,
+            'signed_at' => $return?->received_at,
+            'findings' => $findings,
+        ];
     }
 
     private function formalDateTime(?CarbonInterface $date): ?string

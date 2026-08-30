@@ -149,7 +149,16 @@ class RevisionControlsTest extends TestCase
         app(RequestWorkflowService::class)->recordApprovedLetterDownload($request, $letter, $borrower, '127.0.0.1', 'test');
         $custody = $request->fresh()->custody;
 
-        $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'GATE_PASS', 'status' => 'FINAL']);
+        $this->assertDatabaseHas('gate_passes', [
+            'custody_transaction_id' => $custody->id,
+            'status' => 'PENDING',
+            'pass_document_id' => null,
+        ]);
+        $this->assertDatabaseMissing('generated_documents', [
+            'subject_id' => $custody->id,
+            'document_type' => 'GATE_PASS',
+            'status' => 'FINAL',
+        ]);
         $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'LAUNDRY_FORM', 'status' => 'FINAL']);
         $this->withSession(['active_workspace' => 'BORROWER'])->actingAs($borrower)->get(route('custody.show', $custody))->assertOk()->assertSee('Approved items for pickup');
         $spmuOfficer = User::where('access_classification', AccessClassification::SpmuOfficer->value)->firstOrFail();

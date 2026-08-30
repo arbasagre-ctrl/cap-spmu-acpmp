@@ -3,10 +3,12 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\ViewErrorBag;
 use Symfony\Component\HttpFoundation\Response;
 
 class PreventDuplicateSubmission
@@ -37,10 +39,19 @@ class PreventDuplicateSubmission
             $completedSeconds = 15;
         }
 
+        /*
+         * The resolved path is part of the identity, not just the route name.
+         * Without it, two DIFFERENT records on the same named route with the
+         * same body (for example acknowledging custody A and then custody B,
+         * whose bodies are both empty once the CSRF token is stripped) produce
+         * an identical hash, and the second legitimate action is wrongly
+         * rejected as a duplicate.
+         */
         $actionHash = hash('sha256', implode('|', [
             $userKey,
             strtoupper($request->method()),
             $routeName,
+            '/'.ltrim($request->path(), '/'),
             $identity,
         ]));
 
@@ -73,7 +84,7 @@ class PreventDuplicateSubmission
 
             $response = $next($request);
 
-            if ($response->getStatusCode() < 400) {
+            if ($this->completedSuccessfully($response)) {
                 Cache::put($completedKey, true, now()->addSeconds($completedSeconds));
             }
 
@@ -88,6 +99,30 @@ class PreventDuplicateSubmission
                 ]);
             }
         }
+    }
+
+    /**
+     * A state-changing action counts as completed only when it actually
+     * succeeded.
+     *
+     * Laravel answers a failed ValidationException with a 302 redirect, which
+     * is below 400. Treating that as "completed" would mark an action that
+     * changed nothing as done, and then reject the borrower's corrected retry
+     * with a misleading "this action was already completed" message.
+     */
+    private function completedSuccessfully(Response $response): bool
+    {
+        if ($response->getStatusCode() >= 400) {
+            return false;
+        }
+
+        if (! $response instanceof RedirectResponse) {
+            return true;
+        }
+
+        $errors = $response->getSession()?->get('errors');
+
+        return ! ($errors instanceof ViewErrorBag) || $errors->any() === false;
     }
 
     private function duplicateResponse(Request $request, string $message): Response

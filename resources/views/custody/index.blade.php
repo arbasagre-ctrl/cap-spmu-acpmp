@@ -397,8 +397,24 @@
 
                     $isCompleted = $custody->status === 'CLOSED' || $custody->closed_at !== null;
 
+                    /*
+                     * Borrower Cleared vs. Completed (see custody/show.blade.php
+                     * for the full rule): Completed requires, for linen, that
+                     * internal Laundry processing has finished AND the Laundry
+                     * Form has been archived — not archival alone.
+                     */
+                    $rowHasLaundryItem = $custody->lines->contains(
+                        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+                    );
+                    $rowLaundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
+                    $isFullyComplete = $isCompleted
+                        && (
+                            ! $rowHasLaundryItem
+                            || ($rowLaundryJob?->status === 'LAUNDRY_COMPLETED' && $rowLaundryJob?->latestEvidence?->file)
+                        );
+
                     $operationalLabel = match (true) {
-                        $isCompleted => 'Completed',
+                        $isCompleted => $isFullyComplete ? 'Completed' : 'Borrower Cleared',
                         $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
                         $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
                         in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
@@ -750,8 +766,32 @@
                         && (bool) $custody->pickup_expires_at
                         && ! $custody->pickup_expired_at;
 
+                    $activeEarlyReturn = $mode === 'return'
+                        && $custody->relationLoaded('earlyReturnRequests')
+                        ? $custody->earlyReturnRequests
+                            ->first(fn ($earlyReturn) => $earlyReturn->status === 'REQUESTED')
+                        : null;
+
+                    $isCompleted = $custody->status === 'CLOSED' || $custody->closed_at !== null;
+
+                    /*
+                     * Borrower Cleared vs. Completed (see custody/show.blade.php
+                     * for the full rule): Completed requires, for linen, that
+                     * internal Laundry processing has finished AND the Laundry
+                     * Form has been archived — not archival alone.
+                     */
+                    $rowHasLaundryItem = $custody->lines->contains(
+                        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+                    );
+                    $rowLaundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
+                    $isFullyComplete = $isCompleted
+                        && (
+                            ! $rowHasLaundryItem
+                            || ($rowLaundryJob?->status === 'LAUNDRY_COMPLETED' && $rowLaundryJob?->latestEvidence?->file)
+                        );
+
                     $operationalLabel = match (true) {
-                        $custody->status === 'CLOSED' || $custody->closed_at !== null => 'Completed',
+                        $isCompleted => $isFullyComplete ? 'Completed' : 'Borrower Cleared',
                         $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
                         $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
                         in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
@@ -774,7 +814,8 @@
                     @if(in_array($mode, ['release','return'], true))
                     data-operational-record
                     data-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
-                    data-status="{{ $operationalLabel ?: $custody->status }}"
+                    data-priority="{{ $activeEarlyReturn ? 1 : 0 }}"
+                    data-status="{{ $activeEarlyReturn ? 'Early Return Requested' : ($operationalLabel ?: $custody->status) }}"
                     data-search="{{ strtolower(trim(($custody->borrower?->full_name ?? '').' '.($custody->request?->request_no ?? '').' '.($custody->custody_no ?? '').' '.($custody->request?->currentVersion?->purpose_event ?? ''))) }}"
                     @endif
                 >
@@ -791,13 +832,20 @@
                             <span><small>Issued</small><strong>Not yet</strong></span>
                         @elseif($mode === 'return')
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: '—' }}</strong></span>
-                            <span><small>Return Due</small><strong>{{ optional($returnDate)->format('d M Y') ?: '—' }}</strong></span>
+                            @if($activeEarlyReturn)
+                                <span class="early-return-fact">
+                                    <small>Early Return</small>
+                                    <strong>{{ optional($activeEarlyReturn->proposed_return_at)->format('d M Y, g:i A') ?: 'Schedule pending' }}</strong>
+                                </span>
+                            @else
+                                <span><small>Return Due</small><strong>{{ optional($returnDate)->format('d M Y') ?: '—' }}</strong></span>
+                            @endif
                             <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
                         @else
                             <span><small>Pickup</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong></span>
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: 'Not yet' }}</strong></span>
                             @if($custody->status === 'CLOSED' || $custody->closed_at !== null)
-                                <span><small>Completed</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: 'Completed' }}</strong></span>
+                                <span><small>{{ $isFullyComplete ? 'Completed' : 'Borrower Cleared' }}</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: ($isFullyComplete ? 'Completed' : 'Borrower Cleared') }}</strong></span>
                             @else
                                 <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
                             @endif
@@ -805,6 +853,9 @@
                     </span>
 
                     <span class="operational-record-action">
+                        @if($activeEarlyReturn)
+                            <x-status-badge status="INFORMATIONAL" label="Early Return Requested" />
+                        @endif
                         <x-status-badge
                             :status="$custody->status === 'CLOSED' || $custody->closed_at !== null ? 'COMPLETED' : $custody->status"
                             :label="$operationalLabel"
@@ -836,10 +887,12 @@
     .operational-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,230px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
     .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
+    .early-return-fact small,.early-return-fact strong{color:#0b6f8c}
+    .operational-record-action{align-content:center}
     @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
     </style>
     <script>
-    (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;[...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;status.appendChild(o)});const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1));ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();
+    (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;[...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;status.appendChild(o)});const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>{const priority=Number(b.dataset.priority||0)-Number(a.dataset.priority||0);if(priority!==0)return priority;return(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)});ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();
     </script>
     @endif
 @endif

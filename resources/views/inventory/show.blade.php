@@ -132,25 +132,40 @@
         </div>
     @else
         <section class="inventory-admin-summary" aria-label="Current inventory summary">
-            <div class="inventory-admin-summary-item">
-                <span>Total Stock</span>
-                <strong>{{ $total + 0 }}</strong>
+            <div class="inventory-admin-summary-item is-total">
+                <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="box" size="18" /></span>
+                <div class="inventory-summary-copy">
+                    <span>Total Stock</span>
+                    <strong>{{ $total + 0 }}</strong>
+                </div>
             </div>
             <div class="inventory-admin-summary-item is-available">
-                <span>Available</span>
-                <strong>{{ $available + 0 }}</strong>
+                <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="success" size="18" /></span>
+                <div class="inventory-summary-copy">
+                    <span>Available</span>
+                    <strong>{{ $available + 0 }}</strong>
+                </div>
             </div>
-            <div class="inventory-admin-summary-item">
-                <span>Reserved</span>
-                <strong>{{ $reserved + 0 }}</strong>
+            <div class="inventory-admin-summary-item is-reserved">
+                <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="bookmark" size="18" /></span>
+                <div class="inventory-summary-copy">
+                    <span>Reserved</span>
+                    <strong>{{ $reserved + 0 }}</strong>
+                </div>
             </div>
-            <div class="inventory-admin-summary-item">
-                <span>On Custody</span>
-                <strong>{{ $issued + 0 }}</strong>
+            <div class="inventory-admin-summary-item is-custody">
+                <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="profile" size="18" /></span>
+                <div class="inventory-summary-copy">
+                    <span>On Custody</span>
+                    <strong>{{ $issued + 0 }}</strong>
+                </div>
             </div>
-            <div class="inventory-admin-summary-item">
-                <span>Laundry / Incident</span>
-                <strong>{{ ($laundry + $incident) + 0 }}</strong>
+            <div class="inventory-admin-summary-item is-unavailable">
+                <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="warning" size="18" /></span>
+                <div class="inventory-summary-copy">
+                    <span>Unavailable</span>
+                    <strong>{{ $unavailable + 0 }}</strong>
+                </div>
             </div>
         </section>
 
@@ -166,8 +181,7 @@
             <article class="card">
                 <div class="card-header">
                     <div>
-                        <p class="eyebrow">Quantity status</p>
-                        <h2>Operational breakdown</h2>
+                        <p class="eyebrow">Stock Status</p>
                     </div>
                 </div>
 
@@ -175,46 +189,40 @@
                     <div class="inventory-ops-row" role="listitem">
                         <span>Total inventory</span>
                         <strong>{{ $total + 0 }}</strong>
-                        <small>Recorded quantity</small>
                     </div>
                     <div class="inventory-ops-row" role="listitem">
-                        <span>Available for allocation</span>
+                        <span>Available</span>
                         <strong>{{ $available + 0 }}</strong>
-                        <small>Ready for approved allocation</small>
                     </div>
                     <div class="inventory-ops-row" role="listitem">
                         <span>Reserved</span>
                         <strong>{{ $reserved + 0 }}</strong>
-                        <small>Approved, not yet issued</small>
                     </div>
                     <div class="inventory-ops-row" role="listitem">
-                        <span>Issued</span>
+                        <span>On custody</span>
                         <strong>{{ $issued + 0 }}</strong>
-                        <small>Under borrower custody</small>
                     </div>
                     <div class="inventory-ops-row" role="listitem">
                         <span>In laundry</span>
                         <strong>{{ $laundry + 0 }}</strong>
-                        <small>Temporarily unavailable</small>
                     </div>
                     <div class="inventory-ops-row" role="listitem">
-                        <span>Accountability / incidents</span>
+                        <span>Incident</span>
                         <strong>{{ $incident + 0 }}</strong>
-                        <small>Under incident resolution</small>
                     </div>
                     <div class="inventory-ops-row is-total" role="listitem">
                         <span>Unavailable total</span>
                         <strong>{{ $unavailable + 0 }}</strong>
-                        <small>Not currently allocable</small>
                     </div>
                 </div>
+
+                <p class="inventory-ops-footnote">Items not currently available for allocation.</p>
             </article>
 
             <article class="card">
                 <div class="card-header">
                     <div>
-                        <p class="eyebrow">Physical condition</p>
-                        <h2>Condition breakdown</h2>
+                        <p class="eyebrow">Physical Condition</p>
                     </div>
                     <x-status-badge :status="$item->condition_code" />
                 </div>
@@ -244,6 +252,14 @@
                     <dt>Condemned</dt>
                     <dd><strong>{{ $condemned + 0 }}</strong></dd>
                 </dl>
+
+                <div class="inventory-condition-guide" role="note">
+                    <x-icon name="information" size="16" />
+                    <div>
+                        <strong>Condition guide</strong>
+                        <p>Items marked as damaged or condemned are not available for allocation.</p>
+                    </div>
+                </div>
             </article>
         </div>
         </section>
@@ -529,13 +545,13 @@
                 <dd>{{ $item->unit->unit_name }}</dd>
 
                 <dt>Borrowing eligibility</dt>
-                <dd>{{ $item->borrowable ? 'Borrowable' : 'Not borrowable' }}</dd>
+                <dd><span class="inventory-info-pill {{ $item->borrowable ? 'is-positive' : 'is-neutral' }}">{{ $item->borrowable ? 'Borrowable' : 'Not borrowable' }}</span></dd>
 
                 <dt>Use restriction</dt>
-                <dd>{{ $item->off_campus_allowed ? 'Off-campus eligible' : 'On-campus only' }}</dd>
+                <dd><span class="inventory-info-pill is-neutral">{{ $item->off_campus_allowed ? 'Off-campus eligible' : 'On-campus only' }}</span></dd>
 
                 <dt>Laundry requirement</dt>
-                <dd>{{ $item->laundry_required ? 'Required after use' : 'Not required' }}</dd>
+                <dd><span class="inventory-info-pill {{ $item->laundry_required ? 'is-positive' : 'is-neutral' }}">{{ $item->laundry_required ? 'Required after use' : 'Not required' }}</span></dd>
             </dl>
         </article>
         </section>
@@ -556,8 +572,7 @@
 
 .inventory-admin-summary-item {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    align-items: center;
     gap: 12px;
     min-width: 0;
     padding: 13px 16px;
@@ -568,16 +583,59 @@
     border-right: 0;
 }
 
-.inventory-admin-summary-item span {
+.inventory-summary-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: #eef2f7;
+    color: #64748b;
+}
+
+.inventory-admin-summary-item.is-total .inventory-summary-icon {
+    background: #e5edff;
+    color: #2f5fd6;
+}
+
+.inventory-admin-summary-item.is-available .inventory-summary-icon {
+    background: #e2f6ea;
+    color: #157f3f;
+}
+
+.inventory-admin-summary-item.is-reserved .inventory-summary-icon {
+    background: #fdf1dd;
+    color: #b1710a;
+}
+
+.inventory-admin-summary-item.is-custody .inventory-summary-icon {
+    background: #f0e9fb;
+    color: #7341c9;
+}
+
+.inventory-admin-summary-item.is-unavailable .inventory-summary-icon {
+    background: #fde6e6;
+    color: #c62b2b;
+}
+
+.inventory-summary-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.inventory-summary-copy span {
     color: var(--text-muted);
-    font-size: .78rem;
+    font-size: .74rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .025em;
 }
 
-.inventory-admin-summary-item strong {
-    flex: 0 0 auto;
+.inventory-summary-copy strong {
     color: var(--text);
     font-size: 1.16rem;
 }
@@ -689,12 +747,12 @@
 }
 
 .inventory-ops-row {
-    display: grid;
-    grid-template-columns: minmax(220px, 1.25fr) minmax(70px, .35fr) minmax(220px, 1.45fr);
-    gap: 18px;
+    display: flex;
     align-items: center;
-    min-height: 46px;
-    padding: 10px 0;
+    justify-content: space-between;
+    gap: 18px;
+    min-height: 42px;
+    padding: 9px 0;
     border-bottom: 1px solid var(--border);
 }
 
@@ -712,13 +770,64 @@
     color: var(--text);
 }
 
-.inventory-ops-row > small {
-    color: var(--text-muted);
-    line-height: 1.35;
+.inventory-ops-row.is-total {
+    margin-top: 4px;
+    padding-top: 13px;
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+    font-weight: 700;
 }
 
-.inventory-ops-row.is-total {
-    font-weight: 700;
+.inventory-ops-footnote {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: .83rem;
+}
+
+.inventory-condition-guide {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #eef4ff;
+    color: #1f3a66;
+}
+
+.inventory-condition-guide svg {
+    flex: 0 0 auto;
+    margin-top: 2px;
+}
+
+.inventory-condition-guide strong {
+    display: block;
+    font-size: .88rem;
+}
+
+.inventory-condition-guide p {
+    margin: 2px 0 0;
+    font-size: .83rem;
+    color: #3a5a8c;
+    line-height: 1.4;
+}
+
+.inventory-info-pill {
+    display: inline-block;
+    padding: 3px 11px;
+    border-radius: 999px;
+    font-size: .82rem;
+    font-weight: 600;
+}
+
+.inventory-info-pill.is-positive {
+    background: #e2f6ea;
+    color: #157f3f;
+}
+
+.inventory-info-pill.is-neutral {
+    background: #e5edff;
+    color: #2f5fd6;
 }
 
 .inventory-borrowing-history-card {
@@ -872,10 +981,6 @@
         grid-template-columns: 1fr;
     }
 
-    .inventory-ops-row {
-        grid-template-columns: minmax(190px, 1fr) 70px minmax(180px, 1.2fr);
-    }
-
     .inventory-history-filter {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -910,12 +1015,7 @@
     }
 
     .inventory-ops-row {
-        grid-template-columns: 1fr auto;
         gap: 4px 12px;
-    }
-
-    .inventory-ops-row > small {
-        grid-column: 1 / -1;
     }
 
     .inventory-history-filter,

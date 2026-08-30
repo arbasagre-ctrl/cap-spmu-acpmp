@@ -259,13 +259,13 @@
                             $record->status === App\Enums\RequestStatus::Draft => 'Complete the draft and submit the required signed documents to SPMU.',
                             $record->status === App\Enums\RequestStatus::ReturnedForRevision => 'Review the SPMU remarks, correct the request, and resubmit.',
                             $record->status === App\Enums\RequestStatus::UnderSpmu => 'No action now. Your request is under SPMU review.',
-                            $laundry?->status === 'FOR_LAUNDRY' => 'Bring the used linen and printed Laundry Form to the SPMU Action Officer.',
-                            $laundry?->status === 'IN_PROCESS' => 'No action now. Laundry is processing your linen.',
-                            $laundry?->status === 'READY_FOR_SPMU_RETURN' => 'No action now. SPMU will continue with final linen acceptance.',
-                            $laundry?->status === 'AWAITING_FINAL_FORM_UPLOAD' => 'No action now. SPMU has accepted the linen and is archiving the fully signed form.',
+                            $custody?->status === 'CLOSED' && $laundry?->status === 'TURNED_OVER_TO_LAUNDRY' => 'Completed. Your linen turnover is settled; actual washing now continues internally in the Laundry Area.',
+                            $custody?->status === 'CLOSED' => 'Completed. No further borrower action is required.',
+                            $laundry?->status === 'FOR_LAUNDRY' => 'Return the linen with the same printed Laundry Form. SPMU will record the return condition and confirm Laundry receipt.',
+                            $laundry?->status === 'TURNED_OVER_TO_LAUNDRY' => 'Your linen turnover is complete. Any remaining non-laundry obligation is still being resolved.',
+                            in_array($laundry?->status, ['IN_PROCESS', 'READY_FOR_SPMU_RETURN', 'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'], true) => 'No borrower action is required while SPMU aligns this Laundry record to the simplified turnover workflow.',
                             $custody?->scheduled_release_at && ! $custody?->released_at => 'Pick up the approved items on the scheduled pickup window.',
                             $custody?->released_at && $custody?->status !== 'CLOSED' => 'Keep track of the return deadline and return the items to SPMU.',
-                            $custody?->status === 'CLOSED' => 'Completed. No further action is required.',
                             default => 'Wait for the next SPMU update.',
                         };
 
@@ -331,7 +331,7 @@
                 <span><strong>2</strong> Schedule pickup and prepare Gate Pass when off-campus</span>
                 <span><strong>3</strong> Release approved items physically</span>
                 <span><strong>4</strong> Monitor custody and receive returns</span>
-                <span><strong>5</strong> Record applicable Laundry processing and complete final physical acceptance</span>
+                <span><strong>5</strong> Record linen turnover to Laundry; internal washing may continue later</span>
                 <span><strong>6</strong> Complete final return reconciliation</span>
             </div>
         @elseif($dashboardMode === 'SPMU_HEAD')

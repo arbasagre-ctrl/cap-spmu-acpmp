@@ -210,6 +210,14 @@ class UserAdministrationController extends Controller
             ]);
         }
 
+        // “Borrower” identifies portal access; it is not an employee/job
+        // designation. Keep the designation empty until the real position is
+        // recorded (for example, Instructor I or Administrative Officer IV).
+        if ($classification === AccessClassification::BorrowerOnly
+            && strcasecmp(trim((string) ($data['designation'] ?? '')), AccessClassification::BorrowerOnly->label()) === 0) {
+            $data['designation'] = null;
+        }
+
         return $data;
     }
 }

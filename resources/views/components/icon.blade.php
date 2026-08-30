@@ -95,6 +95,15 @@
         @case('search')
             <circle cx="11" cy="11" r="7" /><path d="m20 20-4.4-4.4" />
             @break
+        @case('box')
+            <path d="m3.5 8 8.5-4.5L20.5 8 12 12.5 3.5 8Z" /><path d="M3.5 8v8L12 20.5l8.5-4.5V8M12 12.5V20.5" />
+            @break
+        @case('bookmark')
+            <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1Z" />
+            @break
+        @case('warning')
+            <path d="M12 3 2.8 20h18.4L12 3Z" /><path d="M12 9v5M12 17.5v.1" />
+            @break
         @default
             <circle cx="12" cy="12" r="9" />
     @endswitch

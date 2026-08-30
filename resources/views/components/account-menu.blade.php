@@ -109,6 +109,7 @@
             <form
                 action="{{ route('logout') }}"
                 method="post"
+                data-preserve-submit-label="true"
             >
                 @csrf
 

@@ -13,7 +13,7 @@ class CustodyLine extends Model
 
     protected function casts(): array
     {
-        return ['approved_quantity' => 'decimal:3', 'quantity_to_receive' => 'decimal:3', 'actual_released_quantity' => 'decimal:3', 'returned_quantity' => 'decimal:3'];
+        return ['approved_quantity' => 'integer', 'quantity_to_receive' => 'integer', 'actual_released_quantity' => 'integer', 'returned_quantity' => 'integer'];
     }
 
     public function custody(): BelongsTo

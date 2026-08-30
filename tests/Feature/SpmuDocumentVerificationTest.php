@@ -59,13 +59,13 @@ class SpmuDocumentVerificationTest extends TestCase
                 'Inspect the approved document'
             )
             ->assertSeeText(
-                'Required details are complete'
+                'Request details match the signed letter'
             )
             ->assertSeeText(
-                'Required signatures are present'
+                'Required signatures and documents are complete'
             )
             ->assertSeeText(
-                'Document is clear and readable'
+                'Inventory availability is verified'
             )
             ->assertSeeText(
                 'Document Status'
@@ -182,8 +182,9 @@ class SpmuDocumentVerificationTest extends TestCase
             )
             ->assertSessionHasErrors([
                 'details_complete',
-                'signatures_present',
-                'document_readable',
+                'documents_complete',
+                'availability_verified',
+                'confirm_e_signature',
             ]);
 
         $this->assertSame(

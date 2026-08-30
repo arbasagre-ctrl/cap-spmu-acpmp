@@ -4,27 +4,26 @@
     <div>
         <p class="eyebrow">SPMU Action Officer</p>
         <h1>Laundry Operations</h1>
-        <p>Record linen turnover and processing, then continue through final SPMU acceptance and signed-form archiving.</p>
+        <p>Track physical linen turnover separately from the later internal washing schedule.</p>
     </div>
-    <a class="button secondary ui-pressable" href="{{ route('laundry.completed') }}">Completed</a>
+    <a class="button secondary ui-pressable" href="{{ route('laundry.completed') }}">Completed Laundry</a>
 </section>
 
 <section class="content-area">
     <article class="card">
         <div class="callout info">
-            <strong>Final linen custody chain</strong>
-            <p>1) The Borrower signs and hands over used linen with the physical Laundry Form. 2) The SPMU Action Officer records receipt and laundry processing. 3) The same Action Officer continues the cleaned linen through final SPMU inspection. 4) The authorized SPMU signatory signs final acceptance. 5) The Action Officer archives the fully signed form to settle the Laundry transaction.</p>
+            <strong>Simplified linen flow</strong>
+            <p>
+                1) SPMU records the borrower return condition once in Return. 2) The borrower brings the linen and same printed Laundry Form to the Laundry Area. 3) Laundry Personnel wet-signs <strong>Received by</strong>. 4) The borrower is cleared from the linen handoff, while internal Laundry processing continues until clean/serviceable linen is marked Available.
+            </p>
         </div>
 
         <div class="document-list top-gap">
             @forelse($jobs as $job)
                 @php
                     $statusText = match($job->status) {
-                        'FOR_LAUNDRY' => 'Waiting for borrower turnover',
-                        'IN_PROCESS' => 'Laundry processing in progress',
-                        'READY_FOR_SPMU_RETURN' => 'Cleaned linen ready to bring directly to SPMU',
-                        'AWAITING_FINAL_FORM_UPLOAD' => 'SPMU accepted linen; upload fully signed form',
-                        'FORM_REPLACEMENT_REQUIRED' => 'Upload a clear replacement final signed form',
+                        'FOR_LAUNDRY' => 'Awaiting return inspection / physical Laundry receipt',
+                        'TURNED_OVER_TO_LAUNDRY' => 'Borrower turnover complete · internal laundry pending',
                         default => str($job->status)->replace('_', ' ')->title(),
                     };
                 @endphp
@@ -40,7 +39,7 @@
                     </div>
                 </article>
             @empty
-                <div class="empty-state"><strong>No Laundry cases need action.</strong><p>New linen cases appear here after SPMU physically releases laundry-required items.</p></div>
+                <div class="empty-state"><strong>No Laundry cases need action.</strong><p>New linen cases appear here after physical release.</p></div>
             @endforelse
         </div>
 

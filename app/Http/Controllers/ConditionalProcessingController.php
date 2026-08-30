@@ -8,10 +8,12 @@ use App\Models\CustodyTransaction;
 use App\Models\GatePass;
 use App\Models\Incident;
 use App\Models\IncidentLine;
+use App\Models\LaundryJob;
 use App\Models\LaundryRecord;
 use App\Models\OverdueCase;
 use App\Models\SystemSetting;
 use App\Services\AuditService;
+use App\Services\CustodyService;
 use App\Services\DocumentService;
 use App\Services\ProtectedFileService;
 use Illuminate\Http\RedirectResponse;
@@ -26,7 +28,8 @@ class ConditionalProcessingController extends Controller
         Request $request,
         GatePass $gatePass,
         ProtectedFileService $files,
-        AuditService $audit
+        AuditService $audit,
+        CustodyService $custodyService
     ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification
@@ -140,29 +143,13 @@ class ConditionalProcessingController extends Controller
                         'VERIFIED',
 
                     /*
-                     * Legacy digital-signature fields remain null in the
-                     * active wet-signature workflow.
+                     * The SPMU Head's approval E-signature and the Action
+                     * Officer's issuance E-signature are the authorizations
+                     * printed on this Gate Pass. They are deliberately NOT
+                     * cleared here: verifying the guard's returned wet-signed
+                     * scan must never erase the electronic authorizations that
+                     * permitted the off-campus movement in the first place.
                      */
-                    'prepared_verified_by_user_id' =>
-                        null,
-
-                    'prepared_verifier_signature_snapshot_id' =>
-                        null,
-
-                    'prepared_verified_at' =>
-                        null,
-
-                    'approved_by_user_id' =>
-                        null,
-
-                    'approver_signature_snapshot_id' =>
-                        null,
-
-                    'temporary_delegation_id' =>
-                        null,
-
-                    'approved_at' =>
-                        null,
                 ]);
 
                 $gatePass
@@ -206,6 +193,14 @@ class ConditionalProcessingController extends Controller
             3
         );
 
+        if ($verified) {
+            $custody = $gatePass->custody()->first();
+
+            if ($custody) {
+                $custodyService->reconcileTransactionStatus($custody);
+            }
+        }
+
         return back()->with(
             'status',
             $verified
@@ -221,8 +216,8 @@ class ConditionalProcessingController extends Controller
             'worker_name' => ['required', 'string', 'max:255'],
             'worker_received_at' => ['required', 'date'],
             'worker_completed_at' => ['required', 'date', 'after_or_equal:worker_received_at'],
-            'cleaned_quantity' => ['required', 'numeric', 'min:0'],
-            'damaged_quantity' => ['required', 'numeric', 'min:0'],
+            'cleaned_quantity' => ['required', 'integer', 'min:0'],
+            'damaged_quantity' => ['required', 'integer', 'min:0'],
         ]);
         $documentId = $laundry->form_document_id ?: DB::table('generated_documents')
             ->where('subject_type', CustodyTransaction::class)
@@ -317,16 +312,7 @@ class ConditionalProcessingController extends Controller
                     $documents->rslddp($incident->fresh());
                 }
             }
-            $openLaundry = LaundryRecord::query()->whereHas('returnLine.custodyLine', fn ($query) => $query->where('custody_transaction_id', $custody->id))->whereNotIn('status', ['VERIFIED', 'VOID'])->exists();
-            $openIncident = DB::table('incidents')->where('custody_transaction_id', $custody->id)->whereNotIn('status', ['RESOLVED', 'CLOSED'])->exists();
-            $openOverdue = OverdueCase::query()->where('custody_transaction_id', $custody->id)->where('status', '!=', 'RESOLVED')->exists();
-            $openGatePass = $custody->gatePass()->whereNotIn('status', ['VERIFIED', 'VOID'])->exists();
-            $allReturned = $custody->lines()->get()->every(fn ($line) => (float) $line->returned_quantity >= (float) $line->actual_released_quantity);
-            if (! $openLaundry && ! $openIncident && ! $openOverdue && ! $openGatePass && $allReturned) {
-                $custody->update(['status' => 'CLOSED', 'closed_at' => now()]);
-            } elseif ($allReturned) {
-                $custody->update(['status' => 'OBLIGATION_OPEN']);
-            }
+            app(CustodyService::class)->reconcileTransactionStatus($custody);
             $audit->record('LAUNDRY_PHYSICAL_VERIFICATION', $laundry, after: $data);
 
             return true;

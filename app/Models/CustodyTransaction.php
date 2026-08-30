@@ -21,6 +21,14 @@ class CustodyTransaction extends Model
         'borrower_user_id',
         'released_by_user_id',
         'prepared_by_user_id',
+
+        /*
+         * SPMU Action Officer E-signature for the physical issuance of the
+         * approved property. This is NOT the borrower's request certification
+         * signature and NOT the borrower's handwritten receipt signature.
+         */
+        'released_by_signature_snapshot_id',
+
         'borrower_ack_signature_snapshot_id',
         'laundry_borrower_signature_snapshot_id',
         'laundry_approved_by_user_id',
@@ -76,11 +84,27 @@ class CustodyTransaction extends Model
         return $this->belongsTo(User::class, 'pickup_scheduled_by_user_id');
     }
 
+    /**
+     * SPMU Action Officer who physically issued the approved property.
+     */
+    public function releasedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'released_by_user_id');
+    }
+
     public function hasPickupSchedule(): bool
     {
         return $this->scheduled_release_at !== null
             && $this->pickup_expires_at !== null
             && $this->pickup_expired_at === null;
+    }
+
+    /**
+     * SPMU Action Officer issuance E-signature captured at physical release.
+     */
+    public function releaseSignature(): BelongsTo
+    {
+        return $this->belongsTo(SignatureSnapshot::class, 'released_by_signature_snapshot_id');
     }
 
     public function acknowledgementSignature(): BelongsTo

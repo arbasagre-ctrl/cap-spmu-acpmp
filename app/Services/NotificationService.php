@@ -40,6 +40,23 @@ class NotificationService
 
         foreach ($recipients as $recipient) {
             foreach ($channels as $channel) {
+                /*
+                 * Respect the recipient's own notification preferences
+                 * (Account Settings > Notification preferences). Defaults
+                 * match that form exactly (system/email on, SMS off) so
+                 * nothing changes for a recipient who never touched them.
+                 */
+                $preferenceKey = strtolower($channel);
+                $channelEnabled = (bool) data_get(
+                    $recipient->notification_preferences,
+                    $preferenceKey,
+                    $channel !== 'SMS'
+                );
+
+                if (! $channelEnabled) {
+                    continue;
+                }
+
                 $address = match ($channel) {
                     'EMAIL' => $recipient->email,
                     'SMS' => $recipient->mobile_no,
@@ -399,9 +416,9 @@ HTML;
             'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the required physical documents. Property is issued only after all release requirements are completed.',
             'PICKUP_EXPIRED' => 'Coordinate with SPMU if the borrowing requirement is still active. An expired pickup reservation is not treated as a completed issuance.',
             'ITEMS_RELEASED' => 'Please keep the issued property in proper custody and return all items on or before the expected return date. Follow applicable Gate Pass or Laundry requirements when relevant.',
-            'LINEN_FOR_LAUNDRY' => 'The SPMU Action Officer should receive the borrower’s used linen and physical Laundry Form after the activity, record the laundry process, and retain the cleaned linen and the same physical form for final SPMU acceptance.',
-            'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry processing is in progress. After cleaning, the SPMU Action Officer continues with final SPMU acceptance and signature using the same physical Laundry Form.',
-            'LAUNDRY_READY_FOR_PICKUP', 'LAUNDRY_PROCESSING_COMPLETED' => 'The cleaned linen and the physical Laundry Form should be brought directly to SPMU for final inspection and form completion.',
+            'LINEN_FOR_LAUNDRY' => 'The borrower returns the linen with the same printed Laundry Form. SPMU records the return condition once, then the borrower brings the linen to the Laundry Area and Laundry Personnel wet-signs Received by. Once that physical turnover is confirmed, washing continues internally in the Laundry Area and no longer holds the borrower transaction open.',
+            'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry Personnel have physically received the returned linen. The borrower no longer waits for the washing cycle. Processing continues inside the Laundry Area until clean/serviceable linen is marked Available.',
+            'LAUNDRY_READY_FOR_PICKUP', 'LAUNDRY_PROCESSING_COMPLETED' => 'Internal laundry processing is complete. SPMU records the clean quantity back to Available inventory and routes any maintenance quantity appropriately.',
             'RETURN_RECORDED' => 'SPMU has recorded the returned property. Any remaining obligations, discrepancies, or follow-up processing will continue through the appropriate workflow.',
             'RETURN_INSPECTED' => 'SPMU has completed the inspection of the returned property. If no additional obligations remain, the transaction may proceed to completion.',
             'TRANSACTION_CLOSED' => 'All required obligations for this borrowing transaction have been completed and the transaction has been closed.',
@@ -820,8 +837,8 @@ HTML;
 
             'EARLY_RETURN_REQUESTED' =>
                 $isBorrower
-                    ? 'Your Early Return coordination notice has been recorded. Bring only the proposed items and quantities to SPMU at the agreed handover schedule. Inventory and custody quantities remain unchanged until SPMU completes the physical Return & Inspection.'
-                    : 'An Early Return coordination notice has been recorded for this custody transaction. Review the proposed schedule and quantities, then use the existing physical Return & Inspection workflow when the items are handed over.',
+                    ? 'Your Early Return coordination notice has been recorded. Bring the borrowed items you are returning to SPMU at the proposed handover schedule. Actual quantities and conditions are recorded only when SPMU completes the physical Return & Inspection.'
+                    : 'An Early Return coordination notice has been recorded for this custody transaction. Review the proposed schedule, then use the physical Return & Inspection workflow to record the actual quantities and conditions when the items are handed over.',
 
             /*
              * -----------------------------------------------------
@@ -846,12 +863,12 @@ HTML;
 
             'LAUNDRY_USED_LINEN_RECEIVED' =>
                 $isBorrower
-                    ? 'Laundry personnel have confirmed receipt of the used linen associated with your borrowing transaction. The linen is now undergoing Laundry processing.'
-                    : 'The used linen associated with this transaction has been physically received by Laundry personnel and is now undergoing Laundry processing.',
+                    ? 'Laundry Personnel have physically received the returned linen. Your linen-return obligation is complete; washing now continues internally in the Laundry Area until clean/serviceable linen is Available.'
+                    : 'Laundry Personnel have physically received the returned linen. The borrower no longer waits for the washing cycle; internal processing continues in the Laundry Area until clean/serviceable linen is Available.',
 
             'LAUNDRY_PROCESSING_COMPLETED',
             'LAUNDRY_READY_FOR_PICKUP' =>
-                'Laundry processing has been completed for the listed linen items. The SPMU Action Officer must continue with final quantity and condition inspection using the same physical Laundry Form.',
+                'Internal Laundry processing has been completed for the listed linen items. Clean/serviceable linen is now Available for future borrowing in the Laundry Area; no additional borrower return step is required.',
 
             'LAUNDRY_FORM_PENDING_SPMU_VERIFICATION' =>
                 'The completed Laundry Form and related linen transaction are ready for SPMU review. Final settlement remains pending until the required physical acceptance and document verification are completed.',

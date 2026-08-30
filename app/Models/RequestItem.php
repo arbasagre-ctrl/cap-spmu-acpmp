@@ -18,7 +18,7 @@ class RequestItem extends Model
 
     protected function casts(): array
     {
-        return ['requested_quantity' => 'decimal:3', 'approved_quantity' => 'decimal:3'];
+        return ['requested_quantity' => 'integer', 'approved_quantity' => 'integer'];
     }
 
     public function version(): BelongsTo

@@ -19,8 +19,8 @@ class Allocation extends Model
     {
         return [
             'period_start' => 'datetime', 'period_end' => 'datetime', 'allocated_at' => 'datetime',
-            'allocated_quantity' => 'decimal:3', 'released_quantity' => 'decimal:3',
-            'restored_quantity' => 'decimal:3',
+            'allocated_quantity' => 'integer', 'released_quantity' => 'integer',
+            'restored_quantity' => 'integer',
         ];
     }
 

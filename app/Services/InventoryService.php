@@ -325,7 +325,7 @@ class InventoryService
         |
         */
 
-        $laundry = (float) DB::table('laundry_records')
+        $legacyLaundry = (float) DB::table('laundry_records')
             ->join(
                 'return_lines',
                 'return_lines.id',
@@ -358,6 +358,88 @@ class InventoryService
             ->sum(
                 'return_lines.quantity_received'
             );
+
+        /*
+        |--------------------------------------------------------------------------
+        | LAUNDRY (current LaundryJob-based workflow)
+        |--------------------------------------------------------------------------
+        |
+        | The legacy query above only ever matches pre-LaundryJob historical
+        | data (CustodyService only creates a laundry_records row when no
+        | LaundryJob exists for the return line). Every current-workflow
+        | linen return instead tracks state on laundry_job_lines, which the
+        | legacy query never sees — without this second query, returned
+        | linen would incorrectly become available again the moment SPMU
+        | records the return inspection, before Laundry has even received
+        | it, let alone finished washing it.
+        |
+        | Still-unavailable quantity = however much was returned with a
+        | LAUNDRY disposition, minus whatever has actually been restored to
+        | AVAILABLE by internal Laundry completion so far (laundry_job_lines
+        | .completed_quantity is only ever set by completeProcessing(), to
+        | the cleaned portion — the damaged-during-wash portion is never
+        | subtracted here, since it never moves to AVAILABLE either).
+        |
+        | Written with a portable CASE/COALESCE expression (no GREATEST()/
+        | multi-arg MAX()) so it runs identically on MariaDB/MySQL
+        | (production) and SQLite (the automated test suite).
+        |
+        | legacyLaundry and this query can never double-count the same
+        | return line: a laundry_records row only exists when no LaundryJob
+        | was created for that return, and a laundry_job_lines row only
+        | exists when one was - the two are mutually exclusive per line.
+        */
+
+        $currentLaundry = (float) DB::table('return_lines')
+            ->join(
+                'custody_lines',
+                'custody_lines.id',
+                '=',
+                'return_lines.custody_line_id'
+            )
+            ->join(
+                'request_items',
+                'request_items.id',
+                '=',
+                'custody_lines.request_item_id'
+            )
+            ->leftJoin(
+                'laundry_job_lines',
+                'laundry_job_lines.custody_line_id',
+                '=',
+                'custody_lines.id'
+            )
+            ->where(
+                'request_items.inventory_item_id',
+                $item->id
+            )
+            ->where(
+                'return_lines.disposition_state',
+                'LAUNDRY'
+            )
+            ->selectRaw(
+                '
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN (
+                                COALESCE(return_lines.quantity_received, 0)
+                                - COALESCE(laundry_job_lines.completed_quantity, 0)
+                            ) > 0
+                            THEN (
+                                COALESCE(return_lines.quantity_received, 0)
+                                - COALESCE(laundry_job_lines.completed_quantity, 0)
+                            )
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS quantity
+                '
+            )
+            ->value('quantity');
+
+        $laundry = $legacyLaundry + $currentLaundry;
 
 
         /*

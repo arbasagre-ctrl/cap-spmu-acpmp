@@ -53,11 +53,23 @@
         && $earlyReturnEligibleLines->isNotEmpty()
         && (bool) $custody->due_at
         && now()->lt($custody->due_at);
-
     $preparationComplete = (bool) $custody->prepared_at;
     $hasPickupSchedule = (bool) $custody->scheduled_release_at
         && (bool) $custody->pickup_expires_at
         && ! $custody->pickup_expired_at;
+
+    $pickupWindowStartsAt = $custody->scheduled_release_at;
+    $pickupWindowEndsAt = $custody->pickup_expires_at;
+    $pickupWindowUpcoming = $hasPickupSchedule
+        && now()->lt($pickupWindowStartsAt);
+
+    $pickupWindowPassed = $hasPickupSchedule
+        && now()->gt($pickupWindowEndsAt);
+
+    $pickupWindowOpen = $hasPickupSchedule
+        && ! $pickupWindowUpcoming
+        && ! $pickupWindowPassed;
+
 
     $hasOffCampusItem = $custody->lines->contains(
         fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
@@ -69,13 +81,33 @@
 
     $laundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
 
+    /*
+     * Borrower Cleared vs. Completed
+     * ------------------------------
+     * Borrower Cleared = custody.status === 'CLOSED': the borrower has
+     * physically returned everything required and no unresolved
+     * accountability remains (linen at least turned over to Laundry).
+     * Completed = Borrower Cleared AND, only when linen is involved,
+     * internal Laundry processing has actually finished AND the
+     * accomplished Laundry Form has been archived. Archival alone (without
+     * LAUNDRY_COMPLETED) is NOT enough to call the transaction Completed —
+     * it stays Borrower Cleared until internal processing is also done.
+     */
+    $transactionFullyComplete = $custody->status === 'CLOSED'
+        && (
+            ! $hasLaundryItem
+            || ($laundryJob?->status === 'LAUNDRY_COMPLETED' && $laundryJob?->latestEvidence?->file)
+        );
+
     $operationalLabel = match (true) {
-        $custody->status === 'CLOSED' => 'Completed',
+        $custody->status === 'CLOSED' => $transactionFullyComplete ? 'Completed' : 'Borrower Cleared',
         $custody->status === 'OBLIGATION_OPEN' => 'Return Reconciliation / Obligation Open',
         $custody->status === 'RETURN_PROCESSING' => 'Return Processing',
         $custody->status === 'OVERDUE' => 'Overdue',
         (bool) $custody->released_at => 'Items Released / On Custody',
-        $preparationComplete && $hasPickupSchedule => 'Ready for Release',
+        $preparationComplete && $pickupWindowOpen => 'Ready for Release',
+        $preparationComplete && $pickupWindowUpcoming => 'Scheduled for Pickup',
+        $pickupWindowPassed => 'Pickup Window Expired',
         ! $hasPickupSchedule && $custody->status === 'PREPARING_RELEASE' => 'For Pickup Scheduling',
         $hasPickupSchedule && ! $preparationComplete => 'For Item Preparation',
         $custody->status === 'PREPARING_RELEASE' => 'Preparing for Release',
@@ -83,9 +115,13 @@
     };
 
     [$borrowerStateTitle, $borrowerStateCopy] = match (true) {
-        $custody->status === 'CLOSED' => [
+        $custody->status === 'CLOSED' && $transactionFullyComplete => [
             'Borrowing completed',
             'All issued items have been returned and reconciled. No further borrower action is required for this borrowing.',
+        ],
+        $custody->status === 'CLOSED' => [
+            'Borrower cleared',
+            'Your returned items have been accepted and your borrowing obligation is now cleared. No further action is required from you. Any remaining laundry processing and internal documentation will be handled by SPMU.',
         ],
         $custody->status === 'OBLIGATION_OPEN' => [
             'Return completed with an open obligation',
@@ -103,9 +139,17 @@
             'Items are currently on your custody',
             'Use this record for your issued items, return due date, and quantities currently on custody.',
         ],
-        $preparationComplete && $hasPickupSchedule => [
-            'Ready for scheduled release',
-            'Your pickup is scheduled and SPMU has confirmed item preparation. Go to SPMU during the pickup window for the physical handover and Borrower Slip.',
+        $preparationComplete && $pickupWindowOpen => [
+            'Ready for physical release',
+            'Your pickup window is open and SPMU has confirmed item preparation. Proceed to SPMU for the physical handover and Borrower Slip.',
+        ],
+        $preparationComplete && $pickupWindowUpcoming => [
+            'Pickup scheduled',
+            'SPMU has confirmed item preparation. Physical release becomes available only when your scheduled pickup window starts.',
+        ],
+        $pickupWindowPassed => [
+            'Pickup window ended',
+            'The scheduled claim window has ended without physical release. Coordinate with SPMU for a new pickup schedule.',
         ],
         $hasPickupSchedule => [
             'Pickup scheduled — preparation in progress',
@@ -144,7 +188,7 @@
             <div class="card-header">
                 <div>
                     <p class="eyebrow">Return coordination</p>
-                    <h2>Early Return Scheduled</h2>
+                    <h2>Early Return Coordination</h2>
                 </div>
                 <span class="status-badge status-info">Active Notice</span>
             </div>
@@ -157,31 +201,14 @@
                 <dd>{{ $activeEarlyReturn->reason ?: 'No coordination note provided.' }}</dd>
             </dl>
 
-            <div class="table-wrap top-gap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Selected Item</th>
-                            <th>Planned Quantity</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach($activeEarlyReturn->lines as $noticeLine)
-                            <tr>
-                                <td>
-                                    <strong>{{ $noticeLine->custodyLine?->requestItem?->description_snapshot ?: 'Custody item' }}</strong>
-                                    <small>{{ $noticeLine->custodyLine?->requestItem?->unit_snapshot ?: '—' }}</small>
-                                </td>
-                                <td>{{ $noticeLine->proposed_quantity + 0 }}</td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+            <div class="callout info top-gap">
+                <strong>Coordination only</strong>
+                <p>
+                    This notice only tells SPMU when the borrower plans to hand items back.
+                    Actual returned quantities and conditions are recorded by the Action Officer during physical Return &amp; Inspection.
+                    Inventory and custody quantities do not change from this notice.
+                </p>
             </div>
-
-            <p class="meta top-gap">
-                This is a notice for coordination only. Inventory, on-custody quantities, and return status change only after SPMU physically receives and inspects the items through Return &amp; Inspection.
-            </p>
         </article>
     </section>
 @endif
@@ -619,7 +646,7 @@
                 </div>
 
                 <p class="meta">
-                    Propose an earlier physical handover to SPMU. This notice does not return items or change inventory; SPMU records the actual receipt through Return &amp; Inspection.
+                    Propose an earlier physical handover schedule to SPMU. This is coordination only; it does not record item quantities, return items, or change inventory.
                 </p>
 
                 <label>
@@ -639,8 +666,7 @@
                         <thead>
                             <tr>
                                 <th>Outstanding Item</th>
-                                <th>Outstanding</th>
-                                <th>Quantity to Hand Over</th>
+                                <th>Currently On Custody</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -657,23 +683,16 @@
                                         <small>{{ $line->requestItem->unit_snapshot }}</small>
                                     </td>
                                     <td>{{ $outstanding + 0 }}</td>
-                                    <td>
-                                        <input
-                                            type="number"
-                                            name="quantities[{{ $line->id }}]"
-                                            value="{{ old('quantities.'.$line->id, 0) }}"
-                                            min="0"
-                                            max="{{ floor($outstanding) }}"
-                                            step="1"
-                                            inputmode="numeric"
-                                            required
-                                        >
-                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
                     </table>
                 </div>
+
+                <p class="meta">
+                    These quantities are read-only context. Do not enter planned return quantities here;
+                    the Action Officer records the actual quantities and conditions during physical Return &amp; Inspection.
+                </p>
 
                 <label>
                     Reason / Coordination Note
@@ -963,8 +982,9 @@
                                         <td>
                                             <input
                                                 type="number"
-                                                step="0.001"
+                                                step="1"
                                                 min="0"
+                                                inputmode="numeric"
                                                 name="quantities[{{ $line->id }}]"
                                                 value="{{ old('quantities.'.$line->id) }}"
                                                 placeholder="Enter actual count"
@@ -1105,7 +1125,7 @@
                 <div class="card-header">
                     <div>
                         <p class="eyebrow">3. Document verification</p>
-                        <h2>Verify the borrower's printed operational forms</h2>
+                        <h2>Verify release documents</h2>
                     </div>
                 </div>
 
@@ -1123,9 +1143,16 @@
                             true
                         );
 
-                        $documentDisplayStatus = $isReleaseOperationalDocument
-                            ? 'BORROWER COPY / REFERENCE'
-                            : str($document->status)->replace('_', ' ')->upper();
+                        $documentDisplayStatus = match (true) {
+                            $document->document_type === 'GATE_PASS'
+                                && in_array($custody->gatePass?->status, ['READY_FOR_PRINTING', 'VERIFIED'], true)
+                                    => 'FINAL SPMU GATE PASS',
+                            $document->document_type === 'GATE_PASS'
+                                    => 'SPMU PREVIEW — NOT FOR BORROWER PRINTING',
+                            $isReleaseOperationalDocument
+                                    => 'BORROWER COPY / REFERENCE',
+                            default => str($document->status)->replace('_', ' ')->upper(),
+                        };
                     @endphp
 
                     <div class="evidence-row">
@@ -1144,12 +1171,53 @@
                 @endforelse
 
                 <p class="meta top-gap">
-                    These forms were generated after SPMU approval and are also available in the Borrower request page for printing. Verify that the borrower brought the correct Borrower Slip and any applicable Gate Pass / Laundry Form. Do not generate a duplicate copy here. Required handwritten signatures are completed through the applicable physical workflow.
+                    The Borrower Slip and applicable Laundry Form may be prepared before pickup. For off-campus borrowing, the borrower does not print a Gate Pass in advance: the Action Officer verifies it with the registered E-signature during Physical Release, then SPMU prints the single FINAL Gate Pass for the borrower to present to the guard.
                 </p>
             </article>
         </section>
 
         <section class="content-area">
+            @if($pickupWindowUpcoming)
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <p class="eyebrow">4. Physical release</p>
+                            <h2>Wait for the scheduled pickup window</h2>
+                        </div>
+                        <x-status-badge status="PENDING" label="Scheduled for Pickup" />
+                    </div>
+
+                    <div class="callout info">
+                        <strong>Physical release is not available yet.</strong>
+                        <p>
+                            The handover may be recorded starting
+                            <strong>{{ optional($pickupWindowStartsAt)->format('d F Y, g:i A') }}</strong>
+                            and must be completed by
+                            <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>.
+                            Refresh this page when the pickup window starts.
+                        </p>
+                    </div>
+                </article>
+            @elseif($pickupWindowPassed)
+                <article class="card">
+                    <div class="card-header">
+                        <div>
+                            <p class="eyebrow">4. Physical release</p>
+                            <h2>Pickup window has ended</h2>
+                        </div>
+                        <x-status-badge status="EXPIRED" label="Pickup Window Expired" />
+                    </div>
+
+                    <div class="callout warning">
+                        <strong>Do not record a late physical release.</strong>
+                        <p>
+                            The claim window ended on
+                            <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>.
+                            Set a new pickup schedule before handing over the items.
+                        </p>
+                    </div>
+                </article>
+            @else
             <form method="post" action="{{ route('custody.release', $custody) }}" class="card form-grid">
                 @csrf
                 <div class="card-header">
@@ -1161,9 +1229,9 @@
                 </div>
 
                 <p>
-                    Release is recorded only when the borrower is physically present, the approved items are handed over,
-                    the Borrower Slip is signed by hand, and any required physical Gate Pass is completed.
+                    Release is recorded only when the borrower is physically present and the approved items are actually handed over.
                     The confirmed prepared quantities become the issued quantities automatically; do not enter them again.
+                    For off-campus borrowing, confirming this release also captures the Action Officer's registered E-signature and finalizes the Gate Pass for SPMU printing.
                 </p>
 
                 <label class="checkbox">
@@ -1175,9 +1243,12 @@
                         required
                         autocomplete="off"
                     >
-                    I confirm that the borrower physically received the approved items and the Borrower Slip,
-                    and Gate Pass if applicable, were completed with the required handwritten/wet signatures.
+                    I confirm that the borrower physically received the approved items and that all applicable physical handover acknowledgements were completed.
                 </label>
+
+                @error('signature')
+                    <p class="form-error">{{ $message }}</p>
+                @enderror
 
                 <label>
                     Release Remarks
@@ -1224,6 +1295,7 @@
                 resetReleaseConfirmation();
             })();
             </script>
+            @endif
         </section>
     @endif
 @endif
@@ -1236,146 +1308,71 @@
 @if($isSpmuOfficer && $custody->released_at)
     @php
         /*
-         * LINEN SPMU READONLY ACCEPTANCE V4 20260823
-         *
-         * The generic editable Fine/Damaged/etc table is NON-LINEN only.
-         * SPMU Action Officer already records the linen quantities/findings.
+         * Revised return workflow:
+         * linen and non-linen are inspected together when the borrower
+         * physically returns them. Laundry washing is a later internal stock
+         * process and does not delay the SPMU return inspection.
          */
         $eligibleReturnLines = $custody->lines->filter(function ($line) {
-            $outstanding = max(
+            return max(
                 0,
                 (float) $line->actual_released_quantity
                     - (float) $line->returned_quantity
-            );
-
-            return $outstanding > 0
-                && ! (bool) $line->requestItem?->inventoryItem?->laundry_required;
+            ) > 0;
         });
-        $nonLinenLines = $custody->lines->filter(
-            fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
-        );
-
         $linenLines = $custody->lines->filter(
             fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
-        );
-
-        $nonLinenOutstanding = $nonLinenLines->sum(
-            fn ($line) => max(0, (float) $line->actual_released_quantity - (float) $line->returned_quantity)
         );
 
         $linenOutstanding = $linenLines->sum(
             fn ($line) => max(0, (float) $line->actual_released_quantity - (float) $line->returned_quantity)
         );
 
-        $linenReadyForSpmuAcceptance =
-            $linenOutstanding > 0
-            && $laundryJob
-            && $laundryJob->status === 'READY_FOR_SPMU_RETURN';
-
-        /*
-         * Require a complete laundry-processing record before final SPMU acceptance.
-         * SPMU sees these values read-only and does not retype them.
-         */
-        $linenRecordsComplete =
-            $linenReadyForSpmuAcceptance
-            && (bool) $laundryJob?->worker_received_at
-            && (bool) $laundryJob?->worker_completed_at
-            && $linenLines
-                ->filter(
-                    fn ($line) =>
-                        max(
-                            0,
-                            (float) $line->actual_released_quantity
-                                - (float) $line->returned_quantity
-                        ) > 0
-                )
-                ->every(function ($line) use ($laundryJob) {
-                    $laundryLine = $laundryJob->lines->firstWhere(
-                        'custody_line_id',
-                        $line->id
-                    );
-
-                    if (! $laundryLine || $laundryLine->received_quantity === null) {
-                        return false;
-                    }
-
-                    $outstanding = max(
-                        0,
-                        (float) $line->actual_released_quantity
-                            - (float) $line->returned_quantity
-                    );
-
-                    $accounted =
-                        (float) ($laundryLine->fine_quantity ?? 0)
-                        + (float) ($laundryLine->damaged_quantity ?? 0)
-                        + (float) ($laundryLine->missing_lost_quantity ?? 0)
-                        + (float) ($laundryLine->stolen_quantity ?? 0)
-                        + (float) ($laundryLine->destroyed_quantity ?? 0);
-
-                    return abs($accounted - $outstanding) <= 0.0005;
-                });
-
         $linenOperationalStatus = match (true) {
             $linenLines->isEmpty() => 'Not applicable',
-            $linenOutstanding <= 0 => 'Fully accounted',
-            ! $laundryJob => 'Awaiting Laundry workflow',
+            $linenOutstanding > 0 => 'Awaiting borrower return inspection',
+            ! $laundryJob => 'Returned / accounted',
             $laundryJob->status === 'FOR_LAUNDRY' =>
-                'Awaiting borrower turnover to Laundry',
-            $laundryJob->status === 'IN_PROCESS' =>
-                'In Laundry process',
-            $laundryJob->status === 'READY_FOR_SPMU_RETURN' =>
-                'Cleaned linen awaiting SPMU acceptance',
-            $laundryJob->status === 'AWAITING_FINAL_FORM_UPLOAD' =>
-                'SPMU accepted linen â€” final form upload pending',
-            $laundryJob->status === 'FORM_REPLACEMENT_REQUIRED' =>
-                'Final Laundry Form replacement required',
+                'SPMU inspected linen — awaiting Laundry receipt signature',
+            $laundryJob->status === 'TURNED_OVER_TO_LAUNDRY' =>
+                'Turned over to Laundry — borrower no longer waits for washing',
             $laundryJob->status === 'LAUNDRY_COMPLETED' =>
-                'Laundry completed / settled',
-            default => 'Return processing',
+                'Laundry completed / available in Laundry Area',
+            default => 'Laundry turnover / internal processing',
         };
 
-        [$linenNextTitle, $linenNextCopy, $linenNextTone] =
-            match ($laundryJob?->status) {
-                'FOR_LAUNDRY' => [
-                    'Waiting for Laundry turnover',
-                    'The borrower must hand the used linen and borrower-signed physical Laundry Form to the SPMU Action Officer.',
-                    'warning',
-                ],
-                'IN_PROCESS' => [
-                    'Laundry is processing the linen',
-                    'Final SPMU linen acceptance is not required yet. Complete the recorded laundry-processing stage first.',
-                    'info',
-                ],
-                'READY_FOR_SPMU_RETURN' => [
-                    'Cleaned linen is awaiting SPMU acceptance',
-                    'Review the laundry-processing record below and physically verify the cleaned linen and physical form. Do not re-enter the Laundry quantities.',
-                    'success',
-                ],
-                'AWAITING_FINAL_FORM_UPLOAD' => [
-                    'Final Laundry Form upload pending',
-                    'SPMU final acceptance is complete. The SPMU Action Officer archives the fully signed scan to settle the Laundry transaction.',
-                    'warning',
-                ],
-                'FORM_REPLACEMENT_REQUIRED' => [
-                    'Laundry Form replacement required',
-                    'The SPMU Action Officer must upload a clear replacement copy of the fully signed Laundry Form.',
-                    'warning',
-                ],
-                'LAUNDRY_COMPLETED' => [
-                    'Laundry completed',
-                    'The cleaned linen was accepted by SPMU and the fully signed Laundry Form is archived.',
-                    'success',
-                ],
-                default => [
-                    'No separate Laundry action',
-                    'Review the current return state for the next required action.',
-                    'info',
-                ],
-            };
-        $returnAvailableToday = (bool) $activeEarlyReturn
-            || ! $returnDate
-            || ! now()->startOfDay()->lt($returnDate->copy()->startOfDay());
-        $hasRecordedReturns = $custody->returns->isNotEmpty();
+        [$linenNextTitle, $linenNextCopy, $linenNextTone] = match (true) {
+            $linenLines->isEmpty() => [
+                'No Laundry requirement',
+                'This custody does not contain laundry-required linen.',
+                'info',
+            ],
+            $linenOutstanding > 0 => [
+                'Return linen with the same printed Laundry Form',
+                'Record the linen condition in this Return Inspection. Laundry Personnel will later wet-sign Received by on the same printed Laundry Form.',
+                'warning',
+            ],
+            $laundryJob?->status === 'FOR_LAUNDRY' => [
+                'Confirm physical Laundry turnover',
+                'SPMU return inspection is complete. The borrower brings the linen and same printed Laundry Form to the Laundry Area. After Laundry Personnel wet-signs Received by, confirm the turnover in Laundry Operations.',
+                'warning',
+            ],
+            $laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY' => [
+                'Borrower linen turnover completed',
+                'Laundry Personnel have received the linen. Washing may be completed later inside the Laundry Area; the borrower has no further linen action.',
+                'success',
+            ],
+            $laundryJob?->status === 'LAUNDRY_COMPLETED' => [
+                'Linen available in Laundry Area',
+                'Internal laundry processing is complete. Clean/serviceable linen is now Available for future borrowing in the Laundry Area.',
+                'success',
+            ],
+            default => [
+                'Review Laundry Operations',
+                'Review the current Laundry case for the next internal action.',
+                'info',
+            ],
+        };
     @endphp
 
     <section class="content-grid two return-context-grid" id="return-summary">
@@ -1461,21 +1458,9 @@
             <div class="return-primary-stack">
 
                 {{-- ================================================= --}}
-                {{-- NON-LINEN â€” editable SPMU physical inspection     --}}
+                {{-- RETURN ITEMS — editable SPMU physical inspection     --}}
                 {{-- ================================================= --}}
-                @if(!$returnAvailableToday && $eligibleReturnLines->isNotEmpty())
-                    <div class="callout info">
-                        <strong>Return inspection opens on the effective SPMU return date.</strong>
-                        <p>
-                            {{ $returnDateAdjusted ? 'Original Expected Return: '.$originalReturnDate?->format('d F Y').'. ' : '' }}
-                            Effective Return: {{ $returnDate?->format('d F Y') }}.
-                            @if($returnDateAdjusted)
-                                The original date is closed under the Operational Calendar, so the borrower is protected from an automatic late status until this adjusted date.
-                            @endif
-                            If issued items remain outstanding after the effective return date, the transaction becomes overdue on the following calendar day.
-                        </p>
-                    </div>
-                @elseif($eligibleReturnLines->isNotEmpty())
+                @if($eligibleReturnLines->isNotEmpty())
                     <form
                         method="post"
                         action="{{ route('custody.return', $custody) }}"
@@ -1488,18 +1473,25 @@
                         <div class="card-header return-inspection-header">
                             <div>
                                 <p class="eyebrow">Physical return inspection</p>
-                                <h2>Account non-linen returned quantities</h2>
+                                <h2>Account returned quantities</h2>
                                 <p class="meta">
-                                    For each non-linen item inspected now, account its
-                                    complete outstanding quantity in one inspection.
-                                    Split item-quantity returns are not allowed.
+                                    Use this single table for every item that still needs physical return inspection.
+                                    Account each selected item's complete outstanding quantity once.
+                                    Linen leaves this table after inspection and continues in Laundry Operations.
                                 </p>
                             </div>
 
                             <span class="status-badge status-info">
-                                {{ $eligibleReturnLines->count() }} non-linen item type(s) ready
+                                {{ $eligibleReturnLines->count() }} item type(s) outstanding
                             </span>
                         </div>
+
+                        @if($eligibleReturnLines->contains(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required))
+                            <div class="callout info">
+                                <strong>Linen note</strong>
+                                <p>Use <strong>Inspection Remarks</strong> for observations such as stained or soiled linen (for example, “2 table cloths stained”). Use the quantity classifications above for damaged, destroyed, missing, lost, or stolen property.</p>
+                            </div>
+                        @endif
 
                         <div class="table-wrap return-inspection-scroll">
                             <table class="return-inspection-table">
@@ -1553,8 +1545,9 @@
                                                     {{ $line->requestItem->description_snapshot }}
                                                 </strong>
                                                 <small>
-                                                    {{ $line->requestItem->unit_snapshot }}
-                                                    Â· Outstanding: {{ $outstanding + 0 }}
+                                                    {{ (bool) $line->requestItem?->inventoryItem?->laundry_required ? 'Linen' : 'Non-linen' }}
+                                                    · {{ $line->requestItem->unit_snapshot }}
+                                                    · Outstanding: {{ $outstanding + 0 }}
                                                 </small>
                                             </td>
 
@@ -1569,9 +1562,10 @@
                                                 <td>
                                                     <input
                                                         type="number"
-                                                        step="0.001"
+                                                        step="1"
                                                         min="0"
                                                         max="{{ $outstanding }}"
+                                                        inputmode="numeric"
                                                         class="return-accounting-input"
                                                         data-condition="{{ $conditionCode }}"
                                                         name="accounting[{{ $line->id }}][{{ $conditionCode }}]"
@@ -1650,7 +1644,7 @@
                                 <textarea
                                     name="remarks"
                                     rows="3"
-                                    placeholder="Optional inspection note"
+                                    placeholder="Optional inspection note (e.g., 2 table cloths stained, minor marks observed)"
                                 >{{ old('remarks') }}</textarea>
                             </label>
 
@@ -1665,206 +1659,7 @@
                     </form>
                 @endif
 
-                {{-- ================================================= --}}
-                {{-- LINEN â€” read-only Laundry record + SPMU accept    --}}
-                {{-- ================================================= --}}
-                @if($linenReadyForSpmuAcceptance && $laundryJob)
-                    <form
-                        method="post"
-                        action="{{ route('custody.return', $custody) }}"
-                        class="card form-grid linen-spmu-acceptance-card"
-                    >
-                        @csrf
-
-                        <div class="card-header">
-                            <div>
-                                <p class="eyebrow">Cleaned linen return</p>
-                                <h2>Verify Laundry Worker record &amp; accept linen</h2>
-                                <p class="meta">
-                                    Laundry Request {{ $laundryJob->laundry_request_id }} was encoded by
-                                    {{ $laundryJob->worker_name ?: 'the Laundry Worker' }}.
-                                    The quantities below are read-only for SPMU.
-                                </p>
-                            </div>
-
-                            <span class="status-badge status-info">
-                                SPMU Acceptance Required
-                            </span>
-                        </div>
-
-                        <div class="callout info linen-no-reentry-callout">
-                            <strong>No duplicate quantity encoding</strong>
-                            <p>
-                                Compare the cleaned linen and physical Laundry Form with
-                                the read-only laundry-processing record below. If anything
-                                does not match, stop and have Laundry correct the record
-                                before confirming acceptance.
-                            </p>
-                        </div>
-
-                        @unless($linenRecordsComplete)
-                            <div class="callout danger">
-                                <strong>Laundry record is incomplete.</strong>
-                                <p>
-                                    SPMU acceptance is blocked until Laundry records the receipt date,
-                                    completion date, actual quantity received, and a complete condition
-                                    breakdown for every outstanding linen item.
-                                </p>
-                            </div>
-                        @endunless
-
-                        <dl class="detail-list compact-detail-list">
-                            <dt>Laundry Request ID</dt>
-                            <dd>{{ $laundryJob->laundry_request_id }}</dd>
-                            <dt>Laundry Worker</dt>
-                            <dd>{{ $laundryJob->worker_name ?: 'Not recorded' }}</dd>
-                            <dt>Date received by Laundry</dt>
-                            <dd>{{ optional($laundryJob->worker_received_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
-                            <dt>Laundry completed</dt>
-                            <dd>{{ optional($laundryJob->worker_completed_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
-                        </dl>
-
-                        <div class="table-wrap linen-spmu-verification-scroll">
-                            <table class="linen-spmu-verification-table">
-                                <thead>
-                                    <tr>
-                                        <th>Item</th>
-                                        <th>Outstanding</th>
-                                        <th>Received by Laundry</th>
-                                        <th>Fine / Good</th>
-                                        <th>Damaged</th>
-                                        <th>Lost / Missing</th>
-                                        <th>Stolen</th>
-                                        <th>Destroyed</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach($linenLines as $line)
-                                        @php
-                                            $outstanding = max(
-                                                0,
-                                                (float) $line->actual_released_quantity
-                                                    - (float) $line->returned_quantity
-                                            );
-
-                                            $laundryLine = $laundryJob->lines->firstWhere(
-                                                'custody_line_id',
-                                                $line->id
-                                            );
-
-                                            $received = max(
-                                                0,
-                                                (float) ($laundryLine?->received_quantity ?? 0)
-                                            );
-                                            $fine = max(
-                                                0,
-                                                (float) ($laundryLine?->fine_quantity ?? 0)
-                                            );
-                                            $damaged = max(
-                                                0,
-                                                (float) ($laundryLine?->damaged_quantity ?? 0)
-                                            );
-                                            $missingLost = max(
-                                                0,
-                                                (float) ($laundryLine?->missing_lost_quantity ?? 0)
-                                            );
-                                            $stolen = max(
-                                                0,
-                                                (float) ($laundryLine?->stolen_quantity ?? 0)
-                                            );
-                                            $destroyed = max(
-                                                0,
-                                                (float) ($laundryLine?->destroyed_quantity ?? 0)
-                                            );
-                                        @endphp
-
-                                        @if($outstanding > 0)
-                                            <tr>
-                                                <td>
-                                                    <strong>{{ $line->requestItem->description_snapshot }}</strong>
-                                                    <small>{{ $line->requestItem->unit_snapshot }}</small>
-                                                </td>
-                                                <td>{{ $outstanding + 0 }}</td>
-                                                <td>{{ $received + 0 }}</td>
-                                                <td>{{ $fine + 0 }}</td>
-                                                <td>{{ $damaged + 0 }}</td>
-                                                <td>{{ $missingLost + 0 }}</td>
-                                                <td>{{ $stolen + 0 }}</td>
-                                                <td>{{ $destroyed + 0 }}</td>
-                                            </tr>
-
-                                            {{-- Hidden backend accounting derived from Laundry Worker record. --}}
-                                            <input type="hidden" name="accounting[{{ $line->id }}][FINE]" value="{{ $fine }}">
-                                            <input type="hidden" name="accounting[{{ $line->id }}][DAMAGED]" value="{{ $damaged }}">
-                                            <input type="hidden" name="accounting[{{ $line->id }}][DESTROYED]" value="{{ $destroyed }}">
-                                            <input type="hidden" name="accounting[{{ $line->id }}][MISSING]" value="{{ $missingLost }}">
-                                            <input type="hidden" name="accounting[{{ $line->id }}][LOST]" value="0">
-                                            <input type="hidden" name="accounting[{{ $line->id }}][STOLEN]" value="{{ $stolen }}">
-
-                                            @if($stolen > 0)
-                                                <tr class="linen-evidence-row">
-                                                    <td colspan="8">
-                                                        <label>
-                                                            Police / blotter reference for
-                                                            {{ $line->requestItem->description_snapshot }}
-                                                            <input
-                                                                name="police_blotter_references[{{ $line->id }}]"
-                                                                value="{{ old('police_blotter_references.'.$line->id) }}"
-                                                                required
-                                                            >
-                                                            <small>
-                                                                Required only because Laundry recorded a stolen quantity.
-                                                                SPMU does not re-enter the stolen quantity itself.
-                                                            </small>
-                                                        </label>
-                                                    </td>
-                                                </tr>
-                                            @endif
-                                        @endif
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <label>
-                            SPMU Acceptance Remarks
-                            <textarea
-                                name="remarks"
-                                rows="3"
-                                placeholder="Optional physical verification note"
-                            >{{ old('remarks') }}</textarea>
-                        </label>
-
-                        <label class="checkbox linen-spmu-confirmation">
-                            <input
-                                type="checkbox"
-                                name="physical_verified"
-                                value="1"
-                                required
-                                @disabled(!$linenRecordsComplete)
-                            >
-                            I confirm that SPMU physically verified and accepted
-                            the cleaned linen, the actual handover matches the
-                            laundry-processing record, and the same physical Laundry
-                            Form has the required SPMU wet signature.
-                        </label>
-
-                        <button
-                            class="button primary ui-pressable"
-                            @disabled(!$linenRecordsComplete)
-                        >
-                            Confirm SPMU Acceptance
-                        </button>
-
-                        <p class="meta">
-                            This uses the existing audited physical-return backend.
-                            After all linen is accepted, the transaction moves to
-                            <strong>Awaiting Final Form Upload</strong>. The physical
-                            form remains with the SPMU Action Officer, who scans and uploads
-                            the fully signed form to settle the Laundry transaction.
-                        </p>
-                    </form>
-                @elseif($eligibleReturnLines->isEmpty())
+                @if($eligibleReturnLines->isEmpty())
                     <article class="card return-empty-state">
                         <div class="empty-state">
                             <strong>
@@ -1895,35 +1690,21 @@
                     <dl class="detail-list compact-detail-list">
                         <dt>Issued</dt>
                         <dd>
-                            {{ optional($custody->released_at)->format('d M Y, g:i A') ?: 'â€”' }}
+                            {{ optional($custody->released_at)->format('d M Y, g:i A') ?: '—' }}
                         </dd>
 
                         <dt>Expected Return</dt>
-                        <dd>{{ $returnDate?->format('d M Y') ?: 'â€”' }}</dd>
+                        <dd>{{ $returnDate?->format('d M Y') ?: '—' }}</dd>
 
                         <dt>{{ $custody->status === 'OVERDUE' ? 'Total Overdue' : 'Total On Custody' }}</dt>
                         <dd>{{ $outstandingTotal + 0 }}</dd>
-
-                        @if($nonLinenLines->isNotEmpty())
-                            <dt>Non-linen</dt>
-                            <dd>
-                                {{
-                                    $nonLinenOutstanding <= 0
-                                        ? 'Fully returned'
-                                        : ($nonLinenOutstanding + 0).($custody->status === 'OVERDUE' ? ' overdue' : ' on custody')
-                                }}
-                            </dd>
-                        @endif
 
                         @if($linenLines->isNotEmpty())
                             <dt>Linen</dt>
                             <dd>
                                 {{ $linenOperationalStatus }}
-                                @if(
-                                    $linenOutstanding > 0
-                                    && $laundryJob?->status !== 'AWAITING_FINAL_FORM_UPLOAD'
-                                )
-                                    Â· {{ $linenOutstanding + 0 }} outstanding
+                                @if($linenOutstanding > 0)
+                                    · {{ $linenOutstanding + 0 }} outstanding
                                 @endif
                             </dd>
                         @endif
@@ -1937,6 +1718,15 @@
                             <p>{{ $linenNextCopy }}</p>
                         </div>
 
+                        @if($laundryJob && in_array($laundryJob->status, ['FOR_LAUNDRY', 'TURNED_OVER_TO_LAUNDRY'], true))
+                            <a
+                                class="button primary small ui-pressable"
+                                href="{{ route('laundry.show', $laundryJob) }}"
+                            >
+                                Open Laundry Operations
+                            </a>
+                        @endif
+
                         @if($laundryJob?->latestEvidence?->file)
                             <a
                                 class="button secondary small ui-pressable"
@@ -1944,7 +1734,7 @@
                                 target="_blank"
                                 rel="noopener"
                             >
-                                View Final Signed Laundry Form
+                                View Archived Laundry Form
                             </a>
                         @endif
                     @endif
@@ -2011,7 +1801,7 @@
             gap: 7px;
         }
     </style>
-    @if($hasRecordedReturns)
+@if($custody->returns->isNotEmpty())
         <section class="content-area return-history-section">
             <article class="card">
                 <div class="card-header">
