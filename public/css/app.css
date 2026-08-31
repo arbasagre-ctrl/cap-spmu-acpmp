@@ -401,6 +401,12 @@ button { color: inherit; }
 .page-heading > div:first-child { min-width: 0; }
 .page-heading h1 { margin: 2px 0 5px; color: var(--heading); font-size: clamp(23px, 2vw, 29px); font-weight: 750; letter-spacing: -.022em; line-height: 1.18; }
 .page-heading p:not(.eyebrow) { max-width: 760px; margin: 0; color: var(--text-muted); }
+/* Drops a heading action clear of the description line it would otherwise
+   sit level with. Offset only, so the heading's own spacing is unchanged. */
+.page-heading.heading-action-lowered > .button { position: relative; top: 11px; }
+/* Compact identity line under a record title: "Borrower: X   Submitted: Y". */
+.request-heading-meta { display: flex; flex-wrap: wrap; gap: 3px 20px; margin-top: 6px !important; font-size: 12.5px; }
+.request-heading-meta strong { color: var(--text-secondary); font-weight: 700; }
 .eyebrow { margin: 0 0 4px; color: var(--text-muted); font-size: 10px; font-weight: 800; letter-spacing: .085em; text-transform: uppercase; }
 h2, h3, h4 { color: var(--heading); }
 h2 { margin: 0 0 12px; font-size: 17px; line-height: 1.3; }
@@ -643,7 +649,7 @@ small, .muted { color: var(--text-muted); }
 
 /* Buttons and status */
 .actions, .inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop) {
+.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort) {
     display: inline-flex;
     min-height: 40px;
     align-items: center;
@@ -659,7 +665,7 @@ small, .muted { color: var(--text-muted); }
     font-weight: 750;
     line-height: 1.2;
 }
-.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .button.primary { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
 .button.primary:hover { color: #fff; background: var(--primary-action-hover); border-color: var(--primary-action-hover); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .button.primary:active {
@@ -836,6 +842,41 @@ input::placeholder, textarea::placeholder { color: var(--text-soft); }
 input:hover, select:hover, textarea:hover { border-color: var(--border-strong); }
 input:focus, select:focus, textarea:focus { outline: 0; border-color: var(--interactive); box-shadow: var(--focus-ring); }
 input:disabled, select:disabled, textarea:disabled { color: var(--text-soft); background: var(--surface-muted); cursor: not-allowed; }
+
+/* Dropdown chevron: one consistent, vertically centred indicator for every select. */
+select {
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230b203b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 38px;
+    background-image: var(--select-chevron);
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    background-size: 16px 16px;
+}
+select::-ms-expand { display: none; }
+html[data-theme="dark"] select {
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23c7d2de' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+select:disabled { background-image: var(--select-chevron); opacity: .75; }
+select[multiple], select[size]:not([size="1"]) { padding-right: 11px; background-image: none; }
+
+/* Detail pages that drill down out of a configuration hub share one back control. */
+.button.config-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 46px;
+    padding: 11px 20px;
+    border-color: #bcd8f5;
+    color: #1a6fd4;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.button.config-back-button:hover, .button.config-back-button:focus-visible { color: #1a6fd4; background: #eff6fe; border-color: #1a6fd4; }
+html[data-theme="dark"] .button.config-back-button { border-color: var(--border-strong); color: var(--interactive); }
+html[data-theme="dark"] .button.config-back-button:hover, html[data-theme="dark"] .button.config-back-button:focus-visible { color: var(--interactive); background: var(--surface-hover); border-color: var(--interactive); }
 .helper, label small { color: var(--text-muted); font-size: 11px; font-weight: 400; }
 .checkbox { display: flex; align-items: center; gap: 8px; }
 .field-error { margin: -7px 0 0; color: var(--danger); font-size: 11px; }
@@ -1583,6 +1624,17 @@ body.calendar-drawer-open { overflow: hidden; }
 .notification-copy small { color: var(--text-muted); }
 .notification-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .notification-heading h2 { margin: 0; font-size: 14px; }
+
+/* A notification row opens the record it refers to. The link is stretched
+   over the whole item so the "Mark as read" control inside it stays
+   separately clickable instead of being nested in an anchor. */
+.notification-list .notification-item.is-linked { position: relative; }
+.notification-open { position: absolute; inset: 0; z-index: 1; border-radius: 6px; }
+.notification-open:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.notification-list .notification-item.is-linked:hover { background: var(--surface-hover); }
+.notification-list .notification-item.is-linked:hover .notification-heading h2 { color: var(--interactive); }
+.notification-list .notification-item.is-linked.unread:hover { background: var(--blue-50); border-left-color: var(--interactive); }
+.notification-item > form { position: relative; z-index: 2; }
 
 /* Public and authentication */
 .site-header, body > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px var(--content-gutter); color: #dce8f5; background: var(--navy-950); }
@@ -2624,6 +2676,7 @@ body > main + footer {
     .topbar-title { margin-right: auto; }
     .account-nav { margin-left: 0; gap: 1px; }
     .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
+    .page-heading.heading-action-lowered > .button { top: 0; }
     .page-heading h1 { font-size: 25px; }
     .stat-grid, .content-grid, .content-grid.two, .content-grid.three, .dashboard-grid, .hero { grid-template-columns: 1fr; }
     .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

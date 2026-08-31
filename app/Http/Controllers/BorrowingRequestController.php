@@ -139,10 +139,16 @@ class BorrowingRequestController extends Controller
             $query->whereNotNull('final_approved_at');
         }
 
+        /*
+         * The borrower workspace renders the paginated My Requests list.
+         * Staff record views keep the full unpaginated table.
+         */
         return view(
             'requests.index',
             [
-                'requests' => $query->get(),
+                'requests' => $workspace === 'BORROWER'
+                    ? $query->paginate(10)->withQueryString()
+                    : $query->get(),
             ]
         );
     }

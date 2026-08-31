@@ -431,7 +431,23 @@
     const clear = browser.querySelector('[data-accountability-clear]');
     const resultCount = browser.querySelector('[data-accountability-result-count]');
     const empty = browser.querySelector('[data-accountability-empty]');
+    const table = browser.querySelector('[data-accountability-table]');
+    const emptyFooter = browser.querySelector('[data-accountability-empty-footer]');
     let selectedCategory = '';
+
+    /*
+     * Captured in document order before any sorting, so a record row and the
+     * detail row that belongs to it stay adjacent when rows are reordered.
+     */
+    const detailFor = new Map();
+
+    records.forEach((record) => {
+        const detail = record.nextElementSibling;
+
+        if (detail && detail.matches('[data-obligation-detail]')) {
+            detailFor.set(record, detail);
+        }
+    });
 
     const applyFilters = () => {
         const query = (search?.value || '').trim().toLowerCase();
@@ -448,7 +464,13 @@
         let visibleCount = 0;
 
         orderedRecords.forEach((record) => {
+            const detail = detailFor.get(record);
+
             recordsContainer?.append(record);
+
+            if (detail) {
+                recordsContainer?.append(detail);
+            }
 
             const matchesCategory = !selectedCategory
                 || record.dataset.category === selectedCategory;
@@ -459,6 +481,9 @@
             const visible = matchesCategory && matchesSearch && matchesStatus;
 
             record.hidden = !visible;
+            if (detail && !visible) {
+                detail.hidden = true;
+            }
             if (visible) {
                 visibleCount += 1;
             }
@@ -471,9 +496,17 @@
         });
 
         if (resultCount) {
-            resultCount.textContent = records.length === visibleCount
-                ? `Showing ${visibleCount} ${visibleCount === 1 ? 'record' : 'records'}`
-                : `Showing ${visibleCount} of ${records.length} records`;
+            resultCount.textContent = visibleCount === 0
+                ? `Showing 0 of ${records.length} records`
+                : `Showing 1 to ${visibleCount} of ${records.length} records`;
+        }
+
+        if (table) {
+            table.hidden = visibleCount === 0;
+        }
+
+        if (emptyFooter) {
+            emptyFooter.hidden = visibleCount > 0;
         }
 
         if (empty) {
@@ -484,13 +517,13 @@
 
             if (heading) {
                 heading.textContent = hasRecords
-                    ? 'No records match the current filters.'
-                    : 'You have no unresolved obligations.';
+                    ? 'No matching obligations'
+                    : 'No unresolved obligations';
             }
             if (copy) {
                 copy.textContent = hasRecords
-                    ? 'Adjust the search or filters to see other records.'
-                    : 'There are no open overdue, property, billing, or restriction records on your account.';
+                    ? 'No record matches the current search or filters. Adjust them to see other records.'
+                    : "You're all clear! You have no overdue returns, property cases, open billings, or restrictions.";
             }
         }
     };

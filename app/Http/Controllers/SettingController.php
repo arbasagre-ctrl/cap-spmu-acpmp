@@ -55,7 +55,16 @@ class SettingController extends Controller
     {
         $this->authorizeConfiguration($request);
 
-        $data = $request->validate(['value' => ['nullable', 'string', 'max:2000'], 'reason' => ['required', 'string', 'max:1000']]);
+        $data = $request->validate(['value' => ['nullable', 'string', 'max:2000'], 'reason' => ['nullable', 'string', 'max:1000']]);
+
+        /*
+         * The change log column is not nullable, so an omitted reason is
+         * recorded explicitly rather than stored as an empty string.
+         */
+        $data['reason'] = filled($data['reason'] ?? null)
+            ? trim($data['reason'])
+            : 'No reason provided.';
+
         $before = $setting->value_json;
         $after = match ($setting->data_type) {
             'INTEGER' => filled($data['value']) ? (int) $data['value'] : null,

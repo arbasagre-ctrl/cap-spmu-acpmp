@@ -10,59 +10,49 @@
 
     $totalIssued = (int) round($job->lines->sum(fn ($line) => (float) $line->issued_quantity));
     $totalInternalLaundry = (int) round($job->lines->sum(fn ($line) => (float) ($line->received_quantity ?? 0)));
+    // Physical release confirms the applicable handwritten acknowledgements;
+    // Laundry receipt is recorded separately after the Received by signature.
+    $issuedSigned = (bool) $job->custody->released_at;
+    $receivedSigned = (bool) $job->worker_received_at;
 @endphp
 
-<section class="page-heading">
+<div class="laundry-detail">
+<section class="page-heading laundry-detail-heading">
     <div>
         <p class="eyebrow">SPMU Action Officer · Laundry</p>
         <h1>{{ $job->custody->custody_no }}</h1>
         <p>{{ $job->custody->borrower->full_name }} · Request {{ $job->custody->request->request_no }}</p>
     </div>
-    <div class="inline-actions">
-        <a class="button secondary ui-pressable" href="{{ route('laundry.index') }}">Back to Laundry</a>
-        <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}">Open Return</a>
-    </div>
 </section>
 
-@if(session('status'))
-<section class="content-area"><div class="callout success">{{ session('status') }}</div></section>
-@endif
-@if($errors->any())
-<section class="content-area">
-    <div class="callout danger">
-        <strong>Please review the Laundry action.</strong>
-        <ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul>
-    </div>
-</section>
-@endif
-
-<section class="content-area narrow">
-    <x-laundry-progress-tracker :job="$job" />
+<section class="content-area laundry-detail-tracker">
+    <x-laundry-progress-tracker :job="$job" :inspection-complete="$allLinenReturned" />
 </section>
 
 <section class="content-area">
     <div class="content-grid two laundry-operation-grid">
-        <article class="card">
-            <div class="card-header">
-                <div>
-                    <p class="eyebrow">Physical Laundry Form</p>
-                    <h2>One printed form from pickup to return</h2>
-                </div>
-                <x-status-badge :status="$job->status" />
+        <article class="card laundry-form-card">
+            <div class="card-header laundry-detail-card-title">
+                <x-icon name="requests" size="27" />
+                <h2>Laundry Form</h2>
             </div>
 
-            <div class="callout info">
-                <strong>Same physical form</strong>
-                <p>
-                    The borrower uses the Laundry Form generated after approval. Laundry Personnel signs
-                    <strong>Issued by</strong> at pickup and signs <strong>Received by</strong> when the linen is returned.
-                    Laundry Personnel do not need a system account; both are handwritten/wet signatures on the same paper.
-                </p>
-            </div>
+            <p class="laundry-form-description">Same printed form used from release through return.</p>
+
+            <dl class="laundry-signature-list" aria-label="Handwritten Laundry Form signatures">
+                <div>
+                    <dt><x-icon name="edit" size="19" />Issued by:</dt>
+                    <dd><span class="status-badge {{ $issuedSigned ? 'status-success' : 'status-warning' }}">{{ $issuedSigned ? 'Signed' : 'Pending' }}</span></dd>
+                </div>
+                <div>
+                    <dt><x-icon name="profile" size="19" />Received by:</dt>
+                    <dd><span class="status-badge {{ $receivedSigned ? 'status-success' : 'status-warning' }}">{{ $receivedSigned ? 'Signed' : 'Pending' }}</span></dd>
+                </div>
+            </dl>
 
             @if($job->document)
-                <div class="inline-actions top-gap">
-                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">View generated Laundry Form</a>
+                <div class="inline-actions laundry-form-actions">
+                    <a class="button secondary ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">View Laundry Form</a>
                     @if($job->latestEvidence?->file)
                         <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">View archived signed form</a>
                     @endif
@@ -77,42 +67,42 @@
                         <small>Required for final transaction documentation; this does not delay borrower clearance.</small>
                         <input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required>
                     </label>
-                    <button class="button secondary ui-pressable"><x-icon name="upload" /> Archive accomplished form</button>
+                    <button class="button secondary ui-pressable link-button" type="submit">Archive accomplished form</button>
                 </form>
             @endif
         </article>
 
-        <article class="card">
-            <div class="card-header"><div><p class="eyebrow">Linen record</p><h2>Quantities</h2></div></div>
-            <dl class="detail-list">
-                <dt>Total issued</dt><dd>{{ $totalIssued }}</dd>
-                <dt>Returned / accounted by SPMU</dt><dd>{{ $allLinenReturned ? 'Complete' : 'Pending return inspection' }}</dd>
-                <dt>Internal Laundry quantity</dt><dd>{{ $totalInternalLaundry }}</dd>
-                <dt>Turnover recorded by</dt><dd>{{ $job->worker_name ?: 'Not yet recorded' }}</dd>
-                <dt>Laundry received</dt><dd>{{ optional($job->worker_received_at)->format('d M Y, g:i A') ?: 'Not yet recorded' }}</dd>
-                <dt>Internal laundry completed</dt><dd>{{ optional($job->worker_completed_at)->format('d M Y, g:i A') ?: 'Not yet recorded' }}</dd>
+        <article class="card laundry-linen-card">
+            <div class="card-header laundry-detail-card-title"><x-icon name="box" size="27" /><h2>Linen Status</h2></div>
+            <dl class="detail-list laundry-linen-facts">
+                <dt>Total issued:</dt><dd>{{ $totalIssued }}</dd>
+                <dt>Returned / accounted by SPMU:</dt><dd>{{ $allLinenReturned ? 'Complete' : 'Pending return inspection' }}</dd>
+                <dt>Internal laundry quantity:</dt><dd>{{ $totalInternalLaundry }}</dd>
+                <dt>Turnover recorded by:</dt><dd>{{ $job->worker_name ?: 'Not yet recorded' }}</dd>
+                <dt>Laundry received:</dt><dd>{{ optional($job->worker_received_at)->format('d M Y, g:i A') ?: 'Not yet recorded' }}</dd>
+                <dt>Internal laundry completed:</dt><dd>{{ optional($job->worker_completed_at)->format('d M Y, g:i A') ?: 'Not yet recorded' }}</dd>
             </dl>
         </article>
     </div>
 </section>
 
 @if($job->status === 'FOR_LAUNDRY')
-<section class="content-area narrow">
-    <article class="card attention-card">
-        <div class="card-header">
-            <div><p class="eyebrow">Borrower-side Laundry turnover</p><h2>Confirm Laundry received the returned linen</h2></div>
-            <x-status-badge status="FOR_LAUNDRY" />
-        </div>
-
-        @if(! $allLinenReturned)
-            <div class="callout warning">
-                <strong>Return Inspection comes first.</strong>
-                <p>
-                    Record the linen quantity and return condition in the SPMU Return workflow first. The Action Officer records the physical inspection in the system; no second linen inspection is required in Laundry Operations.
-                </p>
+<section class="content-area">
+    @if(! $allLinenReturned)
+        <article class="card laundry-next-action">
+            <x-icon name="requests" size="36" />
+            <div>
+                <h2>Return Inspection required</h2>
+                <p>Record the returned linen quantity and condition before Laundry Turnover can be confirmed.</p>
             </div>
             <a class="button primary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-primary">Open Return Inspection</a>
-        @else
+        </article>
+    @else
+        <article class="card laundry-turnover-card">
+            <div class="card-header">
+                <div><p class="eyebrow">Borrower-side Laundry turnover</p><h2>Confirm Laundry received the returned linen</h2></div>
+                <x-status-badge status="FOR_LAUNDRY" />
+            </div>
             <div class="callout success">
                 <strong>SPMU return inspection is complete.</strong>
                 <p>
@@ -130,10 +120,10 @@
                     SPMU turnover remarks <small>Optional</small>
                     <textarea name="worker_remarks" placeholder="Optional note about the physical turnover">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
                 </label>
-                <button class="button primary ui-pressable">Confirm Laundry Turnover</button>
+                <button class="button primary ui-pressable link-button" type="submit">Confirm Laundry Turnover</button>
             </form>
-        @endif
-    </article>
+        </article>
+    @endif
 </section>
 @endif
 
@@ -183,7 +173,7 @@
                     Internal laundry remarks <small>Optional</small>
                     <textarea name="worker_remarks" placeholder="Optional note when Laundry processing is completed">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
                 </label>
-                <button class="button primary ui-pressable">Complete Laundry Processing</button>
+                <button class="button primary ui-pressable link-button" type="submit">Complete Laundry Processing</button>
             </form>
         </article>
     </div>
@@ -191,7 +181,7 @@
 @endif
 
 @if($job->status === 'LAUNDRY_COMPLETED')
-<section class="content-area narrow">
+<section class="content-area">
     <article class="card">
         <div class="card-header">
             <div>
@@ -214,8 +204,6 @@
 </section>
 @endif
 
-<style>
-.laundry-operation-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:18px}
-@media(max-width:900px){.laundry-operation-grid{grid-template-columns:1fr}}
-</style>
+</div>
+@include('laundry.partials.detail-styles')
 @endsection

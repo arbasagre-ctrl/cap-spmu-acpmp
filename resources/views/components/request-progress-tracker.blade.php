@@ -1,4 +1,4 @@
-@props(['request', 'showCurrentStatus' => true])
+@props(['request', 'showCurrentStatus' => true, 'compact' => false, 'releaseView' => false])
 
 @php
     $status = $request->status instanceof App\Enums\RequestStatus
@@ -55,7 +55,7 @@
 
     $formatDateTime = static fn ($value) =>
         $value
-            ? $value->format('d M Y, g:i A')
+            ? $value->format($compact ? 'd M, g:i A' : 'd M Y, g:i A')
             : null;
 
     /*
@@ -518,6 +518,17 @@
         ],
     ];
 
+    if ($compact) {
+        $steps[1]['label'] = 'Prepared';
+        $steps[3]['label'] = $isApproved ? 'Reviewed' : $steps[3]['label'];
+    }
+
+    if ($releaseView) {
+        $steps[6]['label'] = 'Release';
+        $steps[6]['icon'] = 'plus';
+        $steps[7]['icon'] = 'chevron-right';
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Tracker heading
@@ -630,7 +641,7 @@
              HEADER
         ================================================================= --}}
 
-        <div class="request-tracker__header">
+        <div class="request-tracker__header {{ $compact ? 'visually-hidden' : '' }}">
 
             <div>
 
@@ -909,6 +920,7 @@
              FOOTER / INFO
         ================================================================= --}}
 
+        @unless($compact)
         <p class="request-tracker__hint">
 
             <x-icon
@@ -933,6 +945,7 @@
             </span>
 
         </p>
+        @endunless
 
     </article>
 </section>

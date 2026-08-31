@@ -56,6 +56,24 @@
         @case('plus')
             <path d="M12 5v14M5 12h14" />
             @break
+        @case('plus-circle')
+            <circle cx="12" cy="12" r="9" /><path d="M12 8.5v7M8.5 12h7" />
+            @break
+        @case('clipboard-check')
+            <path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2" /><rect x="9" y="2" width="6" height="4" rx="1" /><path d="m9 14 2 2 4-4" />
+            @break
+        @case('shield-check')
+            <path d="M12 2 3 5.5V11c0 5 3 8 9 9.5 6-1.5 9-4.5 9-9.5V5.5L12 2Z" /><path d="m8.5 11.6 2.4 2.4 4.6-4.6" />
+            @break
+        @case('file-search')
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3" /><path d="M14 3l5 5v3" /><path d="M14 3v5h5" /><circle cx="16.5" cy="16.5" r="3.5" /><path d="m19.2 19.2 2.3 2.3" />
+            @break
+        @case('mask')
+            <path d="M3.5 12h-1M22.5 12h-1" /><ellipse cx="8" cy="12" rx="4" ry="3.4" /><ellipse cx="16" cy="12" rx="4" ry="3.4" /><path d="M12 12h0" />
+            @break
+        @case('trash')
+            <path d="M4 7h16" /><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /><path d="M6 7v13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" /><path d="M10 11.5v6M14 11.5v6" />
+            @break
         @case('edit')
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
             @break
@@ -103,6 +121,51 @@
             @break
         @case('warning')
             <path d="M12 3 2.8 20h18.4L12 3Z" /><path d="M12 9v5M12 17.5v.1" />
+            @break
+        @case('check-circle')
+            <circle cx="12" cy="12" r="9" /><path d="m8.2 12.2 2.6 2.6 5-5.6" />
+            @break
+        @case('banknote')
+            <rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2.5" /><path d="M6 12h.01M18 12h.01" />
+            @break
+        @case('external-link')
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6" /><path d="M10 14 21 3" />
+            @break
+        @case('arrow-left')
+            <path d="M20 12H4" /><path d="m10 6-6 6 6 6" />
+            @break
+        @case('lightbulb')
+            <path d="M9 18h6" /><path d="M10 21.5h4" /><path d="M12 2.5a6.5 6.5 0 0 0-3.7 11.84c.5.35.8.9.85 1.5l.05.66h5.6l.05-.66c.05-.6.35-1.15.85-1.5A6.5 6.5 0 0 0 12 2.5Z" />
+            @break
+        @case('save')
+            <path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /><path d="M8 3v6h7V3" /><path d="M8 14h8v7H8z" />
+            @break
+        @case('clock')
+            <circle cx="12" cy="12" r="9" /><path d="M12 7v5.3l3.4 2" />
+            @break
+        @case('calendar-clock')
+            <path d="M20 11V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6" /><path d="M15 2v4M7 2v4M2 9.5h18" /><circle cx="17.5" cy="17" r="4.6" /><path d="M17.5 14.9v2.2l1.6.9" />
+            @break
+        @case('id-badge')
+            <rect x="4" y="3" width="16" height="18" rx="2" /><path d="M9.2 3h5.6v2.6H9.2z" /><circle cx="12" cy="11.2" r="2.2" /><path d="M8.4 17.4a3.7 3.7 0 0 1 7.2 0" />
+            @break
+        @case('cycle')
+            <path d="M3.5 12a8.5 8.5 0 0 1 14.4-6.1L21 8.7" /><path d="M21 4.2v4.5h-4.5" /><path d="M20.5 12a8.5 8.5 0 0 1-14.4 6.1L3 15.3" /><path d="M3 19.8v-4.5h4.5" />
+            @break
+        @case('location')
+            <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" />
+            @break
+        @case('linen')
+            <path d="m8 3-6 4 3 5 3-2v11h8V10l3 2 3-5-6-4a4 4 0 0 1-8 0Z" />
+            @break
+        @case('receipt')
+            <path d="M5 3h14v19l-3-2-4 2-4-2-3 2V3Z" /><path d="M8 7h8M8 11h8M8 15h5" />
+            @break
+        @case('more')
+            <circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none" />
+            @break
+        @case('sort')
+            <path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3" />
             @break
         @default
             <circle cx="12" cy="12" r="9" />

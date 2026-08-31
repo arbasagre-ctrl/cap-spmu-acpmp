@@ -14,7 +14,7 @@
             : ($mode === 'return' ? 'Return' : 'Release'));
 
     $pageCopy = match (true) {
-        $isBorrower => 'Track your pickup, issued items, returns, and completed borrowings. Request approval and documents stay under My Requests.',
+        $isBorrower => 'Track your pickup, issued items, returns, and completed borrowings.',
         $mode === 'release' => 'Schedule pickup, confirm item preparation, print the required physical documents, and record the actual handover.',
         $mode === 'return' => 'Inspect physically returned items, record full-quantity accounting, monitor linen/laundry return, and complete reconciliation.',
         $isHead => 'Monitor release preparation, active custody, return processing, overdue or unresolved cases, and completed transactions.',
@@ -57,6 +57,33 @@
         default => 8,
     };
 
+    $borrowerCounts = $isBorrower
+        ? [
+            'active' => $custodies->filter(fn ($custody) => $groupForCustody($custody) !== 'completed')->count(),
+            'completed' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'completed')->count(),
+        ]
+        : [];
+
+    $oversightTabs = [
+        'all' => 'All',
+        'active' => 'Active',
+        'attention' => 'Needs Attention',
+        'release' => 'Release Queue',
+        'custody' => 'On Custody',
+        'return' => 'Return Processing',
+        'completed' => 'Completed',
+    ];
+
+    $oversightTabIcons = [
+        'all' => 'dashboard',
+        'active' => 'check-circle',
+        'attention' => 'warning',
+        'release' => 'clock',
+        'custody' => 'box',
+        'return' => 'cycle',
+        'completed' => 'check-circle',
+    ];
+
     $oversightCounts = $isOversightView
         ? [
             'active' => $custodies->filter(fn ($custody) => $groupForCustody($custody) !== 'completed')->count(),
@@ -71,200 +98,9 @@
 @endphp
 
 @if($isOversightView)
-<style>
-    .custody-oversight-workspace {
-        --oversight-line: var(--border, #d7e0ea);
-        --oversight-muted: var(--text-muted, #64748b);
-        --oversight-ink: var(--text, #18324a);
-        --oversight-soft: var(--surface-subtle, #f7f9fc);
-        display: grid;
-        gap: 14px;
-    }
-
-    .custody-oversight-toolbar {
-        display: grid;
-        gap: 12px;
-        padding: 14px;
-        border: 1px solid var(--oversight-line);
-        border-radius: 12px;
-        background: var(--surface, #fff);
-    }
-
-    .custody-oversight-tabs {
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        flex-wrap: wrap;
-    }
-
-    .custody-oversight-tab {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        min-height: 36px;
-        padding: 7px 11px;
-        border: 1px solid var(--oversight-line);
-        border-radius: 999px;
-        background: var(--surface, #fff);
-        color: var(--oversight-muted);
-        font: inherit;
-        font-size: 12px;
-        font-weight: 800;
-        line-height: 1;
-        cursor: pointer;
-    }
-
-    .custody-oversight-tab:hover {
-        border-color: #b8c9dc;
-        color: var(--oversight-ink);
-        background: var(--oversight-soft);
-    }
-
-    .custody-oversight-tab.is-active {
-        border-color: #9fc8ec;
-        background: #eaf5ff;
-        color: #075ea8;
-    }
-
-    .custody-oversight-tab-count {
-        display: inline-grid;
-        place-items: center;
-        min-width: 22px;
-        height: 22px;
-        padding: 0 6px;
-        border-radius: 999px;
-        background: rgba(15, 42, 67, .07);
-        font-size: 10px;
-        font-weight: 900;
-    }
-
-    .custody-oversight-filters {
-        display: grid;
-        grid-template-columns: minmax(280px, 1.35fr) minmax(145px, .42fr) minmax(145px, .42fr) minmax(205px, .58fr) auto;
-        gap: 10px;
-        align-items: end;
-    }
-
-    .custody-oversight-filters label {
-        min-width: 0;
-        margin: 0;
-    }
-
-    .custody-oversight-filters input,
-    .custody-oversight-filters select {
-        width: 100%;
-    }
-
-    .custody-oversight-filters select,
-    .custody-oversight-filters .search-input-shell {
-        margin-top: 7px;
-    }
-
-    .custody-oversight-date-error {
-        margin: -2px 0 0;
-        padding: 9px 11px;
-        border: 1px solid #efb5b0;
-        border-radius: 9px;
-        background: #fff3f2;
-        color: #a52a23;
-        font-size: 11px;
-        font-weight: 700;
-        line-height: 1.4;
-    }
-
-    .custody-oversight-date-error[hidden] {
-        display: none !important;
-    }
-
-    .custody-oversight-filters input.is-invalid {
-        border-color: #c53b32;
-        box-shadow: 0 0 0 2px rgba(197, 59, 50, .08);
-    }
-
-    .custody-oversight-summary {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        color: var(--oversight-muted);
-        font-size: 12px;
-    }
-
-    .custody-oversight-summary strong {
-        color: var(--oversight-ink);
-    }
-
-    .custody-operations-list {
-        display: grid;
-        gap: 10px;
-    }
-
-    .custody-operations-list .operational-record {
-        transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
-    }
-
-    .custody-operations-list .operational-record:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(15, 42, 67, .07);
-    }
-
-    .custody-operations-list .operational-record[data-custody-group="attention"] { border-left-color: #c53b32; }
-    .custody-operations-list .operational-record[data-custody-group="return"] { border-left-color: #b97a05; }
-    .custody-operations-list .operational-record[data-custody-group="custody"] { border-left-color: #1268df; }
-    .custody-operations-list .operational-record[data-custody-group="completed"] { border-left-color: #21865b; }
-
-    .custody-outstanding-value.has-outstanding {
-        font-size: 16px;
-        font-weight: 900;
-        color: var(--oversight-ink);
-    }
-
-    .custody-oversight-no-results {
-        padding: 30px 18px;
-        border: 1px dashed var(--oversight-line);
-        border-radius: 12px;
-        background: var(--oversight-soft);
-        color: var(--oversight-muted);
-        text-align: center;
-    }
-
-    .custody-oversight-no-results strong {
-        display: block;
-        margin-bottom: 4px;
-        color: var(--oversight-ink);
-    }
-
-    .custody-oversight-no-results[hidden],
-    .custody-operations-list .operational-record[hidden] {
-        display: none !important;
-    }
-
-    @media (max-width: 980px) {
-        .custody-oversight-filters {
-            grid-template-columns: 1fr 1fr;
-        }
-
-        .custody-oversight-search {
-            grid-column: 1 / -1;
-        }
-    }
-
-    @media (max-width: 620px) {
-        .custody-oversight-filters {
-            grid-template-columns: 1fr;
-        }
-
-        .custody-oversight-search {
-            grid-column: auto;
-        }
-
-        #custody-oversight-clear {
-            width: 100%;
-            justify-content: center;
-        }
-    }
-</style>
+    @include('custody.partials.oversight-styles')
+@elseif($isBorrower)
+    @include('custody.partials.borrowings-styles')
 @endif
 
 <section class="page-heading">
@@ -282,451 +118,139 @@
 </section>
 
 @if($isOversightView)
-    <section class="content-area custody-oversight-workspace">
-        <div class="custody-oversight-toolbar">
-            <nav class="custody-oversight-tabs" aria-label="Release and return status filters">
-                @foreach([
-                    'all' => 'All',
-                    'active' => 'Active',
-                    'attention' => 'Needs Attention',
-                    'release' => 'Release Queue',
-                    'custody' => 'On Custody',
-                    'return' => 'Return Processing',
-                    'completed' => 'Completed',
-                ] as $key => $label)
-                    <button
-                        class="custody-oversight-tab {{ $key === 'all' ? 'is-active' : '' }}"
-                        type="button"
-                        data-custody-tab="{{ $key }}"
-                        aria-pressed="{{ $key === 'all' ? 'true' : 'false' }}"
-                    >
-                        <span>{{ $label }}</span>
-                        <span class="custody-oversight-tab-count">{{ $oversightCounts[$key] ?? 0 }}</span>
-                    </button>
+    <div class="content-area custody-oversight" data-custody-oversight>
+        @include('custody.partials.oversight-toolbar')
+
+        @if($custodies->isEmpty())
+            @include('custody.partials.oversight-empty', [
+                'emptyId' => null,
+                'emptyHidden' => false,
+                'emptyTitle' => 'No transactions to display.',
+                'emptyMessage' => 'Release and return transactions will appear here when available.',
+            ])
+        @else
+            <div class="custody-oversight-summary">
+                <span id="custody-oversight-result-summary" role="status" aria-live="polite">
+                    Showing all release and return transactions.
+                </span>
+
+                <span>Search filters across <strong>All</strong> statuses. Select a status tab above to refine the results.</span>
+            </div>
+
+            <div
+                id="custody-oversight-list"
+                class="custody-oversight-list"
+                aria-label="Release and return oversight records"
+            >
+                @foreach($custodies as $custody)
+                    @include('custody.partials.oversight-row')
                 @endforeach
-            </nav>
+            </div>
 
-            <div class="custody-oversight-filters">
-                <label class="custody-oversight-search">
-                    Search
-                    <span class="search-input-shell">
-                        <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
-                        <input
-                            id="custody-oversight-search"
-                            type="search"
-                            placeholder="Search borrower, request no., custody no., or event..."
-                            autocomplete="off"
-                        >
-                    </span>
-                </label>
+            @include('custody.partials.oversight-empty', [
+                'emptyId' => 'custody-oversight-no-results',
+                'emptyHidden' => true,
+                'emptyTitle' => 'No matching release or return transaction.',
+                'emptyMessage' => 'Try another status tab, clear the search, or adjust the date range.',
+            ])
 
-                <label>
-                    Date from
-                    <input id="custody-oversight-from" type="date">
-                </label>
-
-                <label>
-                    Date to
-                    <input id="custody-oversight-to" type="date">
-                </label>
-
-                <label>
-                    Sort
-                    <select id="custody-oversight-sort">
-                        <option value="return-soonest">Return Date — Soonest</option>
-                        <option value="pickup-soonest">Pickup Date — Soonest</option>
-                        <option value="newest">Newest Transaction</option>
-                        <option value="oldest">Oldest Transaction</option>
+            <div class="custody-oversight-footer" id="custody-oversight-footer">
+                <label class="custody-oversight-page-size">
+                    Show
+                    <select id="custody-oversight-page-size" aria-label="Transactions per page">
+                        <option value="5">5</option>
+                        <option value="10">10</option>
+                        <option value="25">25</option>
+                        <option value="50">50</option>
                     </select>
+                    per page
                 </label>
+
+                <div
+                    class="custody-oversight-pagination"
+                    id="custody-oversight-pagination"
+                    role="group"
+                    aria-label="Release and return oversight pages"
+                ></div>
+            </div>
+        @endif
+    </div>
+
+    @include('custody.partials.oversight-interactions')
+@elseif($isBorrower)
+    <div class="content-area my-borrowings" data-my-borrowings>
+        <div class="my-borrowings-card">
+            <div class="borrowings-tabs" role="tablist" aria-label="Borrowing status">
+                <button
+                    class="borrowings-tab is-active"
+                    type="button"
+                    role="tab"
+                    data-borrowings-tab="active"
+                    aria-selected="true"
+                    aria-controls="borrowings-panel-active"
+                >
+                    Active Borrowings
+                    <span class="borrowings-tab-count">{{ $borrowerCounts['active'] ?? 0 }}</span>
+                </button>
 
                 <button
-                    id="custody-oversight-clear"
-                    class="button secondary ui-pressable"
+                    class="borrowings-tab"
                     type="button"
+                    role="tab"
+                    data-borrowings-tab="completed"
+                    aria-selected="false"
+                    aria-controls="borrowings-panel-completed"
+                    tabindex="-1"
                 >
-                    Clear
+                    Completed
+                    <span class="borrowings-tab-count">{{ $borrowerCounts['completed'] ?? 0 }}</span>
                 </button>
             </div>
 
-            <p
-                id="custody-oversight-date-error"
-                class="custody-oversight-date-error"
-                role="alert"
-                hidden
-            >
-                Date From cannot be later than Date To.
-                Adjust the dates or use Clear.
-            </p>
-
-            <div class="custody-oversight-summary">
-                <span id="custody-oversight-result-summary">Showing all release and return transactions.</span>
-                <span>Search starts across <strong>All</strong> statuses. Select a status tab afterward to refine the results.</span>
-            </div>
-        </div>
-
-        <div
-            id="custody-oversight-list"
-            class="operational-record-list custody-operations-list"
-            aria-label="Release and return oversight records"
-        >
-            @forelse($custodies as $custody)
+            @foreach([
+                'active' => [
+                    'No active borrowings yet.',
+                    'Approved borrowings will appear here once items are allocated and ready for pickup.',
+                ],
+                'completed' => [
+                    'No completed borrowings yet.',
+                    'A borrowing moves here once every item is returned and the record is cleared.',
+                ],
+            ] as $panel => $emptyCopy)
                 @php
-                    $outstanding = $custody->lines->sum(
-                        fn ($line) => max(
-                            0,
-                            (float) $line->actual_released_quantity - (float) $line->returned_quantity
-                        )
+                    $panelCustodies = $custodies->filter(
+                        fn ($custody) => $panel === 'completed'
+                            ? $groupForCustody($custody) === 'completed'
+                            : $groupForCustody($custody) !== 'completed'
                     );
-
-                    $version = $custody->request?->currentVersion;
-                    $scheduleDateValue = $version?->schedule_date ?: $version?->needed_from;
-                    $returnDateValue = $version?->return_date ?: $version?->return_due_at ?: $custody->due_at;
-
-                    $scheduleDate = $scheduleDateValue
-                        ? \Illuminate\Support\Carbon::parse($scheduleDateValue)
-                        : null;
-
-                    $returnDate = $returnDateValue
-                        ? \Illuminate\Support\Carbon::parse($returnDateValue)
-                        : null;
-
-                    $hasActivePickupSchedule = (bool) $custody->scheduled_release_at
-                        && (bool) $custody->pickup_expires_at
-                        && ! $custody->pickup_expired_at;
-
-                    $isCompleted = $custody->status === 'CLOSED' || $custody->closed_at !== null;
-
-                    /*
-                     * Borrower Cleared vs. Completed (see custody/show.blade.php
-                     * for the full rule): Completed requires, for linen, that
-                     * internal Laundry processing has finished AND the Laundry
-                     * Form has been archived — not archival alone.
-                     */
-                    $rowHasLaundryItem = $custody->lines->contains(
-                        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
-                    );
-                    $rowLaundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
-                    $isFullyComplete = $isCompleted
-                        && (
-                            ! $rowHasLaundryItem
-                            || ($rowLaundryJob?->status === 'LAUNDRY_COMPLETED' && $rowLaundryJob?->latestEvidence?->file)
-                        );
-
-                    $operationalLabel = match (true) {
-                        $isCompleted => $isFullyComplete ? 'Completed' : 'Borrower Cleared',
-                        $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
-                        $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
-                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
-                        $custody->status === 'OVERDUE' => 'Overdue',
-                        (bool) $custody->released_at => 'Items Released / On Custody',
-                        (bool) $custody->prepared_at && $hasActivePickupSchedule => 'Ready for Release',
-                        $hasActivePickupSchedule => 'Pickup Scheduled / For Item Preparation',
-                        $custody->status === 'PREPARING_RELEASE' => 'For Pickup Scheduling',
-                        default => null,
-                    };
-
-                    $group = $groupForCustody($custody);
-                    $priority = $priorityForCustody($custody);
-
-                    $searchText = strtolower(trim(
-                        ($custody->borrower?->full_name ?? '').' '.
-                        ($custody->request?->request_no ?? '').' '.
-                        ($custody->custody_no ?? '').' '.
-                        ($version?->purpose_event ?? '')
-                    ));
                 @endphp
 
-                <a
-                    class="operational-record ui-pressable"
-                    href="{{ route('custody.show', $custody) }}"
-                    data-custody-record
-                    data-custody-group="{{ $group }}"
-                    data-custody-priority="{{ $priority }}"
-                    data-created="{{ optional($custody->created_at)->timestamp ?? 0 }}"
-                    data-search="{{ $searchText }}"
-                    data-schedule="{{ optional($scheduleDate)->format('Y-m-d') }}"
-                    data-return="{{ optional($returnDate)->format('Y-m-d') }}"
-                    data-pickup="{{ optional($custody->scheduled_release_at)->format('Y-m-d') ?: optional($scheduleDate)->format('Y-m-d') }}"
-                    data-dates="{{ collect([
-                        optional($scheduleDate)->format('Y-m-d'),
-                        optional($returnDate)->format('Y-m-d'),
-                        optional($custody->scheduled_release_at)->format('Y-m-d'),
-                        optional($custody->released_at)->format('Y-m-d'),
-                        optional($custody->closed_at)->format('Y-m-d'),
-                    ])->filter()->unique()->implode(',') }}"
+                <div
+                    class="borrowings-panel"
+                    id="borrowings-panel-{{ $panel }}"
+                    role="tabpanel"
+                    data-borrowings-panel="{{ $panel }}"
+                    @if($panel !== 'active') hidden @endif
                 >
-                    <span class="operational-record-primary">
-                        <strong>{{ $custody->borrower?->full_name ?: 'Borrower' }}</strong>
-                        <span>Request {{ $custody->request?->request_no }}</span>
-                        <small>
-                            Schedule {{ optional($scheduleDate)->format('d M Y') ?: 'Not set' }}
-                            · Return {{ optional($returnDate)->format('d M Y') ?: 'Not set' }}
-                        </small>
-                    </span>
-
-                    <span class="operational-record-facts">
-                        <span>
-                            <small>Pickup</small>
-                            <strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong>
-                        </span>
-
-                        <span>
-                            <small>Issued</small>
-                            <strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: 'Not yet' }}</strong>
-                        </span>
-
-                        <span>
-                            <small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small>
-                            <strong class="custody-outstanding-value {{ $outstanding > 0 ? 'has-outstanding' : '' }}">
-                                {{ $outstanding + 0 }}
-                            </strong>
-                        </span>
-                    </span>
-
-                    <span class="operational-record-action">
-                        <x-status-badge
-                            :status="$isCompleted ? 'COMPLETED' : $custody->status"
-                            :label="$operationalLabel"
-                        />
-
-                        <strong>
-                            View
-                            <x-icon name="chevron-right" size="16" />
-                        </strong>
-                    </span>
-                </a>
-            @empty
-                <div class="empty-state">
-                    <strong>No custody/pickup records.</strong>
-                    <span>A record appears after the SPMU Head approves a request and the approved quantities are allocated for pickup.</span>
+                    @if($panelCustodies->isEmpty())
+                        @include('custody.partials.borrowings-empty', [
+                            'emptyHidden' => false,
+                            'emptyTitle' => $emptyCopy[0],
+                            'emptyMessage' => $emptyCopy[1],
+                        ])
+                    @else
+                        <div class="operational-record-list borrowings-list">
+                            @foreach($panelCustodies as $custody)
+                                @include('custody.partials.borrowings-row')
+                            @endforeach
+                        </div>
+                    @endif
                 </div>
-            @endforelse
+            @endforeach
         </div>
+    </div>
 
-        <div id="custody-oversight-no-results" class="custody-oversight-no-results" hidden>
-            <strong>No matching release or return transaction.</strong>
-            <span>Try another status tab, clear the search, or adjust the date range.</span>
-        </div>
-    </section>
-
-    <script>
-    (() => {
-        const initializeCustodyOversight = () => {
-            const list = document.getElementById('custody-oversight-list');
-
-            if (!list) {
-                return;
-            }
-
-            const records = Array.from(list.querySelectorAll('[data-custody-record]'));
-            const tabs = Array.from(document.querySelectorAll('[data-custody-tab]'));
-            const search = document.getElementById('custody-oversight-search');
-            const from = document.getElementById('custody-oversight-from');
-            const to = document.getElementById('custody-oversight-to');
-            const sort = document.getElementById('custody-oversight-sort');
-            const clear = document.getElementById('custody-oversight-clear');
-            const noResults = document.getElementById('custody-oversight-no-results');
-            const summary = document.getElementById('custody-oversight-result-summary');
-            const dateError = document.getElementById('custody-oversight-date-error');
-
-            let activeTab = 'all';
-
-            const compareDateValues = (leftValue, rightValue, direction = 'asc') => {
-                const leftMissing = !leftValue;
-                const rightMissing = !rightValue;
-
-                if (leftMissing && rightMissing) return 0;
-                if (leftMissing) return 1;
-                if (rightMissing) return -1;
-
-                return direction === 'desc'
-                    ? rightValue.localeCompare(leftValue)
-                    : leftValue.localeCompare(rightValue);
-            };
-
-            const sortRecords = () => {
-                const mode = sort?.value || 'return-soonest';
-
-                const ordered = [...records].sort((left, right) => {
-                    const leftCompleted = left.dataset.custodyGroup === 'completed';
-                    const rightCompleted = right.dataset.custodyGroup === 'completed';
-
-                    // Keep completed records after active operational work unless
-                    // the user explicitly opens the Completed tab.
-                    if (activeTab !== 'completed' && leftCompleted !== rightCompleted) {
-                        return leftCompleted ? 1 : -1;
-                    }
-
-                    if (mode === 'return-soonest') {
-                        const difference = compareDateValues(
-                            left.dataset.return || '',
-                            right.dataset.return || ''
-                        );
-                        if (difference !== 0) return difference;
-                    }
-
-                    if (mode === 'pickup-soonest') {
-                        const difference = compareDateValues(
-                            left.dataset.pickup || '',
-                            right.dataset.pickup || ''
-                        );
-                        if (difference !== 0) return difference;
-                    }
-
-                    if (mode === 'newest') {
-                        return Number(right.dataset.created || 0) - Number(left.dataset.created || 0);
-                    }
-
-                    if (mode === 'oldest') {
-                        return Number(left.dataset.created || 0) - Number(right.dataset.created || 0);
-                    }
-
-                    const priorityDifference =
-                        Number(left.dataset.custodyPriority || 99)
-                        - Number(right.dataset.custodyPriority || 99);
-
-                    if (priorityDifference !== 0) return priorityDifference;
-
-                    return Number(right.dataset.created || 0) - Number(left.dataset.created || 0);
-                });
-
-                ordered.forEach((record) => list.appendChild(record));
-            };
-
-            const matchesTab = (record) => {
-                const group = record.dataset.custodyGroup || 'active';
-
-                if (activeTab === 'all') {
-                    return true;
-                }
-
-                if (activeTab === 'active') {
-                    return group !== 'completed';
-                }
-
-                return group === activeTab;
-            };
-
-            const render = () => {
-                const query = (search?.value || '').trim().toLowerCase();
-                const fromDate = from?.value || '';
-                const toDate = to?.value || '';
-
-                const invalidDateRange =
-                    Boolean(fromDate && toDate && fromDate > toDate);
-
-                from?.classList.toggle('is-invalid', invalidDateRange);
-                to?.classList.toggle('is-invalid', invalidDateRange);
-
-                if (dateError) {
-                    dateError.hidden = !invalidDateRange;
-                }
-
-                sortRecords();
-
-                let visible = 0;
-
-                records.forEach((record) => {
-                    const recordSearch = record.dataset.search || '';
-                    const relevantDates = (record.dataset.dates || '')
-                        .split(',')
-                        .filter(Boolean);
-
-                    const searchMatches =
-                        !query || recordSearch.includes(query);
-
-                    // The neutral Date From/To filter matches any operational
-                    // date on the record: schedule, pickup, issue, return, or close.
-                    const dateMatches =
-                        invalidDateRange
-                        || (!fromDate && !toDate)
-                        || relevantDates.some((date) =>
-                            (!fromDate || date >= fromDate)
-                            && (!toDate || date <= toDate)
-                        );
-
-                    const show =
-                        matchesTab(record)
-                        && searchMatches
-                        && dateMatches;
-
-                    record.hidden = !show;
-
-                    if (show) {
-                        visible += 1;
-                    }
-                });
-
-                tabs.forEach((tab) => {
-                    const selected = tab.dataset.custodyTab === activeTab;
-                    tab.classList.toggle('is-active', selected);
-                    tab.setAttribute('aria-pressed', selected ? 'true' : 'false');
-                });
-
-                if (noResults) {
-                    noResults.hidden = visible !== 0 || records.length === 0;
-                }
-
-                if (summary) {
-                    const selectedTab = tabs.find(
-                        (tab) => tab.dataset.custodyTab === activeTab
-                    );
-
-                    const label =
-                        selectedTab?.querySelector('span')?.textContent?.trim()
-                        || 'transactions';
-
-                    const searchSuffix =
-                        query
-                            ? ` matching "${search.value.trim()}"`
-                            : '';
-
-                    summary.textContent = visible === 1
-                        ? `Showing 1 ${label.toLowerCase()} transaction${searchSuffix}.`
-                        : `Showing ${visible} ${label.toLowerCase()} transactions${searchSuffix}.`;
-                }
-            };
-
-            tabs.forEach((tab) => {
-                tab.addEventListener('click', () => {
-                    activeTab = tab.dataset.custodyTab || 'active';
-                    render();
-                });
-            });
-
-            search?.addEventListener(
-                'input',
-                () => {
-                    activeTab = 'all';
-                    render();
-                }
-            );
-
-            from?.addEventListener('change', render);
-            to?.addEventListener('change', render);
-            sort?.addEventListener('change', render);
-
-            clear?.addEventListener('click', () => {
-                if (search) search.value = '';
-                if (from) from.value = '';
-                if (to) to.value = '';
-                if (sort) sort.value = 'return-soonest';
-
-                activeTab = 'all';
-                render();
-            });
-
-            render();
-        };
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeCustodyOversight, { once: true });
-        } else {
-            initializeCustodyOversight();
-        }
-    })();
-    </script>
+    @include('custody.partials.borrowings-interactions')
 @else
     <section class="content-area">
         @if(in_array($mode, ['release','return'], true))

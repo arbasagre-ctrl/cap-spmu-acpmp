@@ -16,7 +16,7 @@
     }
 
     $sectionMeta = [
-        'late-return-fee' => ['Return Policy', 'Late Return Policy', 'Review the date-based return rule and configure the financial assessment applied after the effective return deadline.'],
+        'late-return-fee' => ['Financial assessment', 'Late Return Fee', 'Define the daily late return rate and manage how the fee is applied.'],
         'template-billing-statement' => ['Controlled Documents', 'Billing Statement Template', 'Upload, version, and activate the approved Billing Statement template.'],
         'template-laundry-form' => ['Controlled Documents', 'Laundry Form Template', 'Upload, version, and activate the approved Laundry Form template.'],
         'template-gate-pass' => ['Controlled Documents', 'Gate Pass Template', 'Upload, version, and activate the approved Gate Pass template.'],
@@ -35,9 +35,7 @@
         ? array_filter($templateTypes, fn ($label, $type) => $type === $templateSectionType, ARRAY_FILTER_USE_BOTH)
         : $templateTypes;
 
-    $visibleSettings = $configurationSection === 'late-return-fee'
-        ? $settings->where('setting_key', 'daily_overdue_tariff')
-        : $settings;
+    $lateReturnFeeSetting = $settings->firstWhere('setting_key', 'daily_overdue_tariff');
 @endphp
 
 <section class="page-heading settings-detail-heading">
@@ -48,7 +46,10 @@
     </div>
 
     @if($configurationSection)
-        <a class="button secondary ui-pressable" href="{{ route('policies.index') }}">Back to Operational Configuration</a>
+        <a class="button secondary ui-pressable config-back-button" href="{{ route('policies.index') }}">
+            <x-icon name="arrow-left" size="17" />
+            Back to Operational Configuration
+        </a>
     @endif
 </section>
 
@@ -58,7 +59,7 @@
 </section>
 @endif
 
-@if(!$configurationSection || $configurationSection === 'late-return-fee')
+@if(!$configurationSection)
 <section class="content-area">
     <div class="card return-policy-card">
         <div class="card-header">
@@ -194,17 +195,27 @@
 </section>
 @endif
 
-@if(!$configurationSection || $configurationSection === 'late-return-fee')
+@if($configurationSection === 'late-return-fee')
+    @if($lateReturnFeeSetting)
+        @include('administration.partials.late-return-fee', ['setting' => $lateReturnFeeSetting])
+    @else
+        <section class="content-area">
+            <div class="callout">The <code>daily_overdue_tariff</code> setting is missing. Run the system setting seeder to restore it.</div>
+        </section>
+    @endif
+@endif
+
+@if(!$configurationSection)
 <section class="content-area">
     <div class="section-heading">
         <div>
-            <p class="eyebrow">{{ $configurationSection === 'late-return-fee' ? 'Financial assessment' : 'Other configuration' }}</p>
-            <h2>{{ $configurationSection === 'late-return-fee' ? 'Late Return Fee' : 'Policy and system settings' }}</h2>
+            <p class="eyebrow">Other configuration</p>
+            <h2>Policy and system settings</h2>
         </div>
     </div>
 
     <div class="settings-grid admin-settings-grid">
-        @foreach($visibleSettings as $setting)
+        @foreach($settings as $setting)
             @php
                 $dataType = strtoupper((string) ($setting->data_type ?: 'TEXT'));
                 $value = $setting->value_json;
@@ -266,7 +277,7 @@
 
                 <div class="settings-actions">
                     <button class="button primary ui-pressable" data-save-button type="submit" disabled>Save change</button>
-                    <a class="button secondary ui-pressable" href="{{ $configurationSection ? route('policies.index') : route('administration.index') }}">Back</a>
+                    <a class="button secondary ui-pressable" href="{{ route('administration.index') }}">Back</a>
                 </div>
 
                 <small class="audit-note">Changes are recorded in the audit trail.</small>

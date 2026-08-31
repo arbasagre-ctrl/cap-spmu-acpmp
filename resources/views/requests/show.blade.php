@@ -24,6 +24,7 @@
     // return, and completion. Use custody state for the visible operational
     // badge so the request detail never shows a stale "Ready for Release".
     $custody = $borrowingRequest->custody;
+    $isOperationalRequestLayout = $isSpmu && (bool) $custody && ! $isUnderSpmuReview;
     $requestIsCompleted = $custody?->status === 'CLOSED';
     $detailStatus = $borrowingRequest->status->value;
     $detailStatusLabel = null;
@@ -100,6 +101,11 @@
     }
 @endphp
 
+@if($isOperationalRequestLayout)
+    @include('requests.partials.operational-styles')
+    <div class="request-operational-page">
+    @include('requests.partials.operational-heading')
+@else
 <section class="page-heading">
     <div>
         <p class="eyebrow">{{ $isBorrower ? 'My request' : 'Borrowing request' }}</p>
@@ -107,6 +113,13 @@
         <p>{{ $v->purpose_event }}</p>
         @if($isBorrower)
             <p class="meta">Review the request, documents, and current progress.</p>
+        @else
+            {{-- Identity line: who filed it and when, so the reviewer does not
+                 have to scroll to Request Details to place the record. --}}
+            <p class="meta request-heading-meta">
+                <span>Borrower: <strong>{{ $borrowingRequest->borrower->full_name }}</strong></span>
+                <span>Submitted: <strong>{{ optional($v->submitted_at ?: $borrowingRequest->created_at)->format('d M Y, g:i A') }}</strong></span>
+            </p>
         @endif
     </div>
 
@@ -123,6 +136,7 @@
         @endif
     </div>
 </section>
+@endif
 
 @if($errors->any())
 <section class="content-area">
@@ -201,7 +215,7 @@
 @endif
 
 @unless($isBorrower)
-<x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
+<x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" :compact="$isOperationalRequestLayout" />
 @endunless
 
 @if($isBorrower)
@@ -212,17 +226,12 @@
 
 .request-tracker-card .request-tracker {
     overflow: visible;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    padding: 18px 20px;
 }
 
 .request-tracker-card .request-tracker__header {
     gap: 12px;
-    padding-bottom: 8px;
-    border-bottom: 0;
+    padding-bottom: 13px;
 }
 
 .request-tracker-card .request-tracker__header h2 {
@@ -271,8 +280,8 @@
 }
 
 .request-tracker-card .request-tracker__hint {
-    margin-top: 8px;
-    padding-top: 10px;
+    margin-top: 10px;
+    padding: 11px 0 0;
     background: transparent;
     border: 0;
     border-top: 1px solid var(--row-border);
@@ -351,9 +360,9 @@
         <div class="spmu-review-top-row">
             <div class="spmu-scan-slot">
                 <x-document-review-viewer
-            :file="$requestLetterDoc?->file"
-            title="Inspect the signed Borrowing Request Letter"
-        />
+                    :file="$requestLetterDoc?->file"
+                    title="Inspect the signed Borrowing Request Letter"
+                />
             </div>
 
             <article class="card spmu-checklist-panel">
@@ -367,14 +376,14 @@
                 </div>
 
                 <p class="meta spmu-review-summary">
-                    Verify the signed documents, request details, dates, quantities, and system availability.
+                    Verify the submitted documents, request details, and availability.
                 </p>
 
                 @if($v->represents_student_activity)
                     <div class="spmu-supporting-document">
                         <div>
                             <strong>Permission to Conduct Letter</strong>
-                            <small>Required for this student activity / organization request.</small>
+                            <small>Required for this student activity.</small>
                         </div>
                         @if($permissionToConductDoc)
                             <a class="button secondary small ui-pressable" href="{{ route('files.show', $permissionToConductDoc->file, false) }}" target="_blank" rel="noopener">View Attachment</a>
@@ -493,11 +502,10 @@
                     <span>Operational processing by the Action Officer starts only after SPMU Head approval and inventory allocation for pickup.</span>
                 </div>
             @endif
-        </article>
+            </article>
         </div>
 
-        <div class="spmu-review-bottom-row">
-            <article class="card spmu-left-borrowing-info">
+        <article class="card spmu-left-borrowing-info">
             <div class="card-header">
                 <div>
                     <p class="eyebrow">Request details</p>
@@ -527,12 +535,12 @@
                 </div>
 
                 <div class="spmu-left-borrowing-cell">
-                    <span>Schedule Date</span>
+                    <span>Scheduled Use</span>
                     <strong>{{ optional($v->schedule_date ?: $v->needed_from)->format('d F Y') }}</strong>
                 </div>
 
                 <div class="spmu-left-borrowing-cell">
-                    <span>Expected Return Date</span>
+                    <span>Expected Return</span>
                     <strong>{{ optional($v->return_date ?: $v->return_due_at)->format('d F Y') }}</strong>
                 </div>
 
@@ -541,252 +549,238 @@
                     <strong>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</strong>
                 </div>
 
-</div>
+            </div>
         </article>
 
-            <div class="spmu-inventory-slot">
-                @include('requests.partials.spmu-availability-review')
-            </div>
+        <div class="spmu-inventory-slot">
+            @include('requests.partials.spmu-availability-review')
         </div>
     </div>
 </section>
 @endif
 
 @if($isBorrower)
+@include('requests.partials.borrower-detail-styles')
 <div class="borrower-progress-always" aria-label="Current request progress">
     <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
 </div>
 
-<section class="content-area borrower-request-workspace" data-borrower-request-tabs>
-    <div class="borrower-request-tabs" role="tablist" aria-label="Request details">
-        <button
-            type="button"
-            class="borrower-request-tab is-active"
-            role="tab"
-            aria-selected="true"
-            aria-controls="borrower-request-overview"
-            data-request-tab="overview"
-        >
-            Overview
-        </button>
+<div class="content-area borrower-request-detail">
+    <div class="borrower-detail-grid">
+        <article class="borrower-detail-card">
+            <h2 class="borrower-card-title">
+                <span class="borrower-card-icon" aria-hidden="true"><x-icon name="requests" size="20" /></span>
+                Borrowing Information
+            </h2>
 
-        <button
-            type="button"
-            class="borrower-request-tab"
-            role="tab"
-            aria-selected="false"
-            aria-controls="borrower-request-documents"
-            data-request-tab="documents"
-        >
-            Documents
-        </button>
-
-    </div>
-
-    <div
-        id="borrower-request-overview"
-        class="borrower-request-panel"
-        role="tabpanel"
-        data-request-panel="overview"
-    >
-        <div class="borrower-overview-grid">
-            <article class="card">
-                <div class="card-header">
-                    <div>
-                        <p class="eyebrow">Request details</p>
-                        <h2>Borrowing information</h2>
-                    </div>
+            <div class="borrower-fact-grid">
+                <div>
+                    <span>Office / Department</span>
+                    <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '&mdash;' }}</strong>
                 </div>
-
-                <div class="borrower-fact-grid">
-                    <div>
-                        <span>Office / Department</span>
-                        <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</strong>
-                    </div>
-                    <div>
-                        <span>Location</span>
-                        <strong>{{ $v->location }}</strong>
-                    </div>
-                    <div>
-                        <span>Scheduled Use</span>
-                        <strong>{{ optional($v->schedule_date ?: $v->needed_from)->format('d M Y') }}</strong>
-                    </div>
-                    <div>
-                        <span>Expected Return</span>
-                        <strong>{{ optional($v->return_date ?: $v->return_due_at)->format('d M Y') }}</strong>
-                    </div>
-                    <div>
-                        <span>Student Activity</span>
-                        <strong>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</strong>
-                    </div>
+                <div>
+                    <span>Location</span>
+                    <strong>{{ $v->location }}</strong>
                 </div>
-            </article>
-
-            <article class="card">
-                <div class="card-header">
-                    <div>
-                        <p class="eyebrow">Requested property</p>
-                        <div class="borrower-section-title-inline">
-                            <h2>Items</h2>
-                            <span class="borrower-item-count">{{ $v->items->count() }} {{ $v->items->count() === 1 ? 'item' : 'items' }}</span>
-                        </div>
-                    </div>
+                <div>
+                    <span>Scheduled Use</span>
+                    <strong>{{ optional($v->schedule_date ?: $v->needed_from)->format('d M Y') }}</strong>
                 </div>
-
-                <div class="borrower-item-list">
-                    @foreach($v->items as $item)
-                        @php
-                            $requestedQty = $item->requested_quantity + 0;
-                            $approvedQty = $item->approved_quantity === null
-                                ? null
-                                : $item->approved_quantity + 0;
-                            $quantityChanged = $approvedQty !== null
-                                && (float) $approvedQty !== (float) $requestedQty;
-                        @endphp
-
-                        <div class="borrower-item-row">
-                            <div>
-                                <strong>{{ $item->description_snapshot }}</strong>
-                                <small>{{ str($item->use_location)->replace('_',' ')->title() }}</small>
-                            </div>
-
-                            <div class="borrower-item-quantity">
-                                @if($approvedQty === null)
-                                    <strong>{{ $requestedQty }} {{ $item->unit_snapshot }}</strong>
-                                    <small>Pending SPMU approval</small>
-                                @elseif($quantityChanged)
-                                    <strong>{{ $approvedQty }} {{ $item->unit_snapshot }}</strong>
-                                    <small>Requested {{ $requestedQty }} {{ $item->unit_snapshot }}</small>
-                                @else
-                                    <strong>{{ $approvedQty }} {{ $item->unit_snapshot }}</strong>
-                                    <small>Approved quantity</small>
-                                @endif
-                            </div>
-                        </div>
-                    @endforeach
+                <div>
+                    <span>Expected Return</span>
+                    <strong>{{ optional($v->return_date ?: $v->return_due_at)->format('d M Y') }}</strong>
                 </div>
-            </article>
-        </div>
-    </div>
-
-    <div
-        id="borrower-request-documents"
-        class="borrower-request-panel"
-        role="tabpanel"
-        data-request-panel="documents"
-        hidden
-    >
-        <div class="borrower-documents-grid">
-            <article class="card">
-                <div class="card-header">
-                    <div>
-                        <p class="eyebrow">Supporting documents</p>
-                        <h2>Uploaded scans</h2>
-                    </div>
+                <div>
+                    <span>Student Activity</span>
+                    <strong>{{ $v->represents_student_activity ? 'Yes' : 'No' }}</strong>
                 </div>
+                <div>
+                    <span>Premises</span>
+                    <strong>{{ $v->off_campus ? 'Off-campus' : 'On-campus' }}</strong>
+                </div>
+            </div>
+        </article>
 
-                @forelse($currentDocs as $doc)
-                    <div class="evidence-row">
+        <article class="borrower-detail-card">
+            @php
+                $awaitingItemDecision = $v->items->every(
+                    fn ($item) => $item->approved_quantity === null
+                );
+            @endphp
+
+            <h2 class="borrower-card-title">
+                <span class="borrower-card-icon" aria-hidden="true"><x-icon name="box" size="20" /></span>
+                Requested Items
+                <span class="borrower-card-note">{{ $awaitingItemDecision ? 'Awaiting SPMU review' : 'Approved quantities' }}</span>
+            </h2>
+
+            <div class="borrower-item-list">
+                @foreach($v->items as $item)
+                    @php
+                        $requestedQty = $item->requested_quantity + 0;
+                        $approvedQty = $item->approved_quantity === null
+                            ? null
+                            : $item->approved_quantity + 0;
+                        $quantityChanged = $approvedQty !== null
+                            && (float) $approvedQty !== (float) $requestedQty;
+                    @endphp
+
+                    <div class="borrower-item-row">
                         <div>
-                            <strong>
-                                {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER
-                                    ? 'Approved Borrowing Request Letter'
-                                    : 'Permission to Conduct Letter' }}
-                            </strong>
-                            <small>
-                                Version {{ $doc->version_no }}
-                                ·
-                                {{ str($doc->verification_status)->replace('_',' ')->title() }}
-                            </small>
+                            <strong>{{ $item->description_snapshot }}</strong>
                         </div>
 
-                        <a
-                            class="button secondary small ui-pressable"
-                            href="{{ route('files.show', $doc->file, false) }}"
-                            target="_blank"
-                            rel="noopener"
-                        >
-                            View
-                        </a>
-                    </div>
-                @empty
-                    <div class="empty-state">
-                        <strong>No uploaded supporting documents.</strong>
-                    </div>
-                @endforelse
-            </article>
+                        <div class="borrower-item-quantity">
+                            <strong>{{ $approvedQty ?? $requestedQty }} {{ $item->unit_snapshot }}</strong>
 
-            <article class="card">
-                <div class="card-header">
+                            @if($quantityChanged)
+                                <small>Requested {{ $requestedQty }} {{ $item->unit_snapshot }}</small>
+                            @endif
+                        </div>
+                    </div>
+                @endforeach
+            </div>
+        </article>
+    </div>
+
+    <article class="borrower-detail-card">
+        <h2 class="borrower-card-title">
+            <span class="borrower-card-icon" aria-hidden="true"><x-icon name="requests" size="20" /></span>
+            Submitted Documents
+        </h2>
+
+        @if($currentDocs->isEmpty())
+            <p class="borrower-documents-empty">No supporting documents have been uploaded yet.</p>
+        @else
+            <div class="borrower-documents-scroll">
+                <table class="borrower-documents-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Document</th>
+                            <th scope="col">Description</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Action</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        @foreach($currentDocs as $doc)
+                            @php
+                                $isRequestLetter = $doc->document_type
+                                    === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER;
+
+                                [$docStatusLabel, $docStatusTone] = match ($doc->verification_status) {
+                                    App\Models\RequestSupportingDocument::STATUS_VERIFIED => ['Verified', 'success'],
+                                    App\Models\RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION => ['Needs Replacement', 'warning'],
+                                    App\Models\RequestSupportingDocument::STATUS_REJECTED => ['Rejected', 'danger'],
+                                    default => ['Submitted', 'success'],
+                                };
+                            @endphp
+
+                            <tr>
+                                <td>
+                                    <span class="borrower-document-name">
+                                        <x-icon name="requests" size="18" />
+                                        {{ $isRequestLetter ? 'Borrowing Request Letter' : 'Permission to Conduct Letter' }}
+                                    </span>
+                                </td>
+
+                                <td>
+                                    {{ $isRequestLetter
+                                        ? 'Official request letter for borrowing items.'
+                                        : 'Approval to conduct the activity.' }}
+                                </td>
+
+                                <td>
+                                    <span class="status-badge status-{{ $docStatusTone }}">{{ $docStatusLabel }}</span>
+                                </td>
+
+                                <td>
+                                    <a
+                                        class="borrower-document-view"
+                                        href="{{ route('files.show', $doc->file, false) }}"
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        View
+                                    </a>
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        @endif
+    </article>
+
+    @if($borrowingRequest->custody && $borrowingRequest->final_approved_at)
+        <article class="borrower-detail-card">
+            <h2 class="borrower-card-title">
+                <span class="borrower-card-icon" aria-hidden="true"><x-icon name="printer" size="20" /></span>
+                Forms for Physical Processing
+                <span class="borrower-card-note">Download the applicable forms.</span>
+            </h2>
+
+            <div class="borrower-item-list">
+                <div class="borrower-item-row">
                     <div>
-                        <p class="eyebrow">Operational documents</p>
-                        <div class="borrower-section-title-inline">
-                            <h2>Forms for physical processing</h2>
-                            <p class="meta">Download the applicable forms.</p>
-                        </div>
+                        <strong>Borrower Slip</strong>
+                        <small>Required for physical handover.</small>
+                    </div>
+                    <div class="borrower-item-quantity">
+                        @if($borrowerSlipDocument)
+                            <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
+                        @else
+                            <span class="status-badge status-neutral">Preparing</span>
+                        @endif
                     </div>
                 </div>
 
-                @if($borrowingRequest->custody && $borrowingRequest->final_approved_at)
-                    <div class="document-list borrower-document-list">
-                        <article>
-                            <div>
-                                <strong>Borrower Slip</strong>
-                                <small>Required for physical handover.</small>
-                            </div>
-                            @if($borrowerSlipDocument)
-                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
-                            @else
-                                <span class="status-badge status-neutral">Preparing</span>
-                            @endif
-                        </article>
+                <div class="borrower-item-row">
+                    <div>
+                        <strong>Laundry Form</strong>
+                        <small>{{ $requestHasLaundry ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
+                    </div>
+                    <div class="borrower-item-quantity">
+                        @if(!$requestHasLaundry)
+                            <span class="status-badge status-neutral">Not applicable</span>
+                        @elseif($laundryFormDocument)
+                            <a class="button primary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
+                        @else
+                            <span class="status-badge status-neutral">Preparing</span>
+                        @endif
+                    </div>
+                </div>
 
-                        <article>
-                            <div>
-                                <strong>Laundry Form</strong>
-                                <small>{{ $requestHasLaundry ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
-                            </div>
-                            @if(!$requestHasLaundry)
-                                <span class="status-badge status-neutral">Not applicable</span>
-                            @elseif($laundryFormDocument)
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
-                            @else
-                                <span class="status-badge status-neutral">Preparing</span>
-                            @endif
-                        </article>
-
-                        <article>
-                            <div>
-                                <strong>Gate Pass</strong>
-                                <small>
-                                    @if(!$requestHasOffCampus)
-                                        Not applicable.
-                                    @elseif($gatePassFinalized)
-                                        Finalized by SPMU after Physical Release.
-                                    @else
-                                        Pending SPMU verification. SPMU will finalize and print the Gate Pass during Physical Release.
-                                    @endif
-                                </small>
-                            </div>
+                <div class="borrower-item-row">
+                    <div>
+                        <strong>Gate Pass</strong>
+                        <small>
                             @if(!$requestHasOffCampus)
-                                <span class="status-badge status-neutral">Not applicable</span>
+                                Not applicable.
                             @elseif($gatePassFinalized)
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">View Final Gate Pass</a>
+                                Finalized by SPMU after Physical Release.
                             @else
-                                <span class="status-badge status-warning">Pending SPMU Verification</span>
+                                SPMU will finalize and print the Gate Pass during Physical Release.
                             @endif
-                        </article>
+                        </small>
                     </div>
-                @else
-                    <div class="empty-state">
-                        <strong>Operational forms are available after SPMU approval.</strong>
+                    <div class="borrower-item-quantity">
+                        @if(!$requestHasOffCampus)
+                            <span class="status-badge status-neutral">Not applicable</span>
+                        @elseif($gatePassFinalized)
+                            <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">View Final Gate Pass</a>
+                        @else
+                            <span class="status-badge status-warning">Pending SPMU Verification</span>
+                        @endif
                     </div>
-                @endif
-            </article>
-        </div>
-    </div>
-
-</section>
+                </div>
+            </div>
+        </article>
+    @endif
+</div>
+@elseif($isOperationalRequestLayout)
+    @include('requests.partials.operational-details')
 @elseif(!$isUnderSpmuReview)
 <section class="content-grid two">
     <article class="card">
@@ -902,7 +896,7 @@
 
 
 
-@if($borrowingRequest->custody && !$isBorrower)
+@if($borrowingRequest->custody && !$isBorrower && !$isOperationalRequestLayout)
 <section class="content-area">
     <div class="action-panel action-neutral">
         <div>
@@ -983,24 +977,24 @@
     && !$borrowingRequest->custody?->released_at
     && !$pendingCancellation
 )
-<section class="content-area">
-    <article class="card request-cancel-card" data-request-cancel-workspace>
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Request action</p>
-                <h2>Cancel this request</h2>
-            </div>
+<div class="content-area borrower-request-detail">
+    <article class="request-cancel-card" data-request-cancel-workspace>
+        <div class="borrower-cancel-copy">
+            <h2 class="borrower-cancel-title">
+                <x-icon name="warning" size="20" />
+                Request Actions
+            </h2>
+
+            <p>
+                You may cancel this request until items are physically released.
+                @if($borrowingRequest->status === App\Enums\RequestStatus::ApprovedReadyForRelease)
+                    Any approved but unreleased allocation returns to Available inventory, and any active pickup window, Borrower Slip, and Gate Pass prepared for this request will no longer be valid.
+                @endif
+            </p>
         </div>
 
-        <p class="meta">
-            You may cancel this request until the items are physically released to you.
-            @if($borrowingRequest->status === App\Enums\RequestStatus::ApprovedReadyForRelease)
-                Any approved but unreleased allocation will return to Available inventory. Any active pickup window, Borrower Slip, and Gate Pass prepared for this request will no longer be valid.
-            @endif
-        </p>
-
         <button
-            class="button danger ui-pressable"
+            class="button ui-pressable borrower-cancel-button"
             type="button"
             data-request-cancel-trigger
         >
@@ -1023,9 +1017,9 @@
                 <div>
                     <h2>Cancel this borrowing request?</h2>
                     <p class="meta">
-                        This action takes effect immediately because the items have not been physically released yet.
+                        This request will be cancelled immediately. Cancellation is allowed only before physical release.
                         @if($borrowingRequest->status === App\Enums\RequestStatus::ApprovedReadyForRelease)
-                            The approved allocation will be released back to Available inventory and any pending pickup documents will be invalidated.
+                            The approved allocation returns to Available inventory and any pending pickup documents will be invalidated.
                         @endif
                     </p>
 
@@ -1033,88 +1027,31 @@
                         <label for="borrower-cancellation-reason">Cancellation reason *</label>
                         <textarea
                             id="borrower-cancellation-reason"
-                            rows="5"
-                            maxlength="1000"
+                            rows="4"
+                            maxlength="500"
                             data-request-cancel-reason-field
-                            placeholder="Example: The activity was cancelled or the items are no longer needed."
+                            placeholder="Briefly explain why this request is being cancelled..."
                         ></textarea>
-                        <small>Provide a clear reason. It will be saved in the request history.</small>
+                        <div class="spmu-dialog-remarks__footer">
+                            <small>This reason will be recorded in the request history.</small>
+                            <small class="spmu-dialog-remarks__counter" data-request-cancel-counter>0 / 500</small>
+                        </div>
                         <p class="field-error" data-request-cancel-error hidden></p>
                     </div>
                 </div>
 
                 <div class="spmu-confirm-dialog__actions">
                     <button class="button secondary ui-pressable" type="button" data-request-cancel-back>Go Back</button>
-                    <button class="button danger ui-pressable" type="button" data-request-cancel-confirm>Yes, Cancel Request</button>
+                    <button class="button danger ui-pressable" type="button" data-request-cancel-confirm>Cancel Request</button>
                 </div>
             </div>
         </dialog>
     </article>
-</section>
+</div>
 @endif
 
 
 
-@if($isBorrower)
-<script>
-(() => {
-    const initializeBorrowerRequestTabs = () => {
-        const workspace = document.querySelector('[data-borrower-request-tabs]');
-
-        if (!workspace || workspace.dataset.tabsInitialized === '1') {
-            return;
-        }
-
-        const tabs = [...workspace.querySelectorAll('[data-request-tab]')];
-        const panels = [...workspace.querySelectorAll('[data-request-panel]')];
-
-        if (!tabs.length || !panels.length) {
-            return;
-        }
-
-        workspace.dataset.tabsInitialized = '1';
-
-        const activate = (name, updateHash = true) => {
-            const target = panels.find((panel) => panel.dataset.requestPanel === name);
-
-            if (!target) {
-                return;
-            }
-
-            tabs.forEach((tab) => {
-                const active = tab.dataset.requestTab === name;
-                tab.classList.toggle('is-active', active);
-                tab.setAttribute('aria-selected', active ? 'true' : 'false');
-            });
-
-            panels.forEach((panel) => {
-                panel.hidden = panel !== target;
-            });
-
-            if (updateHash && window.history?.replaceState) {
-                window.history.replaceState(null, '', `#request-${name}`);
-            }
-        };
-
-        tabs.forEach((tab) => {
-            tab.addEventListener('click', () => activate(tab.dataset.requestTab));
-        });
-
-        const hashMatch = window.location.hash.match(/^#request-(overview|documents)$/);
-
-        if (hashMatch) {
-            activate(hashMatch[1], false);
-        }
-    };
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeBorrowerRequestTabs, { once: true });
-    } else {
-        initializeBorrowerRequestTabs();
-    }
-})();
-</script>
-@endif
 
 {{-- BORROWER_REQUEST_CANCEL_FIX_V1_START --}}
 <script>
@@ -1160,6 +1097,10 @@
             '[data-request-cancel-confirm]'
         );
 
+        const counter = workspace.querySelector(
+            '[data-request-cancel-counter]'
+        );
+
         if (
             !trigger
             || !dialog
@@ -1172,6 +1113,19 @@
         }
 
         workspace.dataset.cancelInitialized = '1';
+
+        const limit = Number(reasonField.getAttribute('maxlength')) || 500;
+
+        const updateCounter = () => {
+            if (!counter) {
+                return;
+            }
+
+            const used = reasonField.value.length;
+
+            counter.textContent = used + ' / ' + limit;
+            counter.dataset.limitNear = used >= limit ? '1' : '0';
+        };
 
         const clearError = () => {
             if (!error) {
@@ -1215,6 +1169,7 @@
         trigger.addEventListener('click', () => {
             clearError();
             reasonField.value = '';
+            updateCounter();
 
             if (typeof dialog.showModal === 'function') {
                 dialog.showModal();
@@ -1249,8 +1204,13 @@
 
         reasonField.addEventListener(
             'input',
-            clearError
+            () => {
+                clearError();
+                updateCounter();
+            }
         );
+
+        updateCounter();
 
         dialog.addEventListener(
             'cancel',
@@ -1286,485 +1246,12 @@
 
 @unless($isBorrower)
 <section class="content-area">
-    <article class="card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Audit history</p>
-                <h2>Status changes</h2>
-            </div>
-        </div>
-
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>When</th>
-                        <th>From</th>
-                        <th>To</th>
-                        <th>Actor</th>
-                        <th>Reason</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @forelse($borrowingRequest->statusHistory as $history)
-                    <tr>
-                        <td>{{ optional($history->changed_at)->format('d M Y, g:i A') }}</td>
-                        @php
-                            $fromStatus = match($history->from_status) {
-                                'UNDER_GSU', 'UNDER_VPAF' => 'LEGACY_REVIEW',
-                                default => $history->from_status,
-                            };
-                            $toStatus = match($history->to_status) {
-                                'UNDER_GSU', 'UNDER_VPAF' => 'LEGACY_REVIEW',
-                                default => $history->to_status,
-                            };
-                        @endphp
-                        <td>{{ $fromStatus ?: '—' }}</td>
-                        <td>{{ $toStatus }}</td>
-                        <td>{{ $history->actor?->full_name ?: 'System' }}</td>
-                        <td>{{ $history->reason ?: '—' }}</td>
-                    </tr>
-                @empty
-                    <tr>
-                        <td colspan="5">No status history.</td>
-                    </tr>
-                @endforelse
-                </tbody>
-            </table>
-        </div>
-    </article>
+    @include('requests.partials.audit-history')
 </section>
 @endunless
 
 @if($isUnderSpmuReview)
-<style>
-.spmu-verification-grid {
-    display: grid;
-    width: 100%;
-    min-width: 0;
-    grid-template-columns: minmax(0, 1.35fr) minmax(400px, .65fr);
-    gap: 24px;
-    align-items: stretch;
-}
-
-.spmu-verification-grid > * {
-    min-width: 0;
-}
-
-.spmu-document-panel,
-.spmu-checklist-panel,
-.spmu-verification-grid > .scanned-document-card {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-}
-
-/* Keep the document preview and decision panel aligned as one review row. */
-.spmu-verification-grid > .scanned-document-card,
-.spmu-checklist-panel {
-    height: 100%;
-    align-self: stretch;
-}
-
-.spmu-verification-grid > .scanned-document-card {
-    display: flex;
-    flex-direction: column;
-}
-
-.spmu-verification-grid > .scanned-document-card .scanned-pdf-stage {
-    flex: 1 1 auto;
-    height: auto;
-    min-height: clamp(620px, 70vh, 820px);
-}
-
-.spmu-verification-grid > .scanned-document-card .scanned-image-viewer {
-    display: flex;
-    flex: 1 1 auto;
-    min-height: 0;
-    flex-direction: column;
-}
-
-.spmu-verification-grid > .scanned-document-card .scanned-image-stage {
-    flex: 1 1 auto;
-    height: auto;
-    min-height: clamp(620px, 70vh, 820px);
-}
-
-.spmu-checklist-panel {
-    display: flex;
-    flex-direction: column;
-}
-
-.spmu-verification-form {
-    display: flex;
-    flex: 1 1 auto;
-    min-height: 0;
-    flex-direction: column;
-}
-
-.spmu-review-summary {
-    margin-bottom: 2px;
-}
-
-.spmu-review-footer {
-    margin-top: auto;
-    padding-top: 18px;
-    border-top: 1px solid var(--border, #d7dee8);
-}
-
-.spmu-review-secondary-grid {
-    align-items: stretch;
-}
-
-.review-column-card {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.review-scroll-area {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: auto;
-}
-
-.review-detail-scroll,
-.review-table-scroll {
-    max-height: clamp(420px, 48vh, 620px);
-}
-
-.review-detail-scroll {
-    padding-right: 4px;
-}
-
-.review-table-scroll table thead th {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--surface-subtle, #f5f7fb);
-}
-
-.review-detail-scroll .detail-list {
-    margin-bottom: 0;
-}
-
-.spmu-review-footer__note {
-    margin: 12px 0 0;
-}
-
-.spmu-preview {
-    display: grid;
-    gap: 12px;
-}
-
-.spmu-preview-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 10px;
-    align-items: center;
-}
-
-.spmu-preview-toolbar__group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.spmu-preview-zoom,
-.spmu-preview-page {
-    min-width: 58px;
-    text-align: center;
-    font-size: .875rem;
-    font-weight: 700;
-    color: var(--text-muted, #64748b);
-}
-
-.spmu-preview-stage {
-    min-height: 620px;
-    height: min(72vh, 820px);
-    border: 1px solid var(--border, #d7dee8);
-    border-radius: 14px;
-    overflow: hidden;
-    background: #eef2f7;
-}
-
-.spmu-preview-frame {
-    display: block;
-    width: 100%;
-    height: 100%;
-    border: 0;
-    background: #fff;
-}
-
-.spmu-preview-image-scroll {
-    width: 100%;
-    height: 100%;
-    overflow: auto;
-    display: grid;
-    place-items: start center;
-    padding: 18px;
-}
-
-.spmu-preview-image {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    transform-origin: top center;
-    transition: transform 120ms ease;
-}
-
-.spmu-supporting-document {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 16px;
-    margin: 16px 0;
-    border: 1px solid var(--border, #d7dee8);
-    border-radius: 12px;
-}
-
-.spmu-supporting-document div {
-    display: grid;
-    gap: 3px;
-}
-
-.spmu-supporting-document small,
-.spmu-check-row small {
-    color: var(--text-muted, #64748b);
-}
-
-.spmu-checklist {
-    display: grid;
-    gap: 10px;
-    margin: 18px 0;
-}
-
-.spmu-check-row {
-    display: grid;
-    grid-template-columns: 22px minmax(0, 1fr);
-    gap: 12px;
-    align-items: start;
-    padding: 14px;
-    border: 1px solid var(--border, #d7dee8);
-    border-radius: 12px;
-    cursor: pointer;
-}
-
-.spmu-check-row:has(input:checked) {
-    border-color: #8ca5c5;
-    background: rgba(24, 61, 105, .045);
-}
-
-.spmu-check-row input {
-    width: 18px;
-    height: 18px;
-    margin-top: 2px;
-}
-
-.spmu-check-row span {
-    display: grid;
-    gap: 3px;
-}
-
-.spmu-check-row strong,
-.spmu-check-row small,
-.spmu-checklist-panel p,
-.spmu-supporting-document strong,
-.spmu-supporting-document small {
-    overflow-wrap: anywhere;
-    word-break: normal;
-}
-
-.spmu-preview-help {
-    margin: 0;
-    color: var(--text-muted, #64748b);
-    font-size: .8rem;
-    line-height: 1.45;
-}
-
-.spmu-document-status {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 0;
-    border-top: 1px solid var(--border, #d7dee8);
-    border-bottom: 1px solid var(--border, #d7dee8);
-}
-
-.spmu-remarks {
-    display: grid;
-    gap: 8px;
-    margin-top: 16px;
-}
-
-.spmu-remarks label {
-    display: grid;
-    gap: 3px;
-}
-
-.spmu-decision-actions {
-    display: grid;
-    gap: 10px;
-    margin-top: 0;
-}
-
-.spmu-decision-actions .button {
-    width: 100%;
-}
-
-.spmu-decision-actions .button:disabled {
-    opacity: .48;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.spmu-dialog-remarks {
-    display: grid;
-    gap: 8px;
-    margin-top: 16px;
-}
-
-.spmu-dialog-remarks textarea {
-    width: 100%;
-    resize: vertical;
-}
-
-.field-error {
-    margin: 0;
-    color: #b42318;
-    font-size: .875rem;
-}
-
-.spmu-confirm-dialog {
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    right: auto !important;
-    bottom: auto !important;
-    transform: translate(-50%, -50%);
-    width: min(520px, calc(100vw - 32px));
-    max-height: calc(100dvh - 32px);
-    margin: 0 !important;
-    padding: 0;
-    overflow: auto;
-    border: 0;
-    border-radius: 18px;
-    box-shadow: 0 24px 70px rgba(15, 23, 42, .25);
-    z-index: 10000;
-}
-
-.spmu-confirm-dialog::backdrop {
-    background: rgba(15, 23, 42, .52);
-}
-
-.spmu-confirm-dialog__surface {
-    display: grid;
-    grid-template-columns: 44px minmax(0, 1fr);
-    gap: 16px;
-    padding: 24px;
-    background: var(--surface, #fff);
-}
-
-.spmu-confirm-dialog__icon {
-    display: grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    font-size: 1.2rem;
-    font-weight: 800;
-    background: #fff4db;
-    color: #8a5a00;
-}
-
-.spmu-confirm-dialog__icon--danger {
-    background: #feeceb;
-    color: #b42318;
-}
-
-.request-cancel-card {
-    display: grid;
-    gap: 14px;
-}
-
-.request-cancel-card > .button {
-    justify-self: start;
-}
-
-.spmu-confirm-dialog__surface h2 {
-    margin-top: 2px;
-}
-
-.spmu-confirm-dialog__actions {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    margin-top: 4px;
-}
-
-@media (max-width: 1180px) {
-    .spmu-verification-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .spmu-review-secondary-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .review-detail-scroll,
-    .review-table-scroll {
-        max-height: none;
-        overflow: visible;
-    }
-
-    .spmu-verification-grid > .scanned-document-card,
-    .spmu-checklist-panel {
-        height: auto;
-    }
-
-    .spmu-verification-grid > .scanned-document-card .scanned-pdf-stage,
-    .spmu-verification-grid > .scanned-document-card .scanned-image-stage {
-        min-height: 520px;
-        height: 64vh;
-    }
-
-    .spmu-review-footer {
-        margin-top: 18px;
-    }
-
-    .spmu-preview-stage {
-        min-height: 480px;
-        height: 62vh;
-    }
-}
-
-@media (max-width: 620px) {
-    .spmu-preview-toolbar,
-    .spmu-supporting-document,
-    .spmu-confirm-dialog__actions {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .spmu-preview-toolbar__group {
-        justify-content: center;
-    }
-
-    .spmu-preview-stage {
-        min-height: 400px;
-        height: 56vh;
-    }
-
-    .spmu-confirm-dialog__actions .button {
-        width: 100%;
-    }
-}
-</style>
+@include('requests.partials.spmu-review-styles')
 
 <script>
 (() => {
@@ -1977,74 +1464,6 @@
 })();
 
 
-(() => {
-    const workspace = document.querySelector('[data-request-cancel-workspace]');
-    if (!workspace) return;
-
-    const trigger = workspace.querySelector('[data-request-cancel-trigger]');
-    const dialog = workspace.querySelector('[data-request-cancel-dialog]');
-    const form = workspace.querySelector('[data-request-cancel-form]');
-    const hiddenReason = workspace.querySelector('[data-request-cancel-reason]');
-    const reasonField = workspace.querySelector('[data-request-cancel-reason-field]');
-    const error = workspace.querySelector('[data-request-cancel-error]');
-    const back = workspace.querySelector('[data-request-cancel-back]');
-    const confirm = workspace.querySelector('[data-request-cancel-confirm]');
-
-    if (!trigger || !dialog || !form || !hiddenReason || !reasonField || !confirm) return;
-
-    const clearError = () => {
-        if (!error) return;
-        error.textContent = '';
-        error.hidden = true;
-    };
-
-    const closeDialog = () => {
-        clearError();
-        if (dialog.open && typeof dialog.close === 'function') dialog.close();
-    };
-
-    trigger.addEventListener('click', () => {
-        clearError();
-        reasonField.value = '';
-
-        if (typeof dialog.showModal === 'function') {
-            dialog.showModal();
-            window.setTimeout(() => reasonField.focus(), 0);
-            return;
-        }
-
-        const fallbackReason = window.prompt('Enter the cancellation reason:');
-        if (fallbackReason && fallbackReason.trim()) {
-            hiddenReason.value = fallbackReason.trim();
-            form.submit();
-        }
-    });
-
-    back?.addEventListener('click', closeDialog);
-
-    confirm.addEventListener('click', () => {
-        const reason = reasonField.value.trim();
-        if (!reason) {
-            if (error) {
-                error.textContent = 'Please provide a cancellation reason.';
-                error.hidden = false;
-            }
-            reasonField.focus();
-            return;
-        }
-
-        hiddenReason.value = reason;
-        confirm.disabled = true;
-        form.submit();
-    });
-
-    reasonField.addEventListener('input', clearError);
-
-    dialog.addEventListener('cancel', (event) => {
-        event.preventDefault();
-        closeDialog();
-    });
-})();
 
 </script>
 @endif
@@ -2065,349 +1484,9 @@
 
 
 
-<style>
-/* SPMU_CANONICAL_REVIEW_LAYOUT_START */
-
-@media (min-width: 1181px) {
-    .spmu-verification-grid {
-        display: block !important;
-    }
-
-    .spmu-review-layout {
-        display: grid;
-        gap: 20px;
-        width: 100%;
-        min-width: 0;
-    }
-
-    .spmu-review-top-row,
-    .spmu-review-bottom-row {
-        display: grid;
-        grid-template-columns: minmax(0, 52%) minmax(0, 48%);
-        gap: 20px;
-        width: 100%;
-        min-width: 0;
-        align-items: stretch;
-    }
-
-    .spmu-review-top-row > *,
-    .spmu-review-bottom-row > * {
-        min-width: 0;
-    }
-
-    /* Scanned request: show the complete page immediately; users may zoom only when needed. */
-    .spmu-scan-slot {
-        min-width: 0;
-    }
-
-    .spmu-scan-slot > .scanned-document-card,
-    .spmu-scan-slot > .formal-document-review-card {
-        width: 100%;
-        min-width: 0;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .spmu-scan-slot .scanned-pdf-stage,
-    .spmu-scan-slot .scanned-image-stage,
-    .spmu-scan-slot .formal-document-review-stage,
-    .spmu-scan-slot .formal-pdf-stage {
-        height: clamp(620px, 68vh, 760px) !important;
-        min-height: 620px !important;
-        max-height: 760px !important;
-        overflow: hidden !important;
-    }
-
-    .spmu-scan-slot iframe,
-    .spmu-scan-slot embed,
-    .spmu-scan-slot object,
-    .spmu-scan-slot .scanned-pdf-frame,
-    .spmu-scan-slot .formal-document-review-frame,
-    .spmu-scan-slot .formal-pdf-frame {
-        display: block;
-        width: 100% !important;
-        height: 100% !important;
-        min-width: 0 !important;
-        min-height: 0 !important;
-        border: 0;
-    }
-
-    /*
-     * Bottom row: CSS Grid provides the synchronization.
-     * Whichever side is naturally taller determines the row height.
-     * The other card stretches to exactly the same outer height.
-     */
-    .spmu-review-bottom-row {
-        align-items: stretch;
-    }
-
-    .spmu-left-borrowing-info,
-    .spmu-inventory-slot {
-        height: 100%;
-        min-height: 0;
-        align-self: stretch !important;
-    }
-
-    .spmu-left-borrowing-info {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    .spmu-left-borrowing-info .card-header {
-        flex: 0 0 auto;
-        margin-bottom: 0;
-    }
-
-    .spmu-left-borrowing-grid {
-        display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        grid-auto-rows: auto !important;
-        align-content: start;
-        min-height: 0;
-        border-top: 1px solid var(--border, #d7dee8);
-    }
-
-    .spmu-left-borrowing-cell {
-        min-width: 0;
-        min-height: 68px;
-        height: auto !important;
-        padding: 12px 14px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 4px;
-        border-right: 1px solid var(--border, #d7dee8);
-        border-bottom: 1px solid var(--border, #d7dee8);
-    }
-
-    .spmu-left-borrowing-cell:nth-child(even) {
-        border-right: 0;
-    }
-
-    .spmu-left-borrowing-cell span {
-        color: var(--text-muted, #64748b);
-        font-size: .88rem;
-        line-height: 1.25;
-    }
-
-    .spmu-left-borrowing-cell strong {
-        white-space: normal;
-        overflow-wrap: anywhere;
-        word-break: normal;
-        line-height: 1.35;
-    }
-
-    /*
-     * Inventory slot fills the same bottom-row height.
-     * If many requested items exist, only the table region scrolls.
-     */
-    .spmu-inventory-slot {
-        display: flex;
-        min-width: 0;
-    }
-
-    .spmu-inventory-slot > [data-spmu-availability-review],
-    .spmu-inventory-slot > .spmu-availability-review {
-        flex: 1 1 auto;
-        width: 100%;
-        min-width: 0;
-        min-height: 0;
-        height: 100%;
-        max-height: none !important;
-        overflow: hidden !important;
-        box-sizing: border-box;
-        display: flex !important;
-        flex-direction: column !important;
-    }
-
-    .spmu-inventory-slot .spmu-availability-table-wrap {
-        flex: 1 1 auto !important;
-        min-height: 112px !important;
-        max-height: 240px !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
-        overscroll-behavior: contain;
-        scrollbar-gutter: stable;
-    }
-
-    .spmu-inventory-slot .spmu-availability-table {
-        width: 100% !important;
-        min-width: 0 !important;
-        table-layout: fixed !important;
-    }
-
-    .spmu-inventory-slot .spmu-availability-table thead th {
-        position: sticky !important;
-        top: 0;
-        z-index: 3;
-    }
-
-    .spmu-inventory-slot .spmu-availability-table th,
-    .spmu-inventory-slot .spmu-availability-table td {
-        white-space: normal !important;
-        overflow-wrap: anywhere !important;
-        word-break: normal !important;
-        vertical-align: middle !important;
-    }
-
-    .spmu-inventory-slot .status-badge {
-        max-width: 100%;
-        white-space: normal;
-        overflow-wrap: anywhere;
-        text-align: center;
-        line-height: 1.1;
-    }
-
-    /* Keep Review and decide/checklist/button design unchanged. */
-    .spmu-review-top-row > .spmu-checklist-panel {
-        width: 100%;
-        min-width: 0;
-        align-self: start;
-    }
-}
-
-@media (max-width: 1180px) {
-    .spmu-review-layout,
-    .spmu-review-top-row,
-    .spmu-review-bottom-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 16px;
-    }
-
-    .spmu-scan-slot .scanned-pdf-stage,
-    .spmu-scan-slot .scanned-image-stage,
-    .spmu-scan-slot .formal-document-review-stage,
-    .spmu-scan-slot .formal-pdf-stage {
-        height: clamp(500px, 65vh, 680px) !important;
-        min-height: 500px !important;
-    }
-
-    .spmu-left-borrowing-info,
-    .spmu-inventory-slot,
-    .spmu-inventory-slot > [data-spmu-availability-review],
-    .spmu-inventory-slot > .spmu-availability-review {
-        height: auto !important;
-        max-height: none !important;
-    }
-
-    .spmu-inventory-slot .spmu-availability-table-wrap {
-        max-height: 300px !important;
-        overflow-y: auto !important;
-    }
-}
-
-@media (max-width: 620px) {
-    .spmu-left-borrowing-grid {
-        grid-template-columns: 1fr !important;
-    }
-
-    .spmu-left-borrowing-cell {
-        border-right: 0;
-    }
-}
-
-/* SPMU_CANONICAL_REVIEW_LAYOUT_END */
-</style>
 
 
 
-<style>
-/* SPMU_REVIEW_ACTIONS_UNCLIP_START */
-
-/*
- * The action buttons already exist in the Blade markup.
- * Older review CSS forced the right card/form into a constrained flex height
- * and clipped the footer with overflow:hidden.
- *
- * This block only restores natural flow for Review and decide.
- * Checklist markup, button markup, Inventory Check, Borrowing Information,
- * and the scanned document layout are not changed.
- */
-
-.spmu-review-top-row {
-    align-items: start !important;
-}
-
-.spmu-review-top-row > .spmu-checklist-panel {
-    width: 100% !important;
-    min-width: 0 !important;
-
-    height: auto !important;
-    min-height: 0 !important;
-    max-height: none !important;
-
-    align-self: start !important;
-
-    display: block !important;
-    overflow: visible !important;
-}
-
-.spmu-review-top-row .spmu-verification-form {
-    display: block !important;
-
-    flex: none !important;
-    height: auto !important;
-    min-height: 0 !important;
-    max-height: none !important;
-
-    overflow: visible !important;
-}
-
-.spmu-review-top-row .spmu-checklist {
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-}
-
-.spmu-review-top-row .spmu-review-footer {
-    display: block !important;
-
-    position: static !important;
-    inset: auto !important;
-
-    height: auto !important;
-    min-height: 0 !important;
-    max-height: none !important;
-
-    margin-top: 18px !important;
-    padding-top: 18px !important;
-
-    overflow: visible !important;
-    visibility: visible !important;
-}
-
-.spmu-review-top-row .spmu-decision-actions {
-    display: grid !important;
-    grid-template-columns: 1fr !important;
-    gap: 10px !important;
-
-    height: auto !important;
-    overflow: visible !important;
-    visibility: visible !important;
-}
-
-.spmu-review-top-row .spmu-decision-actions > .button {
-    display: inline-flex !important;
-    width: 100% !important;
-    min-height: 44px !important;
-
-    opacity: 1;
-    visibility: visible !important;
-}
-
-/*
- * Verify & Approve must still visually show disabled until all three
- * verification checks are complete. Restore the intended disabled opacity.
- */
-.spmu-review-top-row .spmu-decision-actions > .button:disabled {
-    opacity: .48 !important;
-}
-
-/* SPMU_REVIEW_ACTIONS_UNCLIP_END */
-</style>
 
 {{-- BORROWER_CANCEL_DIALOG_POSITION_FIX_START --}}
 <style>
@@ -2554,15 +1633,36 @@ dialog[data-request-cancel-dialog] .spmu-dialog-remarks textarea:focus {
         0 0 0 3px rgba(23, 105, 224, 0.12) !important;
 }
 
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks__footer {
+    display: flex !important;
+    align-items: baseline !important;
+    justify-content: space-between !important;
+
+    gap: 12px !important;
+
+    margin-top: 6px !important;
+}
+
 dialog[data-request-cancel-dialog] .spmu-dialog-remarks small {
     display: block !important;
 
-    margin-top: 6px !important;
-
     color: #708196 !important;
 
-    font-size: 11px !important;
+    font-size: 11.5px !important;
     line-height: 1.4 !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks__counter {
+    flex-shrink: 0 !important;
+
+    color: #8394a6 !important;
+
+    font-variant-numeric: tabular-nums !important;
+}
+
+dialog[data-request-cancel-dialog] .spmu-dialog-remarks__counter[data-limit-near="1"] {
+    color: #b42318 !important;
+    font-weight: 700 !important;
 }
 
 dialog[data-request-cancel-dialog] .field-error {
@@ -2692,229 +1792,21 @@ dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
     padding-top: 9px;
 }
 
-.borrower-request-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    padding: 7px;
-    border: 1px solid #cbd8e6;
-    border-radius: 14px;
-    background: #f4f8fc;
-}
-
-.borrower-request-tab {
-    min-height: 46px;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    background: transparent;
-    color: #30465f;
-    font: inherit;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
-}
-
-.borrower-request-tab:hover {
-    border-color: #b9cce0;
-    background: #ffffff;
-    color: #0b4f92;
-}
-
-.borrower-request-tab.is-active {
-    border-color: #1769e0;
-    background: #ffffff;
-    color: #0b5cab;
-    box-shadow: 0 2px 8px rgba(16, 61, 103, .08);
-}
-
-.borrower-request-panel[hidden] {
-    display: none !important;
-}
-
-.borrower-overview-grid,
-.borrower-documents-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-    align-items: stretch;
-}
-
-/* Keep paired borrower cards equal in height. The taller card sets the row height,
-   while long office/item/document text wraps instead of widening the column. */
-.borrower-overview-grid > .card,
-.borrower-documents-grid > .card {
-    min-width: 0;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-
-.borrower-overview-grid > .card *,
-.borrower-documents-grid > .card * {
-    min-width: 0;
-}
-
-.borrower-fact-grid strong,
-.borrower-item-row strong,
-.borrower-item-row small,
-.borrower-documents-grid strong,
-.borrower-documents-grid small {
-    overflow-wrap: anywhere;
-    word-break: normal;
-}
-
-.borrower-documents-grid > .card > .empty-state {
-    flex: 1;
-    display: grid;
-    place-items: center;
-    align-content: center;
-}
-
-.borrower-fact-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0;
-}
-
-.borrower-fact-grid > div {
-    display: grid;
-    gap: 4px;
-    padding: 12px 0;
-    border-bottom: 1px solid #e1e8f0;
-}
-
-.borrower-fact-grid > div:nth-child(odd) {
-    padding-right: 18px;
-}
-
-.borrower-fact-grid > div:nth-child(even) {
-    padding-left: 18px;
-    border-left: 1px solid #e1e8f0;
-}
-
-.borrower-fact-grid span,
-.borrower-item-row small {
-    color: #667a91;
-    font-size: 12px;
-}
-
-.borrower-fact-grid strong {
-    color: #102b4e;
-    font-size: 15px;
-    font-weight: 700;
-}
-
-.borrower-item-list {
-    display: grid;
-    max-height: 330px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-right: 6px;
-    scrollbar-gutter: stable;
-    overscroll-behavior: contain;
-}
-
-/* The card header remains fixed while only long item lists scroll.
-   With a few items there is no scrollbar; it appears only when needed. */
-.borrower-item-list::-webkit-scrollbar {
-    width: 8px;
-}
-
-.borrower-item-list::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: #c5d2e0;
-}
-
-.borrower-item-list::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.borrower-section-title-inline {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    min-width: 0;
-    flex-wrap: wrap;
-}
-
-.borrower-section-title-inline h2,
-.borrower-section-title-inline .meta {
-    margin: 0;
-}
-
-.borrower-item-count {
-    color: #667a91;
-    font-size: 12px;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-.borrower-item-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 18px;
-    align-items: center;
-    padding: 13px 0;
-    border-bottom: 1px solid #e1e8f0;
-}
-
-.borrower-item-row:last-child {
-    border-bottom: 0;
-}
-
-.borrower-item-row > div:first-child,
-.borrower-item-quantity {
-    display: grid;
-    gap: 3px;
-}
-
-.borrower-item-quantity {
-    min-width: 150px;
-    text-align: right;
-}
-
 .borrower-document-list article {
     min-height: 64px;
 }
 
-
-@media (max-width: 980px) {
-    .borrower-overview-grid,
-    .borrower-documents-grid {
-        grid-template-columns: 1fr;
-    }
-}
 
 @media (max-width: 680px) {
     .request-heading-actions {
         justify-content: flex-start;
     }
 
-    .borrower-request-tabs {
-        grid-template-columns: 1fr;
-    }
-
-    .borrower-fact-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .borrower-fact-grid > div:nth-child(odd),
-    .borrower-fact-grid > div:nth-child(even) {
-        padding-left: 0;
-        padding-right: 0;
-        border-left: 0;
-    }
-
-    .borrower-item-row {
-        grid-template-columns: 1fr;
-    }
-
-    .borrower-item-quantity {
-        min-width: 0;
-        text-align: left;
-    }
 }
 </style>
 @endif
 
+@if($isOperationalRequestLayout)
+    </div>
+@endif
 @endsection

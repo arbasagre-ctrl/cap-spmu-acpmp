@@ -21,7 +21,7 @@ class CustodyController extends Controller
 {
     public function index(Request $request): View
     {
-        $query = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'])->latest();
+        $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'])->latest();
         if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
             $query->where('borrower_user_id', $request->user()->id);
         }

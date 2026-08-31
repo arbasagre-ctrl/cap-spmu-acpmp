@@ -67,6 +67,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/notifications', [NotificationController::class, 'index'])
         ->name('notifications.index');
 
+    /*
+     * Opening a notification marks it read and forwards to the record it
+     * refers to, so the list item itself is the link.
+     */
+    Route::get('/notifications/{notification}/open', [NotificationController::class, 'open'])
+        ->name('notifications.open');
+
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])
         ->name('notifications.read-all');
 
@@ -498,6 +505,11 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             [PolicyController::class, 'updateOffenseApplication']
         )->name('policies.offense-application.update');
 
+
+        Route::put(
+            '/administration/policies/weekly-schedule',
+            [PolicyController::class, 'updateWeeklyScheduleBatch']
+        )->name('policies.weekly-schedule.batch-update');
 
         Route::put(
             '/administration/policies/weekly-schedule/{weekday}',

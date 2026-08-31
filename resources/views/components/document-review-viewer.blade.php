@@ -35,7 +35,7 @@
     <div class="scanned-document-header">
         <div>
             <p class="eyebrow">
-                Scanned request letter
+                Signed request letter
             </p>
 
             <h2>
@@ -45,12 +45,14 @@
 
         @if($previewUrl)
             <a
-                class="button secondary small ui-pressable"
+                class="button secondary small ui-pressable scanned-document-open"
                 href="{{ $previewUrl }}"
                 target="_blank"
                 rel="noopener"
             >
                 Open original
+
+                <x-icon name="external-link" size="15" />
             </a>
         @endif
     </div>
@@ -135,6 +137,17 @@
         gap: 16px;
         padding: 18px 20px;
         border-bottom: 1px solid var(--border, #d7dee8);
+    }
+
+    .scanned-document-open {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+    }
+
+    .scanned-document-open .ui-icon {
+        flex-shrink: 0;
     }
 
     .scanned-document-header h2 {

@@ -19,292 +19,42 @@
     };
 @endphp
 
-<style>
-    .reports-detail-page {
-        --detail-line: var(--border, #d7e0ea);
-        --detail-muted: var(--text-muted, #64748b);
-        --detail-ink: var(--text, #18324a);
-        --detail-soft: var(--surface-subtle, #f7f9fc);
-        display: grid;
-        gap: 16px;
-    }
-
-    .reports-detail-heading-actions,
-    .reports-module-row,
-    .report-output-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-    }
-
-    .report-generator-card {
-        padding: 16px;
-    }
-
-    .report-generator-grid {
-        display: grid;
-        grid-template-columns:
-            minmax(220px, 1fr)
-            minmax(300px, 1.25fr)
-            minmax(150px, .55fr)
-            minmax(150px, .55fr)
-            minmax(110px, auto);
-        gap: 12px;
-        align-items: end;
-    }
-
-    .report-generator-grid label {
-        min-width: 0;
-        margin: 0;
-    }
-
-    .report-generate-button {
-        min-height: 42px;
-        align-self: end;
-        white-space: nowrap;
-    }
-
-    .report-period-helper {
-        margin: 10px 0 0;
-        color: var(--detail-muted);
-        font-size: 11px;
-        line-height: 1.45;
-    }
-
-    .report-generator-grid input,
-    .report-generator-grid select {
-        width: 100%;
-        margin-top: 7px;
-    }
-
-    .report-description,
-    .report-note {
-        color: var(--detail-muted);
-        font-size: 12px;
-        line-height: 1.45;
-    }
-
-    .report-description {
-        margin: 10px 0 0;
-    }
-
-    .report-note {
-        margin: 10px 0 0;
-        font-size: 11px;
-    }
-
-    .report-summary-grid {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 12px;
-    }
-
-    .report-summary-item {
-        min-width: 0;
-        padding: 12px;
-        border: 1px solid var(--detail-line);
-        border-radius: 10px;
-        background: var(--surface, #fff);
-    }
-
-    .report-summary-item strong {
-        display: block;
-        color: var(--detail-ink);
-        font-size: 22px;
-        line-height: 1.15;
-        overflow-wrap: anywhere;
-    }
-
-    .report-summary-item span {
-        display: block;
-        margin-top: 5px;
-        color: var(--detail-muted);
-        font-size: 10px;
-        font-weight: 700;
-    }
-
-    .report-output-card {
-        overflow: hidden;
-    }
-
-    .report-output-header {
-        padding: 16px 18px;
-        border-bottom: 1px solid var(--detail-line);
-    }
-
-    .report-output-header h2 {
-        margin: 2px 0 4px;
-    }
-
-    .report-output-header p {
-        margin: 0;
-        color: var(--detail-muted);
-        font-size: 12px;
-    }
-
-    .report-output-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-
-    .report-output-body {
-        padding: 16px 18px 18px;
-    }
-
-    .report-table-scroll {
-        overflow-x: auto;
-    }
-
-    .report-table {
-        min-width: 900px;
-    }
-
-    .report-table .numeric {
-        text-align: right;
-    }
-
-    .report-section-subheading {
-        margin: 18px 0 8px;
-        color: var(--detail-ink);
-        font-size: 14px;
-    }
-
-    @media (max-width: 1200px) {
-        .report-summary-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-    }
-
-    @media (max-width: 1050px) {
-        .report-generator-grid {
-            grid-template-columns: 1fr 1fr;
-        }
-    }
-
-    @media (max-width: 700px) {
-        .report-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-
-    @media (max-width: 620px) {
-        .report-generator-grid,
-        .report-summary-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 480px) {
-        .report-summary-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media print {
-        .reports-detail-heading-actions,
-        .reports-module-tabs,
-        .report-generator-card,
-        .report-output-actions {
-            display: none !important;
-        }
-    }
-</style>
-
-<section class="page-heading">
-    <div>
-        <p class="eyebrow">Formal reporting</p>
-        <h1>Reports &amp; Analytics</h1>
-        <p>
-            Generate detailed operational reports for review, evidence, printing, and CSV export.
-        </p>
-    </div>
-
-    <div class="reports-detail-heading-actions">
-        @if(auth()->user()->hasRole('SPMU') || auth()->user()->hasRole('ICTU'))
-            <a class="button secondary ui-pressable" href="{{ route('reports.audit') }}">
-                <x-icon name="reports" size="16" />
-                Audit Trail
-            </a>
-
-            <a class="button secondary ui-pressable" href="{{ route('reports.notifications') }}">
-                <x-icon name="notifications" size="16" />
-                Delivery
-            </a>
-        @endif
-    </div>
-</section>
-
-<div class="reports-detail-page">
-
-    <section class="content-area">
-        <div class="reports-module-row">
-            @include('reports.partials.module-tabs')
-
-            <span class="meta">Reporting period: {{ $periodLabel }}</span>
+@include('reports.partials.workspace-styles')
+@include('reports.partials.detail-styles')
+<div class="reporting-workspace reporting-detail">
+    <section class="page-heading">
+        <div>
+            <p class="eyebrow">Formal reporting</p>
+            <h1>Reports &amp; Analytics</h1>
+            <p>Generate detailed operational reports for review, evidence, printing, and CSV export.</p>
         </div>
+    </section>
 
-        <form method="get" class="card report-generator-card top-gap">
+    <div class="reports-detail-page">
+        <div class="reports-navigation-row">
+            @include('reports.partials.module-tabs')
+            @include('reports.partials.heading-actions')
+        </div>
+        <form method="get" class="card report-generator-card" aria-label="Report generator">
             <input type="hidden" name="tab" value="reports">
-
             <div class="report-generator-grid">
-                <label>
-                    Report Type
-                    <select name="report">
+                <label for="report-type">Report Type
+                    <select id="report-type" name="report">
                         @foreach($reportTypes as $key => $meta)
-                            <option value="{{ $key }}" @selected($selectedReport === $key)>
-                                {{ $meta['label'] }}
-                            </option>
+                            <option value="{{ $key }}" @selected($selectedReport === $key)>{{ $meta['label'] }}</option>
                         @endforeach
                     </select>
                 </label>
-
-                @include(
-                    'reports.partials.academic-period-filter',
-                    [
-                        'periodSelectId' => 'reports-academic-period',
-                        'showPeriodContext' => false,
-                    ]
-                )
-
-                <button
-                    class="button primary ui-pressable report-generate-button"
-                    type="submit"
-                >
-                    Generate
-                </button>
+                @include('reports.partials.period-selection', ['periodSelectId' => 'reports-academic-period'])
+                <button class="button primary report-generate-button" type="submit"><x-icon name="requests" size="17" />Generate Report</button>
             </div>
-
-            <p class="report-period-helper">
-                Choose a reporting scope: <strong>Week</strong>, <strong>Month</strong>, <strong>Semester</strong>, or <strong>Academic Year</strong>. The system resolves the corresponding dates automatically.
-            </p>
-
-            <p class="report-description">{{ $selectedReportMeta['description'] }}</p>
+            <p class="report-period-helper">Choose a reporting scope: Week, Month, Semester, or Academic Year. The system resolves the corresponding dates automatically.</p>
+            @if($selectedReport !== 'borrowing')
+                <p class="report-description">{{ $selectedReportMeta['description'] }}</p>
+            @endif
         </form>
-    </section>
 
-    @if(!empty($reportSummary))
-        <section class="report-summary-grid">
-            @foreach($reportSummary as $label => $value)
-                <article class="report-summary-item">
-                    <strong>
-                        @if($selectedReport === 'review-turnaround' && $label === 'Average review turnaround')
-                            {{ $formatSeconds((int) $value) }}
-                        @elseif($selectedReport === 'compliance' && $label === 'Return compliance')
-                            {{ number_format((float) $value, 1) }}%
-                        @else
-                            {{ is_numeric($value) ? number_format((float) $value, 0) : $value }}
-                        @endif
-                    </strong>
-
-                    <span>{{ $label }}</span>
-                </article>
-            @endforeach
-        </section>
-    @endif
+        @include('reports.partials.report-summary')
 
     <section class="content-area">
         <article class="card report-output-card">
@@ -325,7 +75,7 @@
                                 'to' => $to->toDateString(),
                             ]) }}"
                         >
-                            <x-icon name="reports" size="16" />
+                            <x-icon name="upload" size="16" class="report-download-icon" />
                             Export CSV
                         </a>
                     @endif
@@ -355,14 +105,14 @@
                                     <th>Expected Return</th>
                                     <th>Status</th>
                                     <th>Created</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @forelse($reportRows as $row)
                                     @php $version = $row->currentVersion; @endphp
                                     <tr>
-                                        <td><strong>{{ $row->request_no }}</strong></td>
+                                        <td><a class="report-request-link" href="{{ route('requests.show', $row) }}">{{ $row->request_no }}</a></td>
                                         <td>{{ $row->borrower?->full_name }}</td>
                                         <td>{{ $version?->event_details ?: $version?->purpose_event ?: '—' }}</td>
                                         <td>
@@ -419,7 +169,7 @@
                                     <th>Turnaround</th>
                                     <th>Result</th>
                                     <th>Remarks</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -469,7 +219,7 @@
                                     <th>Expected Return</th>
                                     <th>Closed</th>
                                     <th>Status</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -521,7 +271,7 @@
                                     <th class="numeric">On Custody</th>
                                     <th class="numeric">Laundry</th>
                                     <th class="numeric">Incident / Unavailable</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -575,7 +325,7 @@
                                     <th>Item</th>
                                     <th class="numeric">Released Quantity</th>
                                     <th>Utilization State</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -614,7 +364,7 @@
                                     <th>Overdue Started</th>
                                     <th>Offense Level</th>
                                     <th>Status</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -722,7 +472,7 @@
                                     <th>Expected Return</th>
                                     <th>Closed</th>
                                     <th>State</th>
-                                    <th><span class="visually-hidden">Action</span></th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -794,4 +544,5 @@
 
 </div>
 
+</div>
 @endsection

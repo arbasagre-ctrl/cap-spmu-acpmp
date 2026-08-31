@@ -65,8 +65,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('View generated Laundry Form')
-            ->assertSeeText('Laundry Completed / Available')
+            ->assertSeeText('View Laundry Form')
+            ->assertSeeText('Laundry Complete / Available')
             ->assertDontSeeText('Back to Stock');
     }
 

@@ -516,10 +516,12 @@
                 </nav>
             </header>
             <main class="app-main" id="main-content" tabindex="-1">
+                @unless($inlinePageNotices ?? false)
                 @if(session('status'))<div class="notice success" role="status"><x-icon name="success" /><div>{{ session('status') }}</div></div>@endif
                 @if($errors->any())
                     <div class="notice error" role="alert"><x-icon name="error" /><div><strong>Please correct the following:</strong><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div></div>
                 @endif
+                @endunless
                 @yield('content')
             </main>
         </div>
@@ -685,4 +687,3 @@
     {{-- SPMU-ACPMP ANTI-DUPLICATE-SUBMISSION END --}}
 </body>
 </html>
-

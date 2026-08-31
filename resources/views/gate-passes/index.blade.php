@@ -1,112 +1,96 @@
 @extends('layouts.app', ['title' => 'Gate Pass'])
 @section('content')
 @php
-    $statuses = $gatePasses->pluck('status')->filter()->unique()->sort()->values();
+    $gatePasses->loadMissing('custody.borrower.organizationalUnit');
+    $gatePassStatusLabels = [
+        'PENDING' => 'For Release',
+        'READY_FOR_PRINTING' => 'Awaiting Accomplished Scan',
+        'VERIFIED' => 'Completed',
+    ];
+    $gatePassStatusTones = ['PENDING' => 'warning', 'READY_FOR_PRINTING' => 'info', 'VERIFIED' => 'success'];
+    $statuses = collect(array_keys($gatePassStatusLabels))->merge($gatePasses->pluck('status')->filter())->unique();
 @endphp
-<section class="page-heading">
-    <div>
-        <p class="eyebrow">SPMU Action Officer</p>
-        <h1>Gate Pass</h1>
-        <p>Off-campus borrowings appear here. A Gate Pass stays pending after Head approval, is finalized by the Action Officer at Physical Release, then is printed by SPMU for the borrower and later archived after guard processing.</p>
-    </div>
-</section>
 
-<section class="content-area gate-pass-browser" data-gate-pass-browser>
-    <style>
-        .gate-pass-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 190px 170px;gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
-        .gate-pass-toolbar label{margin:0;min-width:0}.gate-pass-toolbar input,.gate-pass-toolbar select{width:100%}.gate-pass-toolbar select,.gate-pass-toolbar .search-input-shell{margin-top:6px}
-        .gate-pass-list{display:grid;gap:9px}.gate-pass-record[hidden]{display:none!important}.gate-pass-record{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.9fr) auto;gap:18px;align-items:center;padding:13px 15px;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:11px;background:var(--surface);color:inherit;text-decoration:none}
-        .gate-pass-record strong,.gate-pass-record small{display:block}.gate-pass-record small{margin-top:3px;color:var(--text-muted)}.gate-pass-action{display:flex;align-items:center;gap:10px;white-space:nowrap}.gate-pass-empty{padding:28px;text-align:center;border:1px dashed var(--border);border-radius:12px;color:var(--text-muted)}
-        @media(max-width:800px){.gate-pass-toolbar{grid-template-columns:1fr}.gate-pass-record{grid-template-columns:1fr}.gate-pass-action{justify-content:space-between}}
-    </style>
+@include('gate-passes.partials.index-styles')
 
-    <div class="gate-pass-toolbar">
-        <label>Search
-            <span class="search-input-shell">
-                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
-                <input type="search" placeholder="Request, borrower, custody, destination..." data-gate-pass-search autocomplete="off">
-            </span>
-        </label>
-        <label>Status
-            <select data-gate-pass-status>
-                <option value="">All Statuses</option>
-                @foreach($statuses as $status)
-                    <option value="{{ $status }}">{{ str($status)->replace('_',' ')->title() }}</option>
-                @endforeach
-            </select>
-        </label>
-        <label>Sort
-            <select data-gate-pass-sort>
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-            </select>
-        </label>
-    </div>
+<div class="gate-pass-browser" data-gate-pass-browser data-page-size="10">
+    <section class="page-heading gate-pass-heading">
+        <div>
+            <p class="eyebrow">SPMU Action Officer</p>
+            <h1>Gate Pass</h1>
+            <p>Manage generated Gate Passes and accomplished scans for off-campus borrowing.</p>
+        </div>
+    </section>
 
-    <div class="gate-pass-list" data-gate-pass-list>
-        @foreach($gatePasses as $gatePass)
-            @php
-                $custody = $gatePass->custody;
-                $version = $custody?->request?->currentVersion;
-                $search = strtolower(trim(implode(' ', [
-                    $custody?->request?->request_no,
-                    $custody?->custody_no,
-                    $custody?->borrower?->full_name,
-                    $gatePass->destination,
-                    $gatePass->purpose,
-                    $gatePass->status,
-                ])));
-            @endphp
-            <a class="gate-pass-record ui-pressable"
-               href="{{ route('gate-passes.show', $gatePass) }}"
-               data-gate-pass-record
-               data-search="{{ $search }}"
-               data-status="{{ $gatePass->status }}"
-               data-date="{{ optional($gatePass->updated_at)->timestamp ?? 0 }}">
-                <span>
-                    <strong>{{ $custody?->request?->request_no ?: 'Borrowing request' }}</strong>
-                    <small>{{ $custody?->borrower?->full_name }} · {{ $custody?->custody_no }}</small>
+    @if($gatePasses->isEmpty())
+        <section class="card gate-pass-empty-card" aria-labelledby="gate-pass-empty-title">
+            @include('gate-passes.partials.empty-illustration')
+            <h2 id="gate-pass-empty-title">No Gate Pass records yet.</h2>
+            <p>Off-campus borrowing records will appear here<br>once an approved request requires a Gate Pass.</p>
+        </section>
+    @else
+        <section class="card gate-pass-toolbar" aria-label="Gate Pass filters">
+            <label for="gate-pass-search">Search
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="18" /></span>
+                    <input id="gate-pass-search" type="search" placeholder="Request, borrower, custody, destination..." data-gate-pass-search autocomplete="off">
                 </span>
-                <span>
-                    <strong>{{ $gatePass->destination ?: ($version?->location ?: 'Off-campus destination') }}</strong>
-                    <small>{{ $gatePass->guard_name ? 'Guard: '.$gatePass->guard_name : 'Guard details pending' }}</small>
-                </span>
-                <span class="gate-pass-action">
-                    <x-status-badge :status="$gatePass->status" />
-                    <strong>View details <x-icon name="chevron-right" size="15" /></strong>
-                </span>
-            </a>
-        @endforeach
-    </div>
+            </label>
+            <label for="gate-pass-status">Status
+                <select id="gate-pass-status" data-gate-pass-status>
+                    <option value="">All Statuses</option>
+                    @foreach($statuses as $status)
+                        <option value="{{ $status }}">{{ $gatePassStatusLabels[$status] ?? str($status)->replace('_', ' ')->title() }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <label for="gate-pass-sort">Sort
+                <select id="gate-pass-sort" data-gate-pass-sort>
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                </select>
+            </label>
+        </section>
 
-    <div class="gate-pass-empty" data-gate-pass-empty @if($gatePasses->isNotEmpty()) hidden @endif>
-        <strong>{{ $gatePasses->isEmpty() ? 'No off-campus Gate Pass records.' : 'No Gate Pass record matches the selected filters.' }}</strong>
-    </div>
-</section>
+        <section class="card gate-pass-records-card" aria-labelledby="gate-pass-records-title">
+            <h2 id="gate-pass-records-title">Gate Pass Records</h2>
+            <div class="gate-pass-table-wrap">
+                <table class="gate-pass-table" aria-labelledby="gate-pass-records-title">
+                    <thead>
+                        <tr>
+                            <th scope="col">Request No.</th>
+                            <th scope="col">Borrower</th>
+                            <th scope="col">Destination</th>
+                            <th scope="col">Release Date</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody data-gate-pass-list>
+                        @foreach($gatePasses as $gatePass)
+                            @include('gate-passes.partials.record-row')
+                        @endforeach
+                        <tr class="gate-pass-filter-empty" data-gate-pass-empty hidden>
+                            <td colspan="6">
+                                <strong>No Gate Pass records match your filters.</strong>
+                                <p>Try another search or status.</p>
+                                <button class="button secondary small link-button" type="button" data-gate-pass-reset>Clear filters</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="gate-pass-footer">
+                <p data-gate-pass-count role="status" aria-live="polite">Showing 1 to {{ $gatePasses->count() }} of {{ $gatePasses->count() }} records</p>
+                <nav class="gate-pass-pagination" aria-label="Gate Pass records pagination" data-gate-pass-pagination hidden>
+                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="previous" aria-label="Previous page" disabled><x-icon name="chevron-right" class="gate-pass-previous-icon" size="16" /></button>
+                    <div class="gate-pass-page-numbers" data-gate-pass-page-numbers></div>
+                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="next" aria-label="Next page" disabled><x-icon name="chevron-right" size="16" /></button>
+                </nav>
+            </div>
+        </section>
+    @endif
+</div>
 
-<script>
-(() => {
-    const root = document.querySelector('[data-gate-pass-browser]');
-    if (!root) return;
-    const list = root.querySelector('[data-gate-pass-list]');
-    const records = Array.from(root.querySelectorAll('[data-gate-pass-record]'));
-    const search = root.querySelector('[data-gate-pass-search]');
-    const status = root.querySelector('[data-gate-pass-status]');
-    const sort = root.querySelector('[data-gate-pass-sort]');
-    const empty = root.querySelector('[data-gate-pass-empty]');
-    const render = () => {
-        const q = (search?.value || '').trim().toLowerCase();
-        const s = status?.value || '';
-        const dir = sort?.value === 'oldest' ? 1 : -1;
-        records.sort((a,b) => dir * (Number(b.dataset.date||0)-Number(a.dataset.date||0))).forEach(r => list.appendChild(r));
-        let visible = 0;
-        records.forEach(r => {
-            const show = (!q || (r.dataset.search||'').includes(q)) && (!s || r.dataset.status === s);
-            r.hidden = !show; if (show) visible++;
-        });
-        if (empty) empty.hidden = visible !== 0;
-    };
-    search?.addEventListener('input', render); status?.addEventListener('change', render); sort?.addEventListener('change', render); render();
-})();
-</script>
+@include('gate-passes.partials.index-interactions')
 @endsection

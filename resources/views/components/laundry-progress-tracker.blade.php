@@ -1,24 +1,34 @@
-@props(['job'])
+@props(['job', 'inspectionComplete' => null])
 @php
-    $status = (string) $job->status;
-    $current = match($status) {
-        'FOR_LAUNDRY' => 1,
-        'TURNED_OVER_TO_LAUNDRY' => 2,
-        'LAUNDRY_COMPLETED' => 3,
-        default => 1,
+    $inspectionComplete = $inspectionComplete ?? ($job->lines->isNotEmpty()
+        && $job->lines->every(fn ($line) => $line->custodyLine
+            && (float) $line->custodyLine->returned_quantity >= (float) $line->custodyLine->actual_released_quantity));
+    $turnoverComplete = in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
+    $laundryComplete = $job->status === 'LAUNDRY_COMPLETED';
+    $progressLabel = match (true) {
+        $laundryComplete => 'Laundry Complete / Available',
+        $turnoverComplete => 'Internal Laundry Processing',
+        $inspectionComplete => 'Awaiting Laundry Turnover',
+        default => 'Awaiting Return Inspection',
     };
     $steps = [
-        1 => [
-            'Return Inspection & Laundry Turnover',
-            'SPMU records the borrower return condition. The same printed Laundry Form is then handed to Laundry Personnel for the handwritten Received by signature.',
+        [
+            'label' => 'Return Inspection',
+            'icon' => 'requests',
+            'state' => $inspectionComplete ? 'complete' : 'current',
+            'description' => 'SPMU records the quantity and condition of all returned linen before Laundry Turnover can be confirmed.',
         ],
-        2 => [
-            'Borrower Cleared / Internal Laundry',
-            'Laundry Personnel have physically received the linen. The borrower no longer waits for washing; processing continues inside the Laundry Area.',
+        [
+            'label' => 'Laundry Turnover',
+            'icon' => 'custody',
+            'state' => $turnoverComplete ? 'complete' : ($inspectionComplete ? 'current' : 'locked'),
+            'description' => 'After Return Inspection, Laundry Personnel physically receive the linen and wet-sign Received by on the same printed Laundry Form. The borrower no longer waits for washing.',
         ],
-        3 => [
-            'Laundry Completed / Available',
-            'Laundry processing is complete and clean/serviceable linen is Available for future borrowing in the Laundry Area.',
+        [
+            'label' => 'Laundry Complete / Available',
+            'icon' => 'approval',
+            'state' => $laundryComplete ? 'complete' : ($turnoverComplete ? 'current' : 'pending'),
+            'description' => 'Internal washing is completed and clean/serviceable linen becomes Available for future borrowing in the Laundry Area.',
         ],
     ];
 @endphp
@@ -29,30 +39,27 @@
             <p class="eyebrow">Laundry tracker</p>
             <h2>Where this linen is now</h2>
         </div>
-        <x-status-badge :status="$job->status" />
+        <span class="status-badge {{ $laundryComplete ? 'status-success' : 'status-info' }} laundry-progress-status">{{ $progressLabel }}</span>
     </div>
     <ol class="laundry-progress-rail">
-        @foreach($steps as $index => [$label, $description])
+        @foreach($steps as $step)
             @php
-                $state = $index < $current
-                    ? 'complete'
-                    : ($index === $current ? 'current' : 'pending');
+                $state = $step['state'];
+                $stateLabel = $state === 'complete' ? 'Completed' : ucfirst($state);
             @endphp
             <li class="laundry-progress-step is-{{ $state }}" @if($state === 'current') aria-current="step" @endif>
-                <span class="laundry-progress-marker">{{ $state === 'complete' ? '✓' : $index }}</span>
+                <span class="laundry-progress-marker"><x-icon :name="$step['icon']" size="25" /></span>
                 <div
-                    class="workflow-tracker__interactive"
+                    class="workflow-tracker__interactive laundry-progress-content"
                     data-workflow-step
-                    data-workflow-title="{{ $label }}"
-                    data-workflow-meta="{{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}"
-                    data-workflow-description="{{ $description }}"
+                    data-workflow-title="{{ $step['label'] }}"
+                    data-workflow-meta="{{ $stateLabel }}"
+                    data-workflow-description="{{ $step['description'] }}"
                     tabindex="0"
-                    aria-label="{{ $label }}. {{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}. {{ $description }}"
+                    aria-label="{{ $step['label'] }}. {{ $stateLabel }}. {{ $step['description'] }}"
                 >
-                    <strong>{{ $label }}</strong>
-                    <span class="workflow-tracker__meta">
-                        {{ $state === 'complete' ? 'Completed' : ($state === 'current' ? 'Current' : 'Pending') }}
-                    </span>
+                    <strong>{{ $step['label'] }}</strong>
+                    <span class="workflow-tracker__meta">{{ $stateLabel }}</span>
                 </div>
             </li>
         @endforeach

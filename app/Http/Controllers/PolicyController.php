@@ -512,6 +512,144 @@ class PolicyController extends Controller
             ->with('status', 'Weekly operational schedule updated. Existing open custody return dates were re-evaluated.');
     }
 
+    public function updateWeeklyScheduleBatch(
+        Request $request,
+        AuditService $audit,
+        OperationalCalendarService $calendar
+    ): RedirectResponse {
+        $this->authorizeHead($request);
+
+        $data = $request->validate([
+            'only_day' => ['nullable', 'integer', 'between:1,7'],
+            'schedule' => ['required', 'array'],
+            'schedule.*.is_open' => ['required', 'boolean'],
+            'schedule.*.accepts_requests' => ['required', 'boolean'],
+            'schedule.*.allows_pickup' => ['required', 'boolean'],
+            'schedule.*.allows_return' => ['required', 'boolean'],
+            'schedule.*.open_time' => ['nullable', 'date_format:H:i'],
+            'schedule.*.close_time' => ['nullable', 'date_format:H:i'],
+        ]);
+
+        /*
+         * A single-day Save posts the whole grid but limits persistence to
+         * that weekday, so an unsaved edit elsewhere is never written by
+         * accident.
+         */
+        $onlyDay = $data['only_day'] ?? null;
+
+        $weekdays = collect($data['schedule'])
+            ->keys()
+            ->map(fn ($weekday): int => (int) $weekday)
+            ->filter(fn (int $weekday): bool => $weekday >= 1 && $weekday <= 7)
+            ->when(
+                $onlyDay !== null,
+                fn ($days) => $days->filter(
+                    fn (int $weekday): bool => $weekday === (int) $onlyDay
+                )
+            )
+            ->sort()
+            ->values();
+
+        abort_if($weekdays->isEmpty(), 404);
+
+        $errors = [];
+
+        foreach ($weekdays as $weekday) {
+            $row = $data['schedule'][$weekday];
+
+            if (
+                ($row['open_time'] ?? null)
+                && ($row['close_time'] ?? null)
+                && $row['close_time'] <= $row['open_time']
+            ) {
+                $errors["schedule.{$weekday}.close_time"] =
+                    'Closing time must be later than opening time.';
+            }
+        }
+
+        if ($errors !== []) {
+            return back()->withErrors($errors)->withInput();
+        }
+
+        $saved = 0;
+
+        foreach ($weekdays as $weekday) {
+            $row = $data['schedule'][$weekday];
+
+            $values = [
+                'is_open' => (bool) $row['is_open'],
+                'accepts_requests' => (bool) $row['accepts_requests'],
+                'allows_pickup' => (bool) $row['allows_pickup'],
+                'allows_return' => (bool) $row['allows_return'],
+                'open_time' => ($row['open_time'] ?? null) ?: null,
+                'close_time' => ($row['close_time'] ?? null) ?: null,
+            ];
+
+            if (! $values['is_open']) {
+                $values['accepts_requests'] = false;
+                $values['allows_pickup'] = false;
+                $values['allows_return'] = false;
+                $values['open_time'] = null;
+                $values['close_time'] = null;
+            }
+
+            $rule = OperationalWeeklySchedule::query()
+                ->firstOrNew(['weekday' => $weekday]);
+
+            /*
+             * Stored times carry seconds, so they are trimmed to H:i before the
+             * comparison. Without it every save-all would rewrite and audit
+             * rows nobody touched.
+             */
+            $stored = [
+                'is_open' => (bool) $rule->is_open,
+                'accepts_requests' => (bool) $rule->accepts_requests,
+                'allows_pickup' => (bool) $rule->allows_pickup,
+                'allows_return' => (bool) $rule->allows_return,
+                'open_time' => $rule->open_time
+                    ? substr((string) $rule->open_time, 0, 5)
+                    : null,
+                'close_time' => $rule->close_time
+                    ? substr((string) $rule->close_time, 0, 5)
+                    : null,
+            ];
+
+            if ($rule->exists && $stored === $values) {
+                continue;
+            }
+
+            $before = $rule->exists ? $rule->toArray() : null;
+
+            $rule->fill(
+                $values + ['configured_by_user_id' => $request->user()->id]
+            );
+
+            $rule->save();
+            $saved++;
+
+            $audit->record(
+                'OPERATIONAL_WEEKLY_SCHEDULE_UPDATED',
+                $rule,
+                before: $before,
+                after: $rule->fresh()->toArray()
+            );
+        }
+
+        if ($saved === 0) {
+            return redirect()
+                ->to(route('policies.index', ['section' => 'transaction-schedule']).'#transaction-schedule')
+                ->with('status', 'No schedule changes to save.');
+        }
+
+        $this->synchronizeOpenCustodyDueDates($calendar, $audit);
+
+        return redirect()
+            ->to(route('policies.index', ['section' => 'transaction-schedule']).'#transaction-schedule')
+            ->with('status', $saved === 1
+                ? 'Weekly operational schedule updated. Existing open custody return dates were re-evaluated.'
+                : $saved.' schedule days updated. Existing open custody return dates were re-evaluated.');
+    }
+
     public function storeDateException(
         Request $request,
         AuditService $audit,

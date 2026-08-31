@@ -65,6 +65,38 @@
         || ($oldLocations->isEmpty() && $selectedItems->contains(
             fn ($requestItem) => $requestItem?->use_location === 'OFF_CAMPUS'
         ));
+
+    /*
+     * RESUME WHERE THE BORROWER STOPPED
+     * ---------------------------------
+     * Continuing a saved draft must reopen the stage the borrower actually
+     * stopped on, not replay stage 1. A stage counts as done when the data
+     * it collects is already on the version, so the resume point is derived
+     * from what was saved instead of being stored separately and drifting
+     * from it. Reading through old() means a redisplayed form after a failed
+     * validation pass also comes back on the stage being worked on.
+     */
+    $stageOneValues = [
+        old('purpose_event', $version->purpose_event),
+        old('location', $version->location),
+        $selectedDivision,
+        $selectedOfficeUnit,
+        old('schedule_date', optional($version->schedule_date ?: $version->needed_from)->format('Y-m-d')),
+        old('return_date', optional($version->return_date ?: $version->return_due_at)->format('Y-m-d')),
+    ];
+
+    $stageOneComplete = collect($stageOneValues)
+        ->every(fn ($value) => trim((string) $value) !== '');
+
+    $stageTwoComplete = old('item_ids') !== null
+        ? $oldItemIds->isNotEmpty()
+        : $selectedItems->isNotEmpty();
+
+    $resumeStage = match (true) {
+        ! $stageOneComplete => 1,
+        ! $stageTwoComplete => 2,
+        default => 3,
+    };
 @endphp
 
 <style>
@@ -512,106 +544,6 @@
         background: #fbfcfe;
     }
 
-    .review-summary-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 14px;
-    }
-
-    .review-summary-header h3 {
-        margin: 0;
-        color: var(--cr-ink);
-        font-size: 15px;
-    }
-
-    .review-summary-header p {
-        margin: 4px 0 0;
-        color: var(--cr-muted);
-        font-size: 11px;
-    }
-
-    .review-summary-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px 18px;
-        margin-bottom: 16px;
-    }
-
-    .review-summary-field {
-        display: grid;
-        gap: 3px;
-        min-width: 0;
-    }
-
-    .review-summary-field span {
-        color: var(--cr-muted);
-        font-size: 10px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: .035em;
-    }
-
-    .review-summary-field strong {
-        color: var(--cr-ink);
-        font-size: 12px;
-        overflow-wrap: anywhere;
-    }
-
-    .review-summary-section-title {
-        margin: 16px 0 8px;
-        color: var(--cr-ink);
-        font-size: 12px;
-        font-weight: 800;
-    }
-
-    .review-items-table th,
-    .review-items-table td {
-        vertical-align: middle;
-    }
-
-    .review-items-empty {
-        color: var(--cr-muted);
-        font-size: 11px;
-    }
-
-    .review-document-list {
-        display: grid;
-        gap: 7px;
-    }
-
-    .review-document-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 9px 10px;
-        border: 1px solid var(--cr-line);
-        border-radius: 9px;
-        background: #fff;
-        font-size: 11px;
-    }
-
-    .review-document-status {
-        color: var(--cr-muted);
-        font-weight: 700;
-        text-align: right;
-    }
-
-    .documents-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 15px;
-    }
-
-    .document-box {
-        padding: 15px;
-        border: 1px solid var(--cr-line);
-        border-radius: 12px;
-        background: var(--cr-soft);
-    }
-
     .document-current {
         margin: 0 0 10px;
         color: var(--cr-muted);
@@ -739,10 +671,6 @@
     }
 
     @media (max-width: 800px) {
-        .documents-grid {
-            grid-template-columns: 1fr;
-        }
-
         .catalog-item {
             align-items: start;
         }
@@ -863,10 +791,10 @@
         line-height: 1.55;
     }
 
-    .acknowledgement-help {
-        margin-top: 7px;
-    }
 </style>
+
+@include('requests.partials.create-styles')
+@include('requests.partials.create-review-styles')
 
 <section class="page-heading create-request-heading">
     <div>
@@ -945,137 +873,9 @@
         </nav>
 
 
-        <section class="request-card" data-stage-panel="1" aria-labelledby="request-details-heading">
-            <div class="request-card-header">
-                <div>
-                    <p class="eyebrow">Request details</p>
-                    <h2 id="request-details-heading">Borrowing information</h2>
-                    <p class="meta">
-                        Complete the request information first. Premises is selected once before searching for items in the next stage.
-                    </p>
-                </div>
+        @include('requests.partials.create-details')
 
-                <span class="inventory-date-context" id="inventory-date-context">
-                    Select dates
-                </span>
-            </div>
-
-            <div class="request-card-body">
-                <div class="field-grid">
-                    <label>
-                        Purpose of Borrowing
-                        <input
-                            name="purpose_event"
-                            value="{{ old('purpose_event', $version->purpose_event) }}"
-                            maxlength="255"
-                            required
-                            placeholder="Enter the purpose of borrowing."
-                        >
-                        @error('purpose_event')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <label>
-                        Event Location
-                        <input
-                            name="location"
-                            value="{{ old('location', $version->location) }}"
-                            maxlength="255"
-                            required
-                            placeholder="Enter where the event or activity will be held."
-                        >
-                        @error('location')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <label>
-                        Division
-                        <select id="division_code" name="division_code" required>
-                            <option value="">Select division</option>
-                            @foreach($divisionOptions as $code => $label)
-                                <option value="{{ $code }}" @selected($selectedDivision === $code)>
-                                    {{ $label }}
-                                </option>
-                            @endforeach
-                        </select>
-                        @error('division_code')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <label>
-                        Office / Academic Unit / Research Unit
-                        <input
-                            id="office_unit"
-                            name="office_unit"
-                            list="office-unit-options"
-                            value="{{ $selectedOfficeUnit }}"
-                            maxlength="255"
-                            required
-                            autocomplete="off"
-                            placeholder="Select or search the unit"
-                        >
-                        <datalist id="office-unit-options"></datalist>
-                        @error('office_unit')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <label>
-                        Items Needed From
-                        <input
-                            id="schedule_date"
-                            type="date"
-                            name="schedule_date"
-                            value="{{ old('schedule_date', optional($version->schedule_date ?: $version->needed_from)->format('Y-m-d')) }}"
-                            required
-                        >
-                        @error('schedule_date')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <label>
-                        Expected Return Date
-                        <input
-                            id="return_date"
-                            type="date"
-                            name="return_date"
-                            value="{{ old('return_date', optional($version->return_date ?: $version->return_due_at)->format('Y-m-d')) }}"
-                            required
-                        >
-                        @error('return_date')
-                            <small class="field-error">{{ $message }}</small>
-                        @enderror
-                    </label>
-
-                    <div class="student-activity-panel full-span">
-                        <label class="checkbox">
-                            <input type="hidden" name="represents_student_activity" value="0">
-                            <input
-                                id="student-activity-toggle"
-                                type="checkbox"
-                                name="represents_student_activity"
-                                value="1"
-                                @checked(old('represents_student_activity', $version->represents_student_activity))
-                            >
-                            This request represents a student activity
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <div class="stage-actions" data-stage-panel="1">
-            <a class="button secondary ui-pressable" href="{{ route('requests.index') }}">Cancel</a>
-            <button type="button" class="button primary ui-pressable" data-stage-next="2">
-                Continue to Select Items
-            </button>
-        </div>
-
-        <section class="request-card" data-stage-panel="2" aria-labelledby="item-picker-heading">
+        <section class="request-card request-picker-card" data-stage-panel="2" aria-labelledby="item-picker-heading">
             <div class="request-card-header">
                 <div>
                     <p class="eyebrow">Select items</p>
@@ -1103,24 +903,7 @@
                     <p class="field-error">{{ $message }}</p>
                 @enderror
 
-                <div class="request-premises-panel" id="request-premises-panel">
-                    <div class="request-premises-copy">
-                        <strong>Premises</strong>
-                        <span id="request-premises-help">
-                            Items are On-campus by default. Check Off-campus only when the request is for Barricade outside campus premises.
-                        </span>
-                    </div>
-
-                    <label class="request-premises-toggle">
-                        <input
-                            id="request-off-campus-toggle"
-                            type="checkbox"
-                            value="1"
-                            @checked($requestUsesOffCampus)
-                        >
-                        <span>Off-campus</span>
-                    </label>
-                </div>
+                @include('requests.partials.create-premises')
 
                 <div class="inventory-search-shell">
                     <label for="inventory-search" class="inventory-search-label">
@@ -1364,7 +1147,7 @@
 
                                         <button
                                             type="button"
-                                            class="button danger small ui-pressable"
+                                            class="button secondary small ui-pressable request-remove-button"
                                             data-remove-item="{{ $item->id }}"
                                         >
                                             Remove
@@ -1409,237 +1192,233 @@
             </div>
         </section>
 
-        <div class="stage-actions" data-stage-panel="2">
-            <button type="button" class="button secondary ui-pressable" data-stage-back="1">Back</button>
+        <div class="stage-actions request-picker-actions" data-stage-panel="2">
+            <button type="button" class="button secondary ui-pressable" data-stage-back="1"><x-icon name="chevron-right" class="request-back-icon" size="16" />Back</button>
             <button type="button" class="button primary ui-pressable" data-stage-next="3">
                 Confirm Items &amp; Continue
+                <svg class="ui-icon request-continue-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
             </button>
         </div>
 
-        <section class="request-card" data-stage-panel="3" aria-labelledby="documents-heading">
-            <div class="request-card-header">
-                <div>
-                    <p class="eyebrow">Documents &amp; Review</p>
-                    <h2 id="documents-heading">Required documents and final review</h2>
-                    <p class="meta">
-                        Upload the fully signed Borrowing Request Letter and, when required,
-                        the Permission to Conduct Letter. You may save a draft, or submit the
-                        completed request directly to SPMU.
-                    </p>
+        <section class="request-card review-card" data-stage-panel="3" aria-labelledby="review-summary-heading">
+            <p class="request-section-label">Review Summary</p>
+            <p class="request-section-copy" id="review-summary-heading">Please review the details of your request before submitting.</p>
+
+            <hr class="request-section-rule">
+
+            <div class="review-summary-grid">
+                <div class="review-summary-field">
+                    <span>Purpose of Borrowing</span>
+                    <strong id="summary-purpose">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Event Location</span>
+                    <strong id="summary-location">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Division</span>
+                    <strong id="summary-division">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Office / Academic Unit / Research Unit</span>
+                    <strong id="summary-office">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Items Needed From</span>
+                    <strong id="summary-from">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Expected Return Date</span>
+                    <strong id="summary-return">&mdash;</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Premises</span>
+                    <strong id="summary-premises" class="review-summary-pill is-positive">On-campus</strong>
+                </div>
+                <div class="review-summary-field">
+                    <span>Student Activity</span>
+                    <strong id="summary-student-activity" class="review-summary-pill is-neutral">No</strong>
                 </div>
             </div>
 
-            <div class="request-card-body">
-                <section class="review-summary" aria-labelledby="review-summary-heading">
-                    <div class="review-summary-header">
-                        <div>
-                            <h3 id="review-summary-heading">Review Request Summary</h3>
-                            <p>Review the request details, selected inventory, and uploaded documents before saving or submitting.</p>
-                        </div>
-                    </div>
+            <hr class="request-section-rule">
 
-                    <div class="review-summary-grid">
-                        <div class="review-summary-field">
-                            <span>Purpose of Borrowing</span>
-                            <strong id="summary-purpose">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Event Location</span>
-                            <strong id="summary-location">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Division</span>
-                            <strong id="summary-division">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Office / Academic / Research Unit</span>
-                            <strong id="summary-office">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Items Needed From</span>
-                            <strong id="summary-from">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Expected Return Date</span>
-                            <strong id="summary-return">—</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Premises</span>
-                            <strong id="summary-premises">On-campus</strong>
-                        </div>
-                        <div class="review-summary-field">
-                            <span>Student Activity</span>
-                            <strong id="summary-student-activity">No</strong>
-                        </div>
-                    </div>
+            <div class="review-items-header">
+                <h3>Selected Items</h3>
+                <span class="review-items-count" id="summary-items-count">0 items</span>
+            </div>
 
-                    <h4 class="review-summary-section-title">Selected Items</h4>
-                    <div class="table-wrap review-items-table">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Item ID</th>
-                                    <th>Item</th>
-                                    <th>Category</th>
-                                    <th>Unit</th>
-                                    <th>Quantity</th>
-                                </tr>
-                            </thead>
-                            <tbody id="summary-items-body">
-                                <tr>
-                                    <td colspan="5" class="review-items-empty">No selected items.</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+            <div class="table-wrap review-items-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Item</th>
+                            <th scope="col">Category</th>
+                            <th scope="col">Unit</th>
+                            <th scope="col">Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summary-items-body">
+                        <tr>
+                            <td colspan="4" class="review-items-empty">No selected items.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-                    <h4 class="review-summary-section-title">Documents</h4>
-                    <div class="review-document-list">
-                        <div class="review-document-row">
-                            <span>Borrowing Request Letter</span>
-                            <span class="review-document-status" id="summary-request-letter">Not selected</span>
-                        </div>
-                        <div class="review-document-row" id="summary-ptc-row">
-                            <span>Permission to Conduct Letter</span>
-                            <span class="review-document-status" id="summary-ptc">Not selected</span>
-                        </div>
-                    </div>
-                </section>
+        <section class="request-card documents-card" data-stage-panel="3" aria-labelledby="documents-heading">
+            <p class="request-section-label">Required Documents</p>
+            <p class="request-section-copy" id="documents-heading">Upload the fully signed documents required for this request.</p>
 
-                <div class="documents-grid">
-                    <div class="document-box">
+            <div class="document-rows">
+                <div class="document-row">
+                    <div class="document-row-info">
+                        <strong>
+                            Borrowing Request Letter
+                            <span class="document-required">Required</span>
+                        </strong>
+
+                        <p>Upload the signed borrowing request letter.</p>
+
                         @if($requestLetter)
                             <p class="document-current">
-                                Current Borrowing Request Letter:
-                                <a
-                                    href="{{ route('files.show', $requestLetter->file, false) }}"
-                                    target="_blank"
-                                    rel="noopener"
-                                >
+                                Current file:
+                                <a href="{{ route('files.show', $requestLetter->file, false) }}" target="_blank" rel="noopener">
                                     View uploaded file
                                 </a>
                             </p>
                         @endif
-
-                        <label>
-                            Fully Signed Borrowing Request Letter
-                            <input
-                                type="file"
-                                name="approved_request_letter"
-                                accept="application/pdf,image/png,image/jpeg,image/webp"
-                            >
-                            <small>
-                                Upload the clear scanned copy with all required wet signatures.
-                            </small>
-                        </label>
 
                         @error('approved_request_letter')
                             <small class="field-error">{{ $message }}</small>
                         @enderror
                     </div>
 
-                    <div class="document-box" id="ptc-document-box">
+                    <label class="document-dropzone" data-dropzone>
+                        <input
+                            type="file"
+                            name="approved_request_letter"
+                            accept="application/pdf,image/png,image/jpeg,image/webp"
+                        >
+                        <span class="visually-hidden">Fully signed Borrowing Request Letter</span>
+                        <span class="document-dropzone-icon" aria-hidden="true">
+                            <svg class="ui-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 18a4.5 4.5 0 0 1-.6-8.96 6 6 0 0 1 11.7-1.36A4.25 4.25 0 0 1 18 18h-1.5" /><path d="M12 12v8M9 15l3-3 3 3" /></svg>
+                            <strong>Upload file</strong>
+                        </span>
+                        <span class="document-dropzone-hint">or drag and drop</span>
+                        <small class="document-dropzone-formats">PDF, JPG, PNG (Max 10MB)</small>
+                        <span class="document-dropzone-file" data-dropzone-file hidden></span>
+                    </label>
+                </div>
+
+                <div class="document-row" id="ptc-document-box">
+                    <div class="document-row-info">
+                        <strong>
+                            Permission to Conduct Letter
+                            <span class="document-required">Required</span>
+                        </strong>
+
+                        <p>Upload the signed Permission to Conduct Letter.</p>
+
                         @if($ptc)
                             <p class="document-current">
-                                Current Permission to Conduct Letter:
-                                <a
-                                    href="{{ route('files.show', $ptc->file, false) }}"
-                                    target="_blank"
-                                    rel="noopener"
-                                >
+                                Current file:
+                                <a href="{{ route('files.show', $ptc->file, false) }}" target="_blank" rel="noopener">
                                     View uploaded file
                                 </a>
                             </p>
                         @endif
 
-                        <label>
-                            Permission to Conduct Letter
-                            <input
-                                type="file"
-                                name="permission_to_conduct_letter"
-                                accept="application/pdf,image/png,image/jpeg,image/webp"
-                            >
-                            <small>
-                                Required before submission when this represents a student activity.
-                            </small>
-                        </label>
-
                         @error('permission_to_conduct_letter')
                             <small class="field-error">{{ $message }}</small>
                         @enderror
                     </div>
+
+                    <label class="document-dropzone" data-dropzone>
+                        <input
+                            type="file"
+                            name="permission_to_conduct_letter"
+                            accept="application/pdf,image/png,image/jpeg,image/webp"
+                        >
+                        <span class="visually-hidden">Permission to Conduct Letter</span>
+                        <span class="document-dropzone-icon" aria-hidden="true">
+                            <svg class="ui-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 18a4.5 4.5 0 0 1-.6-8.96 6 6 0 0 1 11.7-1.36A4.25 4.25 0 0 1 18 18h-1.5" /><path d="M12 12v8M9 15l3-3 3 3" /></svg>
+                            <strong>Upload file</strong>
+                        </span>
+                        <span class="document-dropzone-hint">or drag and drop</span>
+                        <small class="document-dropzone-formats">PDF, JPG, PNG (Max 10MB)</small>
+                        <span class="document-dropzone-file" data-dropzone-file hidden></span>
+                    </label>
                 </div>
-
-                <label class="final-confirmation">
-                    <input type="hidden" name="borrower_acknowledgement" value="0">
-                    <input
-                        id="final-confirmation"
-                        type="checkbox"
-                        name="borrower_acknowledgement"
-                        value="1"
-                        @checked(old('borrower_acknowledgement'))
-                    >
-                    <span>
-                        <strong>Borrower Certification and Acknowledgement</strong>
-                        <small>
-                            I hereby certify that the information provided in this borrowing request, including the selected items,
-                            requested quantities, premises, borrowing period, and uploaded supporting document(s), is true and correct.
-                            I acknowledge responsibility for the proper use, custody, and timely return of all approved items in accordance
-                            with SPMU policies and procedures.
-                        </small>
-                    </span>                </label>
-
-                <label class="final-confirmation">
-                    <input
-                        id="e-signature-confirmation"
-                        type="checkbox"
-                        name="confirm_e_signature"
-                        value="1"
-                        @checked(old('confirm_e_signature'))
-                        @disabled(!$hasCurrentESignature)
-                        required
-                    >
-                    <span>
-                        <strong>E-signature Authorization</strong>
-                        <small>
-                            I explicitly authorize the system to apply my registered
-                            E-signature to this exact borrowing request version when
-                            I submit it to SPMU.
-                        </small>
-                    </span>
-                </label>
-
-                <p class="field-help acknowledgement-help">
-
-                </p>
-                @error('borrower_acknowledgement')
-                    <p class="field-error">{{ $message }}</p>
-                @enderror
-                <p class="field-error" id="final-confirmation-error" hidden>
-                    Read and accept the Borrower Certification and Acknowledgement before submitting to SPMU.
-                </p>
-                @error('confirm_e_signature')<p class="field-error">{{ $message }}</p>@enderror
-                @error('signature')<p class="field-error">{{ $message }}</p>@enderror
-
-                @if($hasCurrentESignature)
-                    <p class="meta">Your current registered E-signature will be captured as an immutable snapshot only when you submit.</p>
-                @else
-                    <div class="callout warning">
-                        <strong>E-signature required</strong>
-                        <p>Save this draft, then <a href="{{ route('profile.show') }}">register your E-signature in Account Settings</a> before submitting.</p>
-                    </div>
-                @endif
             </div>
         </section>
 
-        <div class="sticky-actions" data-stage-panel="3">
-            <p class="meta">
-                &nbsp;
+        <section class="request-card confirmation-card" data-stage-panel="3" aria-labelledby="final-confirmation-heading">
+            <p class="request-section-label" id="final-confirmation-heading">Final Confirmation</p>
+
+            <label class="final-confirmation">
+                <input type="hidden" name="borrower_acknowledgement" value="0">
+                <input
+                    id="final-confirmation"
+                    type="checkbox"
+                    name="borrower_acknowledgement"
+                    value="1"
+                    @checked(old('borrower_acknowledgement'))
+                >
+                <span>
+                    <strong>I certify that the information provided in this request is true and correct.</strong>
+                    <small>I confirm that all details, selected items, quantities, premises, and borrowing period are accurate.</small>
+                </span>
+            </label>
+
+            <label class="final-confirmation">
+                <input
+                    id="e-signature-confirmation"
+                    type="checkbox"
+                    name="confirm_e_signature"
+                    value="1"
+                    @checked(old('confirm_e_signature'))
+                    @disabled(!$hasCurrentESignature)
+                    required
+                >
+                <span>
+                    <strong>I authorize the use of my registered E-signature for this request.</strong>
+                    <small>I understand that my E-signature is required to submit this request to SPMU.</small>
+                </span>
+            </label>
+
+            @error('borrower_acknowledgement')
+                <p class="field-error">{{ $message }}</p>
+            @enderror
+
+            <p class="field-error" id="final-confirmation-error" hidden>
+                Read and accept the certification above before submitting to SPMU.
             </p>
 
-            <div class="actions">
-                <button type="button" class="button secondary ui-pressable" data-stage-back="2">Back</button>
+            @error('confirm_e_signature')<p class="field-error">{{ $message }}</p>@enderror
+            @error('signature')<p class="field-error">{{ $message }}</p>@enderror
 
+            @if($hasCurrentESignature)
+                <p class="meta">Your current registered E-signature will be captured as an immutable snapshot only when you submit.</p>
+            @else
+                <div class="esignature-notice" role="status">
+                    <x-icon name="warning" size="19" />
+                    <div>
+                        <strong>E-signature not registered</strong>
+                        <p>Register your E-signature in <a href="{{ route('profile.show') }}">Account Settings</a> before submission.</p>
+                    </div>
+                </div>
+            @endif
+        </section>
+
+        <div class="sticky-actions request-review-actions" data-stage-panel="3">
+            <button type="button" class="button secondary ui-pressable" data-stage-back="2">
+                <x-icon name="chevron-right" class="request-back-icon" size="16" />
+                Back
+            </button>
+
+            <div class="actions">
                 <button
                     id="request-save-draft-button"
                     class="button secondary ui-pressable"
@@ -1652,11 +1431,12 @@
 
                 <button
                     id="request-submit-button"
-                    class="button primary ui-pressable"
+                    class="button primary ui-pressable request-submit-button"
                     type="submit"
                     name="intent"
                     value="submit"
                 >
+                    <x-icon name="requests" size="17" />
                     E-sign &amp; Submit to SPMU
                 </button>
             </div>
@@ -1693,14 +1473,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryPremises = document.getElementById('summary-premises');
     const summaryStudentActivity = document.getElementById('summary-student-activity');
     const summaryItemsBody = document.getElementById('summary-items-body');
-    const summaryRequestLetter = document.getElementById('summary-request-letter');
-    const summaryPtcRow = document.getElementById('summary-ptc-row');
-    const summaryPtc = document.getElementById('summary-ptc');
 
     const officeUnitsByDivision = @json($officeUnitsByDivision);
 
     const studentToggle = document.getElementById('student-activity-toggle');
     const ptcDocumentBox = document.getElementById('ptc-document-box');
+    const summaryItemsCount = document.getElementById('summary-items-count');
 
     const searchInput = document.getElementById('inventory-search');
     const catalogItems = Array.from(
@@ -1715,6 +1493,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedCount = document.getElementById('selected-item-count');
     const availabilityConflict = document.getElementById('availability-conflict');
     const requestOffCampusToggle = document.getElementById('request-off-campus-toggle');
+    const requestOnCampusToggle = document.getElementById('request-on-campus-toggle');
     const premisesHelp = document.getElementById('request-premises-help');
     const offCampusModeNote = document.getElementById('off-campus-mode-note');
     const campusModeConflict = document.getElementById('campus-mode-conflict');
@@ -1725,6 +1504,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const stageButtons = Array.from(
         document.querySelectorAll('[data-stage-target]')
     );
+
+    /*
+     * Stage the borrower stopped on, derived from the saved draft in the
+     * Blade template above. Stages up to it stay unlocked in the stepper
+     * because showStage() raises furthestStage to the stage it opens.
+     */
+    const resumeStage = {{ $resumeStage }};
 
     let activeStage = 1;
     let furthestStage = 1;
@@ -1741,17 +1527,6 @@ document.addEventListener('DOMContentLoaded', () => {
         element.textContent = normalized || fallback;
     }
 
-    function selectedFileLabel(inputName, existingUploaded = false) {
-        const input = form?.querySelector(`[name="${inputName}"]`);
-        const file = input?.files?.[0];
-
-        if (file?.name) {
-            return file.name;
-        }
-
-        return existingUploaded ? 'Already uploaded' : 'Not selected';
-    }
-
     function updateReviewSummary() {
         const purposeField = form?.querySelector('[name="purpose_event"]');
         const locationField = form?.querySelector('[name="location"]');
@@ -1765,7 +1540,10 @@ document.addEventListener('DOMContentLoaded', () => {
         setSummaryText(summaryOffice, officeInput?.value);
         setSummaryText(summaryFrom, formatDateLabel(scheduleDate?.value));
         setSummaryText(summaryReturn, formatDateLabel(returnDate?.value));
-        setSummaryText(summaryPremises, requestOffCampusToggle?.checked ? 'Off-campus' : 'On-campus');
+        const isOffCampus = Boolean(requestOffCampusToggle?.checked);
+        setSummaryText(summaryPremises, isOffCampus ? 'Off-campus' : 'On-campus');
+        summaryPremises?.classList.toggle('is-positive', !isOffCampus);
+        summaryPremises?.classList.toggle('is-elevated', isOffCampus);
 
         const isStudentActivity = Boolean(studentToggle?.checked);
         setSummaryText(
@@ -1773,6 +1551,8 @@ document.addEventListener('DOMContentLoaded', () => {
             isStudentActivity ? 'Yes' : 'No',
             'No'
         );
+        summaryStudentActivity?.classList.toggle('is-positive', isStudentActivity);
+        summaryStudentActivity?.classList.toggle('is-neutral', !isStudentActivity);
 
         if (summaryItemsBody) {
             const rows = getSelectedRows();
@@ -1781,7 +1561,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rows.length === 0) {
                 const emptyRow = document.createElement('tr');
                 const emptyCell = document.createElement('td');
-                emptyCell.colSpan = 5;
+                emptyCell.colSpan = 4;
                 emptyCell.className = 'review-items-empty';
                 emptyCell.textContent = 'No selected items.';
                 emptyRow.appendChild(emptyCell);
@@ -1793,56 +1573,91 @@ document.addEventListener('DOMContentLoaded', () => {
                         `[data-selected-quantity="${itemId}"]`
                     )?.value || '0';
                     const tr = document.createElement('tr');
+
+                    // The item code rides along inside the Item cell.
+                    const itemCell = document.createElement('td');
+                    itemCell.className = 'review-item-cell';
+
+                    const badge = document.createElement('span');
+                    badge.className = 'item-code-badge';
+                    badge.textContent = row.dataset.itemCode
+                        || `INV-${String(itemId).padStart(4, '0')}`;
+                    itemCell.appendChild(badge);
+
+                    const name = document.createElement('span');
+                    name.className = 'review-item-name';
+                    name.textContent = row.dataset.itemName || 'Item';
+                    itemCell.appendChild(name);
+
+                    tr.appendChild(itemCell);
+
                     [
-                        row.dataset.itemCode || `INV-${String(itemId).padStart(4, '0')}`,
-                        row.dataset.itemName || 'Item',
                         row.dataset.itemCategory || '—',
                         row.dataset.itemUnit || '—',
                         String(Math.max(0, Math.trunc(Number(quantity) || 0))),
-                    ].forEach((value, index) => {
+                    ].forEach((value) => {
                         const td = document.createElement('td');
-
-                        if (index === 0) {
-                            const badge = document.createElement('span');
-                            badge.className = 'item-code-badge';
-                            badge.textContent = value;
-                            td.appendChild(badge);
-                        } else {
-                            td.textContent = value;
-                        }
-
+                        td.textContent = value;
                         tr.appendChild(td);
                     });
 
                     summaryItemsBody.appendChild(tr);
                 });
             }
-        }
 
-        setSummaryText(
-            summaryRequestLetter,
-            selectedFileLabel(
-                'approved_request_letter',
-                {{ $requestLetter ? 'true' : 'false' }}
-            ),
-            'Not selected'
-        );
-
-        if (summaryPtcRow) {
-            summaryPtcRow.hidden = !isStudentActivity;
-        }
-
-        if (isStudentActivity) {
-            setSummaryText(
-                summaryPtc,
-                selectedFileLabel(
-                    'permission_to_conduct_letter',
-                    {{ $ptc ? 'true' : 'false' }}
-                ),
-                'Not selected'
-            );
+            if (summaryItemsCount) {
+                summaryItemsCount.textContent = rows.length === 1
+                    ? '1 item'
+                    : `${rows.length} items`;
+            }
         }
     }
+
+    document.querySelectorAll('[data-dropzone]').forEach((zone) => {
+        const input = zone.querySelector('input[type="file"]');
+        const readout = zone.querySelector('[data-dropzone-file]');
+
+        if (!input || !readout) {
+            return;
+        }
+
+        const showSelection = () => {
+            const name = input.files?.[0]?.name || '';
+            readout.textContent = name;
+            readout.hidden = name === '';
+            zone.classList.toggle('has-file', name !== '');
+        };
+
+        input.addEventListener('change', showSelection);
+
+        ['dragenter', 'dragover'].forEach((event) => {
+            zone.addEventListener(event, (dragEvent) => {
+                dragEvent.preventDefault();
+                zone.classList.add('is-dragging');
+            });
+        });
+
+        ['dragleave', 'dragend', 'drop'].forEach((event) => {
+            zone.addEventListener(event, () => zone.classList.remove('is-dragging'));
+        });
+
+        zone.addEventListener('drop', (dropEvent) => {
+            dropEvent.preventDefault();
+
+            const dropped = dropEvent.dataTransfer?.files?.[0];
+
+            if (!dropped) {
+                return;
+            }
+
+            const transfer = new DataTransfer();
+            transfer.items.add(dropped);
+            input.files = transfer.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        showSelection();
+    });
 
     function showStage(stage, scroll = true) {
         activeStage = Math.max(1, Math.min(3, Number(stage) || 1));
@@ -2065,6 +1880,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function syncRequestPremises() {
         const offCampusMode = isOffCampusMode();
 
+        if (requestOnCampusToggle) requestOnCampusToggle.checked = !offCampusMode;
+
         document.querySelectorAll('[data-selected-location]').forEach((location) => {
             location.value = 'ON_CAMPUS';
         });
@@ -2082,7 +1899,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (premisesHelp) {
             premisesHelp.textContent = offCampusMode
                 ? 'Off-campus selected. Search and select Barricade only; it must be the only item in this request.'
-                : 'Items are On-campus by default. Check Off-campus only when the request is for Barricade outside campus premises.';
+                : 'Off-campus is available only for eligible items.';
         }
 
         if (searchInput) {
@@ -2471,7 +2288,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    requestOffCampusToggle?.addEventListener('change', () => {
+    function handlePremisesChange() {
         if (requestOffCampusToggle.checked) {
             const selectedRows = getSelectedRows();
             const needsReset = selectedRows.length > 1
@@ -2506,7 +2323,10 @@ document.addEventListener('DOMContentLoaded', () => {
         syncRequestPremises();
         syncSelectedItems();
         renderCatalog();
-    });
+    }
+
+    requestOffCampusToggle?.addEventListener('change', handlePremisesChange);
+    requestOnCampusToggle?.addEventListener('change', handlePremisesChange);
 
     form?.addEventListener('submit', (event) => {
         if (activeStage !== 3) {
@@ -2598,7 +2418,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCatalog();
     syncSelectedItems();
     refreshAvailability();
-    showStage(1, false);
+    showStage(resumeStage, false);
 });
 </script>
 

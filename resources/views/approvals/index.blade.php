@@ -1,220 +1,106 @@
 @extends('layouts.app', ['title' => 'For Approval'])
 
 @section('content')
+@include('approvals.partials.queue-styles')
 
-<section class="page-heading approval-queue-heading">
-    <div class="approval-heading-main">
-        <p class="eyebrow">SPMU approval review</p>
+<div class="approval-queue" data-approval-queue>
+    <section class="page-heading approval-queue-heading">
+        <div>
+            <p class="eyebrow">SPMU approval review</p>
 
-        <h1>Requests for Approval</h1>
+            <h1>Requests for Approval</h1>
 
-        <p>Review submitted borrowing requests, verify item availability and quantities, then approve requests for release.</p>
-
-        <div class="approval-heading-actions">
-            <a
-                class="button secondary ui-pressable"
-                href="{{ route('requests.index') }}"
-            >
-                View Request Records
-            </a>
+            <p>Review submitted borrowing requests ready for SPMU verification.</p>
         </div>
-    </div>
-</section>
 
-<section class="content-area">
-    <div class="approval-browser-toolbar">
-        <label>Search
-            <span class="search-input-shell">
-                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" /></span>
-                <input type="search" id="approval-search" placeholder="Search request no., borrower, event, or item..." autocomplete="off">
-            </span>
-        </label>
-        <label>Sort
-            <select id="approval-sort"><option value="oldest">Oldest submitted</option><option value="newest">Newest submitted</option></select>
-        </label>
-    </div>
+        <a
+            class="button secondary ui-pressable approval-queue-records"
+            href="{{ route('requests.index') }}"
+        >
+            <x-icon name="requests" size="16" />
+            View Request Records
+        </a>
+    </section>
 
-    <div
-        class="approval-queue-list"
-        aria-label="Requests awaiting SPMU approval"
-    >
-        @forelse($requests as $request)
-
-            @php
-                $version = $request->currentVersion;
-
-                $submittedAt =
-                    $version->submitted_at
-                    ?: $request->updated_at;
-
-                $itemCount = $version->items->count();
-
-                $currentSupporting = $version->supportingDocuments
-                    ->where('is_current', true);
-
-                $requestLetter = $currentSupporting->firstWhere(
-                    'document_type',
-                    App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER
-                );
-
-                $requiresPtc =
-                    (bool) $version->represents_student_activity;
-
-                $ptc = $currentSupporting->firstWhere(
-                    'document_type',
-                    App\Models\RequestSupportingDocument::TYPE_PERMISSION_TO_CONDUCT
-                );
-            @endphp
-
-            <a
-                class="approval-queue-item ui-pressable"
-                href="{{ route('requests.show', $request) }}"
-                data-approval-record
-                data-created="{{ optional($submittedAt)->timestamp ?? 0 }}"
-                data-search="{{ strtolower(trim($request->request_no.' '.$request->borrower->full_name.' '.($version->purpose_event ?? '').' '.$version->items->map(fn($ri) => $ri->inventoryItem?->unique_description)->filter()->implode(' '))) }}"
-            >
-                <span class="approval-queue-primary">
-                    <strong>
-                        {{ $version->purpose_event ?: 'Borrowing request' }}
-                    </strong>
-
-                    <span class="approval-queue-borrower">
-                        {{ $request->borrower->full_name }}
-                    </span>
-
-                    <span class="record-reference">
-                        {{ $request->request_no }}
-                    </span>
-                </span>
-
-                <span class="approval-queue-schedule">
-                    <span class="approval-queue-period">
-                        <span>
-                            <small>Items needed from</small>
-
-                            <strong>
-                                <x-date
-                                    :value="$version->schedule_date ?: $version->needed_from"
-                                />
-                            </strong>
-                        </span>
-
-                        <span aria-hidden="true">&rarr;</span>
-
-                        <span>
-                            <small>Expected return</small>
-
-                            <strong>
-                                <x-date
-                                    :value="$version->return_date ?: $version->return_due_at"
-                                />
-                            </strong>
-                        </span>
-                    </span>
-
-                    <small>
-                        Submitted
-                        <x-date
-                            :value="$submittedAt"
-                            with-time
-                        />
-                    </small>
-                </span>
-
-                <span class="approval-queue-indicators">
-
-                    <span>
-                        {{ $itemCount }}
-                        {{ \Illuminate\Support\Str::plural('item type', $itemCount) }}
-                    </span>
-
-                    @if($version->off_campus)
-                        <span class="context-chip context-chip-warning">
-                            Off-campus
-                        </span>
-                    @else
-                        <span class="context-chip">
-                            On-campus
-                        </span>
-                    @endif
-
-                    <span
-                        class="context-chip {{ $requestLetter ? '' : 'context-chip-warning' }}"
+    @if($requests->isEmpty())
+        @include('approvals.partials.queue-empty', [
+            'emptyId' => null,
+            'emptyHidden' => false,
+            'emptyVariant' => null,
+            'emptyTitle' => 'No requests waiting for approval.',
+            'emptyMessage' => 'Newly submitted requests will appear here once they are ready for SPMU review.',
+        ])
+    @else
+        <div class="approval-queue-filters">
+            <label>
+                Search
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="17" /></span>
+                    <input
+                        id="approval-queue-search"
+                        type="search"
+                        placeholder="Search request no., borrower, event, or item..."
+                        autocomplete="off"
                     >
-                        Request Letter:
-                        {{ $requestLetter ? 'Attached' : 'Missing' }}
-                    </span>
-
-                    @if($requiresPtc)
-                        <span
-                            class="context-chip {{ $ptc ? '' : 'context-chip-warning' }}"
-                        >
-                            PTC:
-                            {{ $ptc ? 'Attached' : 'Missing' }}
-                        </span>
-                    @endif
-
-                    <x-status-badge
-                        :status="$request->status->value"
-                        label="For Approval"
-                    />
                 </span>
+            </label>
 
-                <span class="approval-queue-action">
-                    {{ $canDecide ? 'Review & Decide' : 'Review request & documents' }}
+            <label>
+                Sort
+                <select id="approval-queue-sort">
+                    <option value="oldest">Oldest submitted</option>
+                    <option value="newest">Newest submitted</option>
+                </select>
+            </label>
+        </div>
 
-                    <x-icon
-                        name="chevron-right"
-                        size="17"
-                    />
-                </span>
-            </a>
+        <section class="card approval-queue-card" aria-labelledby="approval-queue-title">
+            <h2 class="approval-queue-card-heading" id="approval-queue-title">Pending Approvals</h2>
 
-        @empty
+            <div class="approval-queue-table-wrap">
+                <table class="approval-queue-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Request No.</th>
+                            <th scope="col">Borrower</th>
+                            <th scope="col">Event / Purpose</th>
+                            <th scope="col">Submitted</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Action</th>
+                        </tr>
+                    </thead>
 
-            <div class="empty-state approval-queue-empty">
-                <strong>
-                    No borrowing requests are waiting for approval.
-                </strong>
-
-                <span>
-                    Newly submitted requests will appear here automatically
-                    when they are ready for SPMU review.
-                </span>
+                    <tbody id="approval-queue-body">
+                        @foreach($requests as $request)
+                            @include('approvals.partials.queue-row')
+                        @endforeach
+                    </tbody>
+                </table>
             </div>
 
-        @endforelse
-    </div>
+            @include('approvals.partials.queue-empty', [
+                'emptyId' => 'approval-queue-no-results',
+                'emptyHidden' => true,
+                'emptyVariant' => 'no-results',
+                'emptyTitle' => 'No matching requests.',
+                'emptyMessage' => 'Try another request number, borrower, event, or item.',
+            ])
 
-    <div class="empty-state top-gap" id="approval-filter-empty" hidden><strong>No matching approval requests.</strong><span>Try another search term.</span></div>
-</section>
-<style>
-.approval-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
-.approval-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
-.approval-browser-toolbar input,.approval-browser-toolbar select{min-height:42px;width:100%}
-@media(max-width:680px){.approval-browser-toolbar{grid-template-columns:1fr}}
-</style>
-<script>
-(() => { const list=document.querySelector('.approval-queue-list'); const rows=[...document.querySelectorAll('[data-approval-record]')]; const search=document.getElementById('approval-search'); const sort=document.getElementById('approval-sort'); const empty=document.getElementById('approval-filter-empty'); if(!list||!rows.length||!search||!sort)return; const render=()=>{const q=search.value.trim().toLowerCase();const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1));ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=!q||r.dataset.search.includes(q);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);sort.addEventListener('change',render);render(); })();
-</script>
+            <div class="approval-queue-footer" id="approval-queue-footer">
+                <p id="approval-queue-summary" role="status" aria-live="polite">
+                    Showing {{ min(5, $requests->count()) }} of {{ $requests->count() }} requests
+                </p>
 
-{{-- APPROVAL_HEADING_ACTION_LAYOUT --}}
-<style>
-.approval-queue-heading .approval-heading-main {
-    width: 100%;
-}
+                <div
+                    class="approval-queue-pagination"
+                    id="approval-queue-pagination"
+                    role="group"
+                    aria-label="Pending approvals pages"
+                ></div>
+            </div>
+        </section>
+    @endif
+</div>
 
-.approval-heading-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 18px;
-}
-
-@media (max-width: 700px) {
-    .approval-heading-actions {
-        justify-content: flex-start;
-        margin-top: 12px;
-    }
-}
-</style>
+@include('approvals.partials.queue-interactions')
 @endsection
