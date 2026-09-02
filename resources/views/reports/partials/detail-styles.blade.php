@@ -77,3 +77,84 @@
     .reporting-workspace .report-table tr { break-inside: avoid; }
 }
 </style>
+
+<style>
+/*
+| Reports chrome.
+|
+| Reports is a document surface, not a dashboard. The hierarchy reads
+| builder -> generated-report information -> actions -> records, and colour is
+| used sparingly: statuses are legible as words before they are legible as
+| tones.
+*/
+
+/* Report builder */
+.report-builder-card { display: grid; gap: 16px; }
+.report-builder-primary { display: grid; grid-template-columns: minmax(230px, 1.1fr) minmax(190px, .8fr) minmax(220px, .9fr); gap: 16px; align-items: start; }
+.report-builder-field { display: grid; gap: 6px; margin: 0; font-size: 11.5px; font-weight: 750; letter-spacing: .02em; color: var(--text-secondary); }
+.report-builder-field select { min-height: 42px; width: 100%; font-size: 13px; }
+.report-resolved-period > p { display: flex; align-items: center; gap: 7px; min-height: 42px; margin: 0; padding: 0 12px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.report-resolved-period strong { color: var(--heading); font-size: 13px; font-weight: 750; }
+.report-resolved-period .ui-icon { color: var(--text-soft); flex: 0 0 auto; }
+.report-resolved-period small { color: var(--text-muted); font-size: 11px; font-weight: 500; }
+
+.report-builder-actions { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.report-no-filters { color: var(--text-muted); font-size: 12px; }
+.report-generate-button { min-height: 42px; }
+
+.report-more-filters { flex: 1 1 420px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); }
+.report-more-filters > summary { display: flex; align-items: center; gap: 8px; padding: 11px 14px; cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--text-secondary); list-style: none; }
+.report-more-filters > summary::-webkit-details-marker { display: none; }
+.report-more-filters[open] > summary { border-bottom: 1px solid var(--border); }
+.report-filter-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--info-bg); color: var(--info); font-size: 11px; }
+.report-more-filters-body { display: grid; gap: 12px; padding: 14px; }
+.report-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.report-more-filters-actions { display: flex; justify-content: flex-end; }
+
+/* Generated report */
+.report-metadata { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; }
+.report-metadata > div { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); }
+.report-metadata dt { font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); }
+.report-metadata dd { margin: 5px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+.report-metadata-count dd strong { font-size: 20px; font-weight: 800; color: var(--heading); font-variant-numeric: tabular-nums; }
+.report-filter-warning { display: flex; align-items: flex-start; gap: 8px; margin: -6px 0 16px; color: var(--warning); font-size: 12px; }
+
+/* Status badges: text first, tone second. */
+.report-status-badge { display: inline-flex; align-items: center; min-height: 21px; padding: 2px 9px; border: 1px solid var(--neutral-border); border-radius: 999px; background: var(--neutral-bg); color: var(--neutral); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.report-status-badge.tone-positive { color: var(--success); background: var(--success-bg); border-color: var(--success-border); }
+.report-status-badge.tone-attention { color: var(--warning); background: var(--warning-bg); border-color: var(--warning-border); }
+.report-status-badge.tone-critical { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
+.report-status-badge.tone-progress { color: var(--info); background: var(--info-bg); border-color: var(--info-border); }
+
+.report-table-action-column { white-space: nowrap; }
+.report-empty-state { margin: 0; padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+/* Records footer and pagination */
+.report-records-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.report-records-footer > p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+.report-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.report-page-link { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 32px; padding: 4px 10px; color: var(--text-secondary); background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-size: 11.5px; font-weight: 700; }
+.report-page-link.is-active { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
+.report-pagination a.report-page-link:hover { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
+.report-page-link[aria-disabled="true"] { color: var(--text-soft); background: var(--surface-subtle); cursor: not-allowed; }
+.report-page-ellipsis { padding: 0 2px; color: var(--text-muted); }
+
+/* Contextual pointer to the dedicated Audit Trail module. */
+.report-audit-link { margin: 18px 0 0; }
+.report-audit-link a { display: inline-flex; align-items: center; gap: 4px; color: var(--interactive); font-size: 12px; font-weight: 700; text-decoration: none; }
+.report-audit-link a:hover { text-decoration: underline; }
+
+/* Reports vs Analytics boundary. */
+.report-boundary-note { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.report-boundary-note .ui-icon { flex: 0 0 auto; color: var(--info); margin-top: 1px; }
+
+@media (max-width: 1000px) { .report-builder-primary { grid-template-columns: 1fr; } }
+
+@media print {
+    .app-sidebar, .app-topbar, .report-builder-card, .report-output-actions,
+    .report-more-filters, .report-generate-button, .report-records-footer,
+    .report-pagination, .report-audit-link, .report-boundary-note { display: none !important; }
+    .report-metadata { break-inside: avoid; }
+    .report-output-card { border: 0 !important; box-shadow: none !important; }
+}
+</style>

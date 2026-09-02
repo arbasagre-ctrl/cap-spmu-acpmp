@@ -146,6 +146,8 @@
         .sidebar-nav .nav-icon-users { color: #7A5AF8; }
         .sidebar-nav .nav-icon-settings { color: #0F9488; }
         .sidebar-nav .nav-icon-reports { color: #2F80ED; }
+        .sidebar-nav .nav-icon-analytics { color: #2F80ED; }
+        .sidebar-nav .nav-icon-report-document { color: #2F80ED; }
         .sidebar-nav .nav-icon-notifications { color: #E9870C; }
 
         .sidebar-nav a.active .nav-icon,
@@ -456,8 +458,16 @@
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
-                    ['analytics.index', 'analytics.*', 'Analytics', 'reports'],
-                    ['reports.index', 'reports.index', 'Reports', 'reports'],
+                    ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
+                    ['reports.index', 'reports.index', 'Reports', 'report-document'],
+                    /*
+                     * Audit Trail and Delivery Records are their own
+                     * destinations, not buttons inside Reports: Reports
+                     * generates operational records, the Audit Trail says who
+                     * performed which system action and when.
+                     */
+                    ['reports.audit', 'reports.audit', 'Audit Trail', 'file-search'],
+                    ['reports.notifications', 'reports.notifications', 'Delivery Records', 'notifications'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [

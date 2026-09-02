@@ -678,6 +678,260 @@ class InventoryService
 
 
     /**
+     * The same balance as availability(), for many items at once.
+     *
+     * availability() answers for a single item and runs roughly eight queries
+     * doing it. Asking it about every active item - which is what an inventory
+     * summary needs - multiplies that by the size of the catalogue. This method
+     * computes the identical components with one grouped query each, so the
+     * query count is fixed no matter how many items are passed in.
+     *
+     * The arithmetic is deliberately identical to availability(); the tests
+     * assert the two agree item by item.
+     *
+     * @param  \Illuminate\Support\Collection<int, InventoryItem>|iterable<InventoryItem>  $items
+     * @return array<int, array<string, float>>
+     */
+    public function portfolio(
+        iterable $items,
+        CarbonInterface $from,
+        CarbonInterface $to
+    ): array {
+        $items = collect($items);
+        $ids = $items->pluck('id')->all();
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $allocated = $this->allocationTotals($ids, $from, $to);
+        $reserved = $this->allocationTotals($ids, null, null);
+        $borrowed = $this->custodyTotals($ids, null, null);
+        $borrowedForPeriod = $this->custodyTotals($ids, $from, $to);
+        $laundry = $this->laundryTotals($ids);
+        [$incident, $incidentStates] = $this->incidentTotals($ids);
+
+        $balances = [];
+
+        foreach ($items as $item) {
+            $id = $item->id;
+
+            $total = (float) $item->total_quantity;
+            $serviceableTotal = $item->active && $item->condition_code === 'SERVICEABLE'
+                ? $total
+                : 0.0;
+
+            $itemLaundry = (float) ($laundry[$id] ?? 0);
+            $itemIncident = (float) ($incident[$id] ?? 0);
+            $itemBorrowed = (float) ($borrowed[$id] ?? 0);
+            $itemStates = $incidentStates[$id] ?? [];
+
+            $balances[$id] = [
+                'total' => $total,
+                'serviceable_total' => $serviceableTotal,
+                'allocated' => (float) ($allocated[$id] ?? 0),
+                'reserved' => (float) ($reserved[$id] ?? 0),
+                'borrowed' => $itemBorrowed,
+                'borrowed_for_period' => (float) ($borrowedForPeriod[$id] ?? 0),
+                'laundry' => $itemLaundry,
+                'incident' => $itemIncident,
+                'damaged_maintenance' => (float) ($itemStates['DAMAGED_MAINTENANCE'] ?? 0)
+                    + ($item->condition_code === 'DAMAGED_MAINTENANCE' ? $total : 0.0),
+                'lost' => (float) ($itemStates['LOST'] ?? 0),
+                'stolen' => (float) ($itemStates['STOLEN'] ?? 0),
+                'destroyed' => (float) ($itemStates['DESTROYED'] ?? 0),
+                'condemned' => $item->condition_code === 'CONDEMNED' ? $total : 0.0,
+                'current_available' => max(
+                    0,
+                    $serviceableTotal - $itemBorrowed - $itemLaundry - $itemIncident
+                ),
+                'borrower_available' => max(
+                    0,
+                    $serviceableTotal
+                    - (float) ($reserved[$id] ?? 0)
+                    - $itemBorrowed
+                    - $itemLaundry
+                    - $itemIncident
+                ),
+                'available' => max(
+                    0,
+                    $serviceableTotal
+                    - (float) ($allocated[$id] ?? 0)
+                    - (float) ($borrowedForPeriod[$id] ?? 0)
+                    - $itemLaundry
+                    - $itemIncident
+                ),
+            ];
+        }
+
+        return $balances;
+    }
+
+    /**
+     * Remaining approved allocation per item. Passing null dates gives the
+     * period-independent "reserved" figure.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, float>
+     */
+    private function allocationTotals(array $ids, ?CarbonInterface $from, ?CarbonInterface $to): array
+    {
+        $query = DB::table('allocations')
+            ->join('request_items', 'request_items.id', '=', 'allocations.request_item_id')
+            ->whereIn('request_items.inventory_item_id', $ids)
+            ->whereIn('allocations.status', ['ACTIVE', 'PARTIALLY_RELEASED']);
+
+        if ($from !== null && $to !== null) {
+            $query->where('allocations.period_start', '<=', $to)
+                ->where('allocations.period_end', '>=', $from);
+        }
+
+        return $query
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN ('
+                .'COALESCE(allocations.allocated_quantity, 0)'
+                .' - COALESCE(allocations.released_quantity, 0)'
+                .' - COALESCE(allocations.restored_quantity, 0)) > 0 THEN ('
+                .'COALESCE(allocations.allocated_quantity, 0)'
+                .' - COALESCE(allocations.released_quantity, 0)'
+                .' - COALESCE(allocations.restored_quantity, 0)) ELSE 0 END), 0) AS quantity'
+            )
+            ->pluck('quantity', 'item_id')
+            ->map(fn ($value): float => (float) $value)
+            ->all();
+    }
+
+    /**
+     * Quantity physically out on custody per item. Passing dates narrows it to
+     * custody overlapping that window.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, float>
+     */
+    private function custodyTotals(array $ids, ?CarbonInterface $from, ?CarbonInterface $to): array
+    {
+        $query = DB::table('custody_lines')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->join(
+                'custody_transactions',
+                'custody_transactions.id',
+                '=',
+                'custody_lines.custody_transaction_id'
+            )
+            ->whereIn('request_items.inventory_item_id', $ids)
+            ->whereNotNull('custody_transactions.released_at')
+            ->whereIn('custody_transactions.status', [
+                'ACTIVE',
+                'RETURN_PROCESSING',
+                'OVERDUE',
+                'INCIDENT_OPEN',
+                'OBLIGATION_OPEN',
+            ]);
+
+        if ($from !== null && $to !== null) {
+            $query->where('custody_transactions.released_at', '<=', $to)
+                ->where('custody_transactions.due_at', '>=', $from);
+        }
+
+        return $query
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN ('
+                .'COALESCE(custody_lines.actual_released_quantity, 0)'
+                .' - COALESCE(custody_lines.returned_quantity, 0)) > 0 THEN ('
+                .'COALESCE(custody_lines.actual_released_quantity, 0)'
+                .' - COALESCE(custody_lines.returned_quantity, 0)) ELSE 0 END), 0) AS quantity'
+            )
+            ->pluck('quantity', 'item_id')
+            ->map(fn ($value): float => (float) $value)
+            ->all();
+    }
+
+    /**
+     * Returned stock still held by Laundry Operations, per item.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, float>
+     */
+    private function laundryTotals(array $ids): array
+    {
+        $current = DB::table('return_lines')
+            ->join('custody_lines', 'custody_lines.id', '=', 'return_lines.custody_line_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->leftJoin(
+                'laundry_job_lines',
+                'laundry_job_lines.custody_line_id',
+                '=',
+                'custody_lines.id'
+            )
+            ->whereIn('request_items.inventory_item_id', $ids)
+            ->where('return_lines.disposition_state', 'LAUNDRY')
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN ('
+                .'COALESCE(return_lines.quantity_received, 0)'
+                .' - COALESCE(laundry_job_lines.completed_quantity, 0)) > 0 THEN ('
+                .'COALESCE(return_lines.quantity_received, 0)'
+                .' - COALESCE(laundry_job_lines.completed_quantity, 0)) ELSE 0 END), 0) AS quantity'
+            )
+            ->pluck('quantity', 'item_id');
+
+        $legacy = DB::table('laundry_records')
+            ->join('return_lines', 'return_lines.id', '=', 'laundry_records.return_line_id')
+            ->join('custody_lines', 'custody_lines.id', '=', 'return_lines.custody_line_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->whereIn('request_items.inventory_item_id', $ids)
+            ->whereNotIn('laundry_records.status', ['VERIFIED', 'CANCELLED'])
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw('COALESCE(SUM(COALESCE(return_lines.quantity_received, 0)), 0) AS quantity')
+            ->pluck('quantity', 'item_id');
+
+        $totals = [];
+
+        foreach ($ids as $id) {
+            $totals[$id] = (float) ($current[$id] ?? 0) + (float) ($legacy[$id] ?? 0);
+        }
+
+        return $totals;
+    }
+
+    /**
+     * Incident-held quantity per item, with its disposition breakdown.
+     *
+     * @param  list<int>  $ids
+     * @return array{0: array<int, float>, 1: array<int, array<string, float>>}
+     */
+    private function incidentTotals(array $ids): array
+    {
+        $rows = DB::table('incident_lines')
+            ->join('custody_lines', 'custody_lines.id', '=', 'incident_lines.custody_line_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->whereIn('request_items.inventory_item_id', $ids)
+            ->groupBy('request_items.inventory_item_id', 'incident_lines.disposition_state')
+            ->select(
+                'request_items.inventory_item_id AS item_id',
+                'incident_lines.disposition_state AS state'
+            )
+            ->selectRaw('COALESCE(SUM(incident_lines.quantity), 0) AS quantity')
+            ->get();
+
+        $totals = [];
+        $states = [];
+
+        foreach ($rows as $row) {
+            $totals[$row->item_id] = ($totals[$row->item_id] ?? 0) + (float) $row->quantity;
+            $states[$row->item_id][$row->state] = (float) $row->quantity;
+        }
+
+        return [$totals, $states];
+    }
+
+    /**
      * Reserve inventory only after SPMU verification/approval.
      *
      * @return list<Allocation>

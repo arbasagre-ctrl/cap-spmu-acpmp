@@ -1,6 +1,8 @@
-<div class="reporting-heading-actions">
-    @if(auth()->user()?->hasRole('SPMU') || auth()->user()?->hasRole('ICTU'))
-        <a class="button secondary" href="{{ route('reports.audit') }}"><x-icon name="reports" size="16" />Audit Trail</a>
-        <a class="button secondary" href="{{ route('reports.notifications') }}"><x-icon name="notifications" size="17" />Delivery</a>
-    @endif
-</div>
+{{--
+    Reports keeps a calm header.
+
+    Audit Trail and Delivery Records are separate sidebar destinations, so
+    they are deliberately not repeated here as header buttons. Reports offers
+    Export CSV and Print only once a report has actually been generated, on
+    the generated-report card itself.
+--}}

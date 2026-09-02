@@ -23,6 +23,12 @@
         @case('approval')
             <path d="M20 6 9 17l-5-5" />
             @break
+        @case('analytics')
+            <path d="M4 4v16h16" /><path d="M8 17v-5M13 17v-8M18 17v-3" />
+            @break
+        @case('report-document')
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M9 18v-3M12 18v-6M15 18v-4" />
+            @break
         @case('reports')
             <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
             @break

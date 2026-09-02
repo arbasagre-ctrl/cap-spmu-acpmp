@@ -12,6 +12,7 @@ use App\Models\RequestVersion;
 use App\Services\InventoryService;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
+use App\Support\OrganizationalStructure;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,67 +25,16 @@ use Illuminate\View\View;
 class BorrowingRequestController extends Controller
 {
     /**
-     * Canonical Office / Academic Unit / Research Unit list per division.
+     * The canonical office/unit list, grouped by division.
      *
-     * Single source of truth reused by both server-side validation and the
-     * Create/Edit Request form, so the form's selectable options can never
-     * drift from what the backend accepts. Academic-unit spelling matches
-     * OrganizationalUnitSeeder / ProfileController::BORROWER_DEPARTMENT_NAMES.
+     * Kept as a thin accessor so the existing call sites and the request form
+     * contract stay identical; OrganizationalStructure owns the data.
      *
      * @return array<string, list<string>>
      */
     private static function officeUnitsByDivision(): array
     {
-        return [
-            'ADMINISTRATION' => [
-                'Office of the President',
-                'Office of the Vice President for Administration and Finance',
-                'Office of the Vice President for Academic Affairs',
-                'Office of the Vice President for Research, Innovation and Collaboration',
-                'Internal Audit Unit',
-                'Legal Affairs Office',
-                'Institutional Planning and Development Unit',
-                'Board Secretary',
-                'Human Resource Management Office',
-                'Budget Office',
-                'Accounting Office',
-                "Cashier's Office",
-                'Procurement Office',
-                'Supply and Property Management Unit',
-                'General Services',
-                'Physical Planning and Development Office',
-                'Records Management / College Archives',
-                'Safety and Security Services',
-                "Registrar's Office",
-                'Library',
-                'Guidance and Counseling Office',
-                'Student Affairs and Services',
-                'Medical and Dental Services',
-                'Center for International Relations and Linkages',
-            ],
-            'ACADEMIC' => [
-                'Graduate School',
-                'College of Arts and Sciences',
-                'College of Computer Studies',
-                'College of Engineering and Architecture',
-                'College of Health and Sciences',
-                'College of Technological Developmental Education',
-                'College of Tourism, Hospitality and Business Management',
-            ],
-            'RESEARCH_INNOVATION_COLLABORATION' => [
-                'Research and Development Services Office (RDSO)',
-                'Extension and Community Services Office (ECSO)',
-                'Production and Auxiliary Services (PAxS)',
-                'Technology Transfer Office (TechTro)',
-                'AI Research Center for Community Development (AIRCoDe)',
-                'Center for Future Energy and Sustainable Technology (CFEST)',
-                'Center for Future Thinking and Strategic Foresight (CFTSF)',
-                'Center for Research in Integrative, Social and Special Sciences and Policy (CRIS3P)',
-                'Center for Rinconada Culture and Arts (CRCA)',
-                'Rinconada Center for Environmental Sustainability (RiCES)',
-                'Research Ethics Board',
-            ],
-        ];
+        return OrganizationalStructure::unitsByDivision();
     }
 
     /**
@@ -97,21 +47,7 @@ class BorrowingRequestController extends Controller
      */
     private static function divisionAndOfficeUnitFor(?string $unitName): array
     {
-        $unitName = trim((string) $unitName);
-
-        if ($unitName === '') {
-            return [null, null];
-        }
-
-        foreach (self::officeUnitsByDivision() as $division => $units) {
-            foreach ($units as $unit) {
-                if (strcasecmp($unit, $unitName) === 0) {
-                    return [$division, $unit];
-                }
-            }
-        }
-
-        return [null, null];
+        return OrganizationalStructure::divisionAndUnitFor($unitName);
     }
 
     public function index(Request $request): View
@@ -781,11 +717,7 @@ class BorrowingRequestController extends Controller
 
             'division_code' => [
                 'required',
-                Rule::in([
-                    'ADMINISTRATION',
-                    'ACADEMIC',
-                    'RESEARCH_INNOVATION_COLLABORATION',
-                ]),
+                Rule::in(OrganizationalStructure::divisionCodes()),
             ],
 
             'office_unit' => [

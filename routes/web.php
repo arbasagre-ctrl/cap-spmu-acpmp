@@ -556,6 +556,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/reports/export/{type}', [ReportController::class, 'export'])
             ->name('reports.export');
+
+        /*
+         * The printable copy resolves its scope exactly as the screen did,
+         * so it prints the whole record set rather than the page in view.
+         */
+        Route::get('/reports/print/{type}', [ReportController::class, 'print'])
+            ->name('reports.print');
     });
 
     Route::get('/reports/audit', [ReportController::class, 'audit'])

@@ -1,5 +1,10 @@
 @extends('layouts.app', ['title' => 'Dashboard'])
 @section('content')
+
+@if($dashboardMode === 'BORROWER')
+    @include('dashboard.partials.borrower-styles')
+@endif
+
 <style>
     .dashboard-heading { align-items: center; }
     .dashboard-kpi-card {
@@ -32,41 +37,7 @@
     html[data-theme="dark"] .dashboard-balanced-grid > .card {
         box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
     }
-    .borrower-active-card { margin-bottom: 18px; overflow: hidden; }
-    .borrower-active-card .card-header { align-items: center; }
-    .borrower-active-list { display: grid; gap: 8px; padding: 0 20px 18px; }
-    .borrower-active-row {
-        display: grid;
-        grid-template-columns: minmax(170px, 1.1fr) minmax(180px, 1fr) minmax(170px, .9fr) auto;
-        gap: 18px;
-        align-items: center;
-        min-height: 58px;
-        padding: 10px 14px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface, #fff);
-    }
-    .borrower-active-row:hover { border-color: #a9c8ea; background: rgba(24, 119, 214, .025); }
-    .borrower-active-request { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .borrower-active-request strong { color: var(--text-strong, #0b2745); }
-    .borrower-active-request small,
-    .borrower-active-date { color: var(--muted); }
-    .borrower-active-purpose { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .borrower-active-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
-    .borrower-active-state::before { content: ''; width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
-    .borrower-active-state.tone-danger { color: #b42318; }
-    .borrower-active-state.tone-warning { color: #9a6700; }
-    .borrower-active-state.tone-success { color: #08783e; }
-    .borrower-active-state.tone-info { color: #1769aa; }
-    .borrower-active-state.tone-neutral { color: #53657a; }
-    .borrower-active-overflow { margin: 2px 20px 18px; color: var(--muted); font-size: .88rem; }
-    .borrower-active-empty { margin: 0 20px 18px; }
     .dashboard-balanced-grid.borrower-actions-only { grid-template-columns: minmax(0, 1fr); }
-    @media (max-width: 900px) {
-        .borrower-active-row { grid-template-columns: 1fr auto; gap: 8px 12px; }
-        .borrower-active-state, .borrower-active-date { grid-column: 1; }
-        .borrower-active-row .button { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
-    }
 </style>
 
 @php
@@ -140,6 +111,8 @@
     };
 @endphp
 
+<div class="{{ $dashboardMode === 'BORROWER' ? 'is-borrower-dashboard' : '' }}">
+
 <section class="page-heading dashboard-heading">
     <div>
         <p class="eyebrow">{{ $copy['eyebrow'] }}</p>
@@ -180,10 +153,9 @@
 </section>
 
 @if($dashboardMode === 'BORROWER')
-    <article class="card borrower-active-card" aria-labelledby="active-requests-title">
+    <article class="borrower-dash-card" aria-labelledby="active-requests-title">
         <div class="card-header">
             <div>
-                <p class="eyebrow">Current monitoring</p>
                 <h2 id="active-requests-title">Active requests</h2>
                 <p class="meta">Ongoing requests are prioritized by urgency. Open My Requests for complete tracking and history.</p>
             </div>
@@ -191,7 +163,19 @@
         </div>
 
         @if($activeRequestBars->isNotEmpty())
-            <div class="borrower-active-list">
+            <div class="borrower-active-scroll">
+                <table class="borrower-active-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Request ID</th>
+                            <th scope="col">Event / Charter</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Pickup schedule</th>
+                            <th scope="col">Action</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
                 @foreach($activeRequestBars as $activeRequest)
                     @php
                         $activeCustody = $activeRequest->custody;
@@ -213,28 +197,48 @@
                             default => [$activeRequest->status?->label() ?? 'In Progress', 'neutral'],
                         };
 
-                        $activeDateText = match (true) {
-                            $activeCustody?->released_at !== null && $activeCustody?->due_at !== null => 'Return due '.$activeCustody->due_at->format('d M Y'),
-                            $activeCustody?->scheduled_release_at !== null && $activeCustody?->released_at === null => 'Pickup '.$activeCustody->scheduled_release_at->format('d M Y, g:i A'),
-                            $activeRequest->currentVersion?->return_date !== null => 'Expected return '.$activeRequest->currentVersion->return_date->format('d M Y'),
-                            $activeRequest->currentVersion?->needed_from !== null => 'Needed from '.$activeRequest->currentVersion->needed_from->format('d M Y'),
-                            default => 'Updated '.$activeRequest->updated_at->format('d M Y'),
+                        [$activeDateLabel, $activeDateValue] = match (true) {
+                            $activeCustody?->released_at !== null && $activeCustody?->due_at !== null => ['Return due', $activeCustody->due_at->format('d M Y')],
+                            $activeCustody?->scheduled_release_at !== null && $activeCustody?->released_at === null => ['Pickup', $activeCustody->scheduled_release_at->format('d M Y, g:i A')],
+                            $activeRequest->currentVersion?->return_date !== null => ['Expected return', $activeRequest->currentVersion->return_date->format('d M Y')],
+                            $activeRequest->currentVersion?->needed_from !== null => ['Needed from', $activeRequest->currentVersion->needed_from->format('d M Y')],
+                            default => ['Updated', $activeRequest->updated_at->format('d M Y')],
                         };
 
                         $activeActionLabel = in_array($activeRequest->status, [App\Enums\RequestStatus::Draft, App\Enums\RequestStatus::ReturnedForRevision], true)
                             ? 'Continue'
                             : 'View';
                     @endphp
-                    <div class="borrower-active-row">
-                        <div class="borrower-active-request">
-                            <strong>{{ $activeRequest->request_no }}</strong>
-                            <small class="borrower-active-purpose">{{ $activeRequest->currentVersion?->purpose_event ?: 'Borrowing request' }}</small>
-                        </div>
-                        <span class="borrower-active-state tone-{{ $activeStateTone }}">{{ $activeStateLabel }}</span>
-                        <span class="borrower-active-date">{{ $activeDateText }}</span>
-                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $activeRequest) }}">{{ $activeActionLabel }}</a>
-                    </div>
+                    <tr>
+                        <td class="borrower-active-cell-id">
+                            <span class="borrower-active-id">{{ $activeRequest->request_no }}</span>
+                        </td>
+
+                        <td data-label="Event / Charter">
+                            <span class="borrower-active-purpose">{{ $activeRequest->currentVersion?->purpose_event ?: 'Borrowing request' }}</span>
+                        </td>
+
+                        <td data-label="Status">
+                            <span class="status-badge status-{{ $activeStateTone }}">{{ $activeStateLabel }}</span>
+                        </td>
+
+                        <td class="borrower-active-schedule" data-label="Pickup schedule">
+                            <strong>{{ $activeDateValue }}</strong>
+                            <small>{{ $activeDateLabel }}</small>
+                        </td>
+
+                        <td data-label="Action">
+                            <a
+                                class="button secondary small ui-pressable borrower-active-action"
+                                href="{{ route('requests.show', $activeRequest) }}"
+                            >
+                                {{ $activeActionLabel }}
+                            </a>
+                        </td>
+                    </tr>
                 @endforeach
+                    </tbody>
+                </table>
             </div>
 
             @if($activeRequestTotal > $activeRequestBars->count())
@@ -243,7 +247,8 @@
                 </p>
             @endif
         @else
-            <div class="empty-state borrower-active-empty">
+            <div class="borrower-dash-empty">
+                <x-icon name="requests" size="26" />
                 <strong>No active borrowing request.</strong>
                 <span>Start a new borrowing request when you need SPMU items.</span>
             </div>
@@ -251,13 +256,17 @@
     </article>
 @endif
 
-@if($dashboardMode !== 'BORROWER' || $queue->isNotEmpty())
 <section id="{{ $dashboardMode === 'BORROWER' ? 'borrower-actions' : 'dashboard-actions' }}" class="dashboard-grid dashboard-balanced-grid {{ $dashboardMode === 'BORROWER' ? 'borrower-actions-only' : '' }}">
-    <article class="card queue-card dashboard-panel-equal">
+    <article class="card queue-card dashboard-panel-equal {{ $dashboardMode === 'BORROWER' ? 'borrower-dash-card' : '' }}">
         <div class="card-header">
             <div>
-                <p class="eyebrow">{{ $copy['taskEyebrow'] }}</p>
-                <h2>{{ $copy['taskTitle'] }}</h2>
+                @if($dashboardMode === 'BORROWER')
+                    <h2>{{ $copy['taskTitle'] }}</h2>
+                    <p class="meta">Actions that need your attention to keep your requests moving.</p>
+                @else
+                    <p class="eyebrow">{{ $copy['taskEyebrow'] }}</p>
+                    <h2>{{ $copy['taskTitle'] }}</h2>
+                @endif
             </div>
             @if($dashboardMode === 'SPMU_OFFICER')
                 <a class="dashboard-view-all" href="{{ route('verifications.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
@@ -266,7 +275,7 @@
             @endif
         </div>
 
-        <div class="queue-list">
+        <div class="queue-list {{ $dashboardMode === 'BORROWER' ? 'borrower-next-list' : '' }}">
             @forelse($queue as $record)
                 @if($dashboardMode === 'BORROWER')
                     @php
@@ -290,14 +299,48 @@
                         $actionLabel = in_array($record->status, [App\Enums\RequestStatus::Draft, App\Enums\RequestStatus::ReturnedForRevision], true)
                             ? 'Continue'
                             : 'View';
+
+                        /* Presentation only: an icon and a date drawn from the
+                           same record state that already produced $nextAction. */
+                        [$actionIcon, $actionTone] = match (true) {
+                            $record->status === App\Enums\RequestStatus::Draft => ['edit', 'warning'],
+                            $record->status === App\Enums\RequestStatus::ReturnedForRevision => ['warning', 'danger'],
+                            $record->status === App\Enums\RequestStatus::UnderSpmu => ['clock', 'info'],
+                            $custody?->status === 'CLOSED' => ['check-circle', 'success'],
+                            $laundry !== null => ['cycle', 'info'],
+                            $custody?->scheduled_release_at && ! $custody?->released_at => ['calendar', 'info'],
+                            $custody?->released_at => ['custody', 'warning'],
+                            default => ['information', 'info'],
+                        };
+
+                        $actionWhen = match (true) {
+                            $custody?->scheduled_release_at !== null && $custody?->released_at === null
+                                => $custody->scheduled_release_at->format('d M Y, g:i A'),
+                            $custody?->released_at !== null && $custody?->due_at !== null
+                                => $custody->due_at->format('d M Y'),
+                            $record->currentVersion?->return_date !== null
+                                => $record->currentVersion->return_date->format('d M Y'),
+                            default => null,
+                        };
                     @endphp
-                    <article>
-                        <div>
+                    <article class="borrower-next-row">
+                        <span class="borrower-next-icon tone-{{ $actionTone }}" aria-hidden="true">
+                            <x-icon :name="$actionIcon" size="17" />
+                        </span>
+
+                        <div class="borrower-next-copy">
                             <strong>{{ $record->request_no }}</strong>
                             <span>{{ $record->currentVersion?->purpose_event ?: 'Borrowing request' }}</span>
                             <small>{{ $nextAction }}</small>
                         </div>
-                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $record) }}">{{ $actionLabel }}</a>
+
+                        @if($actionWhen)
+                            <span class="borrower-next-when">{{ $actionWhen }}</span>
+                        @else
+                            <span></span>
+                        @endif
+
+                        <a class="button secondary small ui-pressable borrower-active-action" href="{{ route('requests.show', $record) }}">{{ $actionLabel }}</a>
                     </article>
                 @elseif($dashboardMode === 'SPMU_OFFICER')
                     <article>
@@ -328,10 +371,18 @@
                     </article>
                 @endif
             @empty
-                <div class="empty-state">
-                    <strong>Nothing needs attention right now.</strong>
-                    <span>The next required action will appear here automatically.</span>
-                </div>
+                @if($dashboardMode === 'BORROWER')
+                    <div class="borrower-dash-empty">
+                        <x-icon name="check-circle" size="26" />
+                        <strong>You're all caught up.</strong>
+                        <span>No requests currently require your action.</span>
+                    </div>
+                @else
+                    <div class="empty-state">
+                        <strong>Nothing needs attention right now.</strong>
+                        <span>The next required action will appear here automatically.</span>
+                    </div>
+                @endif
             @endforelse
         </div>
     </article>
@@ -370,5 +421,6 @@
     </article>
     @endif
 </section>
-@endif
+
+</div>
 @endsection

@@ -72,16 +72,13 @@
     );
 
 
-    $divisionOptions = [
-        'ADMINISTRATION' => 'Administrative',
-        'ACADEMIC' => 'Academic',
-        'RESEARCH_INNOVATION_COLLABORATION' => 'Research, Innovation and Collaboration',
-    ];
+    /* Labels come from the same canonical source Analytics reports on. */
+    $divisionOptions = App\Support\OrganizationalStructure::DIVISIONS;
 
     /*
-     * Canonical Office/Academic/Research Unit list comes from the
-     * controller (BorrowingRequestController::officeUnitsByDivision()) so
-     * this form can never drift from what the backend actually accepts.
+     * Canonical Office/Academic/Research Unit list is passed in from
+     * OrganizationalStructure, so this form can never drift from what the
+     * backend actually accepts.
      */
     $officeUnitsByDivision = $officeUnitsByDivision ?? [];
 

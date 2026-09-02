@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\AccessClassification;
 use App\Models\AcademicPeriod;
 use App\Services\AnalyticsService;
+use App\Services\ForecastService;
 use App\Services\InventoryService;
 use App\Services\ReportingPeriodService;
 use Illuminate\Http\Request;
@@ -13,15 +14,30 @@ use Illuminate\View\View;
 /**
  * Analytics workspace for the SPMU Head.
  *
- * The controller only resolves the filters and hands the prepared figures to
- * the view. Every calculation lives in AnalyticsService, so Reports and
- * Analytics cannot drift apart and the Blade template stays a layout.
+ * The controller resolves the filters and the active section, then hands the
+ * prepared figures to the view. Every calculation lives in AnalyticsService or
+ * ForecastService, so Reports and Analytics cannot drift apart and the Blade
+ * template stays a layout.
+ *
+ * Only the active section's figures are computed. Opening Overview must not
+ * pay for the forecast, and opening Forecast must not pay for the returns
+ * breakdown.
  */
 class AnalyticsController extends Controller
 {
+    /** The sections offered in the sub-navigation, in display order. */
+    public const SECTIONS = [
+        'overview' => 'Overview',
+        'borrowers' => 'Borrowers',
+        'equipment' => 'Equipment',
+        'returns' => 'Returns',
+        'forecast' => 'Forecast',
+    ];
+
     public function __invoke(
         Request $request,
         AnalyticsService $analytics,
+        ForecastService $forecasts,
         InventoryService $inventory,
         ReportingPeriodService $periods
     ): View {
@@ -44,6 +60,12 @@ class AnalyticsController extends Controller
             $academicPeriods,
             $activeAcademicPeriod
         );
+
+        $section = (string) $request->input('section', 'overview');
+
+        if (! array_key_exists($section, self::SECTIONS)) {
+            $section = 'overview';
+        }
 
         /* Units are offered per division, so the two filters stay consistent. */
         $unitOptions = $analytics->unitOptions($from, $to);
@@ -68,14 +90,10 @@ class AnalyticsController extends Controller
         $divisionFilter = $division === 'all' ? null : $division;
         $unitFilter = $unit === 'all' ? null : $unit;
 
-        $overview = $analytics->overview($from, $to, $divisionFilter, $unitFilter);
-        $groups = $analytics->borrowerGroups($from, $to, $divisionFilter, $unitFilter);
-        $units = $analytics->unitRankings($from, $to, $divisionFilter, $unitFilter);
-        $equipment = $analytics->equipment($from, $to, $divisionFilter, $unitFilter);
-        $trend = $analytics->trend($from, $to, $divisionFilter, $unitFilter, $periodSelection);
-        $returns = $analytics->returns($from, $to, $divisionFilter, $unitFilter);
+        $data = [
+            'section' => $section,
+            'sections' => self::SECTIONS,
 
-        return view('analytics.index', [
             'from' => $from,
             'to' => $to,
             'periodSelection' => $periodSelection,
@@ -88,15 +106,100 @@ class AnalyticsController extends Controller
             'selectedUnit' => $unit,
             'unitOptions' => $unitOptions,
             'selectableUnits' => $selectableUnits,
+        ];
 
-            'overview' => $overview,
-            'groups' => $groups,
-            'units' => $units,
-            'equipment' => $equipment,
-            'trend' => $trend,
-            'returns' => $returns,
-            'inventory' => $analytics->inventory($inventory),
-            'insights' => $analytics->insights($overview, $groups, $units, $equipment, $trend, $returns),
-        ]);
+        return view(
+            'analytics.index',
+            $data + $this->sectionData(
+                $section,
+                $analytics,
+                $forecasts,
+                $inventory,
+                $from,
+                $to,
+                $divisionFilter,
+                $unitFilter
+            )
+        );
+    }
+
+    /**
+     * The figures a single section needs, and nothing else.
+     *
+     * @return array<string, mixed>
+     */
+    private function sectionData(
+        string $section,
+        AnalyticsService $analytics,
+        ForecastService $forecasts,
+        InventoryService $inventory,
+        \Carbon\CarbonInterface $from,
+        \Carbon\CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        if ($section === 'overview') {
+            $overview = $analytics->overview($from, $to, $division, $unit);
+            $groups = $analytics->borrowerGroups($from, $to, $division, $unit);
+            $units = $analytics->unitRankings($from, $to, $division, $unit);
+            $equipment = $analytics->equipment($from, $to, $division, $unit);
+            $trend = $analytics->trend($from, $to, $division, $unit, 'month');
+            $returns = $analytics->returns($from, $to, $division, $unit);
+
+            return [
+                'overview' => $overview,
+                'groups' => $groups,
+                'units' => $units,
+                'comparison' => $analytics->previousPeriod($from, $to, $division, $unit),
+                'lowAvailability' => $analytics->lowAvailability($inventory),
+                'insights' => $analytics->insights(
+                    $overview,
+                    $groups,
+                    $units,
+                    $equipment,
+                    $trend,
+                    $returns
+                ),
+            ];
+        }
+
+        if ($section === 'borrowers') {
+            return [
+                'groups' => $analytics->borrowerGroups($from, $to, $division, $unit),
+                'units' => $analytics->unitRankings($from, $to, $division, $unit),
+                'unitEquipment' => $unit === null
+                    ? null
+                    : $analytics->equipmentForUnit($from, $to, $unit),
+            ];
+        }
+
+        if ($section === 'equipment') {
+            return [
+                'requested' => $analytics->requestedEquipment($from, $to, $division, $unit),
+                'released' => $analytics->equipment($from, $to, $division, $unit),
+                'lowAvailability' => $analytics->lowAvailability($inventory, 10),
+            ];
+        }
+
+        if ($section === 'returns') {
+            return [
+                'returns' => $analytics->returns($from, $to, $division, $unit),
+                'units' => $analytics->unitRankings($from, $to, $division, $unit),
+            ];
+        }
+
+        /* Forecast. */
+        [$forecastFrom, $forecastTo] = $forecasts->forecastWindow($from, $to);
+
+        return [
+            'forecastFrom' => $forecastFrom,
+            'forecastTo' => $forecastTo,
+            'demand' => $forecasts->demand($analytics, $from, $to, $division, $unit),
+            'divisionForecast' => $forecasts->divisionDemand($analytics, $from, $to),
+            'unitForecast' => $forecasts->unitDemand($analytics, $from, $to),
+            'equipmentForecast' => $forecasts->equipment($from, $to),
+            'busyPeriod' => $forecasts->busyPeriod($analytics, $from, $to),
+            'forecastBasis' => $forecasts->basis(),
+        ];
     }
 }

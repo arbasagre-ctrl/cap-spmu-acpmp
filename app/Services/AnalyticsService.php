@@ -8,6 +8,8 @@ use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
 use App\Models\InventoryItem;
+use App\Support\OrganizationalStructure;
+use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -34,14 +36,19 @@ class AnalyticsService
     /**
      * The division codes a request version can carry, in display order.
      *
-     * These mirror BorrowingRequestController::officeUnitsByDivision(), which
-     * is what the request form writes. Labels are the borrower-facing names.
+     * OrganizationalStructure is the single source: the request form writes
+     * these codes and Analytics reads them back, so neither side can drift.
+     * Research, Innovation and Collaboration is reported as its own division;
+     * no rule folds it into Academic or Administrative.
      */
-    public const DIVISIONS = [
-        'ACADEMIC' => 'Academic',
-        'ADMINISTRATION' => 'Administrative',
-        'RESEARCH_INNOVATION_COLLABORATION' => 'Research & Innovation',
-    ];
+    public const DIVISIONS = OrganizationalStructure::SHORT_LABELS;
+
+    /**
+     * At or below this share of serviceable stock, an equipment type is
+     * reported as low availability. See lowAvailability() for why the value
+     * lives here rather than in the database or a template.
+     */
+    public const LOW_AVAILABILITY_RATIO = 0.25;
 
     /**
      * Requests that reached the system's authoritative approved state.
@@ -337,6 +344,128 @@ class AnalyticsService
         ];
     }
 
+    /**
+     * What borrowers asked for, which is not the same as what went out.
+     *
+     * A request that was never approved or released still expresses demand, so
+     * this ranking counts request items. Utilisation is a separate question
+     * answered by equipment(), which counts physical releases only.
+     *
+     * @return array<string, mixed>
+     */
+    public function requestedEquipment(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        int $limit = 5
+    ): array {
+        $versionIds = $this->requestScope($from, $to, $division, $unit)
+            ->select('request_versions.id');
+
+        $rows = DB::table('request_items')
+            ->whereIn('request_items.request_version_id', $versionIds)
+            ->groupBy('request_items.description_snapshot', 'request_items.unit_snapshot')
+            ->select(
+                'request_items.description_snapshot AS name',
+                'request_items.unit_snapshot AS unit'
+            )
+            ->selectRaw('COUNT(*) AS requests')
+            ->selectRaw('SUM(request_items.requested_quantity) AS quantity')
+            ->orderByDesc('requests')
+            ->orderByDesc('quantity')
+            ->limit($limit)
+            ->get();
+
+        $highest = (int) ($rows->max('requests') ?: 0);
+
+        return [
+            'metric' => 'Requests containing the item',
+            'items' => $rows->map(fn ($row): array => [
+                'name' => $row->name,
+                'unit' => $row->unit,
+                'requests' => (int) $row->requests,
+                'quantity' => (float) $row->quantity + 0,
+                'share' => $highest > 0 ? (int) round((int) $row->requests / $highest * 100) : 0,
+            ])->all(),
+            'summary' => $rows->isEmpty()
+                ? 'No equipment was requested during this period.'
+                : $rows->first()->name.' was the most frequently requested equipment, appearing in '
+                    .(int) $rows->first()->requests.' requests.',
+        ];
+    }
+
+    /**
+     * The equipment a single organisational unit asks for most.
+     *
+     * Counted the same way as requestedEquipment(): one per request the item
+     * appears in, with the total quantity shown alongside so the two readings
+     * are never confused.
+     *
+     * @return array<string, mixed>
+     */
+    public function equipmentForUnit(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        string $unit,
+        int $limit = 5
+    ): array {
+        $result = $this->requestedEquipment($from, $to, null, $unit, $limit);
+
+        $result['unit'] = $unit;
+        $result['summary'] = $result['items'] === []
+            ? 'No borrowing requests were recorded for '.$unit.' during this period.'
+            : $unit.' most often requested '.$result['items'][0]['name'].', in '
+                .$result['items'][0]['requests'].' requests.';
+
+        return $result;
+    }
+
+    /**
+     * The same request count for the period immediately before this one.
+     *
+     * Returned as a plain difference. A percentage is deliberately not offered
+     * when the previous period is zero, because "up 100%" from nothing is not
+     * a reading anyone should act on.
+     *
+     * @return array<string, mixed>
+     */
+    public function previousPeriod(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $days = max(1, Carbon::parse($from)->startOfDay()->diffInDays(Carbon::parse($to)->startOfDay()) + 1);
+
+        $previousTo = Carbon::parse($from)->subDay()->endOfDay();
+        $previousFrom = $previousTo->copy()->subDays($days - 1)->startOfDay();
+
+        $current = $this->requestScope($from, $to, $division, $unit)->count('borrowing_requests.id');
+        $previous = $this->requestScope($previousFrom, $previousTo, $division, $unit)
+            ->count('borrowing_requests.id');
+
+        $hasComparison = $previousTo->isPast();
+        $change = $current - $previous;
+
+        return [
+            'available' => $hasComparison,
+            'current' => $current,
+            'previous' => $previous,
+            'change' => $change,
+            'from' => $previousFrom,
+            'to' => $previousTo,
+            'summary' => match (true) {
+                ! $hasComparison => 'No previous period data',
+                $previous === 0 && $current === 0 => 'No requests in either period',
+                $previous === 0 => 'First period with recorded requests',
+                $change > 0 => '+'.$change.' from the previous period',
+                $change < 0 => $change.' from the previous period',
+                default => 'Unchanged from the previous period',
+            },
+        ];
+    }
+
     /* ------------------------------------------------------------------ */
     /* Section E - Borrowing trends                                        */
     /* ------------------------------------------------------------------ */
@@ -553,25 +682,34 @@ class AnalyticsService
     {
         $items = InventoryItem::query()->where('active', true)->get();
 
+        /*
+         * One batched call rather than one availability() call per item: the
+         * arithmetic is identical, but the query count no longer grows with
+         * the size of the catalogue.
+         */
+        $balances = $inventoryService->portfolio(
+            $items,
+            now()->subYears(10)->startOfDay(),
+            now()->addYears(10)->endOfDay()
+        );
+
         $totals = [
             'available' => 0.0,
             'allocated' => 0.0,
             'on_custody' => 0.0,
             'maintenance' => 0.0,
             'problem' => 0.0,
+            'laundry' => 0.0,
         ];
 
         foreach ($items as $item) {
-            $balance = $inventoryService->availability(
-                $item,
-                now()->subYears(10)->startOfDay(),
-                now()->addYears(10)->endOfDay()
-            );
+            $balance = $balances[$item->id] ?? [];
 
-            $totals['available'] += (float) ($balance['current_available'] ?? $balance['available'] ?? 0);
+            $totals['available'] += (float) ($balance['current_available'] ?? 0);
             $totals['allocated'] += (float) ($balance['allocated'] ?? 0) + (float) ($balance['reserved'] ?? 0);
             $totals['on_custody'] += (float) ($balance['borrowed'] ?? 0);
             $totals['maintenance'] += (float) ($balance['damaged_maintenance'] ?? 0);
+            $totals['laundry'] += (float) ($balance['laundry'] ?? 0);
             $totals['problem'] += (float) ($balance['lost'] ?? 0)
                 + (float) ($balance['stolen'] ?? 0)
                 + (float) ($balance['destroyed'] ?? 0)
@@ -588,6 +726,79 @@ class AnalyticsService
                 : ($totals['problem'] > 0 || $totals['maintenance'] > 0
                     ? ($totals['problem'] + $totals['maintenance']).' units are currently unavailable through maintenance or an open incident.'
                     : 'No inventory units are currently held by maintenance or an incident.'),
+        ];
+    }
+
+    /**
+     * Equipment types whose usable stock has run low.
+     *
+     * THRESHOLD
+     * ---------
+     * The schema carries no reorder level or minimum-stock column, so there is
+     * no existing rule to reuse. This is the project's rule, defined once here
+     * rather than in a Blade template: an active, borrowable item is Limited
+     * when a quarter or less of its serviceable stock is usable right now, and
+     * Unavailable when none of it is. Anything that is currently out, reserved,
+     * held by an incident, or waiting on Laundry Operations is already excluded
+     * by the Inventory module's own availability rule.
+     *
+     * @return array<string, mixed>
+     */
+    public function lowAvailability(InventoryService $inventoryService, int $limit = 5): array
+    {
+        $items = InventoryItem::query()
+            ->where('active', true)
+            ->where('borrowable', true)
+            ->get();
+
+        $balances = $inventoryService->portfolio(
+            $items,
+            now()->startOfDay(),
+            now()->endOfDay()
+        );
+
+        $rows = [];
+
+        foreach ($items as $item) {
+            $balance = $balances[$item->id] ?? [];
+            $stock = (float) ($balance['serviceable_total'] ?? 0);
+
+            if ($stock <= 0) {
+                continue;
+            }
+
+            $usable = (float) ($balance['current_available'] ?? 0);
+            $share = $usable / $stock;
+
+            if ($share > self::LOW_AVAILABILITY_RATIO) {
+                continue;
+            }
+
+            $rows[] = [
+                'item_id' => $item->id,
+                'name' => $item->unique_description,
+                'available' => $usable + 0,
+                'stock' => $stock + 0,
+                'laundry' => (float) ($balance['laundry'] ?? 0) + 0,
+                'laundry_required' => (bool) $item->laundry_required,
+                'status' => $usable <= 0 ? 'Unavailable' : 'Limited',
+                'share' => (int) round($share * 100),
+            ];
+        }
+
+        usort($rows, fn (array $a, array $b): int => $a['share'] <=> $b['share']);
+
+        $watch = $rows === [] ? null : $rows[0];
+
+        return [
+            'count' => count($rows),
+            'items' => array_slice($rows, 0, $limit),
+            'watch' => $watch,
+            'threshold' => self::LOW_AVAILABILITY_RATIO,
+            'summary' => $watch === null
+                ? 'No equipment currently requires availability attention.'
+                : $watch['name'].' has '.($watch['available'] + 0).' of '.($watch['stock'] + 0)
+                    .' units available. Review upcoming bookings before approving additional requests.',
         ];
     }
 
