@@ -37,3 +37,6 @@ Thumbs.db
 *.bak-*
 install-item-borrowing-history.ps1
 item-borrowing-history.patch
+
+return-ui-backup-*/
+return-ui-files.zip
