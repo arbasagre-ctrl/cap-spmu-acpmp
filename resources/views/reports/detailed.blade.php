@@ -1,4 +1,4 @@
-@extends('layouts.app', ['title' => 'Reports & Analytics'])
+@extends('layouts.app', ['title' => 'Reports'])
 
 @section('content')
 
@@ -25,14 +25,13 @@
     <section class="page-heading">
         <div>
             <p class="eyebrow">Formal reporting</p>
-            <h1>Reports &amp; Analytics</h1>
+            <h1>Reports</h1>
             <p>Generate detailed operational reports for review, evidence, printing, and CSV export.</p>
         </div>
     </section>
 
     <div class="reports-detail-page">
         <div class="reports-navigation-row">
-            @include('reports.partials.module-tabs')
             @include('reports.partials.heading-actions')
         </div>
         <form method="get" class="card report-generator-card" aria-label="Report generator">

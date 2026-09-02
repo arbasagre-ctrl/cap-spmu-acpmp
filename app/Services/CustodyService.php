@@ -9,7 +9,6 @@ use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
 use App\Models\EarlyReturnRequest;
 use App\Models\GeneratedDocument;
-use App\Models\GatePass;
 use App\Models\Incident;
 use App\Models\IncidentLine;
 use App\Models\LaundryJob;
@@ -35,7 +34,6 @@ class CustodyService
         private AuditService $audit,
         private NotificationService $notifications,
         private OperationalCalendarService $operationalCalendar,
-        private SignatureService $signatures,
     ) {}
 
     /**
@@ -266,7 +264,7 @@ class CustodyService
             'pickup_at'
         );
 
-        $custody->loadMissing('request.currentVersion', 'borrower');
+        $custody->loadMissing('request.currentVersion', 'borrower', 'lines.requestItem');
         $version = $custody->request?->currentVersion;
 
         if (! $version) {
@@ -354,10 +352,17 @@ class CustodyService
             $locked->loadMissing('borrower');
 
             if ($locked->borrower) {
+                $locked->loadMissing('lines.requestItem');
+                $requiredDocuments = $locked->lines->contains(
+                    fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+                )
+                    ? 'the generated Borrower Slip and Gate Pass'
+                    : 'the generated Borrower Slip';
+
                 $this->notifications->send(
                     'PICKUP_SCHEDULED',
                     collect([$locked->borrower]),
-                    "Pickup for {$locked->custody_no} is scheduled on {$pickup->format('F j, Y g:i A')} and may be claimed until {$expires->format('g:i A')}.",
+                    "Pickup for {$locked->custody_no} is scheduled on {$pickup->format('F j, Y g:i A')} and may be claimed until {$expires->format('g:i A')}. Proceed to SPMU within this window and bring {$requiredDocuments}.",
                     $locked
                 );
             }
@@ -414,39 +419,54 @@ class CustodyService
             403
         );
 
-        $custody->loadMissing([
-            'borrower',
-            'request.currentVersion',
-            'lines.requestItem.inventoryItem',
-            'gatePass',
-        ]);
+        $documentIds = [];
 
-        if (! $custody->hasPickupSchedule()) {
-            throw ValidationException::withMessages([
-                'preparation' => 'Set an active pickup schedule before confirming item preparation.',
-            ]);
-        }
+        DB::transaction(function () use ($custody, $spmu, $quantities, &$documentIds): void {
+            $custody = CustodyTransaction::query()
+                ->with([
+                    'borrower',
+                    'request.currentVersion',
+                    'lines.requestItem.inventoryItem',
+                    'gatePass',
+                ])
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
 
-        foreach ($custody->lines as $line) {
-            if (! array_key_exists($line->id, $quantities)) {
+            if ($custody->status !== 'PREPARING_RELEASE' || $custody->released_at) {
                 throw ValidationException::withMessages([
-                    'quantities' => 'Enter the actual prepared quantity for every approved item.',
+                    'preparation' => 'This custody transaction is no longer awaiting physical preparation.',
                 ]);
             }
 
-            $approved = (float) $line->approved_quantity;
-            $prepared = (float) $quantities[$line->id];
-
-            if (abs($prepared - $approved) > 0.000001) {
+            if (! $custody->hasPickupSchedule()) {
                 throw ValidationException::withMessages([
-                    'quantities' => "Prepared quantity does not match the approved request for {$line->requestItem->description_snapshot}. Approved: {$approved}; prepared: {$prepared}. Recheck the count. Release processing remains blocked until the actual prepared quantity matches the approved quantity.",
+                    'preparation' => 'Set an active pickup schedule before confirming item preparation.',
                 ]);
             }
-        }
 
-        DB::transaction(function () use ($custody, $spmu, $quantities): void {
-            foreach ($custody->lines()->get() as $line) {
+            /*
+             * The approved packet must already exist before preparation is
+             * persisted. This validates Head-generated documents and never
+             * creates a substitute Gate Pass or Borrower Slip at this stage.
+             */
+            $documentIds = $this->validateApprovedReleaseDocuments($custody);
+
+            foreach ($custody->lines as $line) {
+                if (! array_key_exists($line->id, $quantities)) {
+                    throw ValidationException::withMessages([
+                        'quantities' => 'Enter the actual prepared quantity for every approved item.',
+                    ]);
+                }
+
                 $approved = (float) $line->approved_quantity;
+                $prepared = (float) $quantities[$line->id];
+
+                if (abs($prepared - $approved) > 0.000001) {
+                    throw ValidationException::withMessages([
+                        'quantities' => "Prepared quantity does not match the approved request for {$line->requestItem->description_snapshot}. Approved: {$approved}; prepared: {$prepared}. Recheck the count. Release processing remains blocked until the actual prepared quantity matches the approved quantity.",
+                    ]);
+                }
+
                 $line->update([
                     'quantity_to_receive' => $approved,
                     'item_status' => 'PREPARED',
@@ -458,7 +478,7 @@ class CustodyService
                 'prepared_by_user_id' => $spmu->id,
                 'prepared_at' => now(),
             ]);
-        });
+        }, 3);
 
         $fresh = $custody->fresh([
             'borrower',
@@ -467,76 +487,16 @@ class CustodyService
             'gatePass',
         ]);
 
-        /*
-         * Borrower Slip and applicable Laundry Form are borrower-printable
-         * operational forms. The Gate Pass is different: approval creates only
-         * its pending transaction record. Its single FINAL PDF is generated by
-         * SPMU at Physical Release after the Action Officer E-signs/verifies it.
-         */
-        $borrowerSlip = GeneratedDocument::query()
-            ->where('subject_type', CustodyTransaction::class)
-            ->where('subject_id', $fresh->id)
-            ->where('document_type', 'BORROWER_SLIP')
-            ->where('status', 'FINAL')
-            ->latest('id')
-            ->first();
-
-        if (! $borrowerSlip) {
-            $this->documents->borrowerSlip($fresh);
-        }
-
-        $offCampusLine = $fresh->lines->first(
-            fn ($line) =>
-                $line->requestItem?->use_location === 'OFF_CAMPUS'
-                && (float) $line->quantity_to_receive > 0
-        );
-
-        if ($offCampusLine) {
-            GatePass::query()->updateOrCreate(
-                ['custody_transaction_id' => $fresh->id],
-                [
-                    'custody_line_id' => $offCampusLine->id,
-                    'bearer_name' => $fresh->borrower?->full_name,
-                    'destination' => $fresh->request?->currentVersion?->location,
-                    'purpose' => $fresh->request?->currentVersion?->purpose_event,
-                    'status' => in_array(
-                        $fresh->gatePass?->status,
-                        ['READY_FOR_PRINTING', 'VERIFIED'],
-                        true
-                    )
-                        ? $fresh->gatePass->status
-                        : 'PENDING',
-                ]
-            );
-        }
-
-        $hasLaundry = $fresh->lines->contains(
-            fn ($line) =>
-                (bool) $line->requestItem?->inventoryItem?->laundry_required
-                && (float) $line->quantity_to_receive > 0
-        );
-
-        if ($hasLaundry) {
-            $laundryDocumentExists = GeneratedDocument::query()
-                ->where('subject_type', CustodyTransaction::class)
-                ->where('subject_id', $fresh->id)
-                ->where('document_type', 'LAUNDRY_FORM')
-                ->where('status', 'FINAL')
-                ->exists();
-
-            if (! $laundryDocumentExists) {
-                $this->documents->conditionalForm(
-                    $fresh->fresh(),
-                    'LAUNDRY_FORM'
-                );
-            }
-        }
-
         $this->audit->record(
             'RELEASE_PREPARED',
             $fresh,
-            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity against the approved allocation. Borrower Slip/Laundry Form remain valid; any Gate Pass stays pending until SPMU finalizes it at Physical Release.',
-            after: ['prepared_quantities' => $quantities]
+            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity and validated the approved/generated release documents against the allocation.',
+            after: [
+                'prepared_quantities' => $quantities,
+                'borrower_slip_document_id' => $documentIds['borrower_slip'],
+                'gate_pass_document_id' => $documentIds['gate_pass'],
+                'laundry_form_document_id' => $documentIds['laundry_form'],
+            ]
         );
     }
 
@@ -631,7 +591,19 @@ class CustodyService
 
         if ($hasOffCampusItem && ! $custody->gatePass) {
             throw ValidationException::withMessages([
-                'release' => 'An off-campus Gate Pass record is required before release. SPMU finalizes the Gate Pass with the Action Officer E-signature when Physical Release is confirmed.',
+                'release' => 'An approved Gate Pass record is required before physical release.',
+            ]);
+        }
+
+        if (
+            $hasOffCampusItem
+            && (
+                ! $custody->gatePass?->pass_document_id
+                || ! in_array($custody->gatePass?->status, ['READY_FOR_PRINTING', 'VERIFIED'], true)
+            )
+        ) {
+            throw ValidationException::withMessages([
+                'release' => 'The approved generated Gate Pass must be validated before physical release.',
             ]);
         }
         $hasLinen = $custody->lines->contains(
@@ -691,14 +663,17 @@ class CustodyService
 
             $this->assertReleaseWithinPickupWindow($custody);
 
-            /*
-             * The SPMU Action Officer's identity for this physical issuance is
-             * recorded via released_by_user_id/released_at plus the audit log
-             * below. No E-signature is captured for Physical Release itself —
-             * an Action Officer E-signature is only required for the Gate Pass
-             * (captured separately further down, when applicable).
-             */
-            $custody->loadMissing('lines.requestItem.inventoryItem', 'lines.allocation', 'borrower', 'request');
+            /* The handover identity and time are authoritative custody data. */
+            $custody->loadMissing(
+                'lines.requestItem.inventoryItem',
+                'lines.allocation',
+                'borrower',
+                'request',
+                'gatePass'
+            );
+
+            /* Revalidate the same approved packet while holding custody lock. */
+            $approvedDocumentIds = $this->validateApprovedReleaseDocuments($custody);
 
             $releaseReason = trim((string) $remarks);
             if ($releaseReason === '') {
@@ -832,66 +807,6 @@ class CustodyService
             );
 
             /*
-             * Off-campus Gate Pass.
-             *
-             * Approval created only a pending Gate Pass record; there is no
-             * borrower-printable official Gate Pass before this step. At the
-             * actual handover, the Action Officer's registered E-signature is
-             * captured as "Verified By". The system then generates the single
-             * FINAL Gate Pass containing:
-             *   - borrower/bearer E-signature from the approved request version,
-             *   - Action Officer "Verified By" E-signature, and
-             *   - Head "Approved By" E-signature.
-             *
-             * SPMU prints that final copy and gives it to the borrower for the
-             * guard. The guard's "Released by" block remains handwritten.
-             */
-            $gatePass = $custody->gatePass()
-                ->where('status', '!=', 'VERIFIED')
-                ->first();
-
-            if ($gatePass) {
-                $gatePassSignature = $this->signatures->snapshot(
-                    $spmu,
-                    'SPMU_GATE_PASS_VERIFICATION',
-                    'SPMU_ACTION_OFFICER',
-                    $gatePass,
-                    [
-                        'gate_pass_id' => $gatePass->id,
-                        'custody_transaction_id' => $custody->id,
-                        'custody_no' => $custody->custody_no,
-                        'action' => 'SIGN_AND_VERIFY_GATE_PASS',
-                    ]
-                );
-
-                $gatePass->update([
-                    'status' => 'READY_FOR_PRINTING',
-                    'prepared_verified_by_user_id' => $spmu->id,
-                    'prepared_verifier_signature_snapshot_id' => $gatePassSignature->id,
-                    'prepared_verified_at' => now(),
-                ]);
-
-                /*
-                 * Generate/replace the single final Gate Pass only now, after
-                 * the Action Officer verification has been captured. Any legacy
-                 * pre-release Gate Pass PDF is superseded automatically.
-                 */
-                $finalGatePassDocument = $this->documents->replaceConditionalForm(
-                    $custody->fresh([
-                        'gatePass',
-                        'borrower',
-                        'request.currentVersion.borrowerSignature.file',
-                        'lines.requestItem.inventoryItem',
-                    ]),
-                    'GATE_PASS'
-                );
-
-                $gatePass->update([
-                    'pass_document_id' => $finalGatePassDocument->id,
-                ]);
-            }
-
-            /*
              * The Laundry Form is intentionally NOT regenerated at release.
              * It is one travelling physical form generated after approval and
              * carried from pickup through return. Laundry Personnel complete
@@ -902,7 +817,9 @@ class CustodyService
             $this->audit->record('ITEMS_RELEASED', $custody, after: [
                 'released_by' => $spmu->id,
                 'released_at' => now()->toIso8601String(),
-                'gate_pass_signature_snapshot_id' => $gatePass?->fresh()->prepared_verifier_signature_snapshot_id,
+                'borrower_slip_document_id' => $approvedDocumentIds['borrower_slip'],
+                'approved_gate_pass_document_id' => $approvedDocumentIds['gate_pass'],
+                'laundry_form_document_id' => $approvedDocumentIds['laundry_form'],
             ]);
             $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Effective Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
 
@@ -1076,6 +993,35 @@ class CustodyService
                 throw ValidationException::withMessages([
                     'return' => 'Select at least one item that is ready for SPMU return inspection and account for its complete outstanding quantity.',
                 ]);
+            }
+
+            /*
+             * LINEN DOCUMENTARY BASIS
+             * -----------------------
+             * Laundry Personnel are the authoritative physical inspector for
+             * linen. The borrower goes to the Laundry Area first, where the
+             * actual received quantity and condition are written on the same
+             * travelling printed Laundry Form and "Received by" is wet-signed.
+             * The Action Officer is the system verifier/encoder for linen: the
+             * accomplished form must already be uploaded and verified before
+             * any linen quantity can be finalised here. Non-linen is unchanged
+             * and remains a direct Action Officer physical inspection.
+             */
+            $linenLines = $returnableLines->filter(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+
+            if ($linenLines->isNotEmpty()) {
+                $laundryJob = LaundryJob::query()
+                    ->where('custody_transaction_id', $custody->id)
+                    ->first();
+
+                if (! $laundryJob?->latest_evidence_submission_id
+                    || ! $laundryJob?->form_verified_at) {
+                    throw ValidationException::withMessages([
+                        'laundry_form' => 'Completed Laundry Form required. This transaction includes linen items. Upload the accomplished Laundry Form signed by Laundry Personnel before the linen return can be finalized.',
+                    ]);
+                }
             }
 
             foreach ($returnableLines as $line) {
@@ -1572,6 +1518,86 @@ class CustodyService
         }
 
         return $earlyReturn;
+    }
+
+    /**
+     * Validate the controlled document packet generated by the final approval.
+     *
+     * @return array{borrower_slip: int, gate_pass: ?int, laundry_form: ?int}
+     */
+    private function validateApprovedReleaseDocuments(CustodyTransaction $custody): array
+    {
+        $custody->loadMissing([
+            'lines.requestItem.inventoryItem',
+            'gatePass',
+        ]);
+
+        $documentQuery = static fn (string $type) => GeneratedDocument::query()
+            ->where('subject_type', CustodyTransaction::class)
+            ->where('subject_id', $custody->id)
+            ->where('document_type', $type)
+            ->where('status', 'FINAL')
+            ->latest('id');
+
+        $borrowerSlip = $documentQuery('BORROWER_SLIP')->first();
+
+        if (! $borrowerSlip) {
+            throw ValidationException::withMessages([
+                'documents' => 'The approved Borrower Slip is missing or invalid. Do not prepare or release the property; have the final approval record reviewed.',
+            ]);
+        }
+
+        $requiresGatePass = $custody->lines->contains(
+            fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+                && (float) $line->approved_quantity > 0
+        );
+
+        $gatePassDocument = null;
+
+        if ($requiresGatePass) {
+            $gatePass = $custody->gatePass;
+
+            if (
+                ! $gatePass
+                || ! $gatePass->pass_document_id
+                || ! in_array($gatePass->status, ['READY_FOR_PRINTING', 'VERIFIED'], true)
+            ) {
+                throw ValidationException::withMessages([
+                    'documents' => 'The approved Gate Pass is missing or invalid. Do not prepare or release the property; have the final approval record reviewed.',
+                ]);
+            }
+
+            $gatePassDocument = $documentQuery('GATE_PASS')
+                ->whereKey($gatePass->pass_document_id)
+                ->first();
+
+            if (! $gatePassDocument) {
+                throw ValidationException::withMessages([
+                    'documents' => 'The Gate Pass record does not point to a current approved generated document. Physical preparation and release remain blocked.',
+                ]);
+            }
+        }
+
+        $requiresLaundryForm = $custody->lines->contains(
+            fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+                && (float) $line->approved_quantity > 0
+        );
+
+        $laundryForm = $requiresLaundryForm
+            ? $documentQuery('LAUNDRY_FORM')->first()
+            : null;
+
+        if ($requiresLaundryForm && ! $laundryForm) {
+            throw ValidationException::withMessages([
+                'documents' => 'The required approved Laundry Form is missing or invalid. Physical preparation and release remain blocked.',
+            ]);
+        }
+
+        return [
+            'borrower_slip' => $borrowerSlip->id,
+            'gate_pass' => $gatePassDocument?->id,
+            'laundry_form' => $laundryForm?->id,
+        ];
     }
 
     private function assertReleaseWithinPickupWindow(CustodyTransaction $custody): void

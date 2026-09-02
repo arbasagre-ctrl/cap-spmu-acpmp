@@ -305,22 +305,11 @@ class CustodyController extends Controller
             $data['remarks'] ?? null
         );
 
-        $freshCustody = $custody->fresh('gatePass');
-
-        if ($freshCustody?->gatePass?->status === 'READY_FOR_PRINTING') {
-            return redirect()
-                ->route('gate-passes.show', $freshCustody->gatePass)
-                ->with(
-                    'status',
-                    'Physical release completed. The FINAL Gate Pass is ready for SPMU printing. Give the printed copy to the borrower before the property exits the campus.'
-                );
-        }
-
         return redirect()
             ->route('custody.return.show', $custody)
             ->with(
                 'status',
-                'Physical release completed. The transaction is now under Return tracking.'
+                'Physical handover recorded. Custody is now Released / On Custody and the transaction is under Return tracking.'
             );
     }
 

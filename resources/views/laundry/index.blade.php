@@ -9,7 +9,7 @@
     ]);
     $hasLaundryCases = $jobs->total() > 0;
     $laundryStatusLabels = [
-        'FOR_LAUNDRY' => 'Awaiting Laundry Receipt',
+        'FOR_LAUNDRY' => 'Awaiting Laundry Return',
         'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending',
     ];
     $laundryStatuses = collect(array_keys($laundryStatusLabels))
@@ -75,12 +75,10 @@
                                 $caseRequest = $caseCustody?->request;
                                 $casePurpose = $caseRequest?->currentVersion?->purpose_event;
                                 $caseReturnedAt = $caseCustody?->returns->sortByDesc('received_at')->first()?->received_at;
-                                $statusText = $laundryStatusLabels[$job->status] ?? str($job->status)->replace('_', ' ')->title();
-                                $statusDescription = match($job->status) {
-                                    'FOR_LAUNDRY' => 'Awaiting return inspection / physical Laundry receipt',
-                                    'TURNED_OVER_TO_LAUNDRY' => 'Borrower turnover complete · internal laundry pending',
-                                    default => $statusText,
-                                };
+                                // Derived: a verified accomplished form means Laundry
+                                // has already received and signed for the linen.
+                                $statusText = $job->displayStatusLabel();
+                                $statusDescription = $job->displayStatusDescription();
                                 $caseSearch = implode(' ', [
                                     $job->id,
                                     $caseRequest?->request_no,

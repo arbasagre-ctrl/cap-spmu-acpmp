@@ -182,13 +182,13 @@
 
         /* DARK MODE: sidebar follows the selected appearance */
         html[data-theme="dark"] .app-sidebar {
-            background: #E5F2FC !important;
-            border-right-color: #d6e8f5 !important;
-            color: #eaf2fb !important;
+            background: #070518 !important;
+            border-right-color: rgba(255, 255, 255, .06) !important;
+            color: #dce8f5 !important;
         }
 
         html[data-theme="dark"] .sidebar-brand-row {
-            border-bottom-color: #1b324b;
+            border-bottom-color: rgba(255, 255, 255, .06);
         }
 
         html[data-theme="dark"] .sidebar-brand.sidebar-brand-logo {
@@ -233,7 +233,7 @@
         }
 
         html[data-theme="dark"] .sidebar-foot {
-            background: #E5F2FC !important;
+            background: #070518 !important;
             border-top-color: #1b324b !important;
             color: #8fa7c3 !important;
         }
@@ -456,12 +456,14 @@
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
-                    ['reports.index', 'reports.index', 'Reports & Analytics', 'reports'],
+                    ['analytics.index', 'analytics.*', 'Analytics', 'reports'],
+                    ['reports.index', 'reports.index', 'Reports', 'reports'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [
                     ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],
-                    ['requests.index', 'requests.*', 'Approved Requests', 'approval'],
+                    ['verifications.index', 'verifications.*', 'For Verification', 'approval'],
+                    ['requests.index', 'requests.*', 'Request Records', 'requests'],
                     ['custody.release.index', 'custody.release.*', 'Release', 'upload'],
                     ['custody.return.index', 'custody.return.*', 'Return', 'custody'],
                     ['laundry.index', 'laundry.*', 'Laundry Operations', 'success'],

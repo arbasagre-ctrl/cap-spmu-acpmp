@@ -31,18 +31,35 @@
                             </td>
                             <td data-approved-display>{{ $line->approved_quantity + 0 }}</td>
                             <td>
-                                <input
-                                    type="number"
-                                    step="1"
-                                    min="0"
-                                    inputmode="numeric"
-                                    name="quantities[{{ $line->id }}]"
-                                    value="{{ old('quantities.'.$line->id) }}"
-                                    placeholder="Enter actual count"
-                                    data-prepared-quantity
-                                    data-approved="{{ (float) $line->approved_quantity }}"
-                                    required
-                                >
+                                <div class="prepared-quantity-stepper">
+                                    <button
+                                        type="button"
+                                        class="prepared-quantity-step"
+                                        data-prepared-step="-1"
+                                        aria-label="Decrease prepared quantity for {{ $line->requestItem->description_snapshot }}"
+                                    >&minus;</button>
+
+                                    <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        inputmode="numeric"
+                                        class="actual-prepared-quantity"
+                                        name="quantities[{{ $line->id }}]"
+                                        value="{{ old('quantities.'.$line->id) }}"
+                                        placeholder="Enter actual count"
+                                        data-prepared-quantity
+                                        data-approved="{{ (float) $line->approved_quantity }}"
+                                        required
+                                    >
+
+                                    <button
+                                        type="button"
+                                        class="prepared-quantity-step"
+                                        data-prepared-step="1"
+                                        aria-label="Increase prepared quantity for {{ $line->requestItem->description_snapshot }}"
+                                    >+</button>
+                                </div>
                             </td>
                             <td>
                                 <strong data-preparation-result class="is-unchecked">Not Checked</strong>
@@ -154,11 +171,118 @@
             }
         };
 
+        /*
+         * Stepping is bound to `click` only. There is deliberately no
+         * pointerdown/mousedown repeat, timer or long-press handler, so a held
+         * mouse or touchpad button changes the quantity exactly once.
+         */
+        const readMinimum = (input) => {
+            const min = Number.parseInt(input.min, 10);
+
+            return Number.isFinite(min) ? min : 0;
+        };
+
+        const readMaximum = (input) => {
+            /*
+             * The approved quantity is the existing ceiling: CustodyService
+             * only accepts a prepared quantity equal to it. No new limit is
+             * introduced here.
+             */
+            const approved = Number.parseFloat(input.dataset.approved ?? '');
+
+            return Number.isFinite(approved) ? Math.trunc(approved) : null;
+        };
+
+        const readCurrent = (input) => {
+            const current = Number.parseInt(input.value, 10);
+
+            return Number.isFinite(current) ? current : readMinimum(input);
+        };
+
+        const updateStepButtons = () => {
+            inputs.forEach((input) => {
+                const stepper = input.closest('.prepared-quantity-stepper');
+
+                if (!stepper) return;
+
+                const current = readCurrent(input);
+                const min = readMinimum(input);
+                const max = readMaximum(input);
+
+                stepper.querySelectorAll('[data-prepared-step]').forEach((button) => {
+                    const delta = Number.parseInt(button.dataset.preparedStep, 10);
+                    const hadFocus = document.activeElement === button;
+
+                    button.disabled = delta < 0
+                        ? current <= min
+                        : max !== null && current >= max;
+
+                    /* Keyboard focus follows the field rather than being dropped. */
+                    if (button.disabled && hadFocus) {
+                        input.focus();
+                    }
+                });
+            });
+        };
+
+        const refresh = () => {
+            refreshPreparation();
+            updateStepButtons();
+        };
+
+        const stepQuantity = (input, delta) => {
+            const min = readMinimum(input);
+            const max = readMaximum(input);
+            const next = readCurrent(input) + delta;
+
+            if (next < min) return;
+            if (delta > 0 && max !== null && next > max) return;
+
+            input.value = String(next);
+            refresh();
+        };
+
+        /*
+         * A manually typed entry is only normalised to a whole number at or
+         * above the minimum. An over-count is left as typed so the existing
+         * mismatch warning still fires, and the server remains authoritative.
+         */
+        const normalizeQuantity = (input) => {
+            const raw = input.value.trim();
+
+            if (raw === '') return;
+
+            const parsed = Number.parseFloat(raw);
+
+            if (!Number.isFinite(parsed)) {
+                input.value = '';
+                return;
+            }
+
+            input.value = String(Math.max(readMinimum(input), Math.trunc(parsed)));
+        };
+
         inputs.forEach((input) => {
-            input.addEventListener('input', refreshPreparation);
-            input.addEventListener('change', refreshPreparation);
+            input.addEventListener('input', refresh);
+
+            input.addEventListener('change', () => {
+                normalizeQuantity(input);
+                refresh();
+            });
+
+            input
+                .closest('.prepared-quantity-stepper')
+                ?.querySelectorAll('[data-prepared-step]')
+                .forEach((button) => {
+                    button.addEventListener('click', () => {
+                        stepQuantity(
+                            input,
+                            Number.parseInt(button.dataset.preparedStep, 10)
+                        );
+                    });
+                });
         });
 
-        refreshPreparation();
+        refresh();
     })();
     </script>

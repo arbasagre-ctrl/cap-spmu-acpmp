@@ -67,9 +67,9 @@
         'SPMU_OFFICER' => [
             'eyebrow' => 'SPMU Action Officer',
             'title' => 'Welcome, '.$firstName,
-            'subtitle' => 'Process only requests already approved by the SPMU Head: schedule pickup, release items, inspect returns, and complete final Laundry acceptance when applicable.',
-            'taskEyebrow' => "Today's operations",
-            'taskTitle' => 'Tasks requiring your action',
+            'subtitle' => 'Verify submitted requests and documents before Head review, then prepare and physically release only finally approved property.',
+            'taskEyebrow' => 'Verification queue',
+            'taskTitle' => 'Requests requiring verification',
         ],
         'SPMU_HEAD' => [
             'eyebrow' => 'SPMU Head / Admin',
@@ -102,6 +102,7 @@
             'Needs My Action' => ['information', 'warning', route('dashboard').'#borrower-actions'],
         ],
         'SPMU_OFFICER' => [
+            'For Verification' => ['approval', 'warning', route('verifications.index')],
             'For Pickup Scheduling' => ['calendar', 'info', route('custody.index')],
             'Ready for Release' => ['custody', 'success', route('custody.index')],
             'For Return Check' => ['custody', 'warning', route('custody.index')],
@@ -136,7 +137,7 @@
             New borrowing request
         </a>
     @elseif($dashboardMode === 'SPMU_OFFICER')
-        <a class="button primary ui-pressable" href="{{ route('custody.index') }}">Open Release &amp; Return</a>
+        <a class="button primary ui-pressable" href="{{ route('verifications.index') }}">Open Verification Queue</a>
     @elseif($dashboardMode === 'SPMU_HEAD')
         <a class="button primary ui-pressable" href="{{ route('approvals.index') }}">Open Approval Queue</a>
     @elseif($dashboardMode === 'ICTU')
@@ -243,7 +244,7 @@
                 <h2>{{ $copy['taskTitle'] }}</h2>
             </div>
             @if($dashboardMode === 'SPMU_OFFICER')
-                <a class="dashboard-view-all" href="{{ route('custody.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
+                <a class="dashboard-view-all" href="{{ route('verifications.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
             @elseif($dashboardMode === 'SPMU_HEAD')
                 <a class="dashboard-view-all" href="{{ route('approvals.index') }}">View all <x-icon name="chevron-right" size="16" /></a>
             @endif
@@ -261,7 +262,8 @@
                             $record->status === App\Enums\RequestStatus::UnderSpmu => 'No action now. Your request is under SPMU review.',
                             $custody?->status === 'CLOSED' && $laundry?->status === 'TURNED_OVER_TO_LAUNDRY' => 'Completed. Your linen turnover is settled; actual washing now continues internally in the Laundry Area.',
                             $custody?->status === 'CLOSED' => 'Completed. No further borrower action is required.',
-                            $laundry?->status === 'FOR_LAUNDRY' => 'Return the linen with the same printed Laundry Form. SPMU will record the return condition and confirm Laundry receipt.',
+                            $laundry?->status === 'FOR_LAUNDRY' && $laundry->hasVerifiedAccomplishedForm() => 'Your linen was received and signed for at the Laundry Area. SPMU is verifying the accomplished Laundry Form; no further borrower action is required for the linen.',
+                            $laundry?->status === 'FOR_LAUNDRY' => 'Return the linen to the Laundry Area first with the same printed Laundry Form. Laundry Personnel checks the quantity and condition and wet-signs Received by, then you bring the accomplished form to SPMU.',
                             $laundry?->status === 'TURNED_OVER_TO_LAUNDRY' => 'Your linen turnover is complete. Any remaining non-laundry obligation is still being resolved.',
                             in_array($laundry?->status, ['IN_PROCESS', 'READY_FOR_SPMU_RETURN', 'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'], true) => 'No borrower action is required while SPMU aligns this Laundry record to the simplified turnover workflow.',
                             $custody?->scheduled_release_at && ! $custody?->released_at => 'Pick up the approved items on the scheduled pickup window.',
@@ -284,15 +286,11 @@
                 @elseif($dashboardMode === 'SPMU_OFFICER')
                     <article>
                         <div>
-                            <strong>{{ $record->request?->request_no ?: $record->custody_no }}</strong>
+                            <strong>{{ $record->request_no }}</strong>
                             <span>{{ $record->borrower?->full_name }}</span>
-                            <small>
-                                {{ $record->scheduled_release_at
-                                    ? 'Pickup is scheduled. Prepare the approved items and record physical release when claimed.'
-                                    : 'Approved by the SPMU Head. Set the pickup schedule and prepare any required Gate Pass.' }}
-                            </small>
+                            <small>Verify the request and required supporting documents, or return it for correction.</small>
                         </div>
-                        <a class="button primary small ui-pressable" href="{{ route('custody.show', $record) }}">Process</a>
+                        <a class="button primary small ui-pressable" href="{{ route('requests.show', $record) }}">Verify</a>
                     </article>
                 @elseif($dashboardMode === 'SPMU_HEAD')
                     <article>
@@ -325,14 +323,14 @@
     @if($dashboardMode !== 'BORROWER')
     <article class="card dashboard-panel-equal">
         @if($dashboardMode === 'SPMU_OFFICER')
-            <div class="card-header"><div><p class="eyebrow">Operational guide</p><h2>What happens after Head approval?</h2></div></div>
+            <div class="card-header"><div><p class="eyebrow">Action Officer workflow</p><h2>Verification through release</h2></div></div>
             <div class="workflow-mini-list">
-                <span><strong>1</strong> Receive the verified and approved request</span>
-                <span><strong>2</strong> Schedule pickup and prepare Gate Pass when off-campus</span>
-                <span><strong>3</strong> Release approved items physically</span>
-                <span><strong>4</strong> Monitor custody and receive returns</span>
-                <span><strong>5</strong> Record linen turnover to Laundry; internal washing may continue later</span>
-                <span><strong>6</strong> Complete final return reconciliation</span>
+                <span><strong>1</strong> Verify the submitted request and required documents</span>
+                <span><strong>2</strong> Route VERIFIED requests to the SPMU Head for decision</span>
+                <span><strong>3</strong> After approval, schedule pickup and validate the generated documents</span>
+                <span><strong>4</strong> Prepare and physically release the approved items</span>
+                <span><strong>5</strong> Monitor custody and receive returns</span>
+                <span><strong>6</strong> Keep Laundry and final reconciliation in their separate existing paths</span>
             </div>
         @elseif($dashboardMode === 'SPMU_HEAD')
             <div class="card-header"><div><p class="eyebrow">Approval authority</p><h2>Head responsibility</h2></div></div>

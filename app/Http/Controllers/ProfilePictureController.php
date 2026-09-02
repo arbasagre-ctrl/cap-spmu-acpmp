@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,42 @@ class ProfilePictureController extends Controller
         $user = $request->user();
 
         $path = $user?->profile_picture_path;
+
+        abort_unless(
+            $path && Storage::disk('local')->exists($path),
+            404
+        );
+
+        return Storage::disk('local')->response(
+            $path,
+            null,
+            [
+                'Cache-Control' => 'private, max-age=3600',
+                'X-Content-Type-Options' => 'nosniff',
+            ]
+        );
+    }
+
+    /**
+     * Display another user's profile picture.
+     *
+     * Staff working the SPMU workspace already see borrower names on the
+     * oversight lists, so they may also load the matching avatar. Everyone
+     * else is limited to their own picture.
+     */
+    public function showForUser(Request $request, User $user): StreamedResponse
+    {
+        $viewer = $request->user();
+        $workspace = strtoupper(
+            (string) $request->session()->get('active_workspace')
+        );
+
+        abort_unless(
+            $workspace === 'SPMU' || $viewer?->id === $user->id,
+            403
+        );
+
+        $path = $user->profile_picture_path;
 
         abort_unless(
             $path && Storage::disk('local')->exists($path),

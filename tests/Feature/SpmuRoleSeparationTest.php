@@ -117,7 +117,7 @@ class SpmuRoleSeparationTest extends TestCase
                 ->schedule_date
                 ->copy()
                 ->setTime(
-                    9,
+                    13,
                     0
                 );
 
@@ -185,7 +185,7 @@ class SpmuRoleSeparationTest extends TestCase
                 ->schedule_date
                 ->copy()
                 ->setTime(
-                    9,
+                    13,
                     0
                 );
 

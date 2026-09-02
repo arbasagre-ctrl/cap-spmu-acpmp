@@ -31,20 +31,26 @@
     $history = $request->statusHistory ?? collect();
     $approvalSteps = $request->currentVersion?->approvalSteps ?? collect();
 
-    $spmuStep = $approvalSteps
+    $verificationStep = $approvalSteps
         ->where('sequence_no', 1)
         ->first();
 
-    $waitingForHead =
+    $headDecisionStep = $approvalSteps
+        ->where('sequence_no', 2)
+        ->first();
+
+    $waitingForActionOfficer =
         $statusValue === 'UNDER_SPMU'
         && (
-            ! $spmuStep
-            || in_array(
-                $spmuStep->decision,
-                ['PENDING', 'RECEIVED'],
-                true
-            )
+            ! $verificationStep
+            || in_array($verificationStep->decision, ['PENDING', 'RECEIVED'], true)
         );
+
+    $waitingForHead =
+        $statusValue === 'UNDER_SPMU'
+        && $verificationStep?->decision === 'VERIFIED'
+        && $headDecisionStep
+        && in_array($headDecisionStep->decision, ['PENDING', 'RECEIVED'], true);
 
     $historyAt = static function (array $statuses) use ($history) {
         return $history
@@ -225,7 +231,9 @@
             $returnDescription = match ($laundryStatus) {
 
                 'FOR_LAUNDRY'
-                    => 'Return the linen with the same printed Laundry Form. SPMU records return condition, then Laundry Personnel wet-signs Received by.',
+                    => $laundry->hasVerifiedAccomplishedForm()
+                        ? 'Laundry Personnel received the linen and wet-signed Received by. SPMU is verifying the accomplished Laundry Form.'
+                        : 'Return the linen to the Laundry Area first with the same printed Laundry Form. Laundry Personnel records the quantity and condition and wet-signs Received by, then you bring the accomplished form to SPMU.',
 
                 'TURNED_OVER_TO_LAUNDRY'
                     => 'Laundry Personnel have physically received the linen. The borrower no longer waits for the washing cycle; processing continues internally in the Laundry Area.',
@@ -366,10 +374,13 @@
                     => 'SPMU completed the review and rejected the request.',
 
                 $isApproved
-                    => 'SPMU reviewed and verified the request.',
+                    => 'The Action Officer verified the request and the SPMU Head approved it.',
 
                 $waitingForHead
-                    => 'The request is waiting for the SPMU Head review.',
+                    => 'The Action Officer marked the request VERIFIED. It is waiting for the separate SPMU Head decision.',
+
+                $waitingForActionOfficer
+                    => 'The request is waiting for Action Officer document and request verification.',
 
                 default
                     => 'SPMU review is in progress.',
@@ -578,7 +589,9 @@
 
         $isReleased
             && $laundryStatus === 'FOR_LAUNDRY'
-            => 'Awaiting Laundry Turnover',
+            => $laundry?->hasVerifiedAccomplishedForm()
+                ? 'Awaiting SPMU Return Verification'
+                : 'Awaiting Laundry Return',
 
         $isReleased
             && $laundryStatus === 'TURNED_OVER_TO_LAUNDRY'
@@ -609,6 +622,9 @@
 
         $waitingForHead
             => 'Waiting for SPMU Head Approval',
+
+        $waitingForActionOfficer
+            => 'Waiting for Action Officer Verification',
 
         in_array(
             $statusValue,

@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\AccountabilityController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\AdministrationController;
 use App\Http\Controllers\ApprovalController;
+use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\BorrowingRequestController;
 use App\Http\Controllers\CalendarController;
@@ -41,6 +43,18 @@ Route::middleware('guest')->group(function (): void {
     Route::post('/login', [LoginController::class, 'store'])
         ->middleware('throttle:5,1')
         ->name('login.store');
+
+    /*
+     * Google proves identity only. The callback still requires an existing,
+     * active local user before any session is created.
+     */
+    Route::get('/auth/google', [GoogleAuthController::class, 'redirect'])
+        ->middleware('throttle:10,1')
+        ->name('auth.google.redirect');
+
+    Route::get('/auth/google/callback', [GoogleAuthController::class, 'callback'])
+        ->middleware('throttle:10,1')
+        ->name('auth.google.callback');
 });
 
 Route::middleware(['auth', 'active'])->group(function (): void {
@@ -98,6 +112,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     Route::get('/profile/picture', [ProfilePictureController::class, 'show'])
         ->name('profile.picture.show');
+
+    Route::get('/users/{user}/picture', [ProfilePictureController::class, 'showForUser'])
+        ->name('users.picture.show');
 
     Route::post('/profile/picture', [ProfilePictureController::class, 'update'])
         ->name('profile.picture.update');
@@ -264,6 +281,12 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     Route::middleware('workspace:SPMU')->group(function (): void {
 
+        Route::get('/verifications', [ApprovalController::class, 'verificationIndex'])
+            ->name('verifications.index');
+
+        Route::post('/verifications/{borrowingRequest}', [ApprovalController::class, 'verify'])
+            ->name('verifications.verify');
+
         Route::get('/approvals', [ApprovalController::class, 'index'])
             ->name('approvals.index');
 
@@ -280,6 +303,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])
         ->name('documents.download');
+
+    Route::get('/documents/{document}/view', [DocumentController::class, 'view'])
+        ->name('documents.view');
 
 
     /*
@@ -535,6 +561,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     */
 
     Route::middleware('workspace:SPMU')->group(function (): void {
+
+        /*
+         * Analytics and Reports are separate modules: Analytics summarises and
+         * interprets, Reports produces the detailed records and exports.
+         */
+        Route::get('/analytics', AnalyticsController::class)
+            ->name('analytics.index');
 
         Route::get('/reports', [ReportController::class, 'index'])
             ->name('reports.index');

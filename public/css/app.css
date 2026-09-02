@@ -1,4 +1,5 @@
 :root {
+    color-scheme: light;
     --navy-950: #071b35;
     --navy-900: #0b274b;
     --navy-800: #123b69;
@@ -59,49 +60,50 @@
 }
 
 html[data-theme="dark"] {
-    --interactive: #72b7f4;
-    --interactive-hover: #9acdf8;
-    --primary-action: #1769aa;
-    --primary-action-hover: #1d78b9;
-    --blue-50: #172b40;
-    --page-bg: #09121e;
-    --surface: #111c2a;
-    --surface-elevated: #142131;
-    --surface-subtle: #172536;
-    --surface-muted: #202e3e;
-    --surface-hover: #1b3046;
-    --topbar-bg: rgba(17, 28, 42, .98);
-    --input-bg: #0e1927;
-    --table-heading-bg: #182638;
-    --row-hover: #17283a;
-    --border: #2b3b4d;
-    --border-strong: #43556a;
-    --row-border: #263648;
-    --text: #edf3f9;
-    --text-secondary: #c7d2de;
-    --text-muted: #a5b2c2;
-    --text-soft: #8999aa;
-    --heading: #f5f8fc;
-    --success: #86dcb0;
-    --success-bg: #102d23;
-    --success-border: #2c654d;
-    --warning: #f3c56a;
-    --warning-bg: #332711;
-    --warning-border: #72572a;
+    color-scheme: dark;
+    --interactive: #4a8ff7;
+    --interactive-hover: #7fb2fb;
+    --primary-action: #1d6ff2;
+    --primary-action-hover: #3b82f6;
+    --blue-50: #171a44;
+    --page-bg: #0a0820;
+    --surface: #100e2c;
+    --surface-elevated: #12102f;
+    --surface-subtle: #0d0b26;
+    --surface-muted: #1a1740;
+    --surface-hover: #1d1a48;
+    --topbar-bg: rgba(13, 11, 38, .98);
+    --input-bg: #0d0b26;
+    --table-heading-bg: #16133a;
+    --row-hover: #151238;
+    --border: #241f4d;
+    --border-strong: #382f6b;
+    --row-border: #201c45;
+    --text: #e9eff6;
+    --text-secondary: #b9c6d4;
+    --text-muted: #93a3b5;
+    --text-soft: #7a8a9c;
+    --heading: #f2f6fa;
+    --success: #7fdcae;
+    --success-bg: #0e2a24;
+    --success-border: #27604a;
+    --warning: #f0c25c;
+    --warning-bg: #2b2318;
+    --warning-border: #6a5326;
     --danger: #ff9b93;
     --danger-action: #a9362e;
     --danger-action-hover: #c0443a;
-    --danger-bg: #351b1d;
-    --danger-border: #774044;
-    --info: #86c6fb;
-    --info-bg: #132b40;
-    --info-border: #315d80;
-    --neutral: #c1cbd7;
-    --neutral-bg: #222f3e;
-    --neutral-border: #455467;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .28);
-    --shadow: 0 10px 28px rgba(0, 0, 0, .32);
-    --focus-ring: 0 0 0 3px rgba(114, 183, 244, .34);
+    --danger-bg: #2e1a24;
+    --danger-border: #6b393d;
+    --info: #7cc0fb;
+    --info-bg: #131f44;
+    --info-border: #32538a;
+    --neutral: #b9c6d4;
+    --neutral-bg: #191636;
+    --neutral-border: #322c58;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow: 0 10px 28px rgba(0, 0, 0, .45);
+    --focus-ring: 0 0 0 3px rgba(74, 143, 247, .35);
     --bs-body-color: var(--text);
     --bs-body-bg: var(--page-bg);
     --bs-secondary-color: var(--text-muted);
@@ -109,6 +111,12 @@ html[data-theme="dark"] {
     --bs-link-color: var(--interactive);
     --bs-link-hover-color: var(--interactive-hover);
 }
+
+/* The dark shell sits below the page, not above it: near-black chrome, and
+   section eyebrows carry the accent instead of muted grey. */
+html[data-theme="dark"] .site-header,
+html[data-theme="dark"] body > footer { background: #070518; }
+html[data-theme="dark"] .eyebrow { color: var(--interactive); }
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -649,7 +657,7 @@ small, .muted { color: var(--text-muted); }
 
 /* Buttons and status */
 .actions, .inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort) {
+.button, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort):not(.prepared-quantity-step) {
     display: inline-flex;
     min-height: 40px;
     align-items: center;
@@ -665,7 +673,7 @@ small, .muted { color: var(--text-muted); }
     font-weight: 750;
     line-height: 1.2;
 }
-.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.button:hover, button:not(.icon-button):not(.sidebar-backdrop):not(.link-button):not(.account-menu-toggle):not(.account-menu-logout):not(.calendar-event):not(.calendar-more):not(.calendar-view-control):not(.calendar-summary-filter):not(.calendar-summary-clear):not(.accountability-filter-card):not(.calendar-drawer-backdrop):not(.special-dates-sort):not(.prepared-quantity-step):hover { color: var(--heading); background: var(--surface-hover); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .button.primary { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
 .button.primary:hover { color: #fff; background: var(--primary-action-hover); border-color: var(--primary-action-hover); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .button.primary:active {
@@ -857,7 +865,7 @@ select {
 }
 select::-ms-expand { display: none; }
 html[data-theme="dark"] select {
-    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23c7d2de' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b9c6d4' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 select:disabled { background-image: var(--select-chevron); opacity: .75; }
 select[multiple], select[size]:not([size="1"]) { padding-right: 11px; background-image: none; }
@@ -3209,6 +3217,103 @@ body > main + footer {
     right: 18px;
 
     font-size: 19px;
+}
+
+
+/* GOOGLE SIGN-IN
+   Secondary to the blue primary button: surface background, thin border, and
+   the same width and radius as the login controls. */
+
+.login-page .login-alt-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    color: #8190a7;
+
+    font-size: 13px;
+}
+
+.login-page .login-alt-divider::before,
+.login-page .login-alt-divider::after {
+    content: "";
+
+    flex: 1;
+
+    height: 1px;
+
+    background: #dbe3ed;
+}
+
+.login-page .login-google {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+
+    width: 100%;
+    min-height: 50px;
+
+    padding: 0 18px;
+
+    border: 1px solid #cfdae8;
+    border-radius: 9px;
+
+    background: #ffffff;
+
+    color: #24374f;
+
+    font-size: 14.5px;
+    font-weight: 650;
+
+    text-decoration: none;
+
+    cursor: pointer;
+
+    transition:
+        border-color 150ms ease,
+        background-color 150ms ease,
+        box-shadow 150ms ease;
+}
+
+.login-page .login-google:hover {
+    border-color: #b6c7dc;
+
+    background: #f7fafd;
+
+    box-shadow: 0 4px 12px rgba(37, 105, 222, 0.08);
+}
+
+.login-page .login-google:focus-visible {
+    outline: 0;
+
+    border-color: #2875f5;
+
+    box-shadow: 0 0 0 3px rgba(40, 117, 245, 0.22);
+}
+
+.login-page .login-google-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+html[data-theme="dark"] .login-page .login-google {
+    border-color: #3a4c63;
+
+    background: #16202c;
+
+    color: #e5ecf5;
+}
+
+html[data-theme="dark"] .login-page .login-google:hover {
+    border-color: #4c6280;
+
+    background: #1c2836;
+}
+
+html[data-theme="dark"] .login-page .login-alt-divider::before,
+html[data-theme="dark"] .login-page .login-alt-divider::after {
+    background: #33445a;
 }
 
 

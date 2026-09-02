@@ -60,4 +60,51 @@ class LaundryJob extends Model
     {
         return $this->hasMany(LaundryJobLine::class);
     }
+
+    /**
+     * The accomplished Laundry Form is on file and verified, which is the
+     * evidence that Laundry Personnel physically received the returned linen,
+     * recorded quantity/condition, and wet-signed "Received by".
+     */
+    public function hasVerifiedAccomplishedForm(): bool
+    {
+        return (bool) ($this->latest_evidence_submission_id && $this->form_verified_at);
+    }
+
+    /*
+     * DISPLAY-ONLY READING OF THE PHYSICAL SEQUENCE
+     * ---------------------------------------------
+     * The stored status stays FOR_LAUNDRY from physical release until the
+     * turnover is confirmed, so on its own it cannot separate "the borrower
+     * still holds the linen" from "Laundry already received and signed for
+     * it". The verified accomplished form is what distinguishes the two, so
+     * the label is derived here instead of adding a database status. Nothing
+     * in this file changes a transition.
+     */
+    public function displayStatusLabel(): string
+    {
+        return match (true) {
+            $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
+                => 'Laundry Receipt Confirmed',
+            $this->status === 'FOR_LAUNDRY' => 'Awaiting Laundry Return',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending',
+            $this->status === 'LAUNDRY_COMPLETED' => 'Laundry Completed',
+            default => str($this->status)->replace('_', ' ')->title(),
+        };
+    }
+
+    public function displayStatusDescription(): string
+    {
+        return match (true) {
+            $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
+                => 'Accomplished Laundry Form verified · awaiting SPMU Return Verification',
+            $this->status === 'FOR_LAUNDRY'
+                => 'Borrower returns the linen to the Laundry Area first',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY'
+                => 'Borrower turnover complete · internal laundry pending',
+            $this->status === 'LAUNDRY_COMPLETED'
+                => 'Clean linen available in the Laundry Area',
+            default => $this->displayStatusLabel(),
+        };
+    }
 }

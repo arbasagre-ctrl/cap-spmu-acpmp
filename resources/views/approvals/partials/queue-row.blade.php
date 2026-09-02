@@ -17,8 +17,8 @@
     );
 
     /*
-     * A queued request is flagged Needs Attention when a document the SPMU
-     * Head has to read before deciding is not attached to the current version.
+     * Required-document readiness is identical in both queues. The Action
+     * Officer resolves incompleteness; the Head sees only verified requests.
      */
     $missingDocuments = collect([
         $requestLetter ? null : 'Request Letter',
@@ -79,7 +79,9 @@
         <x-status-badge
             :status="$needsAttention ? 'AWAITING_DOCUMENTS' : 'UNDER_SPMU'"
             :label="$needsAttention ? 'Needs Attention' : 'For Review'"
-            :title="$needsAttention ? 'Missing: '.$missingDocuments->implode(', ') : 'Ready for SPMU verification'"
+            :title="$needsAttention
+                ? 'Missing: '.$missingDocuments->implode(', ')
+                : ($mode === 'ACTION_OFFICER_VERIFICATION' ? 'Ready for Action Officer verification' : 'Verified and ready for Head decision')"
         />
     </td>
 

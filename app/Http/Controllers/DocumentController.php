@@ -26,35 +26,8 @@ class DocumentController extends Controller
         ProtectedFileService $files,
         RequestWorkflowService $workflow
     ): StreamedResponse|BinaryFileResponse {
-        $document->loadMissing(['file', 'version.request']);
-
-        $borrowingRequest = $document->version?->request;
+        $borrowingRequest = $this->authorizeGeneratedDocument($request, $document);
         $user = $request->user();
-
-        $billingBorrowerId = $document->subject_type === BillingStatement::class
-            ? BillingStatement::query()
-                ->whereKey($document->subject_id)
-                ->value('borrower_user_id')
-            : null;
-
-        abort_unless(
-            ($borrowingRequest
-                && (int) $borrowingRequest->borrower_user_id === (int) $user->id)
-            || (int) $billingBorrowerId === (int) $user->id
-            || $user->hasRole(UserRole::Spmu)
-            || $user->hasRole(UserRole::Ictu),
-            403
-        );
-
-        abort_if(
-            in_array(
-                $document->status,
-                ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'],
-                true
-            ),
-            410,
-            'This controlled document is historical and is no longer valid for operational use.'
-        );
 
         if (
             $document->document_type === 'APPROVED_REQUEST_LETTER'
@@ -84,6 +57,64 @@ class DocumentController extends Controller
                 'X-Content-Type-Options' => 'nosniff',
             ]
         );
+    }
+
+    public function view(
+        Request $request,
+        GeneratedDocument $document,
+        ProtectedFileService $files
+    ): StreamedResponse {
+        $this->authorizeGeneratedDocument($request, $document);
+
+        $file = $document->file;
+        abort_unless($file, 404);
+
+        $safeName = str_replace(['"', "\r", "\n"], '', $file->original_name ?: 'document.pdf');
+
+        return response()->stream(
+            fn () => print $files->bytes($file),
+            200,
+            [
+                'Content-Type' => $file->mime_type ?: 'application/pdf',
+                'Content-Disposition' => 'inline; filename="'.$safeName.'"',
+                'X-Content-Type-Options' => 'nosniff',
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'Pragma' => 'no-cache',
+            ]
+        );
+    }
+
+    private function authorizeGeneratedDocument(
+        Request $request,
+        GeneratedDocument $document
+    ): ?\App\Models\BorrowingRequest {
+        $document->loadMissing(['file', 'version.request']);
+
+        $borrowingRequest = $document->version?->request;
+        $user = $request->user();
+
+        $billingBorrowerId = $document->subject_type === BillingStatement::class
+            ? BillingStatement::query()
+                ->whereKey($document->subject_id)
+                ->value('borrower_user_id')
+            : null;
+
+        abort_unless(
+            ($borrowingRequest
+                && (int) $borrowingRequest->borrower_user_id === (int) $user->id)
+            || (int) $billingBorrowerId === (int) $user->id
+            || $user->hasRole(UserRole::Spmu)
+            || $user->hasRole(UserRole::Ictu),
+            403
+        );
+
+        abort_if(
+            in_array($document->status, ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'], true),
+            410,
+            'This controlled document is historical and is no longer valid for operational use.'
+        );
+
+        return $borrowingRequest;
     }
 
     /**

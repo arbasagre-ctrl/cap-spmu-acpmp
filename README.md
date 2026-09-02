@@ -9,8 +9,8 @@ The application has one requester portal and three active staff classifications:
 | Access | Purpose |
 |---|---|
 | Borrower | Creates borrowing requests and tracks personal requests/custody. Only Borrower accounts may borrow. |
-| SPMU Admin / Head | SPMU verification/decision authority, oversight, reports, and authorized controls. |
-| SPMU Action Officer | Pickup scheduling, exact-quantity preparation, physical release/return, laundry operations, evidence and operational processing. May make an SPMU decision only under a valid formal delegation. |
+| SPMU Admin / Head | Final borrowing decision authority, oversight, reports, and authorized controls after Action Officer verification. |
+| SPMU Action Officer | Request/document verification, pickup scheduling, exact-quantity preparation, physical release/return, laundry operations, evidence and operational processing. May make the final SPMU decision only under a valid formal delegation. |
 | ICTU Maintainer | User accounts, classifications, system settings, audit trail, delivery records, deployment and technical operations. |
 
 **GSU and VPAF are not application roles, portals, approval queues, or system approvers.** When required by the institutional Borrowing Request Letter, they are **physical signatories only**. The borrower prints the letter, obtains the required handwritten/wet signatures, scans the accomplished document, and uploads it to SPMU for verification.
@@ -21,12 +21,12 @@ The application has one requester portal and three active staff classifications:
 2. The system generates a printable Draft Borrowing Request Letter.
 3. Borrower prints the letter and obtains required handwritten/wet signatures, including the required GSU/VPAF institutional signatories on the physical letter.
 4. Borrower scans and uploads the fully signed Borrowing Request Letter. A Permission to Conduct document is also required when the request represents a student activity/organization.
-5. SPMU opens the submitted scan beside the verification checklist and chooses **Verify & Approve**, **Return for Revision**, or **Reject**.
-6. Approval performs the final availability check and reserves the exact approved quantity. No GSU/VPAF in-system stage follows SPMU.
-7. SPMU Action Officer schedules pickup, confirms the exact approved quantity, and generates the Borrower Slip plus only the applicable physical Gate Pass and/or Laundry Form.
-8. Required signatures on operational forms are handwritten/wet signatures. The system records process confirmation/evidence; it does not create electronic-signature snapshots.
-9. SPMU records physical release and return. Off-campus Gate Pass and linen Laundry Form evidence are uploaded/verified as required.
-10. When released custody includes linen, a Laundry Job is handled by the SPMU Action Officer, who records turnover and processing, continues the linen through final SPMU return inspection, and archives the accomplished signed form. Linen becomes available only through that existing return flow.
+5. The SPMU Action Officer verifies the submitted request and documents or returns an incomplete request for correction. `VERIFIED` is not approval and creates no reservation.
+6. A verified request is routed to the SPMU Head, who may approve, reject, or return it under the existing decision/delegation rules.
+7. Head approval performs the final availability check, reserves the exact approved quantity, and automatically generates the Borrower Slip and applicable Gate Pass. No operational document is generated before approval.
+8. The borrower views/downloads the generated documents and brings them to SPMU on the scheduled pickup date.
+9. The Action Officer validates the approved/generated documents, prepares the exact approved quantity, records physical handover, and moves custody to Released / On Custody.
+10. SPMU records return and applicable Gate Pass/Laundry evidence using the existing separate return, laundry, and accountability workflows.
 
 ## Other implemented controls
 

@@ -16,7 +16,7 @@
     }
 
     $sectionTitles = [
-        'transaction-schedule' => ['Operational Calendar', 'Transaction Schedule', 'Configure weekly request, pickup/release, and return availability.'],
+        'transaction-schedule' => ['SPMU Head', 'Operational Configuration', 'Set office state, allowed transactions, and operating hours for each day.'],
         'special-dates' => ['Operational Calendar', 'Special Dates & Closures', 'Manage holidays, typhoons, emergency closures, and approved special working days.'],
         'academic-periods' => ['Academic Calendar', 'Academic Period', 'Manage the active semester and historical academic periods used by the system.'],
         'sanction-rules' => ['Administrative Accountability', 'Sanction Rules', 'Configure the default consequence for the 1st, 2nd, and 3rd confirmed offense.'],
@@ -938,7 +938,7 @@
 .operational-config-card:hover .operational-config-card-chevron,.operational-config-card:focus-visible .operational-config-card-chevron{color:var(--config-blue);transform:translateX(2px)}
 .operational-config-footnote{display:flex;align-items:center;gap:11px;margin-top:4px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface-elevated);color:var(--text-secondary);font-size:12.5px}
 .operational-config-footnote>.ui-icon{flex-shrink:0;color:var(--text-muted)}
-html[data-theme="dark"] .operational-config-hub{--config-blue:#72b7f4}
+html[data-theme="dark"] .operational-config-hub{--config-blue:#4a8ff7}
 @media(prefers-reduced-motion:reduce){.operational-config-card,.operational-config-card-chevron{transition:none}}
 .schedule-check{display:flex!important;align-items:center;gap:7px!important;min-height:38px;margin:0!important;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:11px!important;color:var(--text)!important}.schedule-check input[type=checkbox]{width:16px;height:16px;margin:0}
 .special-date-form{display:grid;grid-template-columns:1fr 1fr .8fr .8fr;gap:12px;align-items:end}.special-date-form label{margin:0}.special-date-capabilities{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}.special-date-reason{grid-column:1/-1}.special-date-form>.button{justify-self:start}

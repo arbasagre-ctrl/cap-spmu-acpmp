@@ -401,10 +401,15 @@ class LaundryController extends Controller
     }
 
     /**
-     * Archive the same travelling physical Laundry Form after it has the
-     * Laundry Personnel wet signatures. Archiving is useful evidence, but it
-     * is no longer a prerequisite for borrower clearance or for the internal
-     * washing schedule.
+     * Verify and archive the same travelling physical Laundry Form once it
+     * carries the Laundry Personnel wet signatures.
+     *
+     * The borrower returns linen to the Laundry Area first, so the
+     * accomplished form normally arrives while the case is still
+     * FOR_LAUNDRY. It is the documentary basis for the linen condition
+     * encoded in the SPMU Return Inspection, which is blocked until this
+     * upload exists. It may still be (re)archived later in the internal
+     * washing stages.
      */
     public function upload(
         Request $request,
@@ -439,9 +444,26 @@ class LaundryController extends Controller
                 ->with(['custody.borrower'])
                 ->findOrFail($laundryJob->id);
 
-            if (! in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
+            if (! in_array($job->status, ['FOR_LAUNDRY', 'TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
                 throw ValidationException::withMessages([
-                    'evidence' => 'Archive the signed Laundry Form only after Laundry Personnel has physically received the returned linen and signed Received by.',
+                    'evidence' => 'Upload the Laundry Form only after Laundry Personnel has physically received the returned linen, recorded the condition, and signed Received by.',
+                ]);
+            }
+
+            /*
+             * FOR_LAUNDRY starts at physical release, so it also covers the
+             * period while the borrower still holds the linen. Laundry
+             * Personnel are not system users: at this stage the upload is the
+             * only record that the physical receipt happened, so it carries
+             * the same attestation receive() requires. Later stages already
+             * have that receipt recorded and are left untouched.
+             */
+            $attestsPhysicalReceipt = $job->status === 'FOR_LAUNDRY';
+
+            if ($attestsPhysicalReceipt
+                && ! $request->boolean('laundry_received_signature_confirmed')) {
+                throw ValidationException::withMessages([
+                    'laundry_received_signature_confirmed' => 'Confirm that the uploaded Laundry Form is the accomplished form presented by the borrower and contains the Laundry Personnel RECEIVED BY wet signature, including returned quantity and condition/remarks where applicable.',
                 ]);
             }
 
@@ -478,6 +500,13 @@ class LaundryController extends Controller
                     'evidence_submission_id' => $submission->id,
                     'uploaded_by_user_id' => $request->user()->id,
                     'status' => $job->status,
+                    /*
+                     * Physical condition source stays Laundry Personnel; the
+                     * Action Officer is only the system verifier / encoder.
+                     */
+                    'laundry_received_wet_signature_confirmed' => $attestsPhysicalReceipt,
+                    'physical_condition_source' => 'LAUNDRY_PERSONNEL',
+                    'system_verified_by_user_id' => $request->user()->id,
                 ]
             );
 
@@ -490,7 +519,7 @@ class LaundryController extends Controller
             );
         }, 3);
 
-        return back()->with('status', 'Signed Laundry Form archived successfully.');
+        return back()->with('status', 'Accomplished Laundry Form verified and archived. Linen condition may now be encoded in the Return Inspection.');
     }
 
     private function syncCustodyAfterLaundryTurnover(LaundryJob $job): void

@@ -701,12 +701,8 @@ class RoleBasedSignatureTest extends TestCase
         ]);
     }
 
-    /**
-     * The Gate Pass is the one document where the Action Officer's
-     * registered E-signature remains the intended system signatory --
-     * unaffected by removing it from Physical Release / Return Inspection.
-     */
-    public function test_gate_pass_still_captures_and_renders_the_action_officer_e_signature(): void
+    /** The Gate Pass renders the earlier Action Officer verification signature. */
+    public function test_gate_pass_uses_action_officer_verification_signature_before_release(): void
     {
         $this->travelTo(
             app(OperationalCalendarService::class)
@@ -726,8 +722,34 @@ class RoleBasedSignatureTest extends TestCase
         ]);
 
         $officer = $this->spmuActionOfficer();
-        $this->registerSignature($officer, 'gate-pass-ink');
-        $this->actingAs($officer);
+
+        $verificationSnapshot = $this->captureSnapshot(
+            $officer,
+            'SPMU_REQUEST_VERIFICATION',
+            'SPMU_ACTION_OFFICER',
+            'gate-pass-ink'
+        );
+
+        $gatePass = $custody->gatePass;
+        $gatePass->update([
+            'prepared_verified_by_user_id' => $officer->id,
+            'prepared_verifier_signature_snapshot_id' => $verificationSnapshot->id,
+            'prepared_verified_at' => now(),
+            'status' => 'READY_FOR_PRINTING',
+        ]);
+
+        $document = app(DocumentService::class)->conditionalForm(
+            $custody->fresh([
+                'borrower',
+                'request.currentVersion.borrowerSignature.file',
+                'gatePass.preparedVerifier',
+                'gatePass.preparedVerifierSignature.file',
+                'lines.requestItem.inventoryItem.unit',
+            ]),
+            'GATE_PASS'
+        );
+        $gatePass->update(['pass_document_id' => $document->id]);
+        app(DocumentService::class)->borrowerSlip($custody);
 
         $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
 
@@ -739,17 +761,18 @@ class RoleBasedSignatureTest extends TestCase
 
         $this->assertNotNull(
             $gatePass->prepared_verifier_signature_snapshot_id,
-            'The Gate Pass must still capture the Action Officer E-signature at release.'
+            'The Gate Pass must preserve the Action Officer verification signature.'
         );
 
         $snapshot = SignatureSnapshot::query()->findOrFail(
             $gatePass->prepared_verifier_signature_snapshot_id
         );
 
-        $this->assertSame('SPMU_GATE_PASS_VERIFICATION', $snapshot->purpose_code);
+        $this->assertSame('SPMU_REQUEST_VERIFICATION', $snapshot->purpose_code);
         $this->assertSame($officer->id, $snapshot->signer_user_id);
         $this->assertSame('READY_FOR_PRINTING', $gatePass->fresh()->status);
         $this->assertNotNull($gatePass->fresh()->pass_document_id);
+        $this->assertSame($document->id, $gatePass->fresh()->pass_document_id);
 
         $html = $this->gatePassHtml($custody->fresh([
             'borrower',
@@ -1086,8 +1109,8 @@ class RoleBasedSignatureTest extends TestCase
             'request_version_id' => $version->id,
             'borrower_user_id' => $borrower->id,
             'status' => 'PREPARING_RELEASE',
-            'scheduled_release_at' => $scheduleDate->copy()->setTime(9, 0),
-            'pickup_expires_at' => $scheduleDate->copy()->setTime(12, 0),
+            'scheduled_release_at' => $scheduleDate->copy()->setTime(13, 0),
+            'pickup_expires_at' => $scheduleDate->copy()->setTime(16, 0),
             'prepared_at' => now(),
             'due_at' => $returnDate->copy()->endOfDay(),
         ]);

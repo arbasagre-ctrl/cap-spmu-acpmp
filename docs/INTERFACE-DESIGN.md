@@ -16,7 +16,7 @@ The interface uses a compact navy role menu, white work area, clear status badge
 
 ### SPMU
 - Dashboard
-- Approval Queue
+- Action Officer Verification Queue / Head Approval Queue (role-specific)
 - All Requests
 - Inventory
 - Borrowing Calendar
@@ -38,13 +38,13 @@ There are no GSU or VPAF portals. Their names appear only where the physical Bor
 
 ## SPMU verification workspace
 
-For a submitted request, SPMU uses a split review screen:
+For a submitted request, the Action Officer uses a split verification screen:
 
 - left: scanned fully signed Borrowing Request Letter (PDF/image preview);
-- right: verification checklist and decision controls;
-- decisions: Verify & Approve, Return for Revision, Reject.
+- right: verification checklist and controls;
+- actions: Mark VERIFIED or Return for Revision.
 
-No e-signature control appears in this workspace.
+The Head receives only VERIFIED requests and separately chooses Approve, Return for Revision, or Reject. Verification and approval are distinct signed audit events.
 
 ## Shared usability rules
 

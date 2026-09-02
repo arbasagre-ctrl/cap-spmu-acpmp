@@ -109,6 +109,16 @@ class RevisionControlsTest extends TestCase
             'stage_code' => ApprovalStage::Spmu,
             'sequence_no' => 1,
             'received_at' => now(),
+            'approver_user_id' => $delegate->id,
+            'decision' => 'VERIFIED',
+            'decided_at' => now(),
+        ]);
+
+        ApprovalStep::create([
+            'request_version_id' => $version->id,
+            'stage_code' => ApprovalStage::Spmu,
+            'sequence_no' => 2,
+            'received_at' => now(),
             'decision' => 'RECEIVED',
         ]);
 
@@ -136,6 +146,7 @@ class RevisionControlsTest extends TestCase
         $this->assertDatabaseHas('approval_steps', [
             'request_version_id' => $version->id,
             'stage_code' => ApprovalStage::Spmu->value,
+            'sequence_no' => 2,
             'approver_user_id' => $delegate->id,
             'temporary_delegation_id' => $delegation->id,
             'decision' => 'REJECTED',
@@ -151,10 +162,9 @@ class RevisionControlsTest extends TestCase
 
         $this->assertDatabaseHas('gate_passes', [
             'custody_transaction_id' => $custody->id,
-            'status' => 'PENDING',
-            'pass_document_id' => null,
+            'status' => 'READY_FOR_PRINTING',
         ]);
-        $this->assertDatabaseMissing('generated_documents', [
+        $this->assertDatabaseHas('generated_documents', [
             'subject_id' => $custody->id,
             'document_type' => 'GATE_PASS',
             'status' => 'FINAL',

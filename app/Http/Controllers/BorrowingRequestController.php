@@ -132,11 +132,11 @@ class BorrowingRequestController extends Controller
         } elseif (
             $workspace === 'SPMU'
             && $request->user()->access_classification === AccessClassification::SpmuOfficer
-            && $request->user()->activeDelegationFor('SPMU') === null
         ) {
-            // The Action Officer works only on requests already approved
-            // by the SPMU Head. Pending approvals stay in the Head queue.
-            $query->whereNotNull('final_approved_at');
+            $query->where(function ($query): void {
+                $query->where('status', RequestStatus::UnderSpmu)
+                    ->orWhereNotNull('final_approved_at');
+            });
         }
 
         /*
@@ -173,6 +173,13 @@ class BorrowingRequestController extends Controller
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
 
+                /*
+                 * Online request submission and physical pickup/release are
+                 * separate availabilities. This is informational only and
+                 * never blocks the form.
+                 */
+                'pickupAvailability' => $this->pickupAvailability(),
+
                 'officeUnitsByDivision' => self::officeUnitsByDivision(),
                 'prefillDivisionCode' => $prefillDivisionCode,
                 'prefillOfficeUnit' => $prefillOfficeUnit,
@@ -185,6 +192,25 @@ class BorrowingRequestController extends Controller
                     ->get(),
             ]
         );
+    }
+
+    /**
+     * Informational pickup/release availability for the borrower form.
+     *
+     * @return array{available: bool, next: ?\Carbon\CarbonImmutable}
+     */
+    private function pickupAvailability(): array
+    {
+        $calendar = app(\App\Services\OperationalCalendarService::class);
+
+        return [
+            'available' => $calendar->isOpenFor(
+                \App\Services\OperationalCalendarService::PICKUP,
+                now(),
+                true
+            ),
+            'next' => $calendar->nextPickupWindow(now()),
+        ];
     }
 
     public function store(
@@ -318,17 +344,21 @@ class BorrowingRequestController extends Controller
         Request $request,
         BorrowingRequest $borrowingRequest
     ): View {
-        $canDecide =
-            $this->authorizeRequest(
-                $request,
-                $borrowingRequest
-            );
+        $canVerify = $this->canVerifyRequest($request, $borrowingRequest);
+        $canDecide = $this->canDecideApproval($request, $borrowingRequest);
 
-        $canVerify = false;
+        $this->authorizeRequest(
+            $request,
+            $borrowingRequest,
+            $canVerify,
+            $canDecide
+        );
 
-        $reviewMode = $canDecide
-            ? 'HEAD_DECISION'
-            : null;
+        $reviewMode = match (true) {
+            $canVerify => 'ACTION_OFFICER_VERIFICATION',
+            $canDecide => 'HEAD_DECISION',
+            default => null,
+        };
 
         $approvalStage =
             $this->approvalStage(
@@ -1353,17 +1383,14 @@ class BorrowingRequestController extends Controller
 
     private function authorizeRequest(
         Request $request,
-        BorrowingRequest $borrowingRequest
-    ): bool {
+        BorrowingRequest $borrowingRequest,
+        bool $canVerify,
+        bool $canDecide
+    ): void {
         $user = $request->user();
 
         $workspace = strtoupper(
             (string) $request->session()->get('active_workspace')
-        );
-
-        $canDecide = $this->canDecideApproval(
-            $request,
-            $borrowingRequest
         );
 
         $isBorrowerOwner = $workspace === 'BORROWER'
@@ -1374,22 +1401,47 @@ class BorrowingRequestController extends Controller
 
         $isDelegatedOfficer = $workspace === 'SPMU'
             && $user->access_classification === AccessClassification::SpmuOfficer
-            && $user->activeDelegationFor('SPMU') !== null;
+            && $user->activeDelegationFor('SPMU') !== null
+            && $borrowingRequest->status === RequestStatus::UnderSpmu;
 
         $isOperationalOfficer = $workspace === 'SPMU'
             && $user->access_classification === AccessClassification::SpmuOfficer
-            && $borrowingRequest->final_approved_at !== null;
+            && (
+                $borrowingRequest->final_approved_at !== null
+                || $borrowingRequest->status === RequestStatus::UnderSpmu
+                || $canVerify
+            );
 
         abort_unless(
             $isBorrowerOwner
             || $isSpmuHead
             || $isDelegatedOfficer
             || $isOperationalOfficer
+            || $canVerify
             || $canDecide,
             403
         );
+    }
 
-        return $canDecide;
+    private function canVerifyRequest(
+        Request $request,
+        BorrowingRequest $borrowingRequest
+    ): bool {
+        if (
+            $borrowingRequest->status !== RequestStatus::UnderSpmu
+            || $request->user()->primaryWorkspace() !== 'SPMU'
+            || $request->user()->access_classification !== AccessClassification::SpmuOfficer
+        ) {
+            return false;
+        }
+
+        $borrowingRequest->loadMissing('currentVersion.approvalSteps');
+
+        $step = $borrowingRequest->currentVersion?->approvalSteps
+            ?->where('sequence_no', 1)
+            ->first(fn ($item) => (string) $item->stage_code->value === 'SPMU');
+
+        return $step && in_array($step->decision, ['PENDING', 'RECEIVED'], true);
     }
 
     private function canDecideApproval(
@@ -1420,7 +1472,7 @@ class BorrowingRequestController extends Controller
         $borrowingRequest->loadMissing('currentVersion.approvalSteps');
 
         $step = $borrowingRequest->currentVersion?->approvalSteps
-            ?->where('sequence_no', 1)
+            ?->where('sequence_no', 2)
             ->first(fn ($item) => (string) $item->stage_code->value === 'SPMU');
 
         return $step && in_array($step->decision, ['PENDING', 'RECEIVED'], true);

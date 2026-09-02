@@ -11,11 +11,6 @@
 .reporting-workspace .button.primary { background: var(--report-blue); border-color: var(--report-blue); color: #fff; }
 .reporting-workspace .button:hover { filter: brightness(.97); }
 .reporting-workspace :is(a, button, select, summary):focus-visible { outline: 2px solid var(--report-blue); outline-offset: 3px; }
-.reporting-workspace .reports-module-tabs { display: inline-flex; justify-self: start; align-items: stretch; width: fit-content; padding: 0; gap: 0; border: 1px solid var(--report-line); border-radius: 6px; background: var(--surface-elevated); overflow: hidden; }
-.reporting-workspace .reports-module-tabs a { display: flex; align-items: center; justify-content: center; min-width: 106px; min-height: 39px; padding: 8px 22px; border-radius: 0; border-bottom: 2px solid transparent; color: var(--text-secondary); font-size: 13px; font-weight: 700; text-decoration: none; }
-.reporting-workspace .reports-module-tabs a + a { border-left: 1px solid var(--report-line); }
-.reporting-workspace .reports-module-tabs a.is-active { color: var(--report-blue); background: var(--surface-elevated); border-bottom-color: var(--report-blue); box-shadow: none; }
-.reporting-workspace .reports-module-tabs a:hover { background: var(--surface-hover); }
 .reporting-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 10px; }
 .reporting-workspace .report-period-field { display: grid; gap: 8px; min-width: 0; margin: 0; color: var(--heading); font-size: 12px; font-weight: 700; }
 .reporting-workspace .report-period-control { position: relative; display: block; min-width: 0; }
@@ -38,11 +33,9 @@
 @media (max-width: 650px) {
     .reporting-workspace .page-heading { align-items: flex-start; gap: 14px; }
     .reporting-heading-actions { justify-content: flex-start; }
-    .reporting-workspace .reports-module-tabs { width: 100%; }
-    .reporting-workspace .reports-module-tabs a { flex: 1; }
 }
 @media print {
-    .reporting-workspace .reports-module-tabs, .reporting-heading-actions, .reporting-workspace .report-generator-card, .reporting-workspace .report-output-actions, .reporting-workspace .analytics-period-toolbar { display: none !important; }
+    .reporting-heading-actions, .reporting-workspace .report-generator-card, .reporting-workspace .report-output-actions, .reporting-workspace .analytics-period-toolbar { display: none !important; }
     .reporting-workspace .card { box-shadow: none; }
 }
 </style>

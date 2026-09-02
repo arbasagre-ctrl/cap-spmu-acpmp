@@ -310,6 +310,78 @@
     transform: none;
 }
 
+/*
+ * Decision hover states
+ * ---------------------
+ * Each decision announces itself in its own colour only while the pointer is
+ * on it (or it is keyboard-focused); the resting state is left exactly as the
+ * page already renders it.
+ *
+ * !important is required here, and only here: app.css carries a generic
+ * `button:not(...):not(...)...:hover` rule whose long :not() chain gives it a
+ * specificity no reasonable selector in this file can outrank.
+ */
+.spmu-decision-actions .button {
+    transition:
+        background-color 170ms ease,
+        border-color 170ms ease,
+        color 170ms ease;
+}
+
+.spmu-decision-actions .button[data-decision-trigger="APPROVED"]:hover:not(:disabled),
+.spmu-decision-actions .button[data-decision-trigger="APPROVED"]:focus-visible:not(:disabled),
+.spmu-decision-actions .button[data-decision-trigger="VERIFIED"]:hover:not(:disabled),
+.spmu-decision-actions .button[data-decision-trigger="VERIFIED"]:focus-visible:not(:disabled) {
+    color: #fff !important;
+    background-color: #16a34a !important;
+    border-color: #16a34a !important;
+}
+
+.spmu-decision-actions .button[data-decision-trigger="RETURNED_FOR_REVISION"]:hover:not(:disabled),
+.spmu-decision-actions .button[data-decision-trigger="RETURNED_FOR_REVISION"]:focus-visible:not(:disabled) {
+    color: #fff !important;
+    background-color: #d97706 !important;
+    border-color: #d97706 !important;
+}
+
+.spmu-decision-actions .button[data-decision-trigger="REJECTED"]:hover:not(:disabled),
+.spmu-decision-actions .button[data-decision-trigger="REJECTED"]:focus-visible:not(:disabled) {
+    color: #fff !important;
+    background-color: #dc2626 !important;
+    border-color: #dc2626 !important;
+}
+
+/* The focus ring stays on top of the fill so keyboard position is obvious. */
+.spmu-decision-actions .button:focus-visible {
+    outline: 2px solid var(--surface-elevated);
+    outline-offset: -4px;
+    box-shadow: var(--focus-ring);
+}
+
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="APPROVED"]:hover:not(:disabled),
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="APPROVED"]:focus-visible:not(:disabled),
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="VERIFIED"]:hover:not(:disabled),
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="VERIFIED"]:focus-visible:not(:disabled) {
+    color: #fff !important;
+    background-color: #22c55e !important;
+    border-color: #22c55e !important;
+}
+
+/* Dark amber is too light to carry white text, so this one takes dark ink. */
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="RETURNED_FOR_REVISION"]:hover:not(:disabled),
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="RETURNED_FOR_REVISION"]:focus-visible:not(:disabled) {
+    color: #111827 !important;
+    background-color: #f59e0b !important;
+    border-color: #f59e0b !important;
+}
+
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="REJECTED"]:hover:not(:disabled),
+html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="REJECTED"]:focus-visible:not(:disabled) {
+    color: #fff !important;
+    background-color: #ef4444 !important;
+    border-color: #ef4444 !important;
+}
+
 /* 5. Confirmation dialog -------------------------------------------------- */
 
 .spmu-confirm-dialog {

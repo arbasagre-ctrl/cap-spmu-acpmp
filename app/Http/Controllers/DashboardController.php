@@ -194,6 +194,14 @@ class DashboardController extends Controller
         } elseif ($workspace === 'SPMU' && $classification === AccessClassification::SpmuOfficer) {
             $dashboardMode = 'SPMU_OFFICER';
 
+            $forVerification = BorrowingRequest::query()
+                ->where('status', RequestStatus::UnderSpmu)
+                ->whereHas('currentVersion.approvalSteps', fn ($step) => $step
+                    ->where('stage_code', 'SPMU')
+                    ->where('sequence_no', 1)
+                    ->whereIn('decision', ['PENDING', 'RECEIVED']))
+                ->count();
+
             $forPickupScheduling = CustodyTransaction::query()
                 ->where('status', 'PREPARING_RELEASE')
                 ->whereNull('scheduled_release_at')
@@ -214,17 +222,21 @@ class DashboardController extends Controller
                 ->count();
 
             $statistics = [
+                'For Verification' => $forVerification,
                 'For Pickup Scheduling' => $forPickupScheduling,
                 'Ready for Release' => $readyForRelease,
                 'For Return Check' => $forReturnCheck,
                 'Laundry Operations' => $laundryOperations,
             ];
 
-            $queue = CustodyTransaction::query()
-                ->with(['borrower', 'request.currentVersion'])
-                ->where('status', 'PREPARING_RELEASE')
-                ->orderByRaw('CASE WHEN scheduled_release_at IS NULL THEN 0 ELSE 1 END')
-                ->orderBy('scheduled_release_at')
+            $queue = BorrowingRequest::query()
+                ->with(['borrower', 'currentVersion'])
+                ->where('status', RequestStatus::UnderSpmu)
+                ->whereHas('currentVersion.approvalSteps', fn ($step) => $step
+                    ->where('stage_code', 'SPMU')
+                    ->where('sequence_no', 1)
+                    ->whereIn('decision', ['PENDING', 'RECEIVED']))
+                ->oldest()
                 ->limit(6)
                 ->get();
 
@@ -241,7 +253,7 @@ class DashboardController extends Controller
                 ->where('status', RequestStatus::UnderSpmu)
                 ->whereHas('currentVersion.approvalSteps', fn ($step) => $step
                     ->where('stage_code', 'SPMU')
-                    ->where('sequence_no', 1)
+                    ->where('sequence_no', 2)
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->count();
 
@@ -269,7 +281,7 @@ class DashboardController extends Controller
                 ->where('status', RequestStatus::UnderSpmu)
                 ->whereHas('currentVersion.approvalSteps', fn ($step) => $step
                     ->where('stage_code', 'SPMU')
-                    ->where('sequence_no', 1)
+                    ->where('sequence_no', 2)
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->oldest()
                 ->limit(6)

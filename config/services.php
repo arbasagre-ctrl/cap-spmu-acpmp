@@ -35,6 +35,20 @@ return [
         ],
     ],
 
+    /*
+     * Google is used for identity only. Authorization stays with the local
+     * user record, so no scopes beyond openid/email/profile are requested.
+     *
+     * 'allowed_domains' is optional: leave it blank to accept any Google
+     * account and let the local user lookup decide access.
+     */
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
+        'allowed_domains' => env('GOOGLE_ALLOWED_DOMAINS', ''),
+    ],
+
     'sms' => [
         'provider' => env('SMS_PROVIDER'),
         'webhook_url' => env('SMS_WEBHOOK_URL'),

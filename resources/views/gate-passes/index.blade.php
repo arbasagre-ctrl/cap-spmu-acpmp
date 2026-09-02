@@ -3,8 +3,8 @@
 @php
     $gatePasses->loadMissing('custody.borrower.organizationalUnit');
     $gatePassStatusLabels = [
-        'PENDING' => 'For Release',
-        'READY_FOR_PRINTING' => 'Awaiting Accomplished Scan',
+        'PENDING' => 'Legacy / Incomplete',
+        'READY_FOR_PRINTING' => 'Approved / Awaiting Handover',
         'VERIFIED' => 'Completed',
     ];
     $gatePassStatusTones = ['PENDING' => 'warning', 'READY_FOR_PRINTING' => 'info', 'VERIFIED' => 'success'];

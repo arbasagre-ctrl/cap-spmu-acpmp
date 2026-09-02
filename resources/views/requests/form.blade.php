@@ -3,6 +3,32 @@
 @section('content')
 
 @php
+    $pickupAvailability = $pickupAvailability ?? null;
+@endphp
+
+@if($pickupAvailability && ! $pickupAvailability['available'])
+    {{--
+        Informational only: online request submission availability and physical
+        pickup/release availability are separate, so this never blocks the form.
+    --}}
+    <section class="content-area">
+        <div class="callout warning request-pickup-availability">
+            <x-icon name="information" size="21" />
+            <div>
+                <strong>Requests are accepted, but physical pickup/release is currently unavailable.</strong>
+                <p>
+                    Pickup will be scheduled on the next valid Pickup/Release transaction day.
+                    @if($pickupAvailability['next'])
+                        Next available Pickup/Release: {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
+                    @endif
+                </p>
+            </div>
+        </div>
+    </section>
+@endif
+
+
+@php
     $editing = $borrowingRequest->exists;
     $hasCurrentESignature = auth()->user()->currentSignature()->whereHas('file')->exists();
 
@@ -1165,7 +1191,7 @@
                     hidden
                 >
                     <strong>Off-campus borrowing is active.</strong>
-                    <p>Only Barricade may be selected, and it must be borrowed by itself for off-campus use.</p>
+                    <p>Only Barricade may be selected, and it must be borrowed by itself for off-campus use. This request is automatically marked as requiring a Gate Pass.</p>
                 </div>
 
                 <div
@@ -1898,8 +1924,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (premisesHelp) {
             premisesHelp.textContent = offCampusMode
-                ? 'Off-campus selected. Search and select Barricade only; it must be the only item in this request.'
-                : 'Off-campus is available only for eligible items.';
+                ? 'Off-campus selected. A Gate Pass is required. Search and select Barricade only; it must be the only item in this request.'
+                : 'Off-campus is available only for eligible items and automatically requires a Gate Pass after final approval.';
         }
 
         if (searchInput) {

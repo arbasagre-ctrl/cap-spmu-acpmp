@@ -18,6 +18,8 @@
     $pendingCancellation = $borrowingRequest->pendingCancellation;
     $isUnderSpmuReview = $isSpmu
         && $borrowingRequest->status === App\Enums\RequestStatus::UnderSpmu;
+    $actionOfficerStep = $v->approvalSteps->firstWhere('sequence_no', 1);
+    $actionOfficerVerified = $actionOfficerStep?->decision === 'VERIFIED';
 
     // A request remains APPROVED_READY_FOR_RELEASE at the request-record level
     // after approval, while the custody transaction continues through release,
@@ -366,17 +368,19 @@
             </div>
 
             <article class="card spmu-checklist-panel">
-            @if($canDecide)
+            @if($canVerify || $canDecide)
                 <div class="card-header">
                     <div>
-                        <p class="eyebrow">SPMU Head / Admin</p>
-                        <h2>Review and decide</h2>
+                        <p class="eyebrow">{{ $canVerify ? 'SPMU Action Officer' : 'SPMU Head / Admin' }}</p>
+                        <h2>{{ $canVerify ? 'Verify request and documents' : 'Review and decide' }}</h2>
                     </div>
-                    <span class="status-badge status-info">For approval</span>
+                    <span class="status-badge status-info">{{ $canVerify ? 'For verification' : 'Verified · For approval' }}</span>
                 </div>
 
                 <p class="meta spmu-review-summary">
-                    Verify the submitted documents, request details, and availability.
+                    {{ $canVerify
+                        ? 'Check the submitted documents and request details. Marking VERIFIED routes the request to the Head; it does not approve or reserve inventory.'
+                        : 'The Action Officer has verified this request. Record the separate final approval, rejection, or return decision.' }}
                 </p>
 
                 @if($v->represents_student_activity)
@@ -395,7 +399,7 @@
 
                 <form
                     method="post"
-                    action="{{ route('approvals.decide', $borrowingRequest) }}"
+                    action="{{ $canVerify ? route('verifications.verify', $borrowingRequest) : route('approvals.decide', $borrowingRequest) }}"
                     class="spmu-verification-form top-gap"
                     data-verification-form
                     data-required-supporting-present="{{ ($requestLetterDoc && (!$v->represents_student_activity || $permissionToConductDoc)) ? '1' : '0' }}"
@@ -418,13 +422,13 @@
                         </label>
                         <label class="spmu-check-row">
                             <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
-                            <span><strong>Inventory availability is verified</strong></span>
+                            <span><strong>{{ $canVerify ? 'Request and requested inventory were verified' : 'Inventory availability is verified for final allocation' }}</strong></span>
                         </label>
                     </div>
 
                     @unless($hasCurrentESignature)
                         <p class="field-error top-gap">
-                            <a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> to enable approval.
+                            <a href="{{ route('profile.show') }}">Register your E-signature in Account Settings</a> to enable {{ $canVerify ? 'verification' : 'approval' }}.
                         </p>
                     @endunless
 
@@ -435,11 +439,11 @@
                             <button
                                 class="button primary ui-pressable"
                                 type="button"
-                                data-decision-trigger="APPROVED"
+                                data-decision-trigger="{{ $canVerify ? 'VERIFIED' : 'APPROVED' }}"
                                 data-approve-button
                                 disabled
                             >
-                                E-sign, Verify &amp; Approve
+                                {{ $canVerify ? 'E-sign & Mark VERIFIED' : 'E-sign & Approve' }}
                             </button>
 
                             <button
@@ -450,13 +454,15 @@
                                 Return for Revision
                             </button>
 
-                            <button
-                                class="button danger ui-pressable"
-                                type="button"
-                                data-decision-trigger="REJECTED"
-                            >
-                                Reject
-                            </button>
+                            @if($canDecide)
+                                <button
+                                    class="button danger ui-pressable"
+                                    type="button"
+                                    data-decision-trigger="REJECTED"
+                                >
+                                    Reject
+                                </button>
+                            @endif
                         </div>
                     </div>
                 </form>
@@ -493,13 +499,18 @@
                 <div class="card-header">
                     <div>
                         <p class="eyebrow">SPMU review</p>
-                        <h2>Waiting for Head decision</h2>
+                        <h2>{{ $actionOfficerVerified ? 'Waiting for Head decision' : 'Waiting for Action Officer verification' }}</h2>
                     </div>
                 </div>
 
                 <div class="empty-state">
-                    <strong>This request is awaiting SPMU Head approval.</strong>
-                    <span>Operational processing by the Action Officer starts only after SPMU Head approval and inventory allocation for pickup.</span>
+                    @if($actionOfficerVerified)
+                        <strong>This VERIFIED request is awaiting the SPMU Head decision.</strong>
+                        <span>Verification is not approval; operational preparation starts only after the Head's final approval.</span>
+                    @else
+                        <strong>This request is awaiting Action Officer verification.</strong>
+                        <span>The SPMU Head decision workflow becomes available only after the Action Officer marks the request VERIFIED.</span>
+                    @endif
                 </div>
             @endif
             </article>
@@ -596,7 +607,7 @@
                 </div>
                 <div>
                     <span>Premises</span>
-                    <strong>{{ $v->off_campus ? 'Off-campus' : 'On-campus' }}</strong>
+                    <strong>{{ $v->off_campus ? 'Off-campus · Gate Pass required' : 'On-campus' }}</strong>
                 </div>
             </div>
         </article>
@@ -718,8 +729,13 @@
             <h2 class="borrower-card-title">
                 <span class="borrower-card-icon" aria-hidden="true"><x-icon name="printer" size="20" /></span>
                 Forms for Physical Processing
-                <span class="borrower-card-note">Download the applicable forms.</span>
+                <span class="borrower-card-note">View and download the approved forms before pickup.</span>
             </h2>
+
+            <div class="callout info">
+                <strong>Bring the generated documents to SPMU.</strong>
+                <p>Proceed to SPMU on the scheduled pickup date with the Borrower Slip{{ $requestHasOffCampus ? ' and the generated Gate Pass for this off-campus request' : '' }}.</p>
+            </div>
 
             <div class="borrower-item-list">
                 <div class="borrower-item-row">
@@ -729,7 +745,10 @@
                     </div>
                     <div class="borrower-item-quantity">
                         @if($borrowerSlipDocument)
-                            <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download / Print</a>
+                            <span class="inline-actions">
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $borrowerSlipDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
+                            </span>
                         @else
                             <span class="status-badge status-neutral">Preparing</span>
                         @endif
@@ -745,7 +764,10 @@
                         @if(!$requestHasLaundry)
                             <span class="status-badge status-neutral">Not applicable</span>
                         @elseif($laundryFormDocument)
-                            <a class="button primary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download / Print</a>
+                            <span class="inline-actions">
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $laundryFormDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
+                            </span>
                         @else
                             <span class="status-badge status-neutral">Preparing</span>
                         @endif
@@ -759,9 +781,9 @@
                             @if(!$requestHasOffCampus)
                                 Not applicable.
                             @elseif($gatePassFinalized)
-                                Finalized by SPMU after Physical Release.
+                                Generated automatically after SPMU Head approval.
                             @else
-                                SPMU will finalize and print the Gate Pass during Physical Release.
+                                Required, but the approved Gate Pass is not available. Contact SPMU; do not proceed with release.
                             @endif
                         </small>
                     </div>
@@ -769,9 +791,12 @@
                         @if(!$requestHasOffCampus)
                             <span class="status-badge status-neutral">Not applicable</span>
                         @elseif($gatePassFinalized)
-                            <a class="button secondary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">View Final Gate Pass</a>
+                            <span class="inline-actions">
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $gatePassDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
+                            </span>
                         @else
-                            <span class="status-badge status-warning">Pending SPMU Verification</span>
+                            <span class="status-badge status-danger">Missing approved document</span>
                         @endif
                     </div>
                 </div>
@@ -1287,9 +1312,15 @@
     let pendingDecision = '';
 
     const decisionCopy = {
+        VERIFIED: {
+            title: 'Mark this request VERIFIED?',
+            message: 'Your registered E-signature will certify Action Officer verification and route the request to the SPMU Head. This does not approve the request, reserve inventory, or generate release documents.',
+            confirm: 'Yes, Mark VERIFIED',
+            tone: 'primary',
+        },
         APPROVED: {
-            title: 'E-sign, verify, and approve this request?',
-            message: 'Your registered E-signature will be bound to this exact approval step. The approved quantities will be allocated/held for this borrower, but they are not yet physically issued.',
+            title: 'E-sign and approve this verified request?',
+            message: 'Your registered E-signature will be bound to the separate Head approval step. The approved quantities will be reserved and the applicable release documents will be generated, but the property is not yet physically issued.',
             confirm: 'Yes, E-sign & Approve',
             tone: 'primary',
         },
@@ -1306,6 +1337,9 @@
             tone: 'danger',
         },
     };
+
+    const isPositiveDecision = (decision) =>
+        decision === 'VERIFIED' || decision === 'APPROVED';
 
     const checklistComplete = () =>
         requiredSupportingPresent &&
@@ -1330,7 +1364,7 @@
     };
 
     const configureRemarks = (decision) => {
-        const needsRemarks = decision !== 'APPROVED';
+        const needsRemarks = !isPositiveDecision(decision);
         remarksWrap.hidden = !needsRemarks;
         clearRemarksError();
 
@@ -1364,13 +1398,13 @@
 
         if (typeof dialog.showModal === 'function') {
             dialog.showModal();
-            if (decision !== 'APPROVED') {
+            if (!isPositiveDecision(decision)) {
                 window.setTimeout(() => remarksField.focus(), 0);
             }
             return;
         }
 
-        if (decision === 'APPROVED') {
+        if (isPositiveDecision(decision)) {
             if (window.confirm(`${copy.title}\n\n${copy.message}`)) {
                 if (eSignatureInput) eSignatureInput.value = '1';
                 form.submit();
@@ -1402,13 +1436,13 @@
             const decision = trigger.dataset.decisionTrigger;
             showInlineError('');
 
-            if (decision === 'APPROVED' && !checklistComplete()) {
+            if (isPositiveDecision(decision) && !checklistComplete()) {
                 showInlineError(
                     !requiredSupportingPresent
-                        ? 'The required supporting document is missing. Approval is unavailable until the required document is attached.'
+                        ? 'A required supporting document is missing. This action is unavailable until the required document is attached.'
                         : !hasCurrentESignature
-                            ? 'Register your E-signature in Account Settings before approving.'
-                            : 'Complete all verification checks before approving.'
+                            ? 'Register your E-signature in Account Settings before continuing.'
+                            : 'Complete all checks before continuing.'
                 );
                 return;
             }
@@ -1427,7 +1461,7 @@
     confirmSubmit?.addEventListener('click', () => {
         if (!pendingDecision) return;
 
-        if (pendingDecision !== 'APPROVED') {
+        if (!isPositiveDecision(pendingDecision)) {
             if (eSignatureInput) eSignatureInput.value = '';
             const value = remarksField.value.trim();
 

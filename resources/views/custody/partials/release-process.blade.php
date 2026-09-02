@@ -3,6 +3,7 @@
     $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup_at') || $errors->has('pickup_expires_at');
     $releaseCurrentDocuments = $documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']);
     $releaseDocumentsReady = $releaseCurrentDocuments->contains('document_type', 'BORROWER_SLIP')
+        && (! $hasOffCampusItem || $releaseCurrentDocuments->contains('document_type', 'GATE_PASS'))
         && (! $hasLaundryItem || $releaseCurrentDocuments->contains('document_type', 'LAUNDRY_FORM'));
 @endphp
 
@@ -67,11 +68,13 @@
                             <p>Set the pickup date and claim window.</p>
                         @endif
                     </div>
-                    <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $releaseScheduleAttention ? 'Schedule Required' : 'Scheduled' }}</span>
-                    <div class="release-step-actions release-schedule-actions">
+                    <div class="release-schedule-status">
+                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $releaseScheduleAttention ? 'Schedule Required' : 'Scheduled' }}</span>
                         @if($hasPickupSchedule)
-                            <button class="button secondary small ui-pressable link-button release-outline" type="button" data-release-schedule-edit aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}">Edit Schedule</button>
+                            <button class="link-button release-schedule-edit" type="button" data-release-schedule-edit aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}"><x-icon name="edit" size="15" />Edit schedule</button>
                         @endif
+                    </div>
+                    <div class="release-step-actions release-schedule-actions">
                         <button class="icon-button release-step-toggle release-schedule-toggle" type="button" data-release-panel-toggle aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}" aria-label="Toggle pickup schedule editor" title="Show or hide pickup schedule"><x-icon name="chevron-down" size="18" /></button>
                     </div>
                 </div>
@@ -113,7 +116,7 @@
                     <div class="release-step-panel release-documents-panel" id="release-documents-panel">
                         @include('custody.partials.release-documents')
                         @if($hasOffCampusItem)
-                            <p class="release-step-note">The Action Officer finalizes and prints the Gate Pass during Physical Release. Give the final copy to the borrower before the property exits campus.</p>
+                            <p class="release-step-note">Validate that the borrower presented the approved generated Gate Pass before recording the physical handover.</p>
                         @endif
                     </div>
                 @else
@@ -144,7 +147,7 @@
                 @include('custody.partials.physical-release-form')
             </li>
         </ol>
-        <div class="release-process-note"><x-icon name="information" size="19" /><span>Once Physical Release is confirmed, the system will generate the Gate Pass (if required) and update the transaction status.</span></div>
+        <div class="release-process-note"><x-icon name="information" size="19" /><span>Physical Release records the actual handover and moves custody to Released / On Custody. It does not create or approve a new Gate Pass.</span></div>
     </article>
 </section>
 

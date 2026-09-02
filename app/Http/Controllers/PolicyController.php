@@ -493,6 +493,11 @@ class PolicyController extends Controller
             ]);
         }
 
+        /*
+         * Closing a day withdraws its transaction permissions and hours. The
+         * form locks those controls for a closed day, so the stored row has to
+         * match what the SPMU Head is shown.
+         */
         if (! (bool) $data['is_open']) {
             $data['accepts_requests'] = false;
             $data['allows_pickup'] = false;
@@ -585,6 +590,10 @@ class PolicyController extends Controller
                 'close_time' => ($row['close_time'] ?? null) ?: null,
             ];
 
+            /*
+             * Closing a day withdraws its transaction permissions and hours,
+             * matching the controls the form locks for a closed day.
+             */
             if (! $values['is_open']) {
                 $values['accepts_requests'] = false;
                 $values['allows_pickup'] = false;

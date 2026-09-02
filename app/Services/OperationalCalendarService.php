@@ -18,6 +18,14 @@ class OperationalCalendarService
     public const PICKUP = 'PICKUP';
     public const RETURN = 'RETURN';
 
+    /*
+     * Physical pickup / release is an SPMU counter transaction with a fixed
+     * institutional window. Both ends are inclusive, matching the existing
+     * betweenIncluded() convention used for configured operating hours.
+     */
+    public const PICKUP_WINDOW_START = '13:00';
+    public const PICKUP_WINDOW_END = '16:00';
+
     public function profile(CarbonInterface|string $date): array
     {
         $day = $this->asDate($date);
@@ -74,10 +82,19 @@ class OperationalCalendarService
         $at = $this->asDateTime($dateTime);
         $profile = $this->profile($at);
 
-        if (! $profile['is_open']) {
-            return false;
-        }
-
+        /*
+         * OPEN/CLOSED vs ACTIVITY PERMISSION
+         * ----------------------------------
+         * is_open describes whether the SPMU office is physically operating
+         * that weekday. It deliberately does not gate the individual
+         * permissions: a physically closed day may still accept online
+         * request submissions when Requests is enabled, while physical
+         * pickup/release and returns stay unavailable.
+         *
+         * An institutional closure is expressed as a CLOSED date exception,
+         * which profileFromRecords() already resolves by turning every
+         * permission off, so that existing precedence is unchanged.
+         */
         $allowed = match (strtoupper($activity)) {
             self::REQUEST => (bool) $profile['accepts_requests'],
             self::PICKUP => (bool) $profile['allows_pickup'],
@@ -89,15 +106,72 @@ class OperationalCalendarService
             return $allowed;
         }
 
-        if (! $profile['open_time'] || ! $profile['close_time']) {
+        [$open, $close] = $this->operatingWindow($activity, $at, $profile);
+
+        if (! $open || ! $close) {
             return true;
         }
 
-        $timezone = config('app.timezone') ?: 'Asia/Manila';
-        $open = CarbonImmutable::parse($at->toDateString().' '.$profile['open_time'], $timezone);
-        $close = CarbonImmutable::parse($at->toDateString().' '.$profile['close_time'], $timezone);
-
         return $at->betweenIncluded($open, $close);
+    }
+
+    /**
+     * Resolve the effective time window for an activity on a given day.
+     *
+     * Pickup / release is additionally bounded by the fixed physical release
+     * window. A narrower configured window still applies; a wider one cannot
+     * extend the counter beyond 1:00 PM - 4:00 PM.
+     *
+     * @return array{0: ?CarbonImmutable, 1: ?CarbonImmutable}
+     */
+    public function operatingWindow(string $activity, CarbonInterface|string $dateTime, ?array $profile = null): array
+    {
+        $at = $this->asDateTime($dateTime);
+        $profile ??= $this->profile($at);
+        $timezone = config('app.timezone') ?: 'Asia/Manila';
+        $date = $at->toDateString();
+
+        $open = $profile['open_time']
+            ? CarbonImmutable::parse($date.' '.$profile['open_time'], $timezone)
+            : null;
+        $close = $profile['close_time']
+            ? CarbonImmutable::parse($date.' '.$profile['close_time'], $timezone)
+            : null;
+
+        if (strtoupper($activity) === self::PICKUP) {
+            $windowOpen = CarbonImmutable::parse($date.' '.self::PICKUP_WINDOW_START, $timezone);
+            $windowClose = CarbonImmutable::parse($date.' '.self::PICKUP_WINDOW_END, $timezone);
+
+            $open = $open && $open->gt($windowOpen) ? $open : $windowOpen;
+            $close = $close && $close->lt($windowClose) ? $close : $windowClose;
+        }
+
+        return [$open, $close];
+    }
+
+    /**
+     * The next date and time at which a physical pickup / release may occur.
+     *
+     * Reuses the existing day resolver (weekly schedule, special dates and
+     * closures included) and then applies the pickup window, so there is no
+     * second schedule resolver.
+     */
+    public function nextPickupWindow(CarbonInterface|string $from): CarbonImmutable
+    {
+        $at = $this->asDateTime($from);
+
+        // The same day still counts while its window has not closed yet.
+        if ($this->isOpenFor(self::PICKUP, $at, false)) {
+            [$open, $close] = $this->operatingWindow(self::PICKUP, $at);
+
+            if ($close && $at->lte($close)) {
+                return $open && $at->lt($open) ? $open : $at;
+            }
+        }
+
+        $date = $this->nextOpenDate(self::PICKUP, $at->addDay()->startOfDay(), true);
+
+        return $this->operatingWindow(self::PICKUP, $date)[0];
     }
 
     public function nextOpenDate(string $activity, CarbonInterface|string $from, bool $includeCurrent = true): CarbonImmutable
@@ -145,14 +219,27 @@ class OperationalCalendarService
             default => 'transaction',
         };
 
-        if (
-            $this->isOpenFor($activity, $date, false)
-            && $profile['open_time']
-            && $profile['close_time']
-        ) {
-            throw ValidationException::withMessages([
-                $field => ucfirst($label).' is outside the configured operational hours on '.$date->format('F j, Y').'. Allowed window: '.substr((string) $profile['open_time'], 0, 5).' – '.substr((string) $profile['close_time'], 0, 5).'.',
-            ]);
+        if ($this->isOpenFor($activity, $date, false)) {
+            [$open, $close] = $this->operatingWindow($activity, $at, $profile);
+
+            if ($open && $close && $at->lt($open)) {
+                throw ValidationException::withMessages([
+                    $field => ucfirst($label).' is available from '.$open->format('g:i A').' to '.$close->format('g:i A').'.',
+                ]);
+            }
+
+            if ($open && $close && $at->gt($close)) {
+                $nextWindow = strtoupper($activity) === self::PICKUP
+                    ? $this->nextPickupWindow($at)
+                    : null;
+
+                throw ValidationException::withMessages([
+                    $field => "Today's ".$label.' window has ended.'
+                        .($nextWindow
+                            ? ' Next available '.$label.': '.$nextWindow->format('d M Y, g:i A').'.'
+                            : ' Allowed window: '.$open->format('g:i A').' – '.$close->format('g:i A').'.'),
+                ]);
+            }
         }
 
         $next = $this->nextOpenDate($activity, $date, true);

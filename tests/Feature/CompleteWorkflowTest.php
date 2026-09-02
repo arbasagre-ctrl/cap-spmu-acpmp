@@ -585,6 +585,8 @@ class CompleteWorkflowTest extends TestCase
             ])
             ->assertSessionHasNoErrors();
 
+        // ON_CAMPUS: eligible for the Head directly, no verification step.
+
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmu)
             ->post(route('approvals.decide', $secondRequest), [
@@ -635,7 +637,8 @@ class CompleteWorkflowTest extends TestCase
             ->with('lines')
             ->firstOrFail();
 
-        $pickupAt = $version->schedule_date->copy()->setTime(9, 0, 0);
+        // Pickup / release runs 1:00 PM - 4:00 PM.
+        $pickupAt = $version->schedule_date->copy()->setTime(13, 0, 0);
         $pickupExpiresAt = $pickupAt->copy()->addHours(1);
 
         $this->travelTo($pickupAt->copy()->subHour());
@@ -1360,9 +1363,7 @@ class CompleteWorkflowTest extends TestCase
             $request->fresh()->status
         );
 
-        /*
-         * Exactly one active in-system approval/verification stage.
-         */
+        /* Submission creates only the Action Officer verification step. */
         $this->assertDatabaseCount(
             'approval_steps',
             1
@@ -1372,6 +1373,23 @@ class CompleteWorkflowTest extends TestCase
             'allocations',
             0
         );
+
+        /*
+         * PREMISES ROUTING: this helper submits an ON_CAMPUS request, which
+         * is eligible for the SPMU Head immediately and never passes through
+         * Action Officer verification. The single approval step created at
+         * submission is therefore the Head decision step (sequence 2), and
+         * still no allocation exists before approval.
+         */
+        $this->assertDatabaseCount('approval_steps', 1);
+        $this->assertDatabaseCount('allocations', 0);
+
+        $this->assertDatabaseHas('approval_steps', [
+            'request_version_id' => $version->id,
+            'stage_code' => 'SPMU',
+            'sequence_no' => 2,
+            'decision' => 'RECEIVED',
+        ]);
 
         $this->withSession([
             'active_workspace' => 'SPMU',
@@ -1575,12 +1593,13 @@ class CompleteWorkflowTest extends TestCase
         User $spmuOfficer,
         $version
     ): void {
+        // Pickup / release runs 1:00 PM - 4:00 PM.
         $pickupAt =
             $version
                 ->schedule_date
                 ->copy()
                 ->setTime(
-                    9,
+                    13,
                     0,
                     0
                 );

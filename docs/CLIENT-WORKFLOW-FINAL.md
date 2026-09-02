@@ -1,12 +1,12 @@
-# Client Workflow Final — 20 August 2026
+# Client Workflow Final — 2 September 2026
 
 This document is the current implementation baseline for the `client-workflow-update` branch.
 
 ## Active application access
 
 - Borrower — only classification allowed to borrow.
-- SPMU Admin / Head — SPMU verification/decision authority and oversight.
-- SPMU Action Officer — pickup, exact preparation, release/return, laundry operations and evidence; SPMU decision only with valid delegation.
+- SPMU Admin / Head — final decision authority and oversight after Action Officer verification.
+- SPMU Action Officer — request/document verification, pickup, exact preparation, release/return, laundry operations and evidence; final SPMU decision only with valid delegation.
 - ICTU Maintainer — accounts, configuration, audit and technical operations.
 
 ## GSU / VPAF treatment
@@ -25,16 +25,18 @@ Old GSU/VPAF account records are deactivated and hidden from active User Adminis
 3. Borrower prints it and obtains the required handwritten/wet signatures.
 4. Borrower scans and uploads the fully signed letter; Permission to Conduct is also uploaded for applicable student activity/organization requests.
 5. Borrower submits to SPMU.
-6. SPMU verifies the uploaded scan and request details in one system stage.
-7. SPMU Approve reserves exact quantity; Return for Revision/Reject creates no reservation.
+6. SPMU Action Officer verifies the uploaded scan and request details or returns an incomplete request for correction. Verification is not approval and creates no reservation.
+7. A `VERIFIED` request is routed to the SPMU Head for the separate Approve, Reject, or Return for Revision decision.
+8. Only Head approval reserves the exact quantity and creates the operational documents.
 
 ## Pickup / release
 
 - Custody/pickup record is created immediately after SPMU approval/reservation.
-- SPMU Action Officer schedules pickup and prepares the exact approved quantity.
-- System generates Borrower Slip and only applicable Gate Pass/Laundry Form.
+- System automatically generates the Borrower Slip and applicable Gate Pass after Head approval, never before it.
+- Borrower views/downloads both applicable documents and brings them to SPMU on the scheduled pickup date.
+- SPMU Action Officer schedules pickup, validates the approved/generated documents, and prepares the exact approved quantity.
 - Signatures on these forms are physical handwritten/wet signatures.
-- SPMU records physical release; no online e-signature is required.
+- SPMU records physical handover and moves custody to Released / On Custody; no duplicate Gate Pass request is created.
 
 ## Linen / Laundry Operations
 

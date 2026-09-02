@@ -33,11 +33,10 @@ class RequestWorkflowService
     ) {}
 
     /**
-     * Submit the borrower's request for SPMU verification.
+     * Submit the borrower's request to the SPMU Action Officer.
      *
-     * Submission does not create an inventory reservation.
-     * Inventory is reserved only after SPMU verifies and
-     * approves the submitted request.
+     * Submission and Action Officer verification never approve the request or
+     * reserve inventory. Only the later SPMU Head decision can do either.
      */
     public function submit(
         BorrowingRequest $request,
@@ -249,17 +248,17 @@ class RequestWorkflowService
                 ]);
 
                 /*
-                 * A submitted request has one system
-                 * verification stage: SPMU.
-                 *
-                 * Any institutional approvals/signatures
-                 * that were required before submission are
-                 * represented by the uploaded approved
-                 * scanned documents.
+                 * PREMISES ROUTING
+                 * ----------------
+                 * Sequence 1 is Action Officer verification; sequence 2 is the
+                 * SPMU Head decision. Only off-campus requests carry the Gate
+                 * Pass and off-campus eligibility checks that the Action
+                 * Officer verifies, so only they open at sequence 1. An
+                 * on-campus request has no verification stage: submission
+                 * opens the Head decision step directly, which is what makes
+                 * it immediately eligible in For Approval.
                  */
-                $version
-                    ->approvalSteps()
-                    ->delete();
+                $entrySequenceNo = $version->off_campus ? 1 : 2;
 
                 ApprovalStep::query()->create([
                     'request_version_id' =>
@@ -269,7 +268,7 @@ class RequestWorkflowService
                         ApprovalStage::Spmu,
 
                     'sequence_no' =>
-                        1,
+                        $entrySequenceNo,
 
                     'received_at' =>
                         now(),
@@ -310,14 +309,18 @@ class RequestWorkflowService
                     $request,
                     RequestStatus::UnderSpmu,
                     $borrower,
-                    'E-signed borrowing request version and approved scanned supporting document(s) submitted to SPMU for verification.'
+                    $entrySequenceNo === 1
+                        ? 'E-signed borrowing request version and scanned supporting document(s) submitted to the SPMU Action Officer for verification.'
+                        : 'E-signed borrowing request version and scanned supporting document(s) submitted to the SPMU Head for approval.'
                 );
 
                 $this->audit->record(
                     'REQUEST_SUBMITTED',
                     $request,
                     reason:
-                        'E-signed request version routed to SPMU for document and inventory verification. No reservation was created at submission.',
+                        $entrySequenceNo === 1
+                            ? 'E-signed request version routed to the SPMU Action Officer for document and request verification. No reservation was created at submission.'
+                            : 'E-signed on-campus request version routed directly to the SPMU Head for review and decision. No reservation was created at submission.',
                     after: [
                         'request_version_id' => $version->id,
                         'request_version_no' => $version->version_no,
@@ -328,15 +331,24 @@ class RequestWorkflowService
                     ]
                 );
 
-                $heads = User::query()
+                // The submission notice follows the same premises routing as
+                // the entry approval step above.
+                $submissionRecipients = User::query()
                     ->where('account_status', 'ACTIVE')
-                    ->where('access_classification', AccessClassification::SpmuHead->value)
+                    ->where(
+                        'access_classification',
+                        $entrySequenceNo === 1
+                            ? AccessClassification::SpmuOfficer->value
+                            : AccessClassification::SpmuHead->value
+                    )
                     ->get();
 
                 $this->notifications->send(
                     'REQUEST_SUBMITTED',
-                    $heads,
-                    "Request {$request->request_no} is ready for SPMU Head review and decision.",
+                    $submissionRecipients,
+                    $entrySequenceNo === 1
+                        ? "Request {$request->request_no} is ready for Action Officer document and request verification. Verification is not approval."
+                        : "On-campus request {$request->request_no} is ready for SPMU Head review and decision.",
                     $request,
                     ['SYSTEM', 'EMAIL'],
                 );
@@ -346,7 +358,196 @@ class RequestWorkflowService
     }
 
     /**
-     * Record the SPMU verification decision.
+     * Record the Action Officer's verification of the submitted request.
+     *
+     * VERIFIED creates the existing sequence-2 SPMU Head decision step. It
+     * deliberately does not allocate inventory, approve the request, create a
+     * custody transaction, or generate operational documents.
+     */
+    public function verifyByActionOfficer(
+        BorrowingRequest $request,
+        User $officer,
+        string $decision,
+        ?string $remarks,
+        bool $signatureConfirmed
+    ): void {
+        $decision = strtoupper($decision);
+
+        abort_unless(
+            $officer->access_classification === AccessClassification::SpmuOfficer
+                && $officer->primaryWorkspace() === UserRole::Spmu->value
+                && $officer->hasRole(UserRole::Spmu),
+            403,
+            'Only the SPMU Action Officer may verify a submitted request.'
+        );
+
+        if ($request->status !== RequestStatus::UnderSpmu) {
+            throw ValidationException::withMessages([
+                'decision' => 'This request is no longer awaiting Action Officer verification.',
+            ]);
+        }
+
+        if (! in_array($decision, ['VERIFIED', 'RETURNED_FOR_REVISION'], true)) {
+            throw ValidationException::withMessages([
+                'decision' => 'Choose VERIFIED or RETURNED FOR REVISION.',
+            ]);
+        }
+
+        if ($decision === 'RETURNED_FOR_REVISION' && blank($remarks)) {
+            throw ValidationException::withMessages([
+                'remarks' => 'Correction instructions are required when returning a request.',
+            ]);
+        }
+
+        if ($decision === 'VERIFIED' && ! $signatureConfirmed) {
+            throw ValidationException::withMessages([
+                'confirm_e_signature' => 'Confirm that you want to apply your registered E-signature to this verification.',
+            ]);
+        }
+
+        DB::transaction(function () use ($request, $officer, $decision, $remarks): void {
+            $request = BorrowingRequest::query()
+                ->lockForUpdate()
+                ->findOrFail($request->id);
+
+            if ($request->status !== RequestStatus::UnderSpmu) {
+                throw ValidationException::withMessages([
+                    'decision' => 'This request is no longer awaiting Action Officer verification.',
+                ]);
+            }
+
+            $request->loadMissing([
+                'borrower',
+                'currentVersion.items.inventoryItem',
+                'currentVersion.approvalSteps',
+                'currentVersion.supportingDocuments',
+            ]);
+
+            $version = $request->currentVersion;
+            $step = $version?->approvalSteps
+                ->where('sequence_no', 1)
+                ->first(fn ($item) => $item->stage_code === ApprovalStage::Spmu);
+
+            if (! $version || ! $step || ! in_array($step->decision, ['PENDING', 'RECEIVED'], true)) {
+                throw ValidationException::withMessages([
+                    'decision' => 'This Action Officer verification step has already been completed.',
+                ]);
+            }
+
+            if ($decision === 'RETURNED_FOR_REVISION') {
+                $step->update([
+                    'approver_user_id' => $officer->id,
+                    'signature_snapshot_id' => null,
+                    'decision' => 'RETURNED_FOR_REVISION',
+                    'decided_at' => now(),
+                    'remarks' => $remarks,
+                    'temporary_delegation_id' => null,
+                ]);
+
+                $this->markSupportingDocuments(
+                    $version,
+                    RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION,
+                    $officer,
+                    $remarks
+                );
+
+                $this->transition(
+                    $request,
+                    RequestStatus::ReturnedForRevision,
+                    $officer,
+                    $remarks
+                );
+
+                $this->notifications->send(
+                    'REQUEST_RETURNED_FOR_REVISION',
+                    collect([$request->borrower]),
+                    "Request {$request->request_no} was returned by the SPMU Action Officer for correction. Reason: {$remarks}",
+                    $request
+                );
+
+                $this->audit->record(
+                    'SPMU_ACTION_OFFICER_VERIFICATION',
+                    $step,
+                    reason: $remarks,
+                    after: [
+                        'decision' => 'RETURNED_FOR_REVISION',
+                        'approval_granted' => false,
+                        'reservation_created' => false,
+                    ]
+                );
+
+                return;
+            }
+
+            $this->validateRequiredSupportingDocuments($version);
+
+            $signatureSnapshot = $this->signatures->snapshot(
+                $officer,
+                'SPMU_REQUEST_VERIFICATION',
+                'SPMU_ACTION_OFFICER',
+                $step,
+                [
+                    'request_id' => $request->id,
+                    'request_no' => $request->request_no,
+                    'request_version_id' => $version->id,
+                    'approval_step_id' => $step->id,
+                    'action' => 'SIGN_AND_VERIFY_NOT_APPROVE',
+                ]
+            );
+
+            $step->update([
+                'approver_user_id' => $officer->id,
+                'signature_snapshot_id' => $signatureSnapshot->id,
+                'decision' => 'VERIFIED',
+                'decided_at' => $signatureSnapshot->captured_at,
+                'remarks' => $remarks,
+                'temporary_delegation_id' => null,
+            ]);
+
+            $this->markSupportingDocuments(
+                $version,
+                RequestSupportingDocument::STATUS_VERIFIED,
+                $officer,
+                $remarks
+            );
+
+            ApprovalStep::query()->create([
+                'request_version_id' => $version->id,
+                'stage_code' => ApprovalStage::Spmu,
+                'sequence_no' => 2,
+                'received_at' => now(),
+                'decision' => 'RECEIVED',
+            ]);
+
+            $heads = User::query()
+                ->where('account_status', 'ACTIVE')
+                ->where('access_classification', AccessClassification::SpmuHead->value)
+                ->get();
+
+            $this->notifications->send(
+                'REQUEST_VERIFIED',
+                $heads,
+                "Request {$request->request_no} was VERIFIED by the SPMU Action Officer and is ready for Head review and decision. No approval or reservation has occurred yet.",
+                $request,
+                ['SYSTEM', 'EMAIL']
+            );
+
+            $this->audit->record(
+                'SPMU_ACTION_OFFICER_VERIFICATION',
+                $step,
+                after: [
+                    'decision' => 'VERIFIED',
+                    'approval_granted' => false,
+                    'reservation_created' => false,
+                    'head_decision_step_id' => $version->approvalSteps()->where('sequence_no', 2)->value('id'),
+                    'signature_snapshot_id' => $signatureSnapshot->id,
+                ]
+            );
+        }, 3);
+    }
+
+    /**
+     * Record the SPMU Head's final decision after Action Officer verification.
      *
      * APPROVED
      * - final inventory availability is checked
@@ -375,7 +576,7 @@ class RequestWorkflowService
         ) {
             throw ValidationException::withMessages([
                 'decision' =>
-                    'This request is no longer awaiting SPMU verification.',
+                    'This request is no longer awaiting the SPMU Head decision.',
             ]);
         }
 
@@ -388,7 +589,7 @@ class RequestWorkflowService
         ) {
             abort(
                 403,
-                'Only authorized SPMU personnel may verify this request.'
+                'Only authorized SPMU personnel may decide this request.'
             );
         }
 
@@ -415,7 +616,7 @@ class RequestWorkflowService
         ) {
             throw ValidationException::withMessages([
                 'decision' =>
-                    'A user cannot verify their own borrowing request.',
+                    'A user cannot decide their own borrowing request.',
             ]);
         }
 
@@ -432,7 +633,7 @@ class RequestWorkflowService
         ) {
             throw ValidationException::withMessages([
                 'decision' =>
-                    'Choose a valid verification decision.',
+                    'Choose a valid Head decision.',
             ]);
         }
 
@@ -466,6 +667,16 @@ class RequestWorkflowService
                 $decision,
                 $remarks
             ): void {
+                $request = BorrowingRequest::query()
+                    ->lockForUpdate()
+                    ->findOrFail($request->id);
+
+                if ($request->status !== RequestStatus::UnderSpmu) {
+                    throw ValidationException::withMessages([
+                        'decision' => 'This request is no longer awaiting the SPMU Head decision.',
+                    ]);
+                }
+
                 $request->loadMissing([
                     'borrower',
                     'currentVersion.items.inventoryItem',
@@ -482,8 +693,12 @@ class RequestWorkflowService
                     ]);
                 }
 
-                $step = $version->approvalSteps
+                $verificationStep = $version->approvalSteps
                     ->where('sequence_no', 1)
+                    ->firstWhere('stage_code', ApprovalStage::Spmu);
+
+                $step = $version->approvalSteps
+                    ->where('sequence_no', 2)
                     ->firstWhere('stage_code', ApprovalStage::Spmu);
 
                 $temporaryDelegationId =
@@ -491,9 +706,20 @@ class RequestWorkflowService
                         ? $approver->activeDelegationFor(UserRole::Spmu->value)?->id
                         : null;
 
+                /*
+                 * Off-campus only: an on-campus request is routed straight to
+                 * the Head at submission and has no sequence-1 step to check.
+                 */
+                if ($version->off_campus
+                    && (! $verificationStep || $verificationStep->decision !== 'VERIFIED')) {
+                    throw ValidationException::withMessages([
+                        'decision' => 'Action Officer verification is required before the SPMU Head may decide this off-campus request.',
+                    ]);
+                }
+
                 if (! $step || ! in_array($step->decision, ['PENDING', 'RECEIVED'], true)) {
                     throw ValidationException::withMessages([
-                        'decision' => 'This SPMU approval step has already been completed.',
+                        'decision' => 'This SPMU Head decision step has already been completed.',
                     ]);
                 }
 
@@ -529,12 +755,14 @@ class RequestWorkflowService
                             $temporaryDelegationId,
                     ]);
 
-                    $this->markSupportingDocuments(
-                        $version,
-                        RequestSupportingDocument::STATUS_REJECTED,
-                        $approver,
-                        $remarks
-                    );
+                    if (! $version->off_campus) {
+                        $this->markSupportingDocuments(
+                            $version,
+                            RequestSupportingDocument::STATUS_REJECTED,
+                            $approver,
+                            $remarks
+                        );
+                    }
 
                     $this->transition(
                         $request,
@@ -602,12 +830,14 @@ class RequestWorkflowService
                             $temporaryDelegationId,
                     ]);
 
-                    $this->markSupportingDocuments(
-                        $version,
-                        RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION,
-                        $approver,
-                        $remarks
-                    );
+                    if (! $version->off_campus) {
+                        $this->markSupportingDocuments(
+                            $version,
+                            RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION,
+                            $approver,
+                            $remarks
+                        );
+                    }
 
                     $this->transition(
                         $request,
@@ -705,12 +935,14 @@ class RequestWorkflowService
                             $temporaryDelegationId,
                     ]);
 
-                    $this->markSupportingDocuments(
-                        $version,
-                        RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION,
-                        $approver,
-                        $reason
-                    );
+                    if (! $version->off_campus) {
+                        $this->markSupportingDocuments(
+                            $version,
+                            RequestSupportingDocument::STATUS_RETURNED_FOR_REVISION,
+                            $approver,
+                            $reason
+                        );
+                    }
 
                     $this->transition(
                         $request,
@@ -789,12 +1021,14 @@ class RequestWorkflowService
                         $temporaryDelegationId,
                 ]);
 
-                $this->markSupportingDocuments(
-                    $version,
-                    RequestSupportingDocument::STATUS_VERIFIED,
-                    $approver,
-                    $remarks
-                );
+                if (! $version->off_campus) {
+                    $this->markSupportingDocuments(
+                        $version,
+                        RequestSupportingDocument::STATUS_VERIFIED,
+                        $approver,
+                        $remarks
+                    );
+                }
 
                 $request->update([
                     'final_approved_at' =>
@@ -868,31 +1102,45 @@ class RequestWorkflowService
 
                 if ($offCampusLine) {
                     /*
-                     * Create the Gate Pass transaction after Head approval, but
-                     * do NOT generate a printable Gate Pass yet. The borrower's
-                     * request page shows only "Pending SPMU Verification".
-                     *
-                     * At the actual Physical Release, the Action Officer's
-                     * registered E-signature is captured and the system creates
-                     * the single FINAL Gate Pass carrying borrower + Action
-                     * Officer + Head E-signatures. SPMU prints that final copy
-                     * and gives it to the borrower for the guard.
+                     * Reuse the single Gate Pass transaction for this custody.
+                     * The Action Officer's earlier verification signature and
+                     * the Head's approval signature are both available now, so
+                     * the official Gate Pass must be generated immediately and
+                     * exposed before the scheduled physical handover.
                      */
-                    GatePass::query()->updateOrCreate(
+                    $gatePass = GatePass::query()->updateOrCreate(
                         ['custody_transaction_id' => $custody->id],
                         [
                             'custody_line_id' => $offCampusLine->id,
-                            'pass_document_id' => null,
                             'bearer_name' => $request->borrower->full_name,
                             'destination' => $version->location,
                             'purpose' => $version->purpose_event,
-                            'status' => 'PENDING',
+                            'status' => 'READY_FOR_PRINTING',
+                            'prepared_verified_by_user_id' => $verificationStep->approver_user_id,
+                            'prepared_verifier_signature_snapshot_id' => $verificationStep->signature_snapshot_id,
+                            'prepared_verified_at' => $verificationStep->decided_at,
                             'approved_by_user_id' => $approver->id,
                             'approver_signature_snapshot_id' => $signatureSnapshot->id,
                             'temporary_delegation_id' => $temporaryDelegationId,
                             'approved_at' => $signatureSnapshot->captured_at,
                         ]
                     );
+
+                    $gatePassDocument = $this->documents->conditionalForm(
+                        $custody->fresh([
+                            'borrower',
+                            'request.currentVersion',
+                            'lines.requestItem.inventoryItem',
+                            'gatePass',
+                        ]),
+                        'GATE_PASS'
+                    );
+
+                    $gatePass->update([
+                        'pass_document_id' => $gatePassDocument->id,
+                    ]);
+
+                    $generatedOperationalDocuments[] = 'GATE_PASS';
                 }
 
                 $hasLaundry = $custody->lines->contains(
@@ -939,7 +1187,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was verified and approved by the SPMU Head. Your Borrower Slip and any applicable Laundry Form are now available. If off-campus use applies, the Gate Pass will be finalized and printed by SPMU during Physical Release.",
+                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and applicable Gate Pass are now available to view and download. Bring the generated documents and proceed to SPMU on the scheduled pickup date.",
                     $request
                 );
 
@@ -1505,7 +1753,7 @@ class RequestWorkflowService
                                 ->purpose_event,
 
                         'status' =>
-                            'PENDING',
+                            'READY_FOR_PRINTING',
                     ]);
                 }
 
@@ -1653,8 +1901,8 @@ class RequestWorkflowService
 
     /**
      * Verify that the current request version contains
-     * all supporting documents required for submission
-     * or approval.
+     * all supporting documents required for submission, verification, or
+     * approval.
      */
     private function validateRequiredSupportingDocuments(
         $version
@@ -1680,7 +1928,7 @@ class RequestWorkflowService
         if (! $hasRequestLetter) {
             throw ValidationException::withMessages([
                 'approved_request_letter' =>
-                    'Upload the scanned approved Borrowing Request Letter before submitting.',
+                    'Upload the scanned, fully signed Borrowing Request Letter before submitting.',
             ]);
         }
 

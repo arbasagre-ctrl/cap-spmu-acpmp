@@ -1,61 +1,28 @@
 {{--
     Weekly Transaction Schedule.
 
-    Every weekday posts through one form so the SPMU Head can review the whole
-    week before committing. A row's own Save sets `only_day`, which limits
-    persistence to that weekday and leaves unsaved edits elsewhere untouched.
+    All seven weekdays post through one form, so the SPMU Head reviews the whole
+    week and commits it with Save Changes. Reset Changes is a native form reset
+    back to the last saved values.
 --}}
 <section class="content-area" id="transaction-schedule">
-    <article class="card txn-schedule-card">
-        <header class="txn-schedule-header">
-            <span class="txn-schedule-header-icon" aria-hidden="true">
-                <x-icon name="calendar" size="24" />
-            </span>
+    <form
+        method="post"
+        action="{{ route('policies.weekly-schedule.batch-update') }}"
+        class="txn-schedule-form"
+        data-weekly-schedule-form
+    >
+        @csrf
+        @method('PUT')
 
-            <div>
-                <h2>Weekly Transaction Schedule</h2>
-                <p>
-                    Set which weekdays accept request submissions, pickup/release transactions, and physical returns.<br>
-                    Saturday and Sunday are closed by default but may be opened when the institution declares a working day.
-                </p>
-            </div>
-        </header>
-
-        <div class="txn-schedule-note">
-            <x-icon name="information" size="20" />
-
-            <p>
-                <strong>Return protection:</strong><br>
-                If an Expected Return Date becomes a closed return day, the system keeps the original date for audit and
-                automatically moves the effective return deadline to the next open SPMU return day.<br>
-                The borrower is not marked late because of an approved closure.
-            </p>
-        </div>
-
-        <form
-            method="post"
-            action="{{ route('policies.weekly-schedule.batch-update') }}"
-            class="txn-schedule-form"
-            data-weekly-schedule-form
-        >
-            @csrf
-            @method('PUT')
-
-            <input type="hidden" name="only_day" value="" data-weekly-only-day>
-
+        <article class="card txn-schedule-card">
             <div class="txn-schedule-grid">
                 <div class="txn-schedule-head">
                     <span>Day</span>
-                    <span>Availability</span>
-                    <span title="Optional. Leave both times blank for a date-based policy.">
-                        Open time
-                        <x-icon name="information" size="13" class="txn-head-hint" />
-                    </span>
-                    <span title="Must be later than the opening time.">
-                        Close time
-                        <x-icon name="information" size="13" class="txn-head-hint" />
-                    </span>
-                    <span class="txn-head-action">Action</span>
+                    <span>Office State</span>
+                    <span>Allowed Transactions</span>
+                    <span title="Optional. Leave both times blank for a date-based policy.">Open Time</span>
+                    <span title="Must be later than the opening time.">Close Time</span>
                 </div>
 
                 @foreach($weekdayLabels as $weekday => $weekdayLabel)
@@ -83,18 +50,22 @@
                             </span>
                         </div>
 
+                        <label class="txn-state-toggle" data-weekday-state>
+                            <input type="hidden" name="schedule[{{ $weekday }}][is_open]" value="0">
+                            <input
+                                type="checkbox"
+                                name="schedule[{{ $weekday }}][is_open]"
+                                value="1"
+                                class="visually-hidden"
+                                data-weekday-open
+                                @checked($isOpen)
+                            >
+                            <span class="txn-state-track" aria-hidden="true"><i></i></span>
+                            <span class="txn-state-pill" data-weekday-state-label>{{ $isOpen ? 'OPEN' : 'CLOSED' }}</span>
+                        </label>
+
                         <div class="txn-availability">
-                            <label class="txn-check">
-                                <input type="hidden" name="schedule[{{ $weekday }}][is_open]" value="0">
-                                <input
-                                    type="checkbox"
-                                    name="schedule[{{ $weekday }}][is_open]"
-                                    value="1"
-                                    data-weekday-open
-                                    @checked($isOpen)
-                                >
-                                <span>Open</span>
-                            </label>
+                            <span class="txn-availability-title">Allowed Transactions</span>
 
                             <label class="txn-check">
                                 <input type="hidden" name="schedule[{{ $weekday }}][accepts_requests]" value="0">
@@ -103,7 +74,8 @@
                                     name="schedule[{{ $weekday }}][accepts_requests]"
                                     value="1"
                                     data-weekday-capability
-                                    @checked($acceptsRequests)
+                                    @checked($isOpen && $acceptsRequests)
+                                    @disabled(!$isOpen)
                                 >
                                 <span>Requests</span>
                             </label>
@@ -115,7 +87,8 @@
                                     name="schedule[{{ $weekday }}][allows_pickup]"
                                     value="1"
                                     data-weekday-capability
-                                    @checked($allowsPickup)
+                                    @checked($isOpen && $allowsPickup)
+                                    @disabled(!$isOpen)
                                 >
                                 <span>Pickup / Release</span>
                             </label>
@@ -127,7 +100,8 @@
                                     name="schedule[{{ $weekday }}][allows_return]"
                                     value="1"
                                     data-weekday-capability
-                                    @checked($allowsReturn)
+                                    @checked($isOpen && $allowsReturn)
+                                    @disabled(!$isOpen)
                                 >
                                 <span>Returns</span>
                             </label>
@@ -139,8 +113,9 @@
                                 id="open-time-{{ $weekday }}"
                                 type="time"
                                 name="schedule[{{ $weekday }}][open_time]"
-                                value="{{ $openTime }}"
+                                value="{{ $isOpen ? $openTime : '' }}"
                                 data-weekday-time
+                                @disabled(!$isOpen)
                                 @error("schedule.{$weekday}.open_time") aria-invalid="true" @enderror
                             >
                             <x-icon name="clock" size="16" />
@@ -152,23 +127,13 @@
                                 id="close-time-{{ $weekday }}"
                                 type="time"
                                 name="schedule[{{ $weekday }}][close_time]"
-                                value="{{ $closeTime }}"
+                                value="{{ $isOpen ? $closeTime : '' }}"
                                 data-weekday-time
+                                @disabled(!$isOpen)
                                 @error("schedule.{$weekday}.close_time") aria-invalid="true" @enderror
                             >
                             <x-icon name="clock" size="16" />
                         </span>
-
-                        <div class="txn-row-action">
-                            <button
-                                class="button secondary small ui-pressable txn-row-save"
-                                type="submit"
-                                data-weekday-save="{{ $weekday }}"
-                                title="Save {{ $weekdayLabel }} only"
-                            >
-                                Save
-                            </button>
-                        </div>
 
                         @error("schedule.{$weekday}.close_time")
                             <p class="txn-row-error">{{ $message }}</p>
@@ -176,33 +141,43 @@
                     </div>
                 @endforeach
             </div>
+        </article>
 
-            <p class="txn-schedule-footnote">
-                <span class="txn-schedule-footnote-icon" aria-hidden="true">
-                    <x-icon name="lightbulb" size="17" />
-                </span>
-                <span>
-                    Opening and closing times are optional. Leave both blank when the policy is date-based only. When times are configured, physical pickup/release
-                    and return submissions are accepted only inside that operational window.
-                </span>
-            </p>
+        <div class="txn-schedule-toolbar">
+            <button class="button secondary ui-pressable" type="reset" data-weekly-reset>
+                <x-icon name="cycle" size="17" />
+                Reset Changes
+            </button>
 
-            <div class="txn-schedule-actions">
-                <button class="button secondary ui-pressable" type="reset" data-weekly-reset>
-                    <x-icon name="cycle" size="17" />
-                    Reset changes
-                </button>
-
-                <button class="button primary ui-pressable" type="submit" data-weekly-save-all>
-                    <x-icon name="save" size="17" />
-                    Save schedule
-                </button>
-            </div>
-        </form>
-    </article>
+            <button class="button primary ui-pressable" type="submit" data-weekly-save-all>
+                <x-icon name="save" size="17" />
+                Save Changes
+            </button>
+        </div>
+    </form>
 </section>
 
 <style>
+.txn-schedule-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.txn-schedule-toolbar .button {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 11px 20px;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 .txn-schedule-card {
     --txn-line: #e6ecf3;
     --txn-blue: #1a6fd4;
@@ -210,86 +185,27 @@
     --txn-closed: #98a4b3;
 
     padding: 0;
-    overflow: hidden;
-}
-
-.txn-schedule-header {
-    display: grid;
-    grid-template-columns: 52px minmax(0, 1fr);
-    gap: 18px;
-    align-items: start;
-    padding: 26px 28px 20px;
-}
-
-.txn-schedule-header-icon {
-    display: grid;
-    width: 52px;
-    height: 52px;
-    place-items: center;
-    color: var(--txn-blue);
-    background: #e8f1fd;
-    border-radius: 14px;
-}
-
-.txn-schedule-header h2 {
-    margin: 4px 0 8px;
-    color: var(--heading);
-    font-size: 20px;
-    font-weight: 700;
-}
-
-.txn-schedule-header p {
-    max-width: 900px;
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.65;
-}
-
-.txn-schedule-note {
-    display: grid;
-    grid-template-columns: 20px minmax(0, 1fr);
-    gap: 14px;
-    align-items: start;
-    margin: 0 28px 22px;
-    padding: 16px 18px;
-    border: 1px solid #c5ddf6;
-    border-radius: 12px;
-    background: #edf5fd;
-}
-
-.txn-schedule-note > .ui-icon {
-    margin-top: 1px;
-    color: var(--txn-blue);
-}
-
-.txn-schedule-note p {
-    margin: 0;
-    color: #2b4a6b;
-    font-size: 12.5px;
-    line-height: 1.65;
-}
-
-.txn-schedule-note strong {
-    color: #1c3d5e;
-    font-weight: 750;
 }
 
 .txn-schedule-grid {
     display: grid;
-    padding: 0 28px;
+    padding: 24px 28px 26px;
 }
 
+/*
+ * Minimums total 732px, plus 4 x 14px gaps and the grid's 56px side padding =
+ * 844px of card width. The stacked layout below takes over before that runs out.
+ */
 .txn-schedule-head,
 .txn-schedule-row {
     display: grid;
     grid-template-columns:
-        minmax(140px, 1.05fr)
-        minmax(430px, 3.1fr)
-        minmax(120px, .85fr)
-        minmax(120px, .85fr)
-        minmax(78px, .5fr);
-    gap: 16px;
+        minmax(112px, .95fr)
+        minmax(100px, .62fr)
+        minmax(300px, 2.6fr)
+        minmax(110px, .8fr)
+        minmax(110px, .8fr);
+    gap: 14px;
     align-items: center;
 }
 
@@ -304,15 +220,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-}
-
-.txn-head-hint {
-    flex-shrink: 0;
-    color: var(--text-soft);
-}
-
-.txn-head-action {
-    justify-content: center;
 }
 
 .txn-schedule-row {
@@ -354,7 +261,7 @@
 
 .txn-availability {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
     min-width: 0;
 }
@@ -427,28 +334,6 @@
     cursor: pointer;
 }
 
-.txn-row-action {
-    display: flex;
-    justify-content: center;
-    min-width: 0;
-}
-
-.txn-schedule-card .button.txn-row-save {
-    width: 100%;
-    min-height: 40px;
-    padding: 9px 12px;
-    border-color: #bcd8f5;
-    color: var(--txn-blue);
-    font-size: 12.5px;
-    font-weight: 700;
-}
-
-.txn-schedule-card .button.txn-row-save:hover,
-.txn-schedule-card .button.txn-row-save:focus-visible {
-    border-color: var(--txn-blue);
-    background: #eff6fe;
-}
-
 .txn-row-error {
     grid-column: 1 / -1;
     margin: 2px 0 0;
@@ -457,105 +342,133 @@
     font-weight: 600;
 }
 
-.txn-schedule-row.is-closed .txn-availability,
-.txn-schedule-row.is-closed .txn-time-field {
-    opacity: .72;
-}
-
-.txn-schedule-footnote {
-    display: grid;
-    grid-template-columns: 34px minmax(0, 1fr);
-    gap: 14px;
-    align-items: start;
-    margin: 0;
-    padding: 20px 28px 22px;
-    border-top: 1px solid var(--txn-line);
+/*
+ * The caption repeats the column header, so it only appears once the header
+ * row is dropped on narrow screens.
+ */
+.txn-availability-title {
+    display: none;
+    grid-column: 1 / -1;
+    margin-bottom: 2px;
     color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.65;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
 }
 
-.txn-schedule-footnote-icon {
-    display: grid;
-    width: 34px;
-    height: 34px;
-    place-items: center;
-    color: #b78a12;
-    background: #fdf4dd;
-    border-radius: 50%;
-}
-
-.txn-schedule-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 18px 28px 24px;
-    border-top: 1px solid var(--txn-line);
-    background: var(--surface-subtle);
-}
-
-.txn-schedule-actions .button {
+.txn-state-toggle {
     display: inline-flex;
     align-items: center;
     gap: 9px;
-    min-height: 44px;
-    padding: 11px 20px;
-    font-size: 13px;
-    font-weight: 700;
+    margin: 0;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .04em;
+}
+
+.txn-state-track {
+    position: relative;
+    display: inline-block;
+    width: 42px;
+    height: 23px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--txn-closed, #94a3b8);
+    transition: background-color var(--motion) ease;
+}
+
+.txn-state-track > i {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform var(--motion) ease;
+}
+
+.txn-state-toggle input:checked + .txn-state-track {
+    background: var(--txn-open, #16a34a);
+}
+
+.txn-state-toggle input:checked + .txn-state-track > i {
+    transform: translateX(19px);
+}
+
+.txn-state-toggle input:focus-visible + .txn-state-track {
+    box-shadow: var(--focus-ring);
+}
+
+.txn-state-pill {
+    min-width: 62px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    font-size: 10.5px;
+    text-align: center;
+    transition: color var(--motion-fast) ease, background-color var(--motion-fast) ease;
+}
+
+.txn-schedule-row:not(.is-closed) .txn-state-pill {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+/* A closed day's permissions and hours are locked, not merely dimmed. */
+.txn-schedule-row.is-closed .txn-check,
+.txn-schedule-row.is-closed .txn-time-field input {
+    color: var(--text-soft) !important;
+    background: var(--surface-subtle);
+    cursor: not-allowed;
+}
+
+.txn-schedule-row.is-closed .txn-check {
+    border-color: var(--border);
+}
+
+.txn-schedule-row.is-closed .txn-check:hover {
+    border-color: var(--border);
+}
+
+.txn-schedule-row.is-closed .txn-check input[type="checkbox"],
+.txn-schedule-row.is-closed .txn-time-field input,
+.txn-schedule-row.is-closed .txn-time-field input::-webkit-calendar-picker-indicator {
+    cursor: not-allowed;
+}
+
+.txn-schedule-row.is-closed .txn-time-field > .ui-icon {
+    color: var(--text-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .txn-state-track, .txn-state-track > i { transition: none; }
 }
 
 html[data-theme="dark"] .txn-schedule-card {
     --txn-line: var(--row-border);
 }
 
-html[data-theme="dark"] .txn-schedule-header-icon {
-    color: var(--interactive);
-    background: rgba(114, 183, 244, .14);
-}
-
-html[data-theme="dark"] .txn-schedule-note {
-    border-color: var(--info-border);
-    background: var(--info-bg);
-}
-
-html[data-theme="dark"] .txn-schedule-note p,
-html[data-theme="dark"] .txn-schedule-note strong {
-    color: var(--text-secondary);
-}
-
-html[data-theme="dark"] .txn-schedule-note > .ui-icon {
-    color: var(--interactive);
-}
-
-html[data-theme="dark"] .txn-schedule-card .button.txn-row-save {
-    border-color: var(--border-strong);
-    color: var(--interactive);
-}
-
-html[data-theme="dark"] .txn-schedule-card .button.txn-row-save:hover,
-html[data-theme="dark"] .txn-schedule-card .button.txn-row-save:focus-visible {
-    border-color: var(--interactive);
-    background: var(--surface-hover);
-}
-
-html[data-theme="dark"] .txn-schedule-footnote-icon {
-    color: var(--warning);
-    background: var(--warning-bg);
-}
-
-@media (max-width: 1240px) {
+@media (max-width: 1160px) {
     .txn-schedule-head {
         display: none;
     }
 
+    .txn-availability-title {
+        display: block;
+    }
+
     .txn-schedule-row {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 96px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         row-gap: 12px;
         padding: 16px 0;
     }
 
     .txn-day,
+    .txn-state-toggle,
     .txn-availability {
         grid-column: 1 / -1;
     }
@@ -566,28 +479,12 @@ html[data-theme="dark"] .txn-schedule-footnote-icon {
 }
 
 @media (max-width: 700px) {
-    .txn-schedule-header,
-    .txn-schedule-grid,
-    .txn-schedule-footnote,
-    .txn-schedule-actions {
+    .txn-schedule-grid {
         padding-inline: 18px;
-    }
-
-    .txn-schedule-note {
-        margin-inline: 18px;
     }
 
     .txn-schedule-row {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .txn-schedule-actions {
-        flex-direction: column-reverse;
-        align-items: stretch;
-    }
-
-    .txn-schedule-actions .button {
-        justify-content: center;
     }
 }
 </style>
@@ -600,14 +497,12 @@ html[data-theme="dark"] .txn-schedule-footnote-icon {
         return;
     }
 
-    const onlyDay = form.querySelector('[data-weekly-only-day]');
     const rows = Array.from(form.querySelectorAll('[data-weekday-row]'));
 
-    const applyOnlyDay = (submitter) => {
-        if (onlyDay) {
-            onlyDay.value = submitter?.dataset?.weekdaySave ?? '';
-        }
-    };
+    const lockedFields = (row) => [
+        ...row.querySelectorAll('[data-weekday-capability]'),
+        ...row.querySelectorAll('[data-weekday-time]'),
+    ];
 
     const syncRow = (row) => {
         const open = row.querySelector('[data-weekday-open]');
@@ -617,6 +512,7 @@ html[data-theme="dark"] .txn-schedule-footnote-icon {
         }
 
         const status = row.querySelector('[data-weekday-status]');
+        const stateLabel = row.querySelector('[data-weekday-state-label]');
 
         row.classList.toggle('is-closed', !open.checked);
 
@@ -625,12 +521,22 @@ html[data-theme="dark"] .txn-schedule-footnote-icon {
                 ? 'Operational day'
                 : 'Closed day';
         }
+
+        if (stateLabel) {
+            stateLabel.textContent = open.checked ? 'OPEN' : 'CLOSED';
+        }
+
+        /*
+         * A closed day accepts no transaction and keeps no hours, so its
+         * controls are locked. The paired hidden inputs stay enabled, which is
+         * what posts the withdrawn permissions as 0.
+         */
+        lockedFields(row).forEach((field) => {
+            field.disabled = !open.checked;
+        });
     };
 
-    /*
-     * Closing a day clears its capabilities and hours server-side, so the grid
-     * mirrors that immediately instead of showing values that will be dropped.
-     */
+    /* Closing a day withdraws what it had allowed, matching what is stored. */
     const clearRow = (row) => {
         row.querySelectorAll('[data-weekday-capability]').forEach((input) => {
             input.checked = false;
@@ -651,32 +557,15 @@ html[data-theme="dark"] .txn-schedule-footnote-icon {
 
             syncRow(row);
         });
-
-        row.querySelector('[data-weekday-save]')?.addEventListener('click', (event) => {
-            applyOnlyDay(event.currentTarget);
-        });
-    });
-
-    form.querySelector('[data-weekly-save-all]')?.addEventListener('click', () => {
-        applyOnlyDay(null);
     });
 
     /*
-     * Pressing Enter inside a field submits through the first Save button, so
-     * the real submitter decides the scope rather than whichever button was
-     * last clicked.
+     * The native reset restores the server-rendered values; re-syncing on the
+     * next tick restores what those values imply — the closed styling, the
+     * status text, the OPEN/CLOSED pill and the locked controls.
      */
-    form.addEventListener('submit', (event) => {
-        if (event.submitter) {
-            applyOnlyDay(event.submitter);
-        }
-    });
-
     form.addEventListener('reset', () => {
-        window.setTimeout(() => {
-            applyOnlyDay(null);
-            rows.forEach(syncRow);
-        }, 0);
+        window.setTimeout(() => rows.forEach(syncRow), 0);
     });
 
     rows.forEach(syncRow);

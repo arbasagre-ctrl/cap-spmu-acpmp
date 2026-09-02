@@ -45,6 +45,10 @@
 .sanction-rules-config .sanction-rules-note > .ui-icon { flex-shrink: 0; margin-top: 1px; color: var(--warning); }
 .sanction-rules-config .sanction-rules-note strong { color: var(--heading); font-weight: 750; }
 
+/* Dark mode recesses the nested tiles instead of lifting them. */
+html[data-theme="dark"] .sanction-rules-config .offense-type-option { background: var(--surface-subtle); }
+html[data-theme="dark"] .sanction-rules-config .offense-type-option:hover { background: var(--surface-muted); }
+
 @media (max-width: 1180px) {
     .sanction-rules-config .offense-application-panel { grid-template-columns: minmax(0, 1fr); gap: 20px; }
     .sanction-rules-config .sanction-rule-grid { grid-template-columns: minmax(0, 1fr); }

@@ -55,6 +55,10 @@
 .special-dates-config .special-dates-empty h4 { margin: 0 0 7px; color: var(--heading); font-size: 15px; font-weight: 750; }
 .special-dates-config .special-dates-empty p { margin: 0; color: var(--text-muted); font-size: 12.5px; }
 
+/* Dark mode recesses the transaction pills instead of lifting them. */
+html[data-theme="dark"] .special-dates-config .special-date-check { background: var(--surface-subtle); }
+html[data-theme="dark"] .special-dates-config .special-date-check:hover { background: var(--surface-muted); }
+
 @media (max-width: 1180px) {
     .special-dates-config .special-date-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

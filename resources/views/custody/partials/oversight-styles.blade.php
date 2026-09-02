@@ -44,7 +44,8 @@
 .custody-oversight-row[data-custody-group="completed"] { border-left-color: var(--success); }
 
 .custody-oversight-borrower { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
-.custody-oversight-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.custody-oversight-avatar { position: relative; display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; overflow: hidden; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.custody-oversight-avatar-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .custody-oversight-avatar[data-avatar-tone="1"] { background: #1f63c8; }
 .custody-oversight-avatar[data-avatar-tone="2"] { background: #17825c; }
 .custody-oversight-avatar[data-avatar-tone="3"] { background: #b4590c; }

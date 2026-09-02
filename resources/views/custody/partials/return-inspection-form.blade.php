@@ -1,3 +1,23 @@
+@php
+    /*
+     * Linen condition is verified from the accomplished Laundry Form signed by
+     * Laundry Personnel; non-linen stays a direct Action Officer inspection.
+     * The same rule is enforced server-side in CustodyService::receiveReturn.
+     */
+    $linenReturnLines = $eligibleReturnLines->filter(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+
+    $returnLaundryJob = $laundryJob ?? $custody->laundryJob;
+
+    $laundryFormVerified = (bool) (
+        $returnLaundryJob?->latest_evidence_submission_id
+        && $returnLaundryJob?->form_verified_at
+    );
+
+    $laundryFormMissing = $linenReturnLines->isNotEmpty() && ! $laundryFormVerified;
+@endphp
+
 @if($eligibleReturnLines->isNotEmpty())
     <form
         method="post"
@@ -5,6 +25,7 @@
         enctype="multipart/form-data"
         class="card form-grid return-inspection-card"
         id="full-return-accounting-form"
+        @if($laundryFormMissing) data-laundry-form-missing="1" @endif
     >
         @csrf
 
@@ -19,12 +40,20 @@
             </span>
         </div>
 
-        @if($eligibleReturnLines->contains(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required))
-            <div class="callout info return-linen-note">
-                <x-icon name="information" size="22" />
-                <div><strong>Linen item included</strong>
-                <p>Record the linen condition in this return inspection. Laundry personnel will later wet-sign the same printed Laundry Form.</p></div>
-            </div>
+        @if($linenReturnLines->isNotEmpty())
+            @if($laundryFormMissing)
+                <div class="callout danger return-linen-note">
+                    <x-icon name="warning" size="22" />
+                    <div><strong>Completed Laundry Form required</strong>
+                    <p>This transaction includes linen items. Upload the accomplished Laundry Form signed by Laundry Personnel before the linen return can be finalized.</p></div>
+                </div>
+            @else
+                <div class="callout info return-linen-note">
+                    <x-icon name="information" size="22" />
+                    <div><strong>Linen condition verified from accomplished Laundry Form</strong>
+                    <p>Linen items were physically inspected by Laundry Personnel. Encode the returned quantity and condition exactly as recorded on the signed Laundry Form. Non-linen items remain your own physical inspection as SPMU Action Officer.</p></div>
+                </div>
+            @endif
         @endif
 
         <div class="table-wrap return-inspection-scroll">
@@ -84,7 +113,9 @@
                                     {{ $line->requestItem->description_snapshot }}
                                 </strong>
                                 <small>
-                                    {{ (bool) $line->requestItem?->inventoryItem?->laundry_required ? 'Linen' : 'Non-linen' }}
+                                    {{ (bool) $line->requestItem?->inventoryItem?->laundry_required
+                                        ? 'Linen · condition from Laundry Form'
+                                        : 'Non-linen · inspected by Action Officer' }}
                                     · {{ $line->requestItem->unit_snapshot }}
                                 </small>
                                 <small>Outstanding: {{ $outstanding + 0 }}</small>
@@ -177,7 +208,7 @@
             >
                 <x-icon name="warning" size="21" data-return-accounting-warning />
                 <x-icon name="success" size="21" data-return-accounting-success hidden />
-                <span data-return-accounting-copy>For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.</span>
+                <span data-return-accounting-copy>@if($laundryFormMissing)Completed Laundry Form required before the linen return can be finalized.@else For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.@endif</span>
             </div>
 
             <div class="return-action-footer">

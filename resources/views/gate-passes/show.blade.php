@@ -22,26 +22,27 @@
             <div class="card-header">
                 <div>
                     <p class="eyebrow">SPMU Gate Pass workflow</p>
-                    <h2>{{ $gatePassFinalized ? 'Final Gate Pass' : 'Pending Gate Pass Verification' }}</h2>
+                    <h2>{{ $gatePassFinalized ? 'Approved Gate Pass' : 'Gate Pass Document Missing' }}</h2>
                 </div>
                 <x-status-badge :status="$gatePass->status" />
             </div>
 
             @if(!$gatePassFinalized)
                 <div class="callout info">
-                    <strong>Do not print a Gate Pass yet.</strong>
+                    <strong>Do not release the off-campus property.</strong>
                     <p>
-                        The request is approved, but the Gate Pass becomes official only when the Action Officer confirms the actual Physical Release. That step applies the Action Officer E-signature and generates the single FINAL Gate Pass.
+                        This approved off-campus request does not have a valid generated Gate Pass. Have the authoritative approval workflow record reviewed before preparation or release.
                     </p>
                 </div>
             @else
                 <div class="callout success">
-                    <strong>Final Gate Pass is ready.</strong>
+                    <strong>Approved Gate Pass is ready.</strong>
                     <p>
-                        This copy contains the borrower/bearer E-signature, the Action Officer verification E-signature, and the SPMU Head approval E-signature. SPMU should print this final copy and give it to the borrower before the property exits campus.
+                        This copy was generated after Head approval and contains the borrower, Action Officer verification, and Head approval signatures. Validate the borrower-presented copy during physical preparation and handover.
                     </p>
                     <div class="inline-actions top-gap">
-                        <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Print Final Gate Pass</a>
+                        <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
+                        <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download / Print</a>
                     </div>
                 </div>
             @endif
@@ -56,7 +57,7 @@
                 </div>
             @endif
 
-            @if($gatePass->status === 'READY_FOR_PRINTING')
+            @if($gatePass->status === 'READY_FOR_PRINTING' && $custody?->released_at)
                 <form method="post" action="{{ route('gate-passes.verify', $gatePass) }}" enctype="multipart/form-data" class="form-grid top-gap">
                     @csrf
                     <div class="callout info">
@@ -77,6 +78,8 @@
                     </label>
                     <button class="button primary ui-pressable">Upload &amp; Verify Accomplished Gate Pass</button>
                 </form>
+            @elseif($gatePass->status === 'READY_FOR_PRINTING')
+                <div class="callout info top-gap"><strong>Awaiting physical handover.</strong> The accomplished Gate Pass may be uploaded only after the approved items are physically released and the guard processes the printed copy.</div>
             @elseif($gatePass->status === 'VERIFIED')
                 <div class="callout success top-gap"><strong>Gate Pass completed.</strong> The accomplished scan and guard release details are archived.</div>
             @endif
@@ -93,9 +96,12 @@
             </dl>
 
             @if($gatePassFinalized)
-                <a class="button secondary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">View Final Gate Pass</a>
+                <span class="inline-actions">
+                    <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
+                    <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download</a>
+                </span>
             @else
-                <span class="status-badge status-warning">Pending SPMU Verification</span>
+                <span class="status-badge status-danger">Missing approved document</span>
             @endif
 
             <div class="table-wrap top-gap">

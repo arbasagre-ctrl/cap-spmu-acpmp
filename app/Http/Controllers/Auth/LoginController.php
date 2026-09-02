@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers\Auth;
 
-use App\Enums\AccessClassification;
 use App\Enums\AccountStatus;
+use App\Http\Controllers\Auth\Concerns\EstablishesAuthenticatedSession;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -12,6 +12,8 @@ use Illuminate\View\View;
 
 class LoginController extends Controller
 {
+    use EstablishesAuthenticatedSession;
+
     public function create(): View
     {
         return view('auth.login');
@@ -32,36 +34,11 @@ class LoginController extends Controller
             ])->onlyInput('email');
         }
 
-        $request->session()->regenerate();
-        $user = $request->user();
-        $classification = AccessClassification::tryFrom(
-            strtoupper((string) $user?->getRawOriginal('access_classification'))
-        );
+        $error = $this->establishAuthenticatedSession($request, $request->user());
 
-        if (! $classification?->isPortalEnabled()) {
-            Auth::logout();
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
-
-            return back()->withErrors([
-                'email' => 'This account uses a retired or invalid system role. Contact ICTU.',
-            ])->onlyInput('email');
+        if ($error !== null) {
+            return back()->withErrors(['email' => $error])->onlyInput('email');
         }
-
-        $workspace = $user->primaryWorkspace();
-
-        if (! $workspace) {
-            Auth::logout();
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
-
-            return back()->withErrors([
-                'email' => 'This account has no valid portal assignment. Contact ICTU.',
-            ])->onlyInput('email');
-        }
-
-        $user->forceFill(['last_login_at' => now()])->save();
-        $request->session()->put('active_workspace', $workspace);
 
         return redirect()->intended(route('dashboard'));
     }

@@ -25,7 +25,9 @@
         $linenOutstanding > 0 => 'Awaiting borrower return inspection',
         ! $laundryJob => 'Returned / accounted',
         $laundryJob->status === 'FOR_LAUNDRY' =>
-            'SPMU inspected linen — awaiting Laundry receipt signature',
+            $laundryJob->hasVerifiedAccomplishedForm()
+                ? 'Laundry receipt confirmed — awaiting SPMU return verification'
+                : 'Awaiting Laundry return — borrower returns linen to the Laundry Area first',
         $laundryJob->status === 'TURNED_OVER_TO_LAUNDRY' =>
             'Turned over to Laundry — borrower no longer waits for washing',
         $laundryJob->status === 'LAUNDRY_COMPLETED' =>
@@ -39,14 +41,19 @@
             'This custody does not contain laundry-required linen.',
             'info',
         ],
+        $linenOutstanding > 0 && $laundryJob?->hasVerifiedAccomplishedForm() => [
+            'Encode the linen condition from the accomplished Laundry Form',
+            'Laundry Personnel already received the linen, recorded the actual quantity and condition, and wet-signed Received by. Record those values in this Return Inspection exactly as written on the verified form.',
+            'warning',
+        ],
         $linenOutstanding > 0 => [
-            'Return linen with the same printed Laundry Form',
-            'Record the linen condition in this Return Inspection. Laundry Personnel will later wet-sign Received by on the same printed Laundry Form.',
+            'Awaiting Laundry return',
+            'The borrower returns the linen to the Laundry Area first with the same printed Laundry Form. After Laundry Personnel records the condition and wet-signs Received by, upload the accomplished form here before the linen return can be finalized.',
             'warning',
         ],
         $laundryJob?->status === 'FOR_LAUNDRY' => [
             'Confirm physical Laundry turnover',
-            'SPMU return inspection is complete. The borrower brings the linen and same printed Laundry Form to the Laundry Area. After Laundry Personnel wet-signs Received by, confirm the turnover in Laundry Operations.',
+            'The SPMU return verification is recorded. Confirm the Laundry turnover in Laundry Operations so the linen enters the internal washing queue.',
             'warning',
         ],
         $laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY' => [
@@ -126,12 +133,34 @@
                         <div class="return-document-copy">
                             <x-icon name="linen" size="22" />
                             <div><strong>Laundry Form</strong>
-                            <small>{{ $hasLaundryItem ? 'Required for linen included in this borrowing.' : 'Not applicable — no linen items.' }}</small></div>
+                            <small>{{ $hasLaundryItem ? 'Required before the linen return can be finalized. Signed by Laundry Personnel on physical return.' : 'Not applicable — no linen items.' }}</small></div>
                         </div>
                         @if(!$hasLaundryItem)
                             <span class="status-badge status-neutral">Locked</span>
                         @elseif($laundryJob?->latestEvidence?->file)
                             <a class="button secondary small ui-pressable" href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}" target="_blank" rel="noopener">View uploaded form</a>
+                        @elseif($laundryJob)
+                            <form
+                                method="post"
+                                action="{{ route('laundry.spmu.upload-form', $laundryJob) }}"
+                                enctype="multipart/form-data"
+                                class="return-laundry-form-upload"
+                            >
+                                @csrf
+                                <label class="visually-hidden" for="return-laundry-form-evidence">Accomplished Laundry Form</label>
+                                <input
+                                    id="return-laundry-form-evidence"
+                                    type="file"
+                                    name="evidence"
+                                    required
+                                    accept="application/pdf,image/png,image/jpeg,image/webp"
+                                >
+                                <label class="return-laundry-form-attest">
+                                    <input type="checkbox" name="laundry_received_signature_confirmed" value="1" required>
+                                    <span>I confirm that the uploaded Laundry Form is the accomplished form presented by the borrower and contains the Laundry Personnel RECEIVED BY wet signature, including returned quantity and condition/remarks where applicable.</span>
+                                </label>
+                                <button class="button secondary small ui-pressable" type="submit">Upload signed form</button>
+                            </form>
                         @else
                             <span class="status-badge status-warning">Pending scan</span>
                         @endif

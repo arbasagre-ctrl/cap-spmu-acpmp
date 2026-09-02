@@ -1,4 +1,4 @@
-@extends('layouts.app', ['title' => 'For Approval'])
+@extends('layouts.app', ['title' => $mode === 'ACTION_OFFICER_VERIFICATION' ? 'For Verification' : 'For Approval'])
 
 @section('content')
 @include('approvals.partials.queue-styles')
@@ -6,11 +6,15 @@
 <div class="approval-queue" data-approval-queue>
     <section class="page-heading approval-queue-heading">
         <div>
-            <p class="eyebrow">SPMU approval review</p>
+            <p class="eyebrow">{{ $mode === 'ACTION_OFFICER_VERIFICATION' ? 'SPMU Action Officer' : 'SPMU Head decision' }}</p>
 
-            <h1>Requests for Approval</h1>
+            <h1>{{ $mode === 'ACTION_OFFICER_VERIFICATION' ? 'Requests for Verification' : 'Requests for Approval' }}</h1>
 
-            <p>Review submitted borrowing requests ready for SPMU verification.</p>
+            <p>
+                {{ $mode === 'ACTION_OFFICER_VERIFICATION'
+                    ? 'Verify submitted documents and request details before routing the request to the SPMU Head. Verification is not approval.'
+                    : 'Review only requests already VERIFIED by the Action Officer and record the final Head decision.' }}
+            </p>
         </div>
 
         <a
@@ -27,8 +31,12 @@
             'emptyId' => null,
             'emptyHidden' => false,
             'emptyVariant' => null,
-            'emptyTitle' => 'No requests waiting for approval.',
-            'emptyMessage' => 'Newly submitted requests will appear here once they are ready for SPMU review.',
+            'emptyTitle' => $mode === 'ACTION_OFFICER_VERIFICATION'
+                ? 'No requests waiting for verification.'
+                : 'No verified requests waiting for approval.',
+            'emptyMessage' => $mode === 'ACTION_OFFICER_VERIFICATION'
+                ? 'New borrower submissions will appear here first.'
+                : 'Requests appear here only after Action Officer verification.',
         ])
     @else
         <div class="approval-queue-filters">
@@ -55,7 +63,9 @@
         </div>
 
         <section class="card approval-queue-card" aria-labelledby="approval-queue-title">
-            <h2 class="approval-queue-card-heading" id="approval-queue-title">Pending Approvals</h2>
+            <h2 class="approval-queue-card-heading" id="approval-queue-title">
+                {{ $mode === 'ACTION_OFFICER_VERIFICATION' ? 'Pending Verifications' : 'Pending Head Decisions' }}
+            </h2>
 
             <div class="approval-queue-table-wrap">
                 <table class="approval-queue-table">

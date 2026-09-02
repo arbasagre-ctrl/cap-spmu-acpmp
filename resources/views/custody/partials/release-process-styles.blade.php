@@ -116,7 +116,7 @@
 .release-step-number { position: absolute; top: 16px; left: -44px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface-muted); color: var(--text-muted); font-size: 12px; font-weight: 750; z-index: 1; }
 .release-process-step.is-complete > .release-step-number { color: #fff; background: #079e32; }
 .release-process-step.is-current > .release-step-number { color: #fff; background: var(--release-blue); }
-.release-step-heading { display: grid; grid-template-columns: minmax(0, 1fr) 98px var(--release-actions-width); align-items: start; column-gap: 12px; }
+.release-step-heading { display: grid; grid-template-columns: minmax(0, 1fr) 116px var(--release-actions-width); align-items: start; column-gap: 12px; }
 .release-flow-page .release-step-copy h3 { margin: 0; color: var(--heading); font-size: 15px; font-weight: 750; line-height: 1.5; }
 .release-step-copy p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .release-step-schedule, .release-step-notified { display: flex; align-items: flex-start; gap: 7px; }
@@ -125,6 +125,10 @@
 .release-step-badge { justify-self: center; margin-top: 1px; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 750; line-height: 1.4; text-align: center; }
 .release-step-badge.is-complete { color: var(--success); background: var(--success-bg); }
 .release-step-badge.is-pending { color: var(--text-muted); background: var(--surface-muted); }
+.release-schedule-status { display: flex; flex-direction: column; align-items: center; justify-content: space-between; align-self: stretch; gap: 8px; }
+.release-flow-page .release-schedule-edit { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--release-blue); font-size: 11.5px; font-weight: 700; line-height: 1.2; white-space: nowrap; cursor: pointer; }
+.release-flow-page .release-schedule-edit > .ui-icon { flex-shrink: 0; }
+.release-flow-page .release-schedule-edit:hover, .release-flow-page .release-schedule-edit:focus-visible { color: var(--interactive-hover); text-decoration: underline; }
 .release-step-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 30px; }
 .release-schedule-actions { padding-top: 18px; }
 .release-flow-page .button.release-outline { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 5px 12px; border: 1px solid var(--release-blue); border-radius: 6px; color: var(--release-blue); background: var(--surface-elevated); font-size: 11px; font-weight: 700; white-space: nowrap; }
@@ -140,7 +144,50 @@
 .release-flow-page .release-schedule-form, .release-flow-page .release-preparation-form { margin: 0; }
 .release-flow-page .release-preparation-form > p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .release-flow-page .release-preparation-form .table-wrap table { min-width: 580px; }
-.release-preparation-form [data-prepared-quantity] { max-width: 190px; }
+.prepared-quantity-stepper {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    align-items: stretch;
+    width: 100%;
+    max-width: 190px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    transition: border-color var(--motion) ease, box-shadow var(--motion) ease;
+}
+.prepared-quantity-stepper:focus-within { border-color: var(--interactive); box-shadow: var(--focus-ring); }
+.release-preparation-form .prepared-quantity-stepper [data-prepared-quantity] {
+    max-width: none;
+    min-height: 38px;
+    margin: 0;
+    padding: 8px 2px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    text-align: center;
+}
+.release-preparation-form .prepared-quantity-stepper [data-prepared-quantity]:focus { outline: 0; box-shadow: none; }
+/* Actual Prepared only: the native spinner is replaced by the click-once steppers. */
+input.actual-prepared-quantity::-webkit-outer-spin-button,
+input.actual-prepared-quantity::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
+input.actual-prepared-quantity { -moz-appearance: textfield; appearance: textfield; }
+.prepared-quantity-step {
+    display: grid;
+    place-items: center;
+    min-height: 38px;
+    padding: 0;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--motion-fast) ease, background-color var(--motion-fast) ease;
+}
+.prepared-quantity-step:hover:not(:disabled) { color: var(--interactive); background: var(--surface-hover); }
+.prepared-quantity-step:disabled { color: var(--text-soft); cursor: not-allowed; }
 .release-flow-page .release-preparation-form .empty-state { min-height: 0; padding: 12px; align-items: flex-start; text-align: left; }
 .release-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding-right: 40px; }
 .release-documents-panel { margin-top: 4px; }
@@ -194,6 +241,7 @@ html[data-theme="dark"] .release-process-step.is-current > .release-step-number 
     .release-step-heading { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
     .release-step-copy { grid-column: 1; grid-row: 1; }
     .release-step-badge { grid-column: 1; grid-row: 2; justify-self: start; }
+    .release-schedule-status { grid-column: 1; grid-row: 2; align-self: start; align-items: flex-start; justify-content: flex-start; }
     .release-step-actions { grid-column: 2; grid-row: 1; }
     .release-schedule-actions { grid-column: 1 / -1; grid-row: 3; padding-top: 0; }
     .release-schedule-actions > .button { width: auto; }

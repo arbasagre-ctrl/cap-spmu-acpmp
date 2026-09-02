@@ -4,7 +4,6 @@
 .reporting-detail .reports-navigation-row .reporting-heading-actions { flex-shrink: 0; }
 .reporting-detail .reporting-heading-actions .button { min-height: 43px; padding: 10px 18px; }
 .reports-detail-page { display: grid; gap: 18px; min-width: 0; }
-.reporting-detail .reports-module-tabs a { min-height: 44px; }
 .reporting-workspace .report-generator-card { padding: 22px 24px; }
 .report-generator-grid { display: grid; grid-template-columns: minmax(200px, 1.05fr) minmax(190px, 1.08fr) minmax(185px, 1.1fr) auto; align-items: end; gap: 24px; }
 .reporting-workspace .report-generator-grid > label { display: grid; gap: 9px; min-width: 0; margin: 0; color: var(--heading); font-size: 12px; font-weight: 700; }

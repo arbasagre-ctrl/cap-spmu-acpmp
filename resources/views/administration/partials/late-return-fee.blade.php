@@ -337,7 +337,7 @@ html[data-theme="dark"] .late-fee-page {
 
 html[data-theme="dark"] .late-fee-identity-icon,
 html[data-theme="dark"] .late-fee-about-icon {
-    background: rgba(114, 183, 244, .14);
+    background: rgba(74, 143, 247, .16);
 }
 
 html[data-theme="dark"] .late-fee-note,

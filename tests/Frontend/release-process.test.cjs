@@ -100,7 +100,25 @@ test('preparation confirmation enables only when every prepared quantity matches
         const input = fakeElement();
         input.value = '';
         input.dataset.approved = approved;
-        input.closest = () => ({ querySelector: () => resultNodes[index] });
+
+        /*
+         * The field sits inside .prepared-quantity-stepper alongside a minus
+         * and a plus button, and inside the row that carries the result cell,
+         * so closest() has to answer for both ancestors.
+         */
+        const steps = ['-1', '1'].map((delta) => {
+            const step = fakeElement();
+            step.dataset.preparedStep = delta;
+            return step;
+        });
+
+        const stepper = { querySelectorAll: () => steps };
+        const row = { querySelector: () => resultNodes[index] };
+
+        input.closest = (selector) =>
+            selector === '.prepared-quantity-stepper' ? stepper : row;
+        input.steps = steps;
+
         return input;
     });
     const button = { disabled: true };

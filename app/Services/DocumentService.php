@@ -132,6 +132,8 @@ class DocumentService
 
     public function borrowerSlip(CustodyTransaction $custody): GeneratedDocument
     {
+        $this->assertFinalApprovalForOperationalDocument($custody);
+
         $custody->loadMissing([
             'request.borrower',
             'request.currentVersion.borrowerSignature.file',
@@ -145,14 +147,15 @@ class DocumentService
          * Borrower Slip is generated immediately after SPMU approval so the
          * borrower can download, print, and bring the physical form to SPMU.
          * The approved custody quantities are already fixed at this point.
-         * Item preparation later verifies the same approved quantities and
-         * does not create a second Borrower Slip version.
+         * Item preparation later validates this approved document and the
+         * same approved quantities. Controlled copies may still be replaced
+         * after release or return so their operational sections stay current.
          */
 
         $this->supersede(
             $custody,
             'BORROWER_SLIP',
-            'Replaced by the latest physical preparation copy.'
+            'Replaced by the latest controlled operational copy.'
         );
 
         return $this->saveHtml(
@@ -879,6 +882,8 @@ HTML;
     {
         $type = strtoupper(trim($type));
 
+        $this->assertFinalApprovalForOperationalDocument($custody);
+
         $custody->loadMissing([
             'request.borrower',
             'request.currentVersion',
@@ -968,7 +973,14 @@ HTML;
 
         $borrowerName = e((string) $borrower->full_name);
         $purpose = e((string) ($version?->purpose_event ?: ''));
-        $destination = e((string) ($version?->location ?: ''));
+        /*
+         * The printed Remarks field carries no automatically generated text.
+         * Destination, location, designations and approval/signature metadata
+         * are never placed here: a designation belongs only under its
+         * signatory's printed name, and the destination stays on the Gate Pass
+         * record for the workflow without being printed as a remark. The row
+         * stays on the form and is filled in by hand when needed.
+         */
 
         $custodyNumber = e((string) $custody->custody_no);
 
@@ -981,8 +993,8 @@ HTML;
          *
          * - Bearer / Accountable Person: the borrower signature captured when
          *   the approved request version was E-signed and submitted.
-         * - "Verified By": the SPMU Action Officer who verifies the actual
-         *   off-campus handover at Physical Release.
+         * - "Verified By": the SPMU Action Officer who verified the submitted
+         *   request and required documents before Head review.
          * - "Approved By": the SPMU Head whose approval authorized the request
          *   and therefore the off-campus movement.
          *
@@ -996,22 +1008,26 @@ HTML;
             ? e((string) $gatePass->approver->full_name)
             : 'SPMU HEAD';
 
-        $verifiedSignature = $this->signatureImage(
+        /*
+         * One shared geometry for every Gate Pass signature block so the
+         * Bearer, Verified By and Approved By blocks stay identical.
+         */
+        $verifiedSignature = $this->centeredSignatureImage(
             $gatePass?->preparedVerifierSignature,
             140,
             26
         );
 
-        $approvedSignature = $this->signatureImage(
+        $approvedSignature = $this->centeredSignatureImage(
             $gatePass?->approverSignature,
             140,
             26
         );
 
-        $borrowerSignature = $this->signatureImage(
+        $borrowerSignature = $this->centeredSignatureImage(
             $version?->borrowerSignature,
-            150,
-            30
+            140,
+            26
         );
 
         $offCampusLines = $custody->lines->filter(
@@ -1248,7 +1264,7 @@ HTML;
                     min-height:24px;
                 ">
                     <strong>Remarks:</strong>
-                    &nbsp; Destination: {$destination}
+                    &nbsp;
                 </td>
             </tr>
         </tbody>
@@ -1259,31 +1275,43 @@ HTML;
          BEARER
     ======================================================= -->
 
-    <div style="
-        width:48%;
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        table-layout:fixed;
         margin-top:16px;
     ">
-        <div style="font-weight:bold;font-size:10px;">
-            Name &amp; Signature of Bearer (Accountable Person)
-        </div>
+        <tr>
+            <td style="
+                width:50%;
+                border:0;
+                padding:0 24px 0 0;
+                vertical-align:top;
+            ">
+                <div style="font-weight:bold;font-size:10px;">
+                    Name &amp; Signature of Bearer (Accountable Person)
+                </div>
 
-        <div style="
-            height:30px;
-            border-bottom:1px solid #111;
-            display:flex;
-            align-items:flex-end;
-            justify-content:center;
-        ">{$borrowerSignature}</div>
+                <div style="
+                    height:30px;
+                    line-height:30px;
+                    text-align:center;
+                    border-bottom:1px solid #111;
+                ">{$borrowerSignature}</div>
 
-        <div style="
-            text-align:center;
-            font-weight:bold;
-            text-transform:uppercase;
-            margin-top:3px;
-        ">
-            {$borrowerName}
-        </div>
-    </div>
+                <div style="
+                    text-align:center;
+                    font-weight:bold;
+                    text-transform:uppercase;
+                    margin-top:3px;
+                ">
+                    {$borrowerName}
+                </div>
+            </td>
+
+            <td style="width:50%;border:0;padding:0;"></td>
+        </tr>
+    </table>
 
 
     <!-- ======================================================
@@ -1293,13 +1321,15 @@ HTML;
     <table style="
         width:100%;
         border-collapse:collapse;
+        table-layout:fixed;
         margin-top:26px;
     ">
         <tr>
             <td style="
-                width:48%;
+                width:50%;
+                border:0;
                 vertical-align:top;
-                padding-right:30px;
+                padding:0 24px 0 0;
             ">
 
                 <div style="font-weight:bold;margin-bottom:4px;">
@@ -1307,7 +1337,9 @@ HTML;
                 </div>
 
                 <div style="
-                    height:26px;
+                    height:30px;
+                    line-height:30px;
+                    text-align:center;
                     border-bottom:1px solid #111;
                 ">{$verifiedSignature}</div>
 
@@ -1329,9 +1361,10 @@ HTML;
             </td>
 
             <td style="
-                width:52%;
+                width:50%;
+                border:0;
                 vertical-align:top;
-                padding-left:30px;
+                padding:0 0 0 24px;
             ">
 
                 <div style="font-weight:bold;margin-bottom:4px;">
@@ -1339,7 +1372,9 @@ HTML;
                 </div>
 
                 <div style="
-                    height:26px;
+                    height:30px;
+                    line-height:30px;
+                    text-align:center;
                     border-bottom:1px solid #111;
                 ">{$approvedSignature}</div>
 
@@ -1367,16 +1402,25 @@ HTML;
          GUARD / RELEASE CONTROL
     ======================================================= -->
 
-    <div style="
-        width:48%;
+    <table style="
+        width:100%;
+        border-collapse:collapse;
+        table-layout:fixed;
         margin-top:28px;
     ">
+        <tr>
+            <td style="
+                width:50%;
+                border:0;
+                padding:0 24px 0 0;
+                vertical-align:top;
+            ">
         <div style="font-weight:bold;margin-bottom:8px;">
             Released by:
         </div>
 
         <div style="
-            height:25px;
+            height:30px;
             border-bottom:1px solid #111;
         "></div>
 
@@ -1406,7 +1450,11 @@ HTML;
                 border-bottom:1px solid #111;
             "></span>
         </div>
-    </div>
+            </td>
+
+            <td style="width:50%;border:0;padding:0;"></td>
+        </tr>
+    </table>
 
 
     <!-- ======================================================
@@ -2833,6 +2881,32 @@ HTML;
      * its existing blank handwritten-signature space. Historical records that
      * predate role-based E-signature capture therefore render unchanged.
      */
+    /**
+     * A signature image that centres reliably in Dompdf.
+     *
+     * Dompdf supports neither flexbox nor `margin:0 auto` on a replaced
+     * element whose width stays auto, so the image is rendered inline-level
+     * and centred by the container's text-align. Aspect ratio is preserved by
+     * constraining both max dimensions and leaving width/height auto.
+     */
+    private function centeredSignatureImage(
+        ?SignatureSnapshot $snapshot,
+        int $maxWidthPt = 150,
+        int $maxHeightPt = 40
+    ): string {
+        $image = $this->signatureImage($snapshot, $maxWidthPt, $maxHeightPt);
+
+        if ($image === '') {
+            return '';
+        }
+
+        return str_replace(
+            'style="display:block;margin:0 auto;',
+            'style="display:inline-block;vertical-align:bottom;',
+            $image
+        );
+    }
+
     private function signatureImage(
         ?SignatureSnapshot $snapshot,
         int $maxWidthPt = 150,
@@ -3200,5 +3274,30 @@ HTML;
             ->where('document_type', $type)
             ->where('status', 'FINAL')
             ->update(['status' => 'SUPERSEDED', 'invalidated_at' => now(), 'invalidation_reason' => $reason]);
+    }
+
+    private function assertFinalApprovalForOperationalDocument(CustodyTransaction $custody): void
+    {
+        $custody->loadMissing('request');
+
+        $request = $custody->request;
+        $approved = $request
+            && (
+                $request->final_approved_at !== null
+                || in_array(
+                    $request->status,
+                    [
+                        RequestStatus::FinalApprovedAwaitingDownload,
+                        RequestStatus::ApprovedReadyForRelease,
+                    ],
+                    true
+                )
+            );
+
+        if (! $approved) {
+            throw ValidationException::withMessages([
+                'document' => 'Borrower Slip, Gate Pass, and other operational forms may be generated only after final SPMU Head approval.',
+            ]);
+        }
     }
 }

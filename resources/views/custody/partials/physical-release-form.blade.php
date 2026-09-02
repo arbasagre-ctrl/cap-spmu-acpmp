@@ -14,7 +14,7 @@
             autocomplete="off"
             @disabled(!$preparationComplete || !$pickupWindowOpen)
         >
-        <span>I confirm that the borrower physically received the approved items, and that all required handwritten/wet signatures were completed on the Borrower Slip and, if applicable, the Gate Pass.</span>
+        <span>I confirm that I validated the approved/generated Borrower Slip and applicable Gate Pass, completed the physical preparation, and handed the approved items to the borrower.</span>
     </label>
 
     @error('signature')

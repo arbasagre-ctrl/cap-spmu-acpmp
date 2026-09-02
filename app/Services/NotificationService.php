@@ -388,6 +388,7 @@ HTML;
     {
         $title = match ($eventCode) {
             'REQUEST_SUBMITTED' => 'Borrowing Request Submitted',
+            'REQUEST_VERIFIED' => 'Request Verified for Head Review',
             'REQUEST_APPROVED' => 'Borrowing Request Approved',
             'REQUEST_RETURNED_FOR_REVISION' => 'Action Required: Request Revision',
             'REQUEST_REJECTED' => 'Borrowing Request Not Approved',
@@ -409,11 +410,12 @@ HTML;
         };
 
         $next = match ($eventCode) {
-            'REQUEST_SUBMITTED' => 'SPMU will review the request and scanned supporting documents. Submission does not reserve inventory until the request is verified and approved.',
-            'REQUEST_APPROVED' => 'The approved quantities are now reserved. Please wait for the separate pickup schedule notification before going to SPMU for release.',
+            'REQUEST_SUBMITTED' => 'The SPMU Action Officer will verify the request and scanned supporting documents first. Verification is not approval and does not reserve inventory.',
+            'REQUEST_VERIFIED' => 'The request is now routed to the SPMU Head for a separate approval, rejection, or return decision. No inventory is reserved until approval.',
+            'REQUEST_APPROVED' => 'The approved quantities are reserved and the Borrower Slip plus applicable Gate Pass are available to view and download. Bring them to SPMU on the separately scheduled pickup date.',
             'REQUEST_RETURNED_FOR_REVISION' => 'Open the request, review the SPMU remarks, correct the required information or documents, and resubmit the updated request.',
             'REQUEST_REJECTED' => 'No inventory reservation was created. Please review the recorded reason and coordinate with SPMU if clarification is needed.',
-            'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the required physical documents. Property is issued only after all release requirements are completed.',
+            'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the generated Borrower Slip and applicable Gate Pass. Property is issued only after all release requirements are completed.',
             'PICKUP_EXPIRED' => 'Coordinate with SPMU if the borrowing requirement is still active. An expired pickup reservation is not treated as a completed issuance.',
             'ITEMS_RELEASED' => 'Please keep the issued property in proper custody and return all items on or before the expected return date. Follow applicable Gate Pass or Laundry requirements when relevant.',
             'LINEN_FOR_LAUNDRY' => 'The borrower returns the linen with the same printed Laundry Form. SPMU records the return condition once, then the borrower brings the linen to the Laundry Area and Laundry Personnel wet-signs Received by. Once that physical turnover is confirmed, washing continues internally in the Laundry Area and no longer holds the borrower transaction open.',
@@ -776,12 +778,15 @@ HTML;
 
             'REQUEST_SUBMITTED' =>
                 $isBorrower
-                    ? 'Your borrowing request and the required scanned documents have been submitted to the Supply and Property Management Unit for verification. No inventory has been reserved at this stage. Reservation occurs only after SPMU verifies and approves the request.'
-                    : 'A borrowing request and its required scanned documents have been submitted for SPMU verification. No inventory has been reserved at this stage.',
+                    ? 'Your borrowing request and required scanned documents were submitted to the SPMU Action Officer for verification. Verification is not approval, and no inventory is reserved at this stage.'
+                    : 'A borrowing request and its required scanned documents were submitted for Action Officer verification. Verification is not approval, and no inventory is reserved at this stage.',
+
+            'REQUEST_VERIFIED' =>
+                'The SPMU Action Officer verified the submitted request and required documents. The request is now awaiting the separate SPMU Head decision; no approval or inventory reservation has occurred yet.',
 
             'REQUEST_APPROVED' =>
                 $isBorrower
-                    ? 'Your borrowing request has been reviewed and approved by the Supply and Property Management Unit. The approved quantities shown below are now reserved for the approved borrowing period.'
+                    ? 'Your verified borrowing request was approved by the SPMU Head. The approved quantities are reserved, and your Borrower Slip plus applicable Gate Pass are now available to view and download.'
                     : 'The borrowing request has been reviewed and approved by SPMU. The approved quantities shown below are now reserved for the approved borrowing period.',
 
             'REQUEST_RETURNED_FOR_REVISION' =>

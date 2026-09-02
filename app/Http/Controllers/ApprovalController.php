@@ -14,6 +14,23 @@ use Illuminate\View\View;
 
 class ApprovalController extends Controller
 {
+    public function verificationIndex(Request $request): View
+    {
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may access the verification queue.'
+        );
+
+        return view('approvals.index', [
+            'stage' => 'SPMU',
+            'mode' => 'ACTION_OFFICER_VERIFICATION',
+            'requests' => $this->pendingRequestsForSequence(1),
+            'canVerify' => true,
+            'canDecide' => false,
+        ]);
+    }
+
     public function index(Request $request): View
     {
         abort_unless($request->user()->primaryWorkspace() === 'SPMU', 403);
@@ -28,45 +45,70 @@ class ApprovalController extends Controller
             'Only the SPMU Head or a formally delegated Action Officer may access the approval queue.'
         );
 
-        $requests = BorrowingRequest::query()
-            ->with([
-                'borrower.organizationalUnit',
-                'currentVersion.items.inventoryItem.unit',
-                'currentVersion.supportingDocuments.file',
-                'currentVersion.approvalSteps.approver',
-            ])
-            ->where('status', RequestStatus::UnderSpmu)
-            ->whereHas('currentVersion.approvalSteps', function ($step): void {
-                $step->where('stage_code', 'SPMU')
-                    ->where('sequence_no', 1)
-                    ->whereIn('decision', ['PENDING', 'RECEIVED']);
-            })
-            /*
-             * First-ready, first-reviewed queue.
-             *
-             * Priority follows the latest request version's submission time,
-             * not the original request creation time. If a request was returned
-             * for revision, its new resubmission timestamp becomes its queue
-             * position when it comes back for SPMU review.
-             */
-            ->orderBy(
-                RequestVersion::query()
-                    ->selectRaw('COALESCE(submitted_at, updated_at)')
-                    ->whereColumn('request_versions.request_id', 'borrowing_requests.id')
-                    ->orderByDesc('version_no')
-                    ->limit(1),
-                'asc'
-            )
-            ->orderBy('borrowing_requests.id')
-            ->get();
-
         return view('approvals.index', [
             'stage' => 'SPMU',
             'mode' => 'HEAD_DECISION',
-            'requests' => $requests,
+            'requests' => $this->pendingRequestsForSequence(2),
             'canVerify' => false,
             'canDecide' => true,
         ]);
+    }
+
+    public function verify(
+        Request $request,
+        BorrowingRequest $borrowingRequest,
+        RequestWorkflowService $workflow
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may verify a submitted request.'
+        );
+
+        $rules = [
+            'decision' => ['required', Rule::in(['VERIFIED', 'RETURNED_FOR_REVISION'])],
+            'remarks' => [
+                Rule::requiredIf(
+                    fn (): bool => strtoupper((string) $request->input('decision'))
+                        === 'RETURNED_FOR_REVISION'
+                ),
+                'nullable',
+                'string',
+                'max:2000',
+            ],
+        ];
+
+        if (strtoupper((string) $request->input('decision')) === 'VERIFIED') {
+            $rules = array_merge($rules, [
+                'details_complete' => ['required', 'accepted'],
+                'documents_complete' => ['required', 'accepted'],
+                'availability_verified' => ['required', 'accepted'],
+                'confirm_e_signature' => ['required', 'accepted'],
+            ]);
+        }
+
+        $data = $request->validate($rules, [
+            'details_complete.accepted' => 'Confirm that the request details match the signed letter.',
+            'documents_complete.accepted' => 'Confirm that the required supporting documents are complete.',
+            'availability_verified.accepted' => 'Confirm that the request and requested inventory were verified.',
+            'confirm_e_signature.accepted' => 'Confirm that you want to apply your registered E-signature to this verification.',
+            'remarks.required' => 'Correction instructions are required when returning the request.',
+        ]);
+
+        $workflow->verifyByActionOfficer(
+            $borrowingRequest,
+            $request->user(),
+            $data['decision'],
+            $data['remarks'] ?? null,
+            $request->boolean('confirm_e_signature')
+        );
+
+        return redirect()->route('verifications.index')->with(
+            'status',
+            $data['decision'] === 'VERIFIED'
+                ? 'Request marked VERIFIED and routed to the SPMU Head for a separate final decision. Verification did not approve or reserve inventory.'
+                : 'Incomplete request returned to the borrower for correction. No inventory reservation was created.'
+        );
     }
 
     public function decide(
@@ -129,11 +171,38 @@ class ApprovalController extends Controller
         );
 
         $message = match ($data['decision']) {
-            'APPROVED' => 'Request E-signed, verified, and approved by the authorized SPMU signatory. The approved quantity is allocated/held for pickup, and the Action Officer may now schedule pickup and process release.',
+            'APPROVED' => 'Verified request E-signed and approved by the authorized SPMU Head signatory. The approved quantity is reserved, the Borrower Slip and applicable Gate Pass were generated, and the Action Officer may proceed with pickup preparation.',
             'RETURNED_FOR_REVISION' => 'Request returned for revision. No inventory allocation was created.',
             default => 'Request rejected. No inventory allocation was created.',
         };
 
         return redirect()->route('approvals.index')->with('status', $message);
+    }
+
+    private function pendingRequestsForSequence(int $sequence): \Illuminate\Support\Collection
+    {
+        return BorrowingRequest::query()
+            ->with([
+                'borrower.organizationalUnit',
+                'currentVersion.items.inventoryItem.unit',
+                'currentVersion.supportingDocuments.file',
+                'currentVersion.approvalSteps.approver',
+            ])
+            ->where('status', RequestStatus::UnderSpmu)
+            ->whereHas('currentVersion.approvalSteps', function ($step) use ($sequence): void {
+                $step->where('stage_code', 'SPMU')
+                    ->where('sequence_no', $sequence)
+                    ->whereIn('decision', ['PENDING', 'RECEIVED']);
+            })
+            ->orderBy(
+                RequestVersion::query()
+                    ->selectRaw('COALESCE(submitted_at, updated_at)')
+                    ->whereColumn('request_versions.request_id', 'borrowing_requests.id')
+                    ->orderByDesc('version_no')
+                    ->limit(1),
+                'asc'
+            )
+            ->orderBy('borrowing_requests.id')
+            ->get();
     }
 }

@@ -76,15 +76,19 @@
             }
         });
 
-        const ready = selected > 0 && allValid;
+        // Mirrors the server-side linen rule in CustodyService::receiveReturn.
+        const laundryFormMissing = form.dataset.laundryFormMissing === '1';
+        const ready = selected > 0 && allValid && !laundryFormMissing;
         button.disabled = !ready;
         message.classList.toggle('warning', !ready);
         message.classList.toggle('success', ready);
         if (warningIcon) warningIcon.hidden = ready;
         if (successIcon) successIcon.hidden = !ready;
-        messageCopy.textContent = ready
-            ? 'Selected item quantities are fully accounted. You may record the SPMU inspection.'
-            : 'For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.';
+        messageCopy.textContent = laundryFormMissing
+            ? 'Completed Laundry Form required before the linen return can be finalized.'
+            : (ready
+                ? 'Selected item quantities are fully accounted. You may record the SPMU inspection.'
+                : 'For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.');
     };
 
     rows.forEach((row) => {

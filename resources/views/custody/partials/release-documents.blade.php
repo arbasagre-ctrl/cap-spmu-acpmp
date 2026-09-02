@@ -15,9 +15,9 @@
                         $documentDisplayStatus = match (true) {
                             $document->document_type === 'GATE_PASS'
                                 && in_array($custody->gatePass?->status, ['READY_FOR_PRINTING', 'VERIFIED'], true)
-                                    => 'FINAL SPMU GATE PASS',
+                                    => 'APPROVED GATE PASS — VALIDATE PRESENTED COPY',
                             $document->document_type === 'GATE_PASS'
-                                    => 'SPMU PREVIEW — NOT FOR BORROWER PRINTING',
+                                    => 'INVALID — DO NOT RELEASE',
                             $isReleaseOperationalDocument
                                     => 'Borrower Copy / Reference',
                             default => str($document->status)->replace('_', ' ')->upper(),
@@ -30,7 +30,7 @@
                             <strong>{{ str($document->document_type)->replace('_', ' ')->title() }}</strong>
                             <small>{{ $documentDisplayStatus }}</small>
                         </div>
-                        <a class="button secondary small ui-pressable release-outline" href="{{ route('documents.download', $document) }}">
+                        <a class="button secondary small ui-pressable release-outline" href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
                             View
                         </a>
                     </div>
