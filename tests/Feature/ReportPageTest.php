@@ -137,15 +137,14 @@ class ReportPageTest extends TestCase
         $response->assertDontSee('<a class="button secondary" href="'.route('reports.notifications').'"', false);
     }
 
-    public function test_audit_trail_and_delivery_records_are_their_own_sidebar_destinations(): void
+    public function test_spmu_head_sidebar_hides_audit_trail_and_keeps_delivery_records(): void
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index'));
 
-        $response->assertSee('Audit Trail', false);
-        $response->assertSee('Delivery Records', false);
-        $response->assertSee(route('reports.audit'), false);
+        $response->assertDontSee('<span>Audit Trail</span>', false);
+        $response->assertSee('<span>Delivery Records</span>', false);
         $response->assertSee(route('reports.notifications'), false);
     }
 

@@ -460,13 +460,6 @@
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
                     ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
                     ['reports.index', 'reports.index', 'Reports', 'report-document'],
-                    /*
-                     * Audit Trail and Delivery Records are their own
-                     * destinations, not buttons inside Reports: Reports
-                     * generates operational records, the Audit Trail says who
-                     * performed which system action and when.
-                     */
-                    ['reports.audit', 'reports.audit', 'Audit Trail', 'file-search'],
                     ['reports.notifications', 'reports.notifications', 'Delivery Records', 'notifications'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
