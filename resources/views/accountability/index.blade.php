@@ -10,6 +10,8 @@
 
     $activeRestrictions = $restrictions->where('status', 'ACTIVE');
     $openOverdueCases = $overdueCases->whereNotIn('status', ['RESOLVED']);
+    $currentlyOverdueCases = $openOverdueCases->where('status', 'OVERDUE');
+    $returnedLateCases = $openOverdueCases->whereIn('status', ['RETURNED_PENDING_SETTLEMENT', 'BILLED']);
     $openIncidents = $incidents->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
     $openBillings = $billings->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
     $propertyCustodyIds = $openIncidents
@@ -47,7 +49,7 @@
         : 0;
 
     $officerViewLabel = match ($officerView) {
-        'overdue' => 'Overdue Returns',
+        'overdue' => 'Overdue / Late Returns',
         'property' => 'Property Cases',
         'billings' => 'Open Billings',
         'restrictions' => 'Active Restrictions',
@@ -225,7 +227,7 @@
                 ? 'See unresolved obligations that affect your borrowing eligibility and what you need to resolve next.'
                 : ($isHead
                     ? 'Focus on matters that need Head-level oversight or a formal administrative decision.'
-                    : 'Process unresolved return, property, billing, and payment-evidence issues.') }}
+                    : 'Process unresolved returns, property cases, billings, and confirmed Cashier payments.') }}
         </p>
         @if($isOfficer && $officerView !== 'all')
             <div class="actions officer-view-actions">
@@ -249,7 +251,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
             <strong class="kpi-value">{{ $headReviewCount }}</strong>
             <span class="kpi-label">Needs Head Review</span>
-            <small>{{ $headReviewCount ? 'Formal case decision pending' : 'No pending administrative decision' }}</small>
+            <small>{{ $headReviewCount ? 'Late-return or property decision pending' : 'No pending administrative decision' }}</small>
         </a>
         <a
             class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger head-accountability-card {{ $headView === 'cases' ? 'is-active' : '' }}"
@@ -259,7 +261,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="custody" size="18" /></span>
             <strong class="kpi-value">{{ $openCaseCount }}</strong>
             <span class="kpi-label">Open Cases</span>
-            <small>{{ $openOverdueCases->count() }} overdue · {{ $openIncidents->count() }} property</small>
+            <small>{{ $currentlyOverdueCases->count() }} overdue · {{ $returnedLateCases->count() }} returned late · {{ $openIncidents->count() }} property</small>
         </a>
         <a
             class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info head-accountability-card {{ $headView === 'billings' ? 'is-active' : '' }}"
@@ -269,7 +271,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
-            <small>Awaiting settlement or disposition</small>
+            <small>Final charges awaiting settlement or disposition</small>
         </a>
         <a
             class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning head-accountability-card {{ $headView === 'restrictions' ? 'is-active' : '' }}"
@@ -279,7 +281,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
-            <small>Borrowing restrictions currently in force</small>
+            <small>Current borrowing restrictions from unresolved obligations or sanctions</small>
         </a>
     @else
         <a
@@ -289,8 +291,8 @@
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
             <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
-            <span class="kpi-label">Overdue Returns</span>
-            <small>Process lateness follow-up after physical return</small>
+            <span class="kpi-label">Overdue / Late Returns</span>
+            <small>{{ $currentlyOverdueCases->count() }} outstanding · {{ $returnedLateCases->count() }} returned late</small>
         </a>
         <a
             class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning officer-accountability-card {{ $officerView === 'property' ? 'is-active' : '' }}"
@@ -310,7 +312,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
-            <small>Receipt recording and payment verification</small>
+            <small>Final late-return or property charges awaiting payment</small>
         </a>
         <a
             class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning officer-accountability-card {{ $officerView === 'restrictions' ? 'is-active' : '' }}"
@@ -320,7 +322,7 @@
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
-            <small>Reference-only borrowing eligibility status</small>
+            <small>Borrowers currently blocked by an unresolved obligation or sanction</small>
         </a>
     @endif
 </section>
@@ -369,6 +371,17 @@
     </div>
 
     @foreach($pendingViolations as $violation)
+        @php
+            $violationDetails = is_array($violation->details_json) ? $violation->details_json : [];
+            $violationReasons = collect($violationDetails['reasons'] ?? [])->map(fn ($reason) => strtoupper((string) $reason));
+            $isLateReturnViolation = $violationReasons->contains('LATE_RETURN');
+            $offensePreview = $violationOffensePreviews[$violation->id] ?? null;
+            $effectiveReturnDate = data_get($violationDetails, 'effective_return_date');
+            $actualReturnDate = data_get($violationDetails, 'actual_return_date');
+            $lateDays = ($effectiveReturnDate && $actualReturnDate)
+                ? max(0, \Carbon\CarbonImmutable::parse($effectiveReturnDate)->diffInDays(\Carbon\CarbonImmutable::parse($actualReturnDate)))
+                : null;
+        @endphp
         <article class="card top-gap">
             <div class="card-header">
                 <div>
@@ -382,18 +395,40 @@
             <dl class="summary-grid compact">
                 <div>
                     <dt>Finding(s)</dt>
-                    <dd>{{ collect(data_get($violation->details_json, 'reasons', []))->map(fn ($reason) => str($reason)->replace('_', ' ')->title())->join(', ') ?: 'Borrowing violation' }}</dd>
+                    <dd>{{ $violationReasons->map(fn ($reason) => str($reason)->replace('_', ' ')->title())->join(', ') ?: 'Borrowing violation' }}</dd>
                 </div>
                 <div>
                     <dt>Academic Period</dt>
-                    <dd>{{ $violation->academicPeriod ? $violation->academicPeriod->academic_year.' · '.$violation->academicPeriod->term_name : 'Uses active period when confirmed' }}</dd>
+                    <dd>{{ $offensePreview['academic_period_label'] ?? ($violation->academicPeriod ? $violation->academicPeriod->academic_year.' · '.$violation->academicPeriod->term_name : 'Uses active period when confirmed') }}</dd>
                 </div>
+                @if($isLateReturnViolation)
+                    <div>
+                        <dt>Expected Return</dt>
+                        <dd>{{ $effectiveReturnDate ? \Carbon\CarbonImmutable::parse($effectiveReturnDate)->format('d M Y') : '—' }}</dd>
+                    </div>
+                    <div>
+                        <dt>Actual Return</dt>
+                        <dd>{{ $actualReturnDate ? \Carbon\CarbonImmutable::parse($actualReturnDate)->format('d M Y') : '—' }}{{ $lateDays !== null ? ' · '.$lateDays.' day'.($lateDays === 1 ? '' : 's').' late' : '' }}</dd>
+                    </div>
+                @endif
             </dl>
 
-            <div class="callout info top-gap">
-                <strong>Connected to Operational Configuration → Sanction Rules.</strong>
-                <p>Leave Administrative Action on the configured-rule option to apply the active 1st, 2nd, or 3rd offense default. The SPMU Head may still record a justified case-specific override.</p>
-            </div>
+            @if($offensePreview)
+                <div class="callout {{ $offensePreview['is_enabled'] ? 'info' : 'warning' }} top-gap">
+                    @if($isLateReturnViolation)
+                        <strong>Late return detected — Head review is required before it counts as an offense.</strong>
+                        <p>The physical return is already recorded. If the SPMU Head confirms this violation, it will be recorded as the borrower's <strong>{{ $offensePreview['next_offense_label'] }}</strong> for this academic period, using the configured action <strong>{{ $offensePreview['configured_sanction_label'] }}</strong> unless an authorized case-specific override is selected.</p>
+                        <p>Any date-based late-return fee is handled separately under Overdue / Late Return Cases. Confirming or dismissing the administrative offense does not remove a valid financial obligation.</p>
+                    @else
+                        <strong>Administrative offense review</strong>
+                        <p>If confirmed, this case will be recorded as the borrower's <strong>{{ $offensePreview['next_offense_label'] }}</strong> for this academic period. Configured action: <strong>{{ $offensePreview['configured_sanction_label'] }}</strong>.</p>
+                    @endif
+
+                    @unless($offensePreview['is_enabled'])
+                        <p>This violation type is currently not enabled under Operational Configuration → Sanction Rules → Offense Application, so it cannot be confirmed as an offense unless that policy is enabled.</p>
+                    @endunless
+                </div>
+            @endif
 
             <form method="post" action="{{ route('accountability.violations.review', $violation) }}" class="form-grid top-gap">
                 @csrf
@@ -423,7 +458,7 @@
                     <textarea name="remarks" maxlength="2000" placeholder="Record the basis for the SPMU Head decision."></textarea>
                 </label>
                 <div class="inline-actions">
-                    <button class="button primary" name="decision" value="CONFIRMED">Confirm Violation & Record Sanction</button>
+                    <button class="button primary" name="decision" value="CONFIRMED" @disabled($offensePreview && ! $offensePreview['is_enabled'])>Confirm Violation & Record Sanction</button>
                     <button class="button secondary" name="decision" value="DISMISSED">Dismiss Violation</button>
                 </div>
             </form>
@@ -437,20 +472,83 @@
     <div class="section-heading">
         <div>
             <p class="eyebrow">Date-based lateness</p>
-            <h2>Overdue Returns</h2>
-            @if($isOfficer)
-                <p>Physical return quantities are recorded under Return. Use this section for overdue accountability follow-up after the actual return is accounted for.</p>
-            @endif
+            <h2>Overdue / Late Return Cases</h2>
+            <p><strong>Overdue</strong> means the item has not yet been returned after its Expected Return Date. <strong>Returned Late</strong> means the physical return is already complete and the final late-return fee may now be processed. Administrative 1st / 2nd / 3rd offense review remains a separate SPMU Head decision.</p>
         </div>
     </div>
+
     @foreach($openOverdueCases as $overdue)
-<article class="card top-gap"><div class="card-header"><div><strong>{{ $overdue->custody->custody_no }}</strong><h3>{{ $overdue->borrower->full_name }}</h3></div><x-status-badge :status="$overdue->status" /></div>
-<dl class="summary-grid compact"><div><dt>Expected Return Date</dt><dd>{{ $overdue->custody->due_at->format('d M Y') }}</dd></div><div><dt>Late fee rate</dt><dd>{{ $overdue->rate_snapshot === null ? 'Not configured' : 'PHP '.number_format((float)$overdue->rate_snapshot,2) }}</dd></div><div><dt>Accrued amount</dt><dd>{{ $overdue->rate_snapshot === null ? 'Not determined' : 'PHP '.number_format((float)$overdue->accrued_amount,2) }}</dd></div></dl>
-<p class="meta">Late status begins on the calendar day after the Expected Return Date. Time of day is not used to determine lateness.</p>
-@if($isOfficer && !in_array($overdue->status,['BILLED','RESOLVED'],true))
-<form method="post" action="{{ route('overdue.bill',$overdue) }}" class="form-grid top-gap">@csrf<label>Billing basis<textarea name="basis" required placeholder="Use the configured client-approved late fee policy."></textarea></label><label>Payment due date <input type="date" name="due_at"></label><button class="button primary">Generate Billing Statement / Payment Assessment</button></form>
-@endif
-</article>
+        @php
+            $isStillOverdue = $overdue->status === 'OVERDUE';
+            $isReturnedLate = in_array($overdue->status, ['RETURNED_PENDING_SETTLEMENT', 'BILLED'], true);
+            $hasBilling = $overdue->status === 'BILLED';
+        @endphp
+
+        <article class="card top-gap">
+            <div class="card-header">
+                <div>
+                    <strong>{{ $overdue->custody->custody_no }}</strong>
+                    <h3>{{ $overdue->borrower->full_name }}</h3>
+                </div>
+                <x-status-badge
+                    :status="$overdue->status"
+                    :label="$isStillOverdue
+                        ? 'Overdue · Item Not Returned'
+                        : ($overdue->status === 'RETURNED_PENDING_SETTLEMENT'
+                            ? 'Returned Late · Fee Pending'
+                            : ($hasBilling ? 'Returned Late · Billing Issued' : null))"
+                />
+            </div>
+
+            <dl class="summary-grid compact">
+                <div>
+                    <dt>Expected Return Date</dt>
+                    <dd>{{ $overdue->custody->due_at->format('d M Y') }}</dd>
+                </div>
+                <div>
+                    <dt>Late Fee Rate</dt>
+                    <dd>{{ $overdue->rate_snapshot === null ? 'Not configured' : 'PHP '.number_format((float) $overdue->rate_snapshot, 2).' per late day' }}</dd>
+                </div>
+                <div>
+                    <dt>{{ $isStillOverdue ? 'Estimated Fee So Far' : 'Final Late Return Fee' }}</dt>
+                    <dd>{{ $overdue->rate_snapshot === null ? 'Not determined' : 'PHP '.number_format((float) $overdue->accrued_amount, 2) }}</dd>
+                </div>
+            </dl>
+
+            @if($isStillOverdue)
+                <div class="callout warning top-gap">
+                    <strong>The item is still overdue.</strong>
+                    <p>The borrower must return the outstanding item first. The amount shown is only the current estimate and may increase for each additional late day. Do not issue a Billing Statement until the physical return has been recorded.</p>
+                </div>
+            @elseif($overdue->status === 'RETURNED_PENDING_SETTLEMENT')
+                <div class="callout info top-gap">
+                    <strong>The item was returned late.</strong>
+                    <p>The physical return is complete and the fee shown above is the final date-based late-return amount. The Action Officer may now issue the Billing Statement. Any 1st / 2nd / 3rd offense decision is reviewed separately by the SPMU Head.</p>
+                </div>
+            @elseif($hasBilling)
+                <div class="callout info top-gap">
+                    <strong>Late-return billing has already been issued.</strong>
+                    <p>Continue payment or waiver processing under Open Billings. The item is no longer physically overdue.</p>
+                </div>
+            @endif
+
+            <p class="meta">Late days are counted by calendar date after the effective Expected Return Date. The fee rate comes from Operational Configuration.</p>
+
+            @if($isOfficer && $overdue->status === 'RETURNED_PENDING_SETTLEMENT')
+                <form method="post" action="{{ route('overdue.bill', $overdue) }}" class="form-grid top-gap">
+                    @csrf
+                    <label>
+                        Billing Basis
+                        <textarea name="basis" required placeholder="State the applicable late-return fee basis."></textarea>
+                    </label>
+                    <label>
+                        Payment Due Date
+                        <input type="date" name="due_at">
+                    </label>
+                    <button class="button primary">Generate Billing Statement</button>
+                </form>
+            @endif
+        </article>
     @endforeach
 </section>
 @endif
@@ -737,7 +835,7 @@
             <p class="eyebrow">Cashier payment evidence</p>
             <h2>Open Billing Statements</h2>
             @if($isOfficer)
-                <p>Record the paid CSPC Cashier receipt and verify payment evidence. Authorized waivers and formal accountability decisions remain Head-level actions.</p>
+                <p>Check the official CSPC Cashier receipt, record its details, and confirm the payment in one step. Administrative offense decisions remain Head-level actions.</p>
             @endif
         </div>
     </div>
@@ -745,14 +843,14 @@
 <article class="card top-gap"><div class="card-header"><div><strong>{{ $billing->billing_no }}</strong><h3>PHP {{ number_format((float)$billing->total_amount,2) }}</h3><small>{{ $billing->borrower->full_name }}</small></div><x-status-badge :status="$billing->status" /></div>
 <div class="billing-lines">@foreach($billing->lines as $line)<p><strong>{{ str($line->line_type)->replace('_',' ')->title() }}</strong><span>{{ $line->description }}</span><small>PHP {{ number_format((float)$line->amount,2) }}</small></p>@endforeach</div>
 <div class="actions">@foreach($billing->documents->whereNotIn('status',['SUPERSEDED','INVALIDATED','EXPIRED']) as $document)<a class="button secondary small" href="{{ route('documents.download',$document) }}">Download Billing Statement / Assessment</a>@endforeach</div>
-<p class="meta">The system-generated document is not an Official Receipt. The borrower pays at the CSPC Cashier; SPMU then receives and uploads the paid Cashier receipt.</p>
+<p class="meta">The borrower pays at the CSPC Cashier and presents the official receipt to the Action Officer. Confirm the payment only after checking the receipt.</p>
 @if($isOfficer && !in_array($billing->status,['SETTLED','WAIVED','VOID'],true))
-<form method="post" action="{{ route('payments.store',$billing) }}" enctype="multipart/form-data" class="form-grid top-gap">@csrf<div class="card-header"><div><h4>Upload paid CSPC Cashier receipt</h4></div></div><div class="form-columns"><label>Cashier Receipt No.<input name="official_receipt_no" required></label><label>Receipt Date<input type="date" name="receipt_date" required></label><label>Amount Paid<input type="number" step="0.01" min="0.01" name="amount" required></label><label>Scanned Paid Receipt<input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required></label></div><label>Remarks<textarea name="remarks"></textarea></label><button class="button secondary">Upload Paid Receipt</button></form>
+<form method="post" action="{{ route('payments.store',$billing) }}" enctype="multipart/form-data" class="form-grid top-gap">@csrf<div class="card-header"><div><h4>Record Cashier Payment</h4><small>Check the official receipt before confirming.</small></div></div><div class="form-columns"><label>Cashier Receipt No.<input name="official_receipt_no" required></label><label>Receipt Date<input type="date" name="receipt_date" required></label><label>Amount Paid<input type="number" step="0.01" min="0.01" name="amount" required></label><label>Scanned Paid Receipt<input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required></label></div><label>Remarks <small>(Optional)</small><textarea name="remarks"></textarea></label><button class="button primary">Confirm Payment</button></form>
 @endif
 <div class="top-gap">
 @forelse($billing->payments as $payment)
 <div class="evidence-row"><div><x-status-badge :status="$payment->status" /><strong>{{ $payment->official_receipt_no }}</strong><small>{{ optional($payment->receipt_date)->format('d M Y') }} · PHP {{ number_format((float)$payment->amount,2) }}</small>@if($payment->evidence_file_id)<a class="table-action" href="{{ route('files.show', $payment->evidence_file_id, false) }}" target="_blank">View scanned Cashier receipt</a>@endif</div>
-@if($isOfficer && $payment->status==='PENDING_VERIFICATION')<form method="post" action="{{ route('payments.verify',$payment) }}" class="form-grid">@csrf<label>Verification remarks<textarea name="remarks" required></textarea></label><div class="inline-actions"><button class="button primary small" name="decision" value="VERIFIED">Verify Paid</button><button class="button danger small" name="decision" value="REJECTED">Return for Correction</button></div></form>@endif</div>
+@if($payment->status==='PENDING_VERIFICATION')<small class="meta">Legacy payment record from the previous two-step workflow.</small>@endif</div>
 @empty<p class="meta">No paid Cashier receipt uploaded.</p>@endforelse
 </div>
 @if($isHead && !in_array($billing->status,['SETTLED','WAIVED','VOID'],true))<details class="top-gap"><summary>Authorized billing waiver</summary><form method="post" action="{{ route('billings.waive',$billing) }}" class="form-grid top-gap">@csrf<label>Waiver reason<textarea name="reason" required></textarea></label><button class="button danger">Record Authorized Waiver</button></form></details>@endif

@@ -35,53 +35,50 @@
                     </p>
                 </div>
             @else
-                <div class="callout success">
-                    <strong>Approved Gate Pass is ready.</strong>
-                    <p>
-                        This copy was generated after Head approval and contains the borrower, Action Officer verification, and Head approval signatures. Validate the borrower-presented copy during physical preparation and handover.
-                    </p>
-                    <div class="inline-actions top-gap">
-                        <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
-                        <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download / Print</a>
+                @if(!$custody?->released_at)
+                    <div class="callout success">
+                        <strong>Approved Gate Pass is ready.</strong>
+                        <p>Print the Gate Pass before release. The Guard on Duty completes <strong>Released by</strong>, Date, and Time when the borrower exits the campus.</p>
+                        <div class="inline-actions top-gap">
+                            <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
+                            <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download / Print</a>
+                        </div>
                     </div>
-                </div>
-            @endif
-
-            @if($gatePass->accomplishedFile)
-                <div class="evidence-row top-gap">
-                    <div>
-                        <strong>Fully accomplished Gate Pass</strong>
-                        <small>Uploaded {{ optional($gatePass->uploaded_at)->format('d M Y, g:i A') }}</small>
-                    </div>
-                    <a class="button secondary small" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View uploaded scan</a>
-                </div>
+                @endif
             @endif
 
             @if($gatePass->status === 'READY_FOR_PRINTING' && $custody?->released_at)
-                <form method="post" action="{{ route('gate-passes.verify', $gatePass) }}" enctype="multipart/form-data" class="form-grid top-gap">
+                <form method="post" action="{{ route('gate-passes.verify', $gatePass) }}" enctype="multipart/form-data" class="form-grid">
                     @csrf
                     <div class="callout info">
-                        <strong>After the guard processes the printed Gate Pass</strong>
-                        <p>Upload the fully accomplished physical copy and record the guard release details for archival verification.</p>
+                        <strong>Record accomplished Gate Pass</strong>
+                        <p>When the borrower returns, upload the Gate Pass and copy the Guard on Duty, Date, and Time exactly as written on the form.</p>
                     </div>
-                    <label>Fully accomplished Gate Pass
+                    <label>Accomplished Gate Pass
                         <input type="file" name="accomplished_form" accept="application/pdf,image/png,image/jpeg,image/webp" required>
                     </label>
-                    <label>Guard Name
+                    <label>Guard on Duty
                         <input name="guard_name" value="{{ old('guard_name', $gatePass->guard_name) }}" maxlength="255" required>
                     </label>
                     <label>Date &amp; Time Released Off Campus
                         <input type="datetime-local" name="guard_signed_at" value="{{ old('guard_signed_at', optional($gatePass->guard_signed_at)->format('Y-m-d\TH:i')) }}" required>
                     </label>
-                    <label>Remarks
+                    <label>Remarks <small class="meta">Optional</small>
                         <textarea name="remarks" maxlength="2000">{{ old('remarks', $gatePass->verification_remarks) }}</textarea>
                     </label>
-                    <button class="button primary ui-pressable">Upload &amp; Verify Accomplished Gate Pass</button>
+                    <button class="button primary ui-pressable">Save Gate Pass Record</button>
                 </form>
             @elseif($gatePass->status === 'READY_FOR_PRINTING')
-                <div class="callout info top-gap"><strong>Awaiting physical handover.</strong> The accomplished Gate Pass may be uploaded only after the approved items are physically released and the guard processes the printed copy.</div>
+                <div class="callout info top-gap"><strong>Awaiting physical release.</strong> The accomplished Gate Pass will be recorded when the borrower returns.</div>
             @elseif($gatePass->status === 'VERIFIED')
-                <div class="callout success top-gap"><strong>Gate Pass completed.</strong> The accomplished scan and guard release details are archived.</div>
+                <div class="callout success top-gap">
+                    <strong>Accomplished Gate Pass recorded.</strong>
+                    @if($gatePass->accomplishedFile)
+                        <div class="inline-actions top-gap">
+                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Accomplished Gate Pass</a>
+                        </div>
+                    @endif
+                </div>
             @endif
         </article>
 
@@ -91,18 +88,15 @@
                 <dt>Borrower</dt><dd>{{ $custody?->borrower?->full_name ?: '—' }}</dd>
                 <dt>Destination</dt><dd>{{ $gatePass->destination ?: ($version?->location ?: '—') }}</dd>
                 <dt>Purpose</dt><dd>{{ $gatePass->purpose ?: ($version?->purpose_event ?: '—') }}</dd>
-                <dt>Guard Name</dt><dd>{{ $gatePass->guard_name ?: 'Pending accomplished form' }}</dd>
-                <dt>Date &amp; Time Released</dt><dd>{{ optional($gatePass->guard_signed_at)->format('d M Y, g:i A') ?: 'Pending accomplished form' }}</dd>
+                @if($gatePass->status === 'VERIFIED')
+                    <dt>Guard on Duty</dt><dd>{{ $gatePass->guard_name ?: '—' }}</dd>
+                    <dt>Date &amp; Time Released Off Campus</dt><dd>{{ optional($gatePass->guard_signed_at)->format('d M Y, g:i A') ?: '—' }}</dd>
+                @endif
             </dl>
 
-            @if($gatePassFinalized)
-                <span class="inline-actions">
-                    <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
-                    <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download</a>
-                </span>
-            @else
+            @unless($gatePassFinalized)
                 <span class="status-badge status-danger">Missing approved document</span>
-            @endif
+            @endunless
 
             <div class="table-wrap top-gap">
                 <table><thead><tr><th>Item</th><th>Qty</th><th>Use</th></tr></thead><tbody>

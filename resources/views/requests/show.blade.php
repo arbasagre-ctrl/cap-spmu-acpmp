@@ -20,6 +20,11 @@
         && $borrowingRequest->status === App\Enums\RequestStatus::UnderSpmu;
     $actionOfficerStep = $v->approvalSteps->firstWhere('sequence_no', 1);
     $actionOfficerVerified = $actionOfficerStep?->decision === 'VERIFIED';
+    $actionOfficerDocumentsVerified = $actionOfficerVerified
+        && $currentDocs->isNotEmpty()
+        && $currentDocs->every(
+            fn ($document) => $document->verification_status === App\Models\RequestSupportingDocument::STATUS_VERIFIED
+        );
 
     // A request remains APPROVED_READY_FOR_RELEASE at the request-record level
     // after approval, while the custody transaction continues through release,
@@ -374,14 +379,56 @@
                         <p class="eyebrow">{{ $canVerify ? 'SPMU Action Officer' : 'SPMU Head / Admin' }}</p>
                         <h2>{{ $canVerify ? 'Verify request and documents' : 'Review and decide' }}</h2>
                     </div>
-                    <span class="status-badge status-info">{{ $canVerify ? 'For verification' : 'Verified · For approval' }}</span>
+                    <span class="status-badge status-info">{{ $canVerify ? 'For verification' : 'For approval' }}</span>
                 </div>
 
                 <p class="meta spmu-review-summary">
-                    {{ $canVerify
-                        ? 'Check the submitted documents and request details. Marking VERIFIED routes the request to the Head; it does not approve or reserve inventory.'
-                        : 'The Action Officer has verified this request. Record the separate final approval, rejection, or return decision.' }}
+                    @if($canVerify)
+                        Review the request and required documents before forwarding it for final approval.
+                    @elseif($v->off_campus)
+                        Review the Action Officer verification and make the final decision.
+                    @else
+                        Review the request and make the final decision.
+                    @endif
                 </p>
+
+                @if($canDecide && $v->off_campus && $actionOfficerVerified)
+                    <section class="spmu-ao-verification-summary" aria-label="Action Officer verification record">
+                        <div class="spmu-ao-verification-summary__header">
+                            <div>
+                                <p class="eyebrow">Action Officer verification</p>
+                                <strong>Verification record</strong>
+                            </div>
+                            <span class="status-badge status-success">Verified</span>
+                        </div>
+
+                        <dl class="spmu-ao-verification-summary__details">
+                            <div>
+                                <dt>Verified by</dt>
+                                <dd>{{ $actionOfficerStep?->approver?->full_name ?? 'SPMU Action Officer' }}</dd>
+                            </div>
+                            <div>
+                                <dt>Verified on</dt>
+                                <dd>{{ $actionOfficerStep?->decided_at?->format('d M Y, g:i A') ?? 'Not recorded' }}</dd>
+                            </div>
+                            <div>
+                                <dt>E-signature</dt>
+                                <dd>{{ $actionOfficerStep?->signature_snapshot_id ? 'Applied' : 'Not recorded' }}</dd>
+                            </div>
+                            <div>
+                                <dt>Documents</dt>
+                                <dd>{{ $actionOfficerDocumentsVerified ? 'Verified' : 'Review required' }}</dd>
+                            </div>
+                        </dl>
+
+                        @if(filled($actionOfficerStep?->remarks))
+                            <div class="spmu-ao-verification-summary__remarks">
+                                <span>Remarks</span>
+                                <p>{{ $actionOfficerStep->remarks }}</p>
+                            </div>
+                        @endif
+                    </section>
+                @endif
 
                 @if($v->represents_student_activity)
                     <div class="spmu-supporting-document">
@@ -412,18 +459,73 @@
                     <input type="hidden" name="confirm_e_signature" value="" data-verification-e-signature>
 
                     <div class="spmu-checklist">
-                        <label class="spmu-check-row">
-                            <input type="checkbox" name="details_complete" value="1" data-verification-check @checked(old('details_complete'))>
-                            <span><strong>Request details match the signed letter</strong></span>
-                        </label>
-                        <label class="spmu-check-row">
-                            <input type="checkbox" name="documents_complete" value="1" data-verification-check @checked(old('documents_complete'))>
-                            <span><strong>Required signatures and documents are complete</strong></span>
-                        </label>
-                        <label class="spmu-check-row">
-                            <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
-                            <span><strong>{{ $canVerify ? 'Request and requested inventory were verified' : 'Inventory availability is verified for final allocation' }}</strong></span>
-                        </label>
+                        @if($canVerify)
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="details_complete" value="1" data-verification-check @checked(old('details_complete'))>
+                                <span>
+                                    <strong>Request details are consistent with the submitted letter</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that the submitted request matches the signed request letter.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="documents_complete" value="1" data-verification-check @checked(old('documents_complete'))>
+                                <span>
+                                    <strong>Required supporting documents are complete</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Verify the required attachments, including PTC when applicable.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
+                                <span>
+                                    <strong>Off-campus requirements are verified</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that Gate Pass requirements are complete and valid.</small>
+                                </span>
+                            </label>
+                        @elseif($v->off_campus)
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="details_complete" value="1" data-verification-check @checked(old('details_complete'))>
+                                <span>
+                                    <strong>Action Officer verification has been reviewed</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Review the completed verification before making the final decision.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="documents_complete" value="1" data-verification-check @checked(old('documents_complete'))>
+                                <span>
+                                    <strong>Request is appropriate for approval</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that the purpose, schedule, and intended use may be authorized.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
+                                <span>
+                                    <strong>Inventory availability is verified</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that the requested quantities may be allocated without conflict.</small>
+                                </span>
+                            </label>
+                        @else
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="details_complete" value="1" data-verification-check @checked(old('details_complete'))>
+                                <span>
+                                    <strong>Request details and required documents are complete</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Review the submitted request and required supporting documents.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="documents_complete" value="1" data-verification-check @checked(old('documents_complete'))>
+                                <span>
+                                    <strong>Request is appropriate for approval</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that the purpose, schedule, and intended use may be authorized.</small>
+                                </span>
+                            </label>
+                            <label class="spmu-check-row">
+                                <input type="checkbox" name="availability_verified" value="1" data-verification-check @checked(old('availability_verified'))>
+                                <span>
+                                    <strong>Inventory availability is verified</strong>
+                                    <small class="meta" style="display:block; margin-top:4px;">Confirm that the requested quantities may be allocated without conflict.</small>
+                                </span>
+                            </label>
+                        @endif
                     </div>
 
                     @unless($hasCurrentESignature)

@@ -237,6 +237,12 @@ class CustodyController extends Controller
         $data = $request->validate([
             'pickup_at' => ['required', 'date'],
             'pickup_expires_at' => ['required', 'date', 'after:pickup_at'],
+        ], [
+            'pickup_at.required' => 'Please select the Pickup Date & Time.',
+            'pickup_at.date' => 'Please enter a valid Pickup Date & Time.',
+            'pickup_expires_at.required' => 'Please select the Claim Until date and time.',
+            'pickup_expires_at.date' => 'Please enter a valid Claim Until date and time.',
+            'pickup_expires_at.after' => 'Please set "Claim Until" to a later time than the Pickup Date & Time.',
         ]);
 
         $service->schedulePickup(
@@ -341,11 +347,11 @@ class CustodyController extends Controller
         /*
          * RETURN INPUT SANITIZATION
          * -------------------------
-         * Every outstanding issued line, including linen, is inspected when
-         * the borrower physically returns it. Linen no longer waits for the
-         * washing cycle before SPMU can record return condition. The separate
-         * Laundry step only confirms that Laundry Personnel physically received
-         * the returned linen and wet-signed the same printed Laundry Form.
+         * Non-linen remains a direct Action Officer inspection. For linen, the
+         * physical inspection happens first in the Laundry Area: Laundry
+         * Personnel record quantity/condition and wet-sign Received by on the
+         * same printed Laundry Form. The Action Officer then encodes those
+         * findings here from the uploaded accomplished form.
          */
         $custody->loadMissing('lines.requestItem.inventoryItem', 'laundryJob');
         $eligibleLineIds = [];
@@ -397,7 +403,7 @@ class CustodyController extends Controller
 
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
-            ->with('status', 'Return inspection recorded. For linen, continue in Laundry Operations after Laundry Personnel signs Received by on the same printed form.');
+            ->with('status', 'Return inspection recorded. Linen findings were encoded from the accomplished Laundry Form; any serviceable linen now continues through internal Laundry processing with no further borrower turnover step.');
     }
 
     public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse

@@ -116,7 +116,11 @@
                     <div class="release-step-panel release-documents-panel" id="release-documents-panel">
                         @include('custody.partials.release-documents')
                         @if($hasOffCampusItem)
-                            <p class="release-step-note">Validate that the borrower presented the approved generated Gate Pass before recording the physical handover.</p>
+                            <p class="release-step-note">For an off-campus barricade, validate the Borrower Slip and approved Gate Pass. The Guard on Duty completes the <strong>Released by</strong>, Date, and Time fields at the campus exit.</p>
+                        @elseif($hasLaundryItem)
+                            <p class="release-step-note">For linen, the borrower proceeds to the Laundry Area with the approved Borrower Slip and Laundry Form. Laundry Personnel issue the linen and wet-sign <strong>Issued by</strong>. Record Physical Release only after the linen has actually been issued.</p>
+                        @else
+                            <p class="release-step-note">Validate the Borrower Slip and approved item before recording the physical handover.</p>
                         @endif
                     </div>
                 @else
@@ -133,7 +137,7 @@
                     @if($pickupWindowUpcoming)
                         <div class="callout info release-window-notice" id="physical-release-availability">
                             <strong>Physical release is not available yet.</strong>
-                            <p>The handover may be recorded starting <strong>{{ optional($pickupWindowStartsAt)->format('d F Y, g:i A') }}</strong> and must be completed by <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>. Refresh this page when the pickup window starts.</p>
+                            <p>Physical release can be confirmed from <strong>{{ optional($pickupWindowStartsAt)->format('d F Y, g:i A') }}</strong> until <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>. Come back at the scheduled pickup time.</p>
                         </div>
                     @elseif($pickupWindowPassed)
                         <div class="callout warning release-window-notice" id="physical-release-availability">
@@ -147,7 +151,18 @@
                 @include('custody.partials.physical-release-form')
             </li>
         </ol>
-        <div class="release-process-note"><x-icon name="information" size="19" /><span>Physical Release records the actual handover and moves custody to Released / On Custody. It does not create or approve a new Gate Pass.</span></div>
+        <div class="release-process-note">
+            <x-icon name="information" size="19" />
+            <span>
+                @if($hasOffCampusItem)
+                    After Physical Release, the borrower presents the printed Gate Pass to the Guard on Duty. The guard completes <strong>Released by</strong>, Date, and Time. The borrower keeps the accomplished Gate Pass and submits it to SPMU when returning the barricade.
+                @elseif($hasLaundryItem)
+                    Laundry Personnel are the physical issuer for linen. After <strong>Issued by</strong> is signed, SPMU records the completed release. On return, the borrower goes to the Laundry Area first for checking and the <strong>Received by</strong> signature, then brings the accomplished Laundry Form to SPMU.
+                @else
+                    After Physical Release, the item is under the borrower's custody. On return, the Action Officer inspects the item and records the returned quantity and condition.
+                @endif
+            </span>
+        </div>
     </article>
 </section>
 

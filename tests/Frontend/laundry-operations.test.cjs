@@ -11,6 +11,10 @@ const page = read('resources/views/laundry/index.blade.php');
 const guide = partial('flow-guide');
 const styles = partial('operations-styles');
 const interactions = partial('operations-interactions');
+const detail = read('resources/views/laundry/show.blade.php');
+const detailStyles = read('resources/views/laundry/partials/detail-styles.blade.php');
+const progress = read('resources/views/components/laundry-progress-tracker.blade.php');
+const returnWorkspace = read('resources/views/custody/partials/return-workspace.blade.php');
 const script = interactions.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function element(dataset = {}) {
@@ -78,14 +82,45 @@ test('the compact tracker appears above both the empty and populated states', ()
 
 test('the guide explains the four physical steps without inventing job states', () => {
     assert.equal((guide.match(/class="laundry-flow-number"/g) || []).length, 4);
-    for (const label of ['Return recorded', 'Linen dropped off', 'Received by laundry', 'Clean &amp; available']) {
+    for (const label of ['Linen issued', 'Returned to Laundry', 'SPMU records form', 'Clean &amp; available']) {
         assert.ok(guide.includes(`<strong>${label}</strong>`));
     }
     assert.match(guide, /aria-label="Laundry process overview"/);
     assert.match(guide, /aria-describedby="laundry-receipt-guidance"/);
-    assert.match(guide, /wet-signs <strong>Received by<\/strong>/);
-    assert.match(guide, /Borrower handoff ends at step 3/);
+    assert.match(guide, /SPMU uploads the accomplished Laundry Form and records the findings written by Laundry Personnel\./);
+    assert.doesNotMatch(guide, /Internal washing|second Laundry turnover confirmation/i);
     assert.doesNotMatch(guide, /aria-current|\$job|data-status|<form|type="submit"/);
+});
+
+test('detail view uses the accomplished form as one record instead of tracking wet signatures separately', () => {
+    assert.match(detail, /Accomplished & verified/);
+    assert.match(detail, /SPMU return:/);
+    assert.match(detail, /Serviceable in Laundry:/);
+    assert.match(detail, /Laundry processing:/);
+    assert.match(detail, /Archive pending/);
+    assert.doesNotMatch(detail, /<dt>.*Issued by:|<dt>.*Received by:|Pending return/);
+    assert.match(detail, /No further linen action is required from the borrower\./);
+    assert.match(detail, /No reclassification is needed here\./);
+});
+
+test('detail tracker is monotonic after SPMU return encoding', () => {
+    for (const label of ['Laundry Return', 'SPMU Return Encoding', 'Laundry Processing', 'Available']) {
+        assert.ok(progress.includes(`'label' => '${label}'`));
+    }
+    assert.match(progress, /\$returnEncoded = \$inspectionComplete/);
+    assert.match(progress, /\$laundryReturnComplete = \$formComplete \|\| \$returnEncoded/);
+    assert.doesNotMatch(progress, /Laundry Receipt & Form|Laundry Complete \/ Available/);
+    assert.match(detailStyles, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+});
+
+test('return workspace keeps the linen instructions concise', () => {
+    assert.match(returnWorkspace, /Required for linen return\./);
+    assert.match(returnWorkspace, /I confirm this is the accomplished Laundry Form signed by Laundry Personnel\./);
+    assert.match(returnWorkspace, />Upload Form</);
+    assert.match(returnWorkspace, /Linen return completed/);
+    assert.match(returnWorkspace, /No further borrower action is required\./);
+    assert.match(returnWorkspace, /Open Laundry Processing/);
+    assert.doesNotMatch(returnWorkspace, /Open Internal Laundry Processing/);
 });
 
 test('flow card stays within the content width and reflows without widening the page', () => {
@@ -110,7 +145,7 @@ test('case table preserves live data, current statuses and protected navigation'
     for (const field of ['request_no', 'custody_no', 'full_name', 'unit_name', 'purpose_event', 'received_at', 'description_snapshot']) {
         assert.ok(page.includes(field), `Missing live field: ${field}`);
     }
-    assert.match(page, /'FOR_LAUNDRY' => 'Awaiting Laundry Receipt'/);
+    assert.match(page, /'FOR_LAUNDRY' => 'Awaiting Laundry Return'/);
     assert.match(page, /'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending'/);
     assert.doesNotMatch(page, /FOR_SPMU_FINAL_CHECK|AWAITING_FINAL_FORM_UPLOAD|READY_FOR_SPMU_RETURN|For SPMU Acceptance/);
     assert.doesNotMatch(page, /Juan Dela Cruz|CSPC Foundation Day 2026|CUS-2026/);

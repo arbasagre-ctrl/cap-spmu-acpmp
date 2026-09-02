@@ -39,8 +39,17 @@
         ->where('sequence_no', 2)
         ->first();
 
+    /*
+     * Only Gate Pass / off-campus requests pass through Action Officer
+     * verification before the SPMU Head / Admin decision. Ordinary on-campus
+     * requests, including linen and non-linen requests, go directly to the
+     * SPMU Head / Admin review after borrower submission.
+     */
+    $requiresActionOfficerVerification = (bool) ($request->currentVersion?->off_campus);
+
     $waitingForActionOfficer =
-        $statusValue === 'UNDER_SPMU'
+        $requiresActionOfficerVerification
+        && $statusValue === 'UNDER_SPMU'
         && (
             ! $verificationStep
             || in_array($verificationStep->decision, ['PENDING', 'RECEIVED'], true)
@@ -48,9 +57,12 @@
 
     $waitingForHead =
         $statusValue === 'UNDER_SPMU'
-        && $verificationStep?->decision === 'VERIFIED'
         && $headDecisionStep
-        && in_array($headDecisionStep->decision, ['PENDING', 'RECEIVED'], true);
+        && in_array($headDecisionStep->decision, ['PENDING', 'RECEIVED'], true)
+        && (
+            ! $requiresActionOfficerVerification
+            || $verificationStep?->decision === 'VERIFIED'
+        );
 
     $historyAt = static function (array $statuses) use ($history) {
         return $history
@@ -153,21 +165,42 @@
     | Current major milestone
     |--------------------------------------------------------------------------
     |
-    | Blue/current means:
-    | "Ito ang kasalukuyang milestone na tinatrabaho."
+    | Normal on-campus request:
+    | Prepared -> Submitted -> SPMU Head / Admin Review -> Pickup -> Release
     |
-    | Hindi ibig sabihin na completed na ang milestone.
+    | Gate Pass / off-campus request:
+    | Prepared -> Submitted -> Action Officer Verification ->
+    | SPMU Head / Admin Review -> Pickup -> Release
     |
     */
 
+    $actionOfficerStepIndex = $requiresActionOfficerVerification ? 3 : null;
+    $headReviewStepIndex = $requiresActionOfficerVerification ? 4 : 3;
+    $pickupStepIndex = $requiresActionOfficerVerification ? 5 : 4;
+    $releaseStepIndex = $requiresActionOfficerVerification ? 6 : 5;
+    $returnStepIndex = $requiresActionOfficerVerification ? 7 : 6;
+    $completedStepIndex = $requiresActionOfficerVerification ? 8 : 7;
+
+    $reviewStepIndex = match (true) {
+        $requiresActionOfficerVerification
+            && $verificationStep?->decision === 'RETURNED_FOR_REVISION'
+            => $actionOfficerStepIndex,
+
+        $waitingForActionOfficer
+            => $actionOfficerStepIndex,
+
+        default
+            => $headReviewStepIndex,
+    };
+
     $currentIndex = match (true) {
-        $isClosed => 8,
+        $isClosed => $completedStepIndex,
 
-        $isReleased => 7,
+        $isReleased => $returnStepIndex,
 
-        $hasActivePickupSchedule => 6,
+        $hasActivePickupSchedule => $releaseStepIndex,
 
-        $isApproved => 5,
+        $isApproved => $pickupStepIndex,
 
         in_array(
             $statusValue,
@@ -180,7 +213,7 @@
                 'REJECTED',
             ],
             true
-        ) => 3,
+        ) => $reviewStepIndex,
 
         $statusValue === 'SIGNED' => 2,
 
@@ -188,7 +221,7 @@
     };
 
     if ($pickupExpired) {
-        $currentIndex = 5;
+        $currentIndex = $pickupStepIndex;
     }
 
     if (
@@ -297,247 +330,155 @@
     |--------------------------------------------------------------------------
     | Tracker steps
     |--------------------------------------------------------------------------
-    |
-    | IMPORTANT:
-    |
-    | Kapag nangyari na ang milestone, historical wording na.
-    |
-    | Example:
-    |
-    | WRONG kapag Completed na:
-    | "Waiting for SPMU to set the pickup schedule."
-    |
-    | CORRECT:
-    | "Pickup was scheduled for 23 Aug 2026, 7:00 AM."
-    |
     */
 
     $steps = [
-
-        /*
-        |--------------------------------------------------------------------------
-        | 1. Request Prepared
-        |--------------------------------------------------------------------------
-        */
-
         1 => [
             'label' => 'Request Prepared',
-
             'icon' => 'requests',
-
             'time' => $request->created_at,
-
             'description' =>
                 $statusValue === 'DRAFT'
                     ? 'Complete the request and required documents before submission.'
                     : 'Borrowing request created.',
         ],
 
-        /*
-        |--------------------------------------------------------------------------
-        | 2. Submitted
-        |--------------------------------------------------------------------------
-        */
-
         2 => [
             'label' => 'Submitted',
-
             'icon' => 'upload',
-
             'time' => $submittedAt,
-
             'description' =>
                 $submittedAt
-                    ? 'Signed request and required supporting documents submitted to SPMU.'
+                    ? ($requiresActionOfficerVerification
+                        ? 'Gate Pass request and required supporting documents submitted for Action Officer verification.'
+                        : 'Borrowing request and required supporting documents submitted directly for SPMU Head / Admin review.')
                     : 'Waiting for borrower submission.',
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 3. SPMU Review
-        |--------------------------------------------------------------------------
-        */
-
-        3 => [
-            'label' => 'SPMU Review',
-
-            'icon' => 'eye',
-
-            'time' => $reviewStartedAt,
-
-            'description' => match (true) {
-
-                $returnedForRevision
-                    => 'SPMU returned the request for correction and resubmission.',
-
-                $statusValue === 'REJECTED'
-                    => 'SPMU completed the review and rejected the request.',
-
-                $isApproved
-                    => 'The Action Officer verified the request and the SPMU Head approved it.',
-
-                $waitingForHead
-                    => 'The Action Officer marked the request VERIFIED. It is waiting for the separate SPMU Head decision.',
-
-                $waitingForActionOfficer
-                    => 'The request is waiting for Action Officer document and request verification.',
-
-                default
-                    => 'SPMU review is in progress.',
-            },
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 4. Approved
-        |--------------------------------------------------------------------------
-        */
-
-        4 => [
-            'label' => 'Approved',
-
-            'icon' => 'success',
-
-            'time' => $approvedAt,
-
-            'description' =>
-                $isApproved
-                    ? 'SPMU approved the request and reserved the approved quantities for pickup.'
-                    : 'Waiting for SPMU approval.',
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 5. Pickup Scheduled
-        |--------------------------------------------------------------------------
-        */
-
-        5 => [
-            'label' => 'Pickup Scheduled',
-
-            'icon' => 'calendar',
-
-            'time' => $pickupScheduledAt,
-
-            'description' => match (true) {
-
-                /*
-                 * Already scheduled.
-                 *
-                 * Historical wording.
-                 */
-                (bool) $pickupScheduledAt
-                    && (bool) $custody?->scheduled_release_at
-                    => 'Pickup was scheduled for '
-                        .$custody->scheduled_release_at->format(
-                            'd M Y, g:i A'
-                        )
-                        .(
-                            $custody?->pickup_expires_at
-                                ? ' · claim until '
-                                    .$custody->pickup_expires_at->format(
-                                        'g:i A'
-                                    )
-                                : ''
-                        )
-                        .'.',
-
-                /*
-                 * We have evidence that scheduling happened,
-                 * even if scheduled_release_at is no longer available.
-                 */
-                (bool) $pickupScheduledAt
-                    => 'SPMU set the pickup schedule.',
-
-                /*
-                 * Current pending states.
-                 */
-                $pickupExpired
-                    => 'The previous pickup window expired. Waiting for SPMU to schedule a new pickup window.',
-
-                $isApproved
-                    => 'Waiting for SPMU to schedule the pickup.',
-
-                default
-                    => 'Pickup scheduling becomes available after approval.',
-            },
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 6. Items Released
-        |--------------------------------------------------------------------------
-        */
-
-        6 => [
-            'label' => 'Items Released',
-
-            'icon' => 'custody',
-
-            'time' => $releasedAt,
-
-            'description' =>
-                $isReleased
-                    ? 'SPMU physically released the approved items to the borrower.'
-                    : match (true) {
-
-                        ! $hasActivePickupSchedule
-                            => 'Pickup must be scheduled before item preparation and release.',
-
-                        ! $preparationComplete
-                            => 'SPMU is preparing the approved items for release.',
-
-                        default
-                            => 'Item preparation is complete. Waiting for the scheduled physical handover.',
-                    },
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 7. Return Processing
-        |--------------------------------------------------------------------------
-        */
-
-        7 => [
-            'label' => 'Return Processing',
-
-            'icon' => 'custody',
-
-            'time' => $returnStartedAt,
-
-            'description' =>
-                $returnDescription,
-        ],
-
-        /*
-        |--------------------------------------------------------------------------
-        | 8. Completed
-        |--------------------------------------------------------------------------
-        */
-
-        8 => [
-            'label' => 'Completed',
-
-            'icon' => 'success',
-
-            'time' => $completedAt,
-
-            'description' =>
-                $isClosed
-                    ? 'All return requirements were completed and the borrowing transaction was closed.'
-                    : 'Completed after final SPMU return reconciliation.',
         ],
     ];
 
+    if ($requiresActionOfficerVerification) {
+        $steps[$actionOfficerStepIndex] = [
+            'label' => 'Action Officer Verification',
+            'icon' => 'eye',
+            'time' => $verificationStep?->received_at ?: $reviewStartedAt,
+            'description' => match (true) {
+                $verificationStep?->decision === 'RETURNED_FOR_REVISION'
+                    => 'The Action Officer returned the Gate Pass request for correction and resubmission.',
+
+                $verificationStep?->decision === 'VERIFIED'
+                    => 'The Action Officer verified the Gate Pass request and forwarded it for final review and decision.',
+
+                $waitingForActionOfficer
+                    => 'The Gate Pass request is awaiting verification by the Action Officer.',
+
+                default
+                    => 'Action Officer verification applies only to Gate Pass / off-campus requests.',
+            },
+        ];
+    }
+
+    $steps[$headReviewStepIndex] = [
+        'label' => 'SPMU Head / Admin Review',
+        'icon' => 'success',
+        'time' => $headDecisionStep?->received_at ?: ($requiresActionOfficerVerification ? null : $reviewStartedAt),
+        'description' => match (true) {
+            $headDecisionStep?->decision === 'RETURNED_FOR_REVISION'
+                => 'The SPMU Head / Admin returned the request for correction and resubmission.',
+
+            $statusValue === 'REJECTED'
+                => 'The SPMU Head / Admin completed the final review and rejected the request.',
+
+            $isApproved
+                => 'The SPMU Head / Admin approved the request for operational processing.',
+
+            $waitingForHead && $requiresActionOfficerVerification
+                => 'The Gate Pass request was verified by the Action Officer and is awaiting the SPMU Head / Admin final decision.',
+
+            $waitingForHead
+                => 'The submitted request is awaiting the SPMU Head / Admin final review and decision.',
+
+            $waitingForActionOfficer
+                => 'This stage becomes available after the Action Officer verifies the Gate Pass request.',
+
+            default
+                => 'Final review and decision are handled by the SPMU Head / Admin.',
+        },
+    ];
+
+    $steps[$pickupStepIndex] = [
+        'label' => 'Pickup Scheduled',
+        'icon' => 'calendar',
+        'time' => $pickupScheduledAt,
+        'description' => match (true) {
+            (bool) $pickupScheduledAt && (bool) $custody?->scheduled_release_at
+                => 'Pickup was scheduled for '
+                    .$custody->scheduled_release_at->format('d M Y, g:i A')
+                    .($custody?->pickup_expires_at
+                        ? ' · claim until '.$custody->pickup_expires_at->format('g:i A')
+                        : '')
+                    .'.',
+
+            (bool) $pickupScheduledAt
+                => 'SPMU set the pickup schedule.',
+
+            $pickupExpired
+                => 'The previous pickup window expired. Waiting for SPMU to schedule a new pickup window.',
+
+            $isApproved
+                => 'Waiting for SPMU operational processing and pickup scheduling.',
+
+            default
+                => 'Pickup scheduling becomes available after final approval.',
+        },
+    ];
+
+    $steps[$releaseStepIndex] = [
+        'label' => 'Items Released',
+        'icon' => 'custody',
+        'time' => $releasedAt,
+        'description' =>
+            $isReleased
+                ? 'SPMU physically released the approved items to the borrower.'
+                : match (true) {
+                    ! $hasActivePickupSchedule
+                        => 'Pickup must be scheduled before item preparation and release.',
+                    ! $preparationComplete
+                        => 'SPMU is preparing the approved items for release.',
+                    default
+                        => 'Item preparation is complete. Waiting for the scheduled physical handover.',
+                },
+    ];
+
+    $steps[$returnStepIndex] = [
+        'label' => 'Return Processing',
+        'icon' => 'custody',
+        'time' => $returnStartedAt,
+        'description' => $returnDescription,
+    ];
+
+    $steps[$completedStepIndex] = [
+        'label' => 'Completed',
+        'icon' => 'success',
+        'time' => $completedAt,
+        'description' =>
+            $isClosed
+                ? 'All return requirements were completed and the borrowing transaction was closed.'
+                : 'Completed after final SPMU return reconciliation.',
+    ];
+
+    ksort($steps);
+
     if ($compact) {
         $steps[1]['label'] = 'Prepared';
-        $steps[3]['label'] = $isApproved ? 'Reviewed' : $steps[3]['label'];
+        $steps[$headReviewStepIndex]['label'] = $isApproved
+            ? 'Reviewed'
+            : $steps[$headReviewStepIndex]['label'];
     }
 
     if ($releaseView) {
-        $steps[6]['label'] = 'Release';
-        $steps[6]['icon'] = 'plus';
-        $steps[7]['icon'] = 'chevron-right';
+        $steps[$releaseStepIndex]['label'] = 'Release';
+        $steps[$releaseStepIndex]['icon'] = 'plus';
+        $steps[$returnStepIndex]['icon'] = 'chevron-right';
     }
 
     /*
@@ -620,11 +561,11 @@
             && $isApproved
             => 'Pickup Scheduling Required',
 
-        $waitingForHead
-            => 'Waiting for SPMU Head Approval',
-
         $waitingForActionOfficer
             => 'Waiting for Action Officer Verification',
+
+        $waitingForHead
+            => 'Waiting for SPMU Head / Admin Review',
 
         in_array(
             $statusValue,
@@ -636,7 +577,9 @@
             ],
             true
         )
-            => 'Under SPMU Review',
+            => $requiresActionOfficerVerification
+                ? 'Gate Pass Verification in Progress'
+                : 'Waiting for SPMU Head / Admin Review',
 
         $statusValue === 'SIGNED'
             => 'Ready for Submission',

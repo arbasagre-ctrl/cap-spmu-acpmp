@@ -13,17 +13,25 @@
     --}}
     <section class="content-area">
         <div class="callout warning request-pickup-availability">
+    <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <span style="display: flex; flex: 0 0 auto; margin-top: 1px;">
             <x-icon name="information" size="21" />
-            <div>
-                <strong>Requests are accepted, but physical pickup/release is currently unavailable.</strong>
-                <p>
-                    Pickup will be scheduled on the next valid Pickup/Release transaction day.
-                    @if($pickupAvailability['next'])
-                        Next available Pickup/Release: {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
-                    @endif
-                </p>
-            </div>
+        </span>
+
+        <div>
+            <strong style="display: block;">
+                Borrowing requests are currently being accepted.
+            </strong>
+
+            <p>
+                However, physical pickup and release are unavailable at this time.
+                @if($pickupAvailability['next'])
+                    The next available pickup/release schedule is {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
+                @endif
+            </p>
         </div>
+    </div>
+</div>
     </section>
 @endif
 

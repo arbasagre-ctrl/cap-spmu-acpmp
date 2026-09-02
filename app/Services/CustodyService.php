@@ -301,13 +301,25 @@ class CustodyService
 
         if ($expires->toDateString() !== $pickup->toDateString()) {
             throw ValidationException::withMessages([
-                'pickup_expires_at' => 'Pickup time and pickup expiration must be on the same calendar date.',
+                'pickup_expires_at' => 'Please set "Claim Until" on the same date as the Pickup Date & Time.',
             ]);
         }
 
         if ($expires->lte($pickup)) {
             throw ValidationException::withMessages([
-                'pickup_expires_at' => 'Pickup expiration must be later than the pickup time.',
+                'pickup_expires_at' => 'Please set "Claim Until" to a later time than the Pickup Date & Time.',
+            ]);
+        }
+
+        [, $pickupClose] = $this->operationalCalendar->operatingWindow(
+            OperationalCalendarService::PICKUP,
+            $pickup
+        );
+
+        if ($pickupClose && $expires->gt($pickupClose)) {
+            throw ValidationException::withMessages([
+                'pickup_expires_at' => 'Please set "Claim Until" no later than '
+                    .$pickupClose->format('g:i A').' for the selected date.',
             ]);
         }
 
@@ -944,15 +956,15 @@ class CustodyService
                 ->first();
 
             /*
-             * Revised linen return rule:
-             * SPMU inspects linen WHEN THE BORROWER RETURNS IT, not after the
-             * washing cycle. The Action Officer records the same Fine/Damaged/
-             * Missing/etc. findings used for all other property. Fine linen
-             * moves to the LAUNDRY inventory
-             * state and remains unavailable until SPMU later records internal
-             * laundry completion. The borrower's transaction only waits for
-             * Laundry Personnel to physically receive the linen and wet-sign
-             * the same printed Laundry Form.
+             * Linen return rule:
+             * Laundry Personnel physically inspect returned linen first, write
+             * the actual quantity/condition on the same travelling Laundry Form,
+             * and wet-sign "Received by". The borrower then presents that
+             * accomplished form to the SPMU Action Officer. SPMU does not perform
+             * a second linen inspection; the Action Officer only encodes the
+             * Laundry Personnel findings. Fine linen moves to the LAUNDRY
+             * inventory state and stays unavailable until the internal washing
+             * cycle is later marked complete.
              */
             $eligibleLines = $custody->lines->filter(function ($line): bool {
                 return max(
@@ -1241,16 +1253,43 @@ class CustodyService
                 if ($allLaundryReturned
                     && ! in_array($laundryJob->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
                     /*
-                     * The Action Officer has finished the borrower-side return
-                     * inspection. Keep the LaundryJob at FOR_LAUNDRY until the
-                     * physical Laundry Form comes back with the Laundry
-                     * Personnel's wet "Received by" signature. Confirming that
-                     * handover is the point at which Laundry stops blocking the
-                     * borrower's transaction.
+                     * Reaching this point means the accomplished Laundry Form
+                     * was already uploaded/verified (enforced above) and the
+                     * Action Officer has now encoded all linen findings from it.
+                     * There is therefore no second "Confirm Laundry Turnover"
+                     * step. The physical Laundry receipt already happened before
+                     * SPMU Return Inspection.
                      */
+                    $laundryJob->loadMissing([
+                        'lines.custodyLine.returnLines',
+                    ]);
+
+                    $totalForInternalLaundry = 0;
+
+                    foreach ($laundryJob->lines as $jobLine) {
+                        $received = (float) $jobLine->custodyLine->returnLines
+                            ->where('disposition_state', 'LAUNDRY')
+                            ->sum('quantity_received');
+
+                        $jobLine->update([
+                            'received_quantity' => (int) round($received),
+                        ]);
+
+                        $totalForInternalLaundry += $received;
+                    }
+
+                    $nextLaundryStatus = $totalForInternalLaundry > 0
+                        ? 'TURNED_OVER_TO_LAUNDRY'
+                        : 'LAUNDRY_COMPLETED';
+
                     $laundryJob->update([
-                        'status' => 'FOR_LAUNDRY',
-                        'completed_at' => null,
+                        'status' => $nextLaundryStatus,
+                        'worker_name' => $spmu->full_name,
+                        'worker_received_at' => $laundryJob->worker_received_at
+                            ?: ($laundryJob->form_verified_at ?: now()),
+                        'completed_at' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                            ? now()
+                            : null,
                     ]);
 
                     $custody->lines()
@@ -1259,8 +1298,32 @@ class CustodyService
                             fn ($query) => $query->where('laundry_required', true)
                         )
                         ->update([
-                            'compliance_status' => 'LAUNDRY_RECEIPT_PENDING',
+                            'compliance_status' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                                ? 'LAUNDRY_COMPLETED'
+                                : 'INTERNAL_LAUNDRY',
                         ]);
+
+                    $this->audit->record(
+                        'LAUNDRY_RETURN_RECORDED_FROM_FORM',
+                        $laundryJob,
+                        after: [
+                            'status' => $nextLaundryStatus,
+                            'recorded_by_user_id' => $spmu->id,
+                            'physical_condition_source' => 'LAUNDRY_PERSONNEL',
+                            'accomplished_form_verified' => true,
+                            'internal_laundry_quantity' => (int) round($totalForInternalLaundry),
+                        ]
+                    );
+
+                    $this->notifications->send(
+                        'LAUNDRY_INTERNAL_QUEUE',
+                        $this->spmuRecipients(),
+                        $nextLaundryStatus === 'TURNED_OVER_TO_LAUNDRY'
+                            ? "Returned linen for {$custody->custody_no} was encoded from the accomplished Laundry Form and is now in the internal laundry queue."
+                            : "The linen return for {$custody->custody_no} was encoded from the accomplished Laundry Form with no serviceable quantity remaining for internal washing.",
+                        $laundryJob,
+                        ['SYSTEM']
+                    );
                 }
             }
 

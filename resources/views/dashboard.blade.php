@@ -12,6 +12,22 @@
     .dashboard-balanced-grid > .card {
         border-radius: 12px;
     }
+
+    .dashboard-stat-grid.dashboard-stat-grid-five {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    .dashboard-stat-grid.dashboard-stat-grid-five .dashboard-kpi-card {
+        min-width: 0;
+    }
+    @media (max-width: 1300px) {
+        .dashboard-stat-grid.dashboard-stat-grid-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+        .dashboard-stat-grid.dashboard-stat-grid-five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+        .dashboard-stat-grid.dashboard-stat-grid-five { grid-template-columns: 1fr; }
+    }
     html[data-theme="dark"] .dashboard-kpi-card,
     html[data-theme="dark"] .dashboard-balanced-grid > .card {
         box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
@@ -145,7 +161,7 @@
     @endif
 </section>
 
-<section class="stat-grid dashboard-stat-grid" aria-label="Current totals">
+<section class="stat-grid dashboard-stat-grid {{ $dashboardMode === 'SPMU_OFFICER' ? 'dashboard-stat-grid-five' : '' }}" aria-label="Current totals">
     @foreach($statistics as $label => $value)
         @php
             [$icon, $tone, $link] = $statMeta[$label] ?? [

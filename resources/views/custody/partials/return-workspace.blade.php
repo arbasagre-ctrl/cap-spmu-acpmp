@@ -1,9 +1,10 @@
 @php
     /*
-     * Revised return workflow:
-     * linen and non-linen are inspected together when the borrower
-     * physically returns them. Laundry washing is a later internal stock
-     * process and does not delay the SPMU return inspection.
+     * Return workflow:
+     * non-linen is physically inspected by the Action Officer. Linen goes to
+     * the Laundry Area first, where Laundry Personnel record quantity/condition
+     * and wet-sign Received by. SPMU then uploads that accomplished form and
+     * encodes its findings here. Washing is a later internal stock process.
      */
     $eligibleReturnLines = $custody->lines->filter(function ($line) {
         return max(
@@ -22,17 +23,19 @@
 
     $linenOperationalStatus = match (true) {
         $linenLines->isEmpty() => 'Not applicable',
-        $linenOutstanding > 0 => 'Awaiting borrower return inspection',
+        $linenOutstanding > 0 => $laundryJob?->hasVerifiedAccomplishedForm()
+            ? 'Laundry Form ready — awaiting SPMU encoding'
+            : 'Accomplished form pending',
         ! $laundryJob => 'Returned / accounted',
         $laundryJob->status === 'FOR_LAUNDRY' =>
             $laundryJob->hasVerifiedAccomplishedForm()
-                ? 'Laundry receipt confirmed — awaiting SPMU return verification'
-                : 'Awaiting Laundry return — borrower returns linen to the Laundry Area first',
+                ? 'Laundry Form ready — awaiting SPMU encoding'
+                : 'Accomplished form pending',
         $laundryJob->status === 'TURNED_OVER_TO_LAUNDRY' =>
-            'Turned over to Laundry — borrower no longer waits for washing',
+            'Linen return completed',
         $laundryJob->status === 'LAUNDRY_COMPLETED' =>
-            'Laundry completed / available in Laundry Area',
-        default => 'Laundry turnover / internal processing',
+            'Laundry complete / available',
+        default => 'Laundry processing',
     };
 
     [$linenNextTitle, $linenNextCopy, $linenNextTone] = match (true) {
@@ -42,41 +45,40 @@
             'info',
         ],
         $linenOutstanding > 0 && $laundryJob?->hasVerifiedAccomplishedForm() => [
-            'Encode the linen condition from the accomplished Laundry Form',
-            'Laundry Personnel already received the linen, recorded the actual quantity and condition, and wet-signed Received by. Record those values in this Return Inspection exactly as written on the verified form.',
+            'Encode the Laundry Form',
+            'Record the returned quantity and condition exactly as written on the accomplished Laundry Form.',
             'warning',
         ],
         $linenOutstanding > 0 => [
-            'Awaiting Laundry return',
-            'The borrower returns the linen to the Laundry Area first with the same printed Laundry Form. After Laundry Personnel records the condition and wet-signs Received by, upload the accomplished form here before the linen return can be finalized.',
+            'Accomplished form pending',
+            'Borrower returns the linen to Laundry first, then brings the accomplished Laundry Form and Borrower Slip to SPMU.',
             'warning',
         ],
         $laundryJob?->status === 'FOR_LAUNDRY' => [
-            'Confirm physical Laundry turnover',
-            'The SPMU return verification is recorded. Confirm the Laundry turnover in Laundry Operations so the linen enters the internal washing queue.',
-            'warning',
+            'SPMU return pending',
+            'The accomplished Laundry Form is the basis for return encoding.',
+            'info',
         ],
         $laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY' => [
-            'Borrower linen turnover completed',
-            'Laundry Personnel have received the linen. Washing may be completed later inside the Laundry Area; the borrower has no further linen action.',
+            'Linen return completed',
+            'Laundry received the linen. No further borrower action is required.',
             'success',
         ],
         $laundryJob?->status === 'LAUNDRY_COMPLETED' => [
-            'Linen available in Laundry Area',
-            'Internal laundry processing is complete. Clean/serviceable linen is now Available for future borrowing in the Laundry Area.',
+            'Linen available',
+            'Clean/serviceable linen is available for future borrowing.',
             'success',
         ],
         default => [
             'Review Laundry Operations',
-            'Review the current Laundry case for the next internal action.',
+            'Review the Laundry case for the next action.',
             'info',
         ],
     };
 
+    // Flash only once after an action. Do not recreate a release notice from
+    // custody state on every page load; that made the banner look permanent.
     $returnFlashMessage = session('status');
-    if (! $returnFlashMessage && $custody->released_at && $custody->status === 'ACTIVE' && $custody->returns->isEmpty()) {
-        $returnFlashMessage = 'Physical release completed. The transaction is now under Return tracking.';
-    }
 @endphp
 
 @include('custody.partials.return-process-styles')
@@ -133,7 +135,7 @@
                         <div class="return-document-copy">
                             <x-icon name="linen" size="22" />
                             <div><strong>Laundry Form</strong>
-                            <small>{{ $hasLaundryItem ? 'Required before the linen return can be finalized. Signed by Laundry Personnel on physical return.' : 'Not applicable — no linen items.' }}</small></div>
+                            <small>{{ $hasLaundryItem ? 'Required for linen return.' : 'Not applicable — no linen items.' }}</small></div>
                         </div>
                         @if(!$hasLaundryItem)
                             <span class="status-badge status-neutral">Locked</span>
@@ -157,9 +159,9 @@
                                 >
                                 <label class="return-laundry-form-attest">
                                     <input type="checkbox" name="laundry_received_signature_confirmed" value="1" required>
-                                    <span>I confirm that the uploaded Laundry Form is the accomplished form presented by the borrower and contains the Laundry Personnel RECEIVED BY wet signature, including returned quantity and condition/remarks where applicable.</span>
+                                    <span>I confirm this is the accomplished Laundry Form signed by Laundry Personnel.</span>
                                 </label>
-                                <button class="button secondary small ui-pressable" type="submit">Upload signed form</button>
+                                <button class="button secondary small ui-pressable" type="submit">Upload Form</button>
                             </form>
                         @else
                             <span class="status-badge status-warning">Pending scan</span>
@@ -170,14 +172,22 @@
                         <div class="return-document-copy">
                             <x-icon name="shield-lock" size="22" />
                             <div><strong>Gate Pass</strong>
-                            <small>{{ $hasOffCampusItem ? 'Required for approved off-campus use.' : 'Not applicable — on-campus only.' }}</small></div>
+                            <small>
+                                @if($hasOffCampusItem)
+                                    Required for an off-campus barricade return.
+                                @else
+                                    Not applicable — on-campus only.
+                                @endif
+                            </small></div>
                         </div>
                         @if(!$hasOffCampusItem)
                             <span class="status-badge status-neutral">Locked</span>
                         @elseif($custody->gatePass?->accomplishedFile)
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $custody->gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View uploaded gate pass</a>
+                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $custody->gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Gate Pass</a>
+                        @elseif($custody->gatePass)
+                            <a class="button secondary small ui-pressable" href="{{ route('gate-passes.show', $custody->gatePass) }}">Record Accomplished Gate Pass</a>
                         @else
-                            <span class="status-badge status-warning">Pending scan</span>
+                            <span class="status-badge status-warning">Gate Pass record unavailable</span>
                         @endif
                     </div>
 
@@ -248,12 +258,14 @@
                     <p>{{ $linenNextCopy }}</p></div>
                 </div>
 
-                <a
-                    class="button primary ui-pressable"
-                    href="{{ $laundryJob ? route('laundry.show', $laundryJob) : route('laundry.index') }}"
-                >
-                    Open Laundry Operations
-                </a>
+                @if($linenOutstanding <= 0 && $laundryJob && in_array($laundryJob->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true))
+                    <a
+                        class="button primary ui-pressable"
+                        href="{{ route('laundry.show', $laundryJob) }}"
+                    >
+                        Open Laundry Processing
+                    </a>
+                @endif
 
                 @if($laundryJob?->latestEvidence?->file)
                     <a
@@ -262,7 +274,7 @@
                         target="_blank"
                         rel="noopener"
                     >
-                        View Archived Laundry Form
+                        View Laundry Form
                     </a>
                 @endif
             @endif

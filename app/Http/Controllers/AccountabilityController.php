@@ -26,6 +26,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class AccountabilityController extends Controller
@@ -58,9 +59,15 @@ class AccountabilityController extends Controller
         $sanctions = $sanctionQuery->get();
 
         $incidentOffensePreviews = [];
+        $violationOffensePreviews = [];
+
         if ($request->user()?->access_classification === AccessClassification::SpmuHead) {
             foreach ($incidents as $incident) {
                 $incidentOffensePreviews[$incident->id] = $policy->incidentOffensePreview($incident);
+            }
+
+            foreach ($violations->where('status', 'PENDING_REVIEW') as $violation) {
+                $violationOffensePreviews[$violation->id] = $policy->violationOffensePreview($violation);
             }
         }
 
@@ -72,6 +79,7 @@ class AccountabilityController extends Controller
             'violations' => $violations,
             'sanctions' => $sanctions,
             'incidentOffensePreviews' => $incidentOffensePreviews,
+            'violationOffensePreviews' => $violationOffensePreviews,
         ]);
     }
 
@@ -93,11 +101,23 @@ class AccountabilityController extends Controller
 
         $overdue->loadMissing('custody.lines');
 
+        if ($overdue->status === 'OVERDUE') {
+            return back()->withErrors([
+                'overdue' => 'The item is still overdue. Record the physical return first so the final late-return fee can be determined.',
+            ]);
+        }
+
+        if ($overdue->status !== 'RETURNED_PENDING_SETTLEMENT') {
+            return back()->withErrors([
+                'overdue' => 'This late-return case is not ready for a new Billing Statement.',
+            ]);
+        }
+
         if (! $overdue->custody->lines->every(
             fn ($line) => (float) $line->returned_quantity >= (float) $line->actual_released_quantity
         )) {
             return back()->withErrors([
-                'overdue' => 'All issued quantity must first receive a physical return/accountability disposition so the final date-based late duration is known.',
+                'overdue' => 'Record the complete physical return first so the final late-return fee can be determined.',
             ]);
         }
 
@@ -261,8 +281,9 @@ class AccountabilityController extends Controller
     }
 
     /**
-     * SPMU receives the CSPC Cashier paid receipt, scans/uploads it, and records
-     * its structured payment details. Borrowers do not upload payment evidence.
+     * The Action Officer receives the official CSPC Cashier receipt, checks it
+     * before saving, uploads the scan, and confirms the payment in one step.
+     * There is no second SPMU verification stage for newly recorded payments.
      */
     public function recordPayment(
         Request $request,
@@ -272,6 +293,11 @@ class AccountabilityController extends Controller
         NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeSpmu($request);
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may record and confirm Cashier payments.'
+        );
         abort_if(in_array($billing->status, ['SETTLED', 'WAIVED', 'VOID'], true), 403);
 
         $data = $request->validate([
@@ -280,6 +306,11 @@ class AccountabilityController extends Controller
             'receipt_date' => ['required', 'date', 'before_or_equal:today'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'remarks' => ['nullable', 'string', 'max:1000'],
+        ], [], [
+            'official_receipt_no' => 'Cashier Receipt No.',
+            'receipt_date' => 'Receipt Date',
+            'amount' => 'Amount Paid',
+            'evidence' => 'Scanned Paid Receipt',
         ]);
 
         $file = $files->storeUpload(
@@ -288,42 +319,103 @@ class AccountabilityController extends Controller
             'CSPC_CASHIER_PAID_RECEIPT'
         );
 
-        $payment = Payment::query()->create([
-            'billing_statement_id' => $billing->id,
-            'evidence_file_id' => $file->id,
-            'recorded_by_user_id' => $request->user()->id,
-            'official_receipt_no' => $data['official_receipt_no'],
-            'receipt_date' => $data['receipt_date'],
-            'amount' => $data['amount'],
-            'status' => 'PENDING_VERIFICATION',
-            'submitted_at' => now(),
-            'verification_remarks' => $data['remarks'] ?? null,
-        ]);
+        [$payment, $settled, $remainingBalance] = DB::transaction(function () use (
+            $billing,
+            $request,
+            $data,
+            $file,
+            $audit
+        ): array {
+            $billing = BillingStatement::query()->lockForUpdate()->findOrFail($billing->id);
 
-        $billing->update(['status' => 'RECEIPT_SUBMITTED']);
+            if (in_array($billing->status, ['SETTLED', 'WAIVED', 'VOID'], true)) {
+                abort(403);
+            }
 
-        $audit->record(
-            'CASHIER_RECEIPT_UPLOADED_BY_SPMU',
-            $payment,
-            reason: $data['remarks'] ?? null,
-            after: [
+            $confirmedBefore = (float) $billing->payments()
+                ->where('status', 'VERIFIED')
+                ->sum('amount');
+            $remainingBefore = max(0.0, (float) $billing->total_amount - $confirmedBefore);
+            $amount = (float) $data['amount'];
+
+            if ($amount > $remainingBefore + 0.0001) {
+                throw ValidationException::withMessages([
+                    'amount' => 'Amount Paid cannot be more than the remaining balance of PHP '
+                        .number_format($remainingBefore, 2).'.',
+                ]);
+            }
+
+            $payment = Payment::query()->create([
+                'billing_statement_id' => $billing->id,
                 'evidence_file_id' => $file->id,
-                'receipt_no' => $data['official_receipt_no'],
+                'recorded_by_user_id' => $request->user()->id,
+                'verified_by_user_id' => $request->user()->id,
+                'official_receipt_no' => $data['official_receipt_no'],
                 'receipt_date' => $data['receipt_date'],
                 'amount' => $data['amount'],
-            ]
-        );
+                'status' => 'VERIFIED',
+                'submitted_at' => now(),
+                'verified_at' => now(),
+                'verification_remarks' => $data['remarks'] ?? null,
+                'rejection_reason' => null,
+            ]);
 
-        $notifications->send(
-            'PAYMENT_RECEIPT_PENDING_VERIFICATION',
-            $this->spmuUsers(),
-            "CSPC Cashier paid receipt for {$billing->billing_no} was uploaded by SPMU and is pending verification.",
-            $billing
-        );
+            $settled = $this->settleBillingIfFullyPaid($billing, $request->user()->id);
+            $confirmedAfter = (float) $billing->payments()
+                ->where('status', 'VERIFIED')
+                ->sum('amount');
+            $remainingBalance = max(0.0, (float) $billing->total_amount - $confirmedAfter);
 
-        return back()->with('status', 'Paid CSPC Cashier receipt uploaded. Verify it before marking the billing as paid.');
+            if (! $settled) {
+                // Keep the Billing Statement open when only part of the balance was paid.
+                $billing->update(['status' => 'ISSUED']);
+            }
+
+            $audit->record(
+                'CASHIER_PAYMENT_CONFIRMED',
+                $payment,
+                reason: $data['remarks'] ?? null,
+                after: [
+                    'billing_status' => $billing->fresh()->status,
+                    'receipt_no' => $payment->official_receipt_no,
+                    'receipt_date' => $payment->receipt_date,
+                    'amount' => $payment->amount,
+                    'remaining_balance' => $remainingBalance,
+                    'confirmed_by_user_id' => $request->user()->id,
+                ]
+            );
+
+            return [$payment, $settled, $remainingBalance];
+        }, 3);
+
+        $billing->refresh()->loadMissing('borrower');
+
+        if ($billing->borrower) {
+            $message = $settled
+                ? "Payment for {$billing->billing_no} was confirmed by SPMU. The billing is now settled."
+                : "Payment for {$billing->billing_no} was confirmed by SPMU. Remaining balance: PHP "
+                    .number_format($remainingBalance, 2).'.';
+
+            $notifications->send(
+                'PAYMENT_VERIFIED',
+                collect([$billing->borrower]),
+                $message,
+                $billing
+            );
+        }
+
+        return back()->with(
+            'status',
+            $settled
+                ? 'Cashier payment confirmed. The billing is now settled.'
+                : 'Cashier payment confirmed. Remaining balance: PHP '.number_format($remainingBalance, 2).'.'
+        );
     }
 
+    /**
+     * Kept only for older records that were created under the former two-step
+     * receipt workflow. New payments are confirmed directly by recordPayment().
+     */
     public function verifyPayment(
         Request $request,
         Payment $payment,
@@ -331,10 +423,14 @@ class AccountabilityController extends Controller
         NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeSpmu($request);
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
+            403
+        );
 
         $data = $request->validate([
             'decision' => ['required', 'in:VERIFIED,REJECTED'],
-            'remarks' => ['required', 'string', 'max:1000'],
+            'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $payment->loadMissing('billingStatement');
@@ -352,18 +448,12 @@ class AccountabilityController extends Controller
                     'verified_by_user_id' => $request->user()->id,
                     'status' => 'REJECTED',
                     'verified_at' => now(),
-                    'rejection_reason' => $data['remarks'],
+                    'rejection_reason' => $data['remarks'] ?? 'Legacy payment record returned for correction.',
                     'verification_remarks' => $data['remarks'],
                 ]);
 
                 $billing->update(['status' => 'ISSUED']);
                 $audit->record('PAYMENT_RECEIPT_REJECTED', $payment, reason: $data['remarks']);
-                $notifications->send(
-                    'PAYMENT_RECEIPT_REJECTED',
-                    collect([$billing->borrower]),
-                    "The uploaded paid receipt for {$billing->billing_no} requires correction: {$data['remarks']}",
-                    $billing
-                );
 
                 return;
             }
@@ -376,39 +466,7 @@ class AccountabilityController extends Controller
                 'rejection_reason' => null,
             ]);
 
-            $verifiedAmount = (float) $billing->payments()
-                ->where('status', 'VERIFIED')
-                ->sum('amount');
-
-            if ($verifiedAmount + 0.0001 >= (float) $billing->total_amount) {
-                $billing->update(['status' => 'SETTLED']);
-
-                BorrowerRestriction::query()
-                    ->where('billing_statement_id', $billing->id)
-                    ->where('status', 'ACTIVE')
-                    ->update([
-                        'status' => 'LIFTED',
-                        'effective_to' => now(),
-                        'lifted_by_user_id' => $request->user()->id,
-                    ]);
-
-                $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
-                Incident::query()->whereKey($incidentIds)->where('status', 'BILLING_PENDING')->update(['status' => 'RESOLVED']);
-
-                $penaltyIds = $billing->lines()->whereNotNull('penalty_id')->pluck('penalty_id');
-                Penalty::query()->whereKey($penaltyIds)->update(['status' => 'SETTLED']);
-                OverdueCase::query()
-                    ->whereHas('penalties', fn ($query) => $query->whereIn('penalties.id', $penaltyIds))
-                    ->update(['status' => 'RESOLVED']);
-
-                $custodyIds = Incident::query()->whereKey($incidentIds)->pluck('custody_transaction_id')
-                    ->merge(Penalty::query()->whereKey($penaltyIds)->pluck('custody_transaction_id'))
-                    ->unique();
-
-                foreach ($custodyIds as $custodyId) {
-                    $this->attemptCloseCustody((int) $custodyId);
-                }
-            }
+            $this->settleBillingIfFullyPaid($billing, $request->user()->id);
 
             $audit->record(
                 'CASHIER_PAYMENT_VERIFIED',
@@ -418,20 +476,24 @@ class AccountabilityController extends Controller
                     'billing_status' => $billing->fresh()->status,
                     'receipt_no' => $payment->official_receipt_no,
                     'amount' => $payment->amount,
+                    'legacy_payment_record' => true,
                 ]
             );
 
-            $notifications->send(
-                'PAYMENT_VERIFIED',
-                collect([$billing->borrower]),
-                "CSPC Cashier receipt {$payment->official_receipt_no} for {$billing->billing_no} was verified by SPMU. Payment status: {$billing->fresh()->status}.",
-                $billing
-            );
+            $billing->loadMissing('borrower');
+            if ($billing->borrower) {
+                $notifications->send(
+                    'PAYMENT_VERIFIED',
+                    collect([$billing->borrower]),
+                    "CSPC Cashier receipt {$payment->official_receipt_no} for {$billing->billing_no} was confirmed by SPMU.",
+                    $billing
+                );
+            }
         }, 3);
 
         return back()->with('status', $data['decision'] === 'VERIFIED'
-            ? 'Paid receipt verified. The payment record is now read-only.'
-            : 'Paid receipt returned for correction.');
+            ? 'Legacy Cashier payment record confirmed.'
+            : 'Legacy payment record returned for correction.');
     }
 
     public function waive(
@@ -688,6 +750,54 @@ class AccountabilityController extends Controller
             'status',
             "Violation confirmed. {$sanction->sanction_label} was recorded by the SPMU Head."
         );
+    }
+
+    /**
+     * Settle a Billing Statement once confirmed payments cover the full amount.
+     * Financial settlement and administrative sanctions remain separate.
+     */
+    private function settleBillingIfFullyPaid(BillingStatement $billing, int $actorUserId): bool
+    {
+        $confirmedAmount = (float) $billing->payments()
+            ->where('status', 'VERIFIED')
+            ->sum('amount');
+
+        if ($confirmedAmount + 0.0001 < (float) $billing->total_amount) {
+            return false;
+        }
+
+        $billing->update(['status' => 'SETTLED']);
+
+        BorrowerRestriction::query()
+            ->where('billing_statement_id', $billing->id)
+            ->where('status', 'ACTIVE')
+            ->update([
+                'status' => 'LIFTED',
+                'effective_to' => now(),
+                'lifted_by_user_id' => $actorUserId,
+            ]);
+
+        $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
+        Incident::query()
+            ->whereKey($incidentIds)
+            ->where('status', 'BILLING_PENDING')
+            ->update(['status' => 'RESOLVED']);
+
+        $penaltyIds = $billing->lines()->whereNotNull('penalty_id')->pluck('penalty_id');
+        Penalty::query()->whereKey($penaltyIds)->update(['status' => 'SETTLED']);
+        OverdueCase::query()
+            ->whereHas('penalties', fn ($query) => $query->whereIn('penalties.id', $penaltyIds))
+            ->update(['status' => 'RESOLVED']);
+
+        $custodyIds = Incident::query()->whereKey($incidentIds)->pluck('custody_transaction_id')
+            ->merge(Penalty::query()->whereKey($penaltyIds)->pluck('custody_transaction_id'))
+            ->unique();
+
+        foreach ($custodyIds as $custodyId) {
+            $this->attemptCloseCustody((int) $custodyId);
+        }
+
+        return true;
     }
 
     private function attemptCloseCustody(int $custodyId): void

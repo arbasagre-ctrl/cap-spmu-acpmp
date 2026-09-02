@@ -45,13 +45,13 @@
                 <div class="callout danger return-linen-note">
                     <x-icon name="warning" size="22" />
                     <div><strong>Completed Laundry Form required</strong>
-                    <p>This transaction includes linen items. Upload the accomplished Laundry Form signed by Laundry Personnel before the linen return can be finalized.</p></div>
+                    <p>Upload the accomplished Laundry Form before encoding the linen return.</p></div>
                 </div>
             @else
                 <div class="callout info return-linen-note">
                     <x-icon name="information" size="22" />
-                    <div><strong>Linen condition verified from accomplished Laundry Form</strong>
-                    <p>Linen items were physically inspected by Laundry Personnel. Encode the returned quantity and condition exactly as recorded on the signed Laundry Form. Non-linen items remain your own physical inspection as SPMU Action Officer.</p></div>
+                    <div><strong>Encode from Laundry Form</strong>
+                    <p>For linen, record the quantity and condition exactly as written by Laundry Personnel. Non-linen remains an Action Officer physical inspection.</p></div>
                 </div>
             @endif
         @endif
@@ -243,11 +243,10 @@
     <article class="card return-empty-state">
         <div class="empty-state">
             <strong>
-                No item needs SPMU quantity encoding right now.
+                No return item requires encoding.
             </strong>
             <span>
-                Review the Return Status panel for the next Laundry
-                or return action.
+                Review the Return Status panel for the next action.
             </span>
         </div>
     </article>

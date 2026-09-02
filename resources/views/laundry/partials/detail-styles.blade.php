@@ -19,11 +19,11 @@
 .laundry-detail .eyebrow { font-size: 11px; }
 .laundry-detail .laundry-operation-grid { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: stretch; gap: 20px; }
 
-/* The three milestones stay visible; only the active milestone has a card fill. */
+/* Four compact milestones show the return-to-available sequence. */
 .laundry-detail .laundry-progress-card .card-header { align-items: flex-start; margin-bottom: 24px; }
 .laundry-detail .laundry-progress-card h2 { margin-top: 6px; font-size: 19px; }
 .laundry-detail .laundry-progress-status { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
-.laundry-detail .laundry-progress-rail { --laundry-step-gap: clamp(24px, 4.5vw, 90px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--laundry-step-gap); margin: 0; padding: 0; list-style: none; }
+.laundry-detail .laundry-progress-rail { --laundry-step-gap: clamp(14px, 1.8vw, 34px); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--laundry-step-gap); margin: 0; padding: 0; list-style: none; }
 .laundry-detail .laundry-progress-step { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 16px; min-height: 76px; padding: 10px 14px; border: 1px solid transparent; border-radius: 10px; background: transparent; opacity: 1; }
 .laundry-detail .laundry-progress-step:not(:last-child)::after { content: ""; position: absolute; top: 50%; left: calc(100% + 1px); width: calc(var(--laundry-step-gap) - 10px); height: 1px; background: var(--border-strong); }
 .laundry-detail .laundry-progress-marker { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-muted); background: var(--surface-elevated); }

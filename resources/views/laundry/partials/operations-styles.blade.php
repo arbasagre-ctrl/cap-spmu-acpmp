@@ -20,7 +20,7 @@
     max-width: 100%;
     padding: 0;
     margin: 0 0 14px;
-    overflow: hidden;
+    overflow: visible;
 }
 .laundry-flow-body { padding: 18px 20px 12px; }
 .laundry-operations #laundry-flow-title { margin: 0; font-size: 16px; font-weight: 750; }
@@ -51,24 +51,60 @@
 .laundry-flow-step.is-emphasized > strong { color: var(--laundry-blue); }
 .laundry-flow-step.is-internal .laundry-flow-marker { color: var(--heading); }
 .laundry-flow-step.is-internal .laundry-flow-number { background: #8595ab; }
-.laundry-flow-annotation-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 13px; }
-.laundry-flow-annotation {
-    position: relative;
-    grid-column: 3;
-    justify-self: center;
-    width: min(100%, 228px);
+.laundry-flow-step { cursor: help; outline: none; }
+.laundry-flow-step:focus-visible .laundry-flow-marker { outline: 2px solid var(--laundry-blue); outline-offset: 3px; }
+.laundry-flow-tooltip {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 10px);
+    left: 50%;
+    width: min(260px, calc(100vw - 44px));
     margin: 0;
     padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 7px;
     color: var(--text-secondary);
     background: var(--surface-elevated);
-    box-shadow: var(--shadow-sm);
-    font-size: 12px;
+    box-shadow: var(--shadow-md, 0 10px 24px rgba(7, 27, 53, .12));
+    font-size: 11px;
     line-height: 1.5;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(-50%, 4px);
+    transition: opacity .14s ease, transform .14s ease, visibility .14s ease;
 }
-.laundry-flow-annotation::before { content: ""; position: absolute; top: -6px; left: calc(50% - 6px); width: 10px; height: 10px; border-top: 1px solid var(--border); border-left: 1px solid var(--border); background: var(--surface-elevated); transform: rotate(45deg); }
-.laundry-flow-annotation strong { color: var(--heading); }
+.laundry-flow-tooltip::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    left: calc(50% - 6px);
+    width: 10px;
+    height: 10px;
+    border-top: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    background: var(--surface-elevated);
+    transform: rotate(45deg);
+}
+.laundry-flow-tooltip strong { color: var(--heading); }
+.laundry-flow-step:hover .laundry-flow-tooltip,
+.laundry-flow-step:focus .laundry-flow-tooltip,
+.laundry-flow-step:focus-within .laundry-flow-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+}
+.laundry-flow-step:first-child .laundry-flow-tooltip { left: 0; transform: translate(0, 4px); }
+.laundry-flow-step:first-child:hover .laundry-flow-tooltip,
+.laundry-flow-step:first-child:focus .laundry-flow-tooltip,
+.laundry-flow-step:first-child:focus-within .laundry-flow-tooltip { transform: translate(0, 0); }
+.laundry-flow-step:first-child .laundry-flow-tooltip::before { left: 27px; }
+.laundry-flow-step:last-child .laundry-flow-tooltip { right: 0; left: auto; transform: translate(0, 4px); }
+.laundry-flow-step:last-child:hover .laundry-flow-tooltip,
+.laundry-flow-step:last-child:focus .laundry-flow-tooltip,
+.laundry-flow-step:last-child:focus-within .laundry-flow-tooltip { transform: translate(0, 0); }
+.laundry-flow-step:last-child .laundry-flow-tooltip::before { right: 27px; left: auto; }
 .laundry-flow-footer { display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 12px 18px; border-top: 1px solid var(--row-border); color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .laundry-flow-footer > .ui-icon { flex-shrink: 0; }
 .laundry-operations .laundry-toolbar { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, .95fr) minmax(0, .9fr); gap: 14px; align-items: end; padding: 16px 18px; margin-bottom: 10px; }
@@ -115,7 +151,6 @@ html[data-theme="dark"] .laundry-operations [data-status="FOR_LAUNDRY"] .status-
 html[data-theme="dark"] .laundry-operations [data-status="TURNED_OVER_TO_LAUNDRY"] .status-badge { color: var(--info); background: var(--info-bg); }
 @media (max-width: 1000px) {
     .laundry-operations .laundry-toolbar { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, .8fr); }
-    .laundry-flow-annotation { font-size: 11px; }
 }
 @media (max-width: 700px) {
     .laundry-operations .laundry-operations-heading { align-items: stretch; gap: 12px; }
@@ -126,8 +161,6 @@ html[data-theme="dark"] .laundry-operations [data-status="TURNED_OVER_TO_LAUNDRY
     .laundry-flow-number { width: 20px; height: 20px; font-size: 10px; }
     .laundry-flow-step:not(:last-child)::after { top: 23px; left: calc(50% + 28px); width: calc(100% - 56px); }
     .laundry-flow-step > strong { font-size: 11px; }
-    .laundry-flow-annotation { grid-column: 2 / 5; width: min(100%, 248px); justify-self: end; }
-    .laundry-flow-annotation::before { left: 48%; }
     .laundry-operations .laundry-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
     .laundry-toolbar > label:first-child { grid-column: 1 / -1; }
     .laundry-operations .laundry-cases-card { padding-right: 12px; padding-left: 12px; }
@@ -136,8 +169,6 @@ html[data-theme="dark"] .laundry-operations [data-status="TURNED_OVER_TO_LAUNDRY
     .laundry-flow-marker { width: 40px; height: 40px; }
     .laundry-flow-step:not(:last-child)::after { top: 20px; left: calc(50% + 24px); width: calc(100% - 48px); }
     .laundry-flow-step > strong { padding: 0 2px; font-size: 10px; }
-    .laundry-flow-annotation { grid-column: 1 / -1; justify-self: center; width: 100%; }
-    .laundry-flow-annotation::before { left: 62%; }
     .laundry-operations .laundry-toolbar { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

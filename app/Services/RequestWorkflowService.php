@@ -1187,7 +1187,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and applicable Gate Pass are now available to view and download. Bring the generated documents and proceed to SPMU on the scheduled pickup date.",
+                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. Bring the generated documents and proceed to SPMU on the scheduled pickup date.",
                     $request
                 );
 

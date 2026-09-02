@@ -412,15 +412,15 @@ HTML;
         $next = match ($eventCode) {
             'REQUEST_SUBMITTED' => 'The SPMU Action Officer will verify the request and scanned supporting documents first. Verification is not approval and does not reserve inventory.',
             'REQUEST_VERIFIED' => 'The request is now routed to the SPMU Head for a separate approval, rejection, or return decision. No inventory is reserved until approval.',
-            'REQUEST_APPROVED' => 'The approved quantities are reserved and the Borrower Slip plus applicable Gate Pass are available to view and download. Bring them to SPMU on the separately scheduled pickup date.',
+            'REQUEST_APPROVED' => 'The approved quantities are reserved and the Borrower Slip plus any applicable Gate Pass or Laundry Form are available to view and download. Bring the generated documents to SPMU on the separately scheduled pickup date.',
             'REQUEST_RETURNED_FOR_REVISION' => 'Open the request, review the SPMU remarks, correct the required information or documents, and resubmit the updated request.',
             'REQUEST_REJECTED' => 'No inventory reservation was created. Please review the recorded reason and coordinate with SPMU if clarification is needed.',
-            'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the generated Borrower Slip and applicable Gate Pass. Property is issued only after all release requirements are completed.',
+            'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the generated Borrower Slip plus any applicable Gate Pass or Laundry Form. For linen, SPMU validates the release first, then Laundry Personnel issue the linen and wet-sign Issued by on the printed Laundry Form.',
             'PICKUP_EXPIRED' => 'Coordinate with SPMU if the borrowing requirement is still active. An expired pickup reservation is not treated as a completed issuance.',
             'ITEMS_RELEASED' => 'Please keep the issued property in proper custody and return all items on or before the expected return date. Follow applicable Gate Pass or Laundry requirements when relevant.',
-            'LINEN_FOR_LAUNDRY' => 'The borrower returns the linen with the same printed Laundry Form. SPMU records the return condition once, then the borrower brings the linen to the Laundry Area and Laundry Personnel wet-signs Received by. Once that physical turnover is confirmed, washing continues internally in the Laundry Area and no longer holds the borrower transaction open.',
+            'LINEN_FOR_LAUNDRY' => 'At release, Laundry Personnel wet-sign Issued by on the printed Laundry Form when the linen is physically issued. On return, the borrower goes to the Laundry Area first; Laundry Personnel record the actual quantity/condition and wet-sign Received by. The borrower then brings the accomplished form to SPMU, where the Action Officer uploads it and encodes the linen findings. No second Laundry turnover confirmation is required.',
             'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry Personnel have physically received the returned linen. The borrower no longer waits for the washing cycle. Processing continues inside the Laundry Area until clean/serviceable linen is marked Available.',
-            'LAUNDRY_READY_FOR_PICKUP', 'LAUNDRY_PROCESSING_COMPLETED' => 'Internal laundry processing is complete. SPMU records the clean quantity back to Available inventory and routes any maintenance quantity appropriately.',
+            'LAUNDRY_READY_FOR_PICKUP', 'LAUNDRY_PROCESSING_COMPLETED' => 'Internal laundry processing is complete. The serviceable quantity already classified from the accomplished Laundry Form is restored to Available inventory.',
             'RETURN_RECORDED' => 'SPMU has recorded the returned property. Any remaining obligations, discrepancies, or follow-up processing will continue through the appropriate workflow.',
             'RETURN_INSPECTED' => 'SPMU has completed the inspection of the returned property. If no additional obligations remain, the transaction may proceed to completion.',
             'TRANSACTION_CLOSED' => 'All required obligations for this borrowing transaction have been completed and the transaction has been closed.',
@@ -786,7 +786,7 @@ HTML;
 
             'REQUEST_APPROVED' =>
                 $isBorrower
-                    ? 'Your verified borrowing request was approved by the SPMU Head. The approved quantities are reserved, and your Borrower Slip plus applicable Gate Pass are now available to view and download.'
+                    ? 'Your verified borrowing request was approved by the SPMU Head. The approved quantities are reserved, and your Borrower Slip plus any applicable Gate Pass or Laundry Form are now available to view and download.'
                     : 'The borrowing request has been reviewed and approved by SPMU. The approved quantities shown below are now reserved for the approved borrowing period.',
 
             'REQUEST_RETURNED_FOR_REVISION' =>
@@ -864,7 +864,7 @@ HTML;
              */
 
             'LINEN_FOR_LAUNDRY' =>
-                'A borrowing transaction containing laundry-required linen has been physically released. The listed linen items are expected for Laundry processing after the activity. Receive the used linen together with the physical Laundry Form and process the linen according to the approved Laundry workflow.',
+                'A borrowing transaction containing laundry-required linen has been released. Laundry Personnel wet-sign Issued by when the linen is physically issued. On return, receive the used linen first, record quantity/condition on the same Laundry Form, wet-sign Received by, and return the accomplished form to the borrower for SPMU encoding.',
 
             'LAUNDRY_USED_LINEN_RECEIVED' =>
                 $isBorrower
@@ -873,7 +873,7 @@ HTML;
 
             'LAUNDRY_PROCESSING_COMPLETED',
             'LAUNDRY_READY_FOR_PICKUP' =>
-                'Internal Laundry processing has been completed for the listed linen items. Clean/serviceable linen is now Available for future borrowing in the Laundry Area; no additional borrower return step is required.',
+                'Internal Laundry processing has been completed for the serviceable linen quantity already classified during SPMU return encoding. That linen is now Available for future borrowing in the Laundry Area; no additional borrower return step is required.',
 
             'LAUNDRY_FORM_PENDING_SPMU_VERIFICATION' =>
                 'The completed Laundry Form and related linen transaction are ready for SPMU review. Final settlement remains pending until the required physical acceptance and document verification are completed.',

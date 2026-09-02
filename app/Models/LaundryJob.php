@@ -74,21 +74,19 @@ class LaundryJob extends Model
     /*
      * DISPLAY-ONLY READING OF THE PHYSICAL SEQUENCE
      * ---------------------------------------------
-     * The stored status stays FOR_LAUNDRY from physical release until the
-     * turnover is confirmed, so on its own it cannot separate "the borrower
-     * still holds the linen" from "Laundry already received and signed for
-     * it". The verified accomplished form is what distinguishes the two, so
-     * the label is derived here instead of adding a database status. Nothing
-     * in this file changes a transition.
+     * FOR_LAUNDRY covers the period from physical release until SPMU has
+     * encoded the completed linen return. The verified accomplished form tells
+     * us that Laundry Personnel have already received the linen and wet-signed
+     * the physical form, even if SPMU has not encoded the return yet.
      */
     public function displayStatusLabel(): string
     {
         return match (true) {
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
-                => 'Laundry Receipt Confirmed',
-            $this->status === 'FOR_LAUNDRY' => 'Awaiting Laundry Return',
-            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending',
-            $this->status === 'LAUNDRY_COMPLETED' => 'Laundry Completed',
+                => 'Ready for SPMU Encoding',
+            $this->status === 'FOR_LAUNDRY' => 'Accomplished Form Pending',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Laundry Processing',
+            $this->status === 'LAUNDRY_COMPLETED' => 'Available',
             default => str($this->status)->replace('_', ' ')->title(),
         };
     }
@@ -97,13 +95,13 @@ class LaundryJob extends Model
     {
         return match (true) {
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
-                => 'Accomplished Laundry Form verified · awaiting SPMU Return Verification',
+                => 'Accomplished Laundry Form on file · awaiting SPMU return encoding',
             $this->status === 'FOR_LAUNDRY'
-                => 'Borrower returns the linen to the Laundry Area first',
+                => 'Accomplished Laundry Form has not yet been uploaded',
             $this->status === 'TURNED_OVER_TO_LAUNDRY'
-                => 'Borrower turnover complete · internal laundry pending',
+                => 'SPMU return encoded · laundry processing pending',
             $this->status === 'LAUNDRY_COMPLETED'
-                => 'Clean linen available in the Laundry Area',
+                => 'Clean/serviceable linen available',
             default => $this->displayStatusLabel(),
         };
     }

@@ -9,8 +9,8 @@
     ]);
     $hasLaundryCases = $jobs->total() > 0;
     $laundryStatusLabels = [
-        'FOR_LAUNDRY' => 'Awaiting Laundry Return',
-        'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending',
+        'FOR_LAUNDRY' => 'Accomplished Form Pending',
+        'TURNED_OVER_TO_LAUNDRY' => 'Laundry Processing',
     ];
     $laundryStatuses = collect(array_keys($laundryStatusLabels))
         ->merge($jobs->pluck('status'))->unique();
@@ -23,7 +23,7 @@
         <div>
             <p class="eyebrow">SPMU Action Officer</p>
             <h1>Laundry Operations</h1>
-            <p>Manage linen turnover, internal laundry processing, and signed-form archiving.</p>
+            <p>Monitor accomplished Laundry Forms and complete laundry processing for serviceable linen.</p>
         </div>
         <a class="button secondary ui-pressable laundry-completed-link" href="{{ route('laundry.completed') }}">Completed</a>
     </section>

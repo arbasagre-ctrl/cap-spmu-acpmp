@@ -1,8 +1,5 @@
 <form method="post" action="{{ route('custody.release', $custody) }}" class="form-grid release-handover-form" @if(!$preparationComplete || !$pickupWindowOpen) aria-describedby="physical-release-availability" @endif>
     @csrf
-    <p class="release-handover-intro">
-        Confirm the actual handover of approved items.
-    </p>
 
     <label class="checkbox">
         <input
@@ -14,7 +11,15 @@
             autocomplete="off"
             @disabled(!$preparationComplete || !$pickupWindowOpen)
         >
-        <span>I confirm that I validated the approved/generated Borrower Slip and applicable Gate Pass, completed the physical preparation, and handed the approved items to the borrower.</span>
+        <span>
+            @if($hasOffCampusItem)
+                I confirm that the Borrower Slip and approved Gate Pass were validated and the barricade was handed to the borrower.
+            @elseif($hasLaundryItem)
+                I confirm that Laundry Personnel issued the linen and wet-signed <strong>Issued by</strong> on the printed Laundry Form.
+            @else
+                I confirm that the Borrower Slip and approved item were validated and the item was physically handed to the borrower.
+            @endif
+        </span>
     </label>
 
     @error('signature')
@@ -43,29 +48,29 @@
 </form>
 
 <script>
-            (() => {
-                const confirmation = document.getElementById('physical-signatures-confirmed');
-                const releaseButton = document.getElementById('confirm-physical-release-button');
+(() => {
+    const confirmation = document.getElementById('physical-signatures-confirmed');
+    const releaseButton = document.getElementById('confirm-physical-release-button');
 
-                if (!confirmation || !releaseButton) return;
+    if (!confirmation || !releaseButton) return;
 
-                const refreshReleaseConfirmation = () => {
-                    releaseButton.disabled = confirmation.disabled || !confirmation.checked;
-                };
+    const refreshReleaseConfirmation = () => {
+        releaseButton.disabled = confirmation.disabled || !confirmation.checked;
+    };
 
-                /*
-                 * Operational safety: browsers can restore checkbox state when
-                 * navigating back/forward. A physical handover confirmation must
-                 * always be made deliberately for the current release action.
-                 */
-                const resetReleaseConfirmation = () => {
-                    confirmation.checked = false;
-                    refreshReleaseConfirmation();
-                };
+    /*
+     * Browsers can restore checkbox state when navigating back/forward.
+     * Physical Release must always be confirmed deliberately for the
+     * current handover.
+     */
+    const resetReleaseConfirmation = () => {
+        confirmation.checked = false;
+        refreshReleaseConfirmation();
+    };
 
-                confirmation.addEventListener('change', refreshReleaseConfirmation);
-                window.addEventListener('pageshow', resetReleaseConfirmation);
+    confirmation.addEventListener('change', refreshReleaseConfirmation);
+    window.addEventListener('pageshow', resetReleaseConfirmation);
 
-                resetReleaseConfirmation();
-            })();
-            </script>
+    resetReleaseConfirmation();
+})();
+</script>

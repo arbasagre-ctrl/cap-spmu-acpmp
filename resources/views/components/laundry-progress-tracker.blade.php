@@ -3,32 +3,41 @@
     $inspectionComplete = $inspectionComplete ?? ($job->lines->isNotEmpty()
         && $job->lines->every(fn ($line) => $line->custodyLine
             && (float) $line->custodyLine->returned_quantity >= (float) $line->custodyLine->actual_released_quantity));
-    $turnoverComplete = in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
+
+    $formComplete = $job->hasVerifiedAccomplishedForm();
+    $returnEncoded = $inspectionComplete
+        || in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
+    $laundryProcessing = $job->status === 'TURNED_OVER_TO_LAUNDRY';
     $laundryComplete = $job->status === 'LAUNDRY_COMPLETED';
+
     $progressLabel = match (true) {
-        $laundryComplete => 'Laundry Complete / Available',
-        $turnoverComplete => 'Internal Laundry Processing',
-        $inspectionComplete => 'Awaiting Laundry Turnover',
-        default => 'Awaiting Return Inspection',
+        $laundryComplete => 'Clean & Available',
+        $laundryProcessing => 'Laundry Processing',
+        $returnEncoded => 'Return Encoded',
+        $formComplete => 'Ready for SPMU Encoding',
+        default => 'Accomplished Form Pending',
     };
+
     $steps = [
         [
-            'label' => 'Return Inspection',
+            'label' => 'SPMU Return Encoding',
             'icon' => 'requests',
-            'state' => $inspectionComplete ? 'complete' : 'current',
-            'description' => 'SPMU records the quantity and condition of all returned linen before Laundry Turnover can be confirmed.',
+            'state' => $returnEncoded ? 'complete' : 'current',
+            'description' => $formComplete
+                ? 'The accomplished Laundry Form is ready for Action Officer encoding.'
+                : 'Upload the accomplished Laundry Form before encoding the linen return.',
         ],
         [
-            'label' => 'Laundry Turnover',
-            'icon' => 'custody',
-            'state' => $turnoverComplete ? 'complete' : ($inspectionComplete ? 'current' : 'locked'),
-            'description' => 'After Return Inspection, Laundry Personnel physically receive the linen and wet-sign Received by on the same printed Laundry Form. The borrower no longer waits for washing.',
+            'label' => 'Laundry Processing',
+            'icon' => 'linen',
+            'state' => $laundryComplete ? 'complete' : ($laundryProcessing ? 'current' : 'pending'),
+            'description' => 'Serviceable returned linen is washed in the Laundry Area.',
         ],
         [
-            'label' => 'Laundry Complete / Available',
+            'label' => 'Available',
             'icon' => 'approval',
-            'state' => $laundryComplete ? 'complete' : ($turnoverComplete ? 'current' : 'pending'),
-            'description' => 'Internal washing is completed and clean/serviceable linen becomes Available for future borrowing in the Laundry Area.',
+            'state' => $laundryComplete ? 'complete' : 'pending',
+            'description' => 'Clean serviceable linen is available for future borrowing.',
         ],
     ];
 @endphp

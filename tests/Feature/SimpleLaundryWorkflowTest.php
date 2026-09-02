@@ -9,34 +9,31 @@ use App\Models\BorrowingRequest;
 use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
 use App\Models\GeneratedDocument;
+use App\Models\Incident;
 use App\Models\InventoryItem;
 use App\Models\LaundryJob;
 use App\Models\LaundryJobLine;
-use App\Models\NotificationEvent;
 use App\Models\RequestItem;
-use App\Models\ReturnLine;
-use App\Models\ReturnTransaction;
 use App\Models\StoredFile;
 use App\Models\User;
 use App\Services\InventoryService;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * Covers the CURRENT, simplified linen workflow:
+ * Covers the current linen workflow:
  *
- *   SPMU return inspection (custody.return, disposition=LAUNDRY)
- *     -> Laundry turnover confirmation (laundry.receive)
- *          -> borrower is cleared here; custody may already close
- *     -> internal Laundry completion (laundry.complete-processing)
- *          -> purely internal; never reopens the borrower's obligation
- *     -> signed Laundry Form archival (laundry.spmu.upload-form)
- *          -> documentation only; never itself changes availability
- *
- * There is no Laundry Worker system account anywhere in this flow.
+ *   Laundry Personnel receive returned linen first and wet-sign Received by
+ *     -> Action Officer uploads/verifies the accomplished Laundry Form
+ *     -> Action Officer encodes the form in SPMU Return
+ *          -> serviceable linen automatically enters the internal Laundry queue
+ *          -> there is NO second Laundry turnover confirmation
+ *     -> internal Laundry completion marks that known serviceable quantity Available
+ *          -> there is NO second quantity/condition classification in Laundry Operations
  */
 class SimpleLaundryWorkflowTest extends TestCase
 {
@@ -50,219 +47,201 @@ class SimpleLaundryWorkflowTest extends TestCase
         Storage::fake('local');
     }
 
-    public function test_spmu_action_officer_can_open_laundry_operations(): void
+    public function test_spmu_return_encoding_automatically_creates_the_internal_laundry_queue(): void
     {
-        [$job] = $this->laundryCaseAfterReturnInspection();
+        [$job, $jobLine, $borrower, $custody] = $this->outstandingLaundryCase(quantity: 2);
         $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
 
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($officer)
-            ->get(route('dashboard'))
-            ->assertOk()
-            ->assertSeeText('Laundry Operations');
+        $this->uploadAccomplishedForm($job, $officer)->assertSessionHasNoErrors();
+
+        $this->recordReturn($custody, $officer, [
+            $jobLine->custody_line_id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        $job->refresh();
+        $jobLine->refresh();
+        $custody->refresh();
+
+        $this->assertSame('TURNED_OVER_TO_LAUNDRY', $job->status);
+        $this->assertSame(2, $jobLine->received_quantity);
+        $this->assertSame($officer->full_name, $job->worker_name);
+        $this->assertNotNull($job->worker_received_at);
+        $this->assertSame('CLOSED', $custody->status);
+        $this->assertFalse(Route::has('laundry.receive'));
+        $this->assertFalse(Route::has('laundry.verify'));
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('View Laundry Form')
-            ->assertSeeText('Laundry Complete / Available')
-            ->assertDontSeeText('Back to Stock');
+            ->assertSeeText('Mark Laundry Complete')
+            ->assertSeeText('No reclassification is needed here.')
+            ->assertDontSeeText('Confirm Laundry Turnover')
+            ->assertDontSeeText('Archive accomplished Laundry Form')
+            ->assertDontSeeText('Clean / Available')
+            ->assertDontSeeText('Maintenance')
+            ->assertDontSeeText('Issued by:')
+            ->assertDontSeeText('Received by:');
     }
 
-    public function test_only_spmu_action_officer_records_laundry_turnover(): void
+    public function test_internal_laundry_completion_needs_no_second_quantity_input(): void
     {
-        [$job, $jobLine, $borrower] = $this->laundryCaseAfterReturnInspection();
+        [$job, $jobLine, $borrower, $custody, $item] = $this->outstandingLaundryCase(quantity: 2);
         $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
+        $inventory = app(InventoryService::class);
 
-        $this->withSession(['active_workspace' => 'BORROWER'])
-            ->actingAs($borrower)
-            ->post(route('laundry.receive', $job), [
-                'laundry_received_signature_confirmed' => 1,
-                'worker_remarks' => 'Attempted borrower turnover.',
-            ])
-            ->assertForbidden();
+        $this->uploadAccomplishedForm($job, $officer)->assertSessionHasNoErrors();
+        $this->recordReturn($custody, $officer, [
+            $jobLine->custody_line_id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        $afterReturnEncoding = $this->currentAvailable($inventory, $item);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
-            ->post(route('laundry.receive', $job), [
-                'laundry_received_signature_confirmed' => 1,
-                'worker_remarks' => 'Linen physically received by Laundry Personnel.',
+            ->post(route('laundry.complete-processing', $job->fresh()), [
+                'worker_remarks' => 'Washing completed.',
             ])
             ->assertSessionHasNoErrors();
 
         $job->refresh();
         $jobLine->refresh();
 
-        $this->assertSame('TURNED_OVER_TO_LAUNDRY', $job->status);
-        $this->assertSame($officer->full_name, $job->worker_name);
-        $this->assertNotNull($job->worker_received_at);
-        $this->assertSame(2.0, (float) $jobLine->received_quantity);
+        $this->assertSame('LAUNDRY_COMPLETED', $job->status);
+        $this->assertSame(2, $jobLine->completed_quantity);
+        $this->assertSame('CLOSED', $custody->fresh()->status);
+        $this->assertSame(
+            $afterReturnEncoding + 2.0,
+            $this->currentAvailable($inventory, $item)
+        );
+    }
 
-        $this->assertDatabaseHas('notification_events', [
-            'event_code' => 'LAUNDRY_USED_LINEN_RECEIVED',
+    public function test_adverse_linen_findings_are_not_reclassified_inside_laundry_operations(): void
+    {
+        [$job, $jobLine, $borrower, $custody] = $this->outstandingLaundryCase(quantity: 2);
+        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
+
+        $this->uploadAccomplishedForm($job, $officer)->assertSessionHasNoErrors();
+        $this->recordReturn(
+            $custody,
+            $officer,
+            [$jobLine->custody_line_id => ['FINE' => 1, 'DAMAGED' => 1]],
+            [
+                'remarks' => 'One linen item marked damaged by Laundry Personnel.',
+                'evidence_files' => [
+                    $jobLine->custody_line_id => UploadedFile::fake()->image('linen-damage.jpg'),
+                ],
+            ]
+        )->assertSessionHasNoErrors();
+
+        $job->refresh();
+        $jobLine->refresh();
+
+        $this->assertSame('TURNED_OVER_TO_LAUNDRY', $job->status);
+        $this->assertSame(1, $jobLine->received_quantity);
+        $this->assertSame(1, Incident::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->where('incident_type', 'DAMAGED')
+            ->count());
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(route('laundry.complete-processing', $job), [
+                'worker_remarks' => null,
+            ])
+            ->assertSessionHasNoErrors();
+
+        $jobLine->refresh();
+        $this->assertSame(1, $jobLine->completed_quantity);
+        $this->assertSame(0, $jobLine->affected_quantity);
+    }
+
+    public function test_old_fully_encoded_jobs_skip_the_removed_turnover_and_quantity_steps(): void
+    {
+        [$job, $jobLine, $borrower, $custody] = $this->outstandingLaundryCase(quantity: 2);
+        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
+
+        $this->uploadAccomplishedForm($job, $officer)->assertSessionHasNoErrors();
+        $this->recordReturn($custody, $officer, [
+            $jobLine->custody_line_id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        // Simulate a record left behind by the previous duplicate-turnover UI.
+        $job->refresh()->update([
+            'status' => 'FOR_LAUNDRY',
+            'worker_received_at' => null,
         ]);
+        $jobLine->refresh()->update(['received_quantity' => 0]);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
             ->get(route('laundry.show', $job->fresh()))
             ->assertOk()
-            ->assertSeeText('Complete Laundry Processing')
-            ->assertSeeText('Archive accomplished Laundry Form')
-            ->assertDontSeeText('Record Clean Linen Back to Stock');
+            ->assertSeeText('Mark Laundry Complete')
+            ->assertSeeText('Serviceable quantity in Laundry')
+            ->assertDontSeeText('Confirm Laundry Turnover')
+            ->assertDontSeeText('Open SPMU Return');
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(route('laundry.complete-processing', $job->fresh()), [
+                'worker_remarks' => 'Legacy record completed without duplicate encoding.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('LAUNDRY_COMPLETED', $job->fresh()->status);
+        $this->assertSame(2, $jobLine->fresh()->received_quantity);
+        $this->assertSame(2, $jobLine->fresh()->completed_quantity);
     }
 
-    public function test_custody_is_cleared_at_turnover_without_waiting_for_internal_processing_or_archival(): void
+    public function test_accomplished_form_upload_stays_in_the_spmu_return_workspace(): void
     {
-        [$job, $jobLine, $borrower, $custody] = $this->laundryCaseAfterReturnInspection();
+        [$job, $jobLine, $borrower, $custody] = $this->outstandingLaundryCase(quantity: 2);
         $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
-            ->post(route('laundry.receive', $job), [
-                'laundry_received_signature_confirmed' => 1,
-                'worker_remarks' => null,
-            ])
-            ->assertSessionHasNoErrors();
+            ->get(route('laundry.show', $job))
+            ->assertOk()
+            ->assertSeeText('Return linen to the Laundry Area first')
+            ->assertSeeText('Open SPMU Return')
+            ->assertDontSeeText('Archive accomplished Laundry Form')
+            ->assertDontSeeText('Confirm Laundry Turnover');
 
-        /*
-         * Borrower is cleared (custody CLOSED) the moment Laundry confirms
-         * turnover -- the borrower's obligation never waits for washing.
-         */
-        $custody->refresh();
-        $this->assertSame('CLOSED', $custody->status);
-        $this->assertNotNull($custody->closed_at);
-
-        $this->assertSame(1, NotificationEvent::query()
-            ->where('event_code', 'TRANSACTION_CLOSED')
-            ->where('source_type', CustodyTransaction::class)
-            ->where('source_id', $custody->id)
-            ->count());
-
-        /*
-         * At this exact point internal Laundry processing has NOT finished
-         * and the Laundry Form has NOT been archived, so this transaction
-         * is Borrower Cleared, not fully Completed.
-         */
-        $job->refresh();
-        $this->assertSame('TURNED_OVER_TO_LAUNDRY', $job->status);
-
-        /*
-         * Internal Laundry completion happens afterward and must not
-         * reopen, re-close, or send another borrower notification.
-         */
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
-            ->post(route('laundry.complete-processing', $job), [
-                'worker_remarks' => 'All linen cleaned.',
-                'lines' => [
-                    $jobLine->id => [
-                        'cleaned_quantity' => 2,
-                        'damaged_quantity' => 0,
-                        'remarks' => null,
-                    ],
-                ],
-            ])
-            ->assertSessionHasNoErrors();
-
-        $job->refresh();
-        $this->assertSame('LAUNDRY_COMPLETED', $job->status);
-        $this->assertSame('CLOSED', $custody->fresh()->status);
-
-        /*
-         * Archival is documentation-only and, likewise, must not fire a
-         * second borrower-facing TRANSACTION_CLOSED.
-         */
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($officer)
-            ->post(route('laundry.spmu.upload-form', $job), [
-                'evidence' => UploadedFile::fake()->create(
-                    'fully-accomplished-laundry-form.pdf',
-                    20,
-                    'application/pdf'
-                ),
-            ])
-            ->assertSessionHasNoErrors();
-
-        $this->assertNotNull($job->fresh()->latestEvidence);
-
-        $this->assertSame(1, NotificationEvent::query()
-            ->where('event_code', 'TRANSACTION_CLOSED')
-            ->where('source_type', CustodyTransaction::class)
-            ->where('source_id', $custody->id)
-            ->count());
+            ->get(route('custody.return.show', $custody))
+            ->assertOk()
+            ->assertSeeText('Upload Form')
+            ->assertSeeText('I confirm this is the accomplished Laundry Form signed by Laundry Personnel.');
     }
 
-    public function test_linen_inventory_availability_stays_suppressed_until_internal_laundry_completion(): void
+    private function recordReturn(
+        CustodyTransaction $custody,
+        User $officer,
+        array $accounting,
+        array $extra = []
+    ) {
+        return $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->post(
+                route('custody.return', $custody),
+                array_merge(['accounting' => $accounting], $extra)
+            );
+    }
+
+    private function uploadAccomplishedForm(LaundryJob $job, User $officer)
     {
-        [$job, $jobLine, $borrower, $custody, $item] = $this->laundryCaseAfterReturnInspection();
-        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
-        $inventory = app(InventoryService::class);
-
-        /*
-         * Checkpoint 1: immediately after the return inspection (already
-         * recorded by the fixture as disposition=LAUNDRY), the returned
-         * quantity must stay excluded from availability -- identical to
-         * how it was counted while still physically on custody.
-         */
-        $afterReturnInspection = $this->currentAvailable($inventory, $item);
-
-        /*
-         * Checkpoint 2: after Laundry turnover confirmation, still
-         * unavailable -- borrower clearance is not the same as clean stock.
-         */
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($officer)
-            ->post(route('laundry.receive', $job), [
-                'laundry_received_signature_confirmed' => 1,
-                'worker_remarks' => null,
-            ])
-            ->assertSessionHasNoErrors();
-
-        $afterTurnover = $this->currentAvailable($inventory, $item);
-        $this->assertSame($afterReturnInspection, $afterTurnover,
-            'Linen must remain unavailable after Laundry turnover, before internal washing is complete.');
-
-        /*
-         * Checkpoint 3: after internal Laundry completion, the cleaned
-         * quantity becomes available again.
-         */
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($officer)
-            ->post(route('laundry.complete-processing', $job), [
-                'worker_remarks' => null,
-                'lines' => [
-                    $jobLine->id => [
-                        'cleaned_quantity' => 2,
-                        'damaged_quantity' => 0,
-                        'remarks' => null,
-                    ],
-                ],
-            ])
-            ->assertSessionHasNoErrors();
-
-        $afterCompletion = $this->currentAvailable($inventory, $item);
-        $this->assertSame($afterReturnInspection + 2.0, $afterCompletion,
-            'Cleaned linen must become available again once internal Laundry completion is recorded.');
-
-        /*
-         * Checkpoint 4: archiving the signed Laundry Form is documentation
-         * only and must not change availability at all.
-         */
-        $this->withSession(['active_workspace' => 'SPMU'])
+        return $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
             ->post(route('laundry.spmu.upload-form', $job), [
                 'evidence' => UploadedFile::fake()->create(
-                    'fully-accomplished-laundry-form.pdf',
+                    'accomplished-laundry-form.pdf',
                     20,
                     'application/pdf'
                 ),
-            ])
-            ->assertSessionHasNoErrors();
-
-        $afterArchival = $this->currentAvailable($inventory, $item);
-        $this->assertSame($afterCompletion, $afterArchival,
-            'Archiving the signed Laundry Form must not, by itself, change inventory availability.');
+                'laundry_received_signature_confirmed' => 1,
+            ]);
     }
 
     private function currentAvailable(InventoryService $inventory, InventoryItem $item): float
@@ -275,18 +254,11 @@ class SimpleLaundryWorkflowTest extends TestCase
     }
 
     /**
-     * Builds a released custody with one laundry-required line that has
-     * already gone through the SPMU return inspection (disposition=LAUNDRY,
-     * fully accounted), and a LaundryJob sitting at FOR_LAUNDRY awaiting
-     * turnover -- i.e. the exact state the current LaundryController
-     * expects before Laundry Personnel can confirm receipt.
-     *
      * @return array{0: LaundryJob, 1: LaundryJobLine, 2: User, 3: CustodyTransaction, 4: InventoryItem}
      */
-    private function laundryCaseAfterReturnInspection(): array
+    private function outstandingLaundryCase(int $quantity): array
     {
         $borrower = $this->classificationUser(AccessClassification::BorrowerOnly);
-        $officer = $this->classificationUser(AccessClassification::SpmuOfficer);
         $item = InventoryItem::query()
             ->where('active', true)
             ->where('borrowable', true)
@@ -307,7 +279,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             'location' => 'CSPC Campus',
             'needed_from' => now()->subDay(),
             'return_due_at' => now()->endOfDay(),
-            'event_details' => 'Borrower carries used linen to Laundry and cleaned linen back to SPMU.',
+            'event_details' => 'Borrower returns linen through the Laundry Area first.',
             'off_campus' => false,
             'created_by_user_id' => $borrower->id,
         ]);
@@ -317,8 +289,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             'inventory_item_id' => $item->id,
             'description_snapshot' => $item->unique_description,
             'unit_snapshot' => $item->unit->unit_name,
-            'requested_quantity' => 2,
-            'approved_quantity' => 2,
+            'requested_quantity' => $quantity,
+            'approved_quantity' => $quantity,
             'use_location' => 'ON_CAMPUS',
         ]);
 
@@ -326,8 +298,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             'request_item_id' => $requestItem->id,
             'period_start' => $version->needed_from,
             'period_end' => $version->return_due_at,
-            'allocated_quantity' => 2,
-            'released_quantity' => 2,
+            'allocated_quantity' => $quantity,
+            'released_quantity' => $quantity,
             'restored_quantity' => 0,
             'status' => 'RELEASED',
             'allocated_at' => now()->subDay(),
@@ -347,12 +319,12 @@ class SimpleLaundryWorkflowTest extends TestCase
             'custody_transaction_id' => $custody->id,
             'request_item_id' => $requestItem->id,
             'allocation_id' => $allocation->id,
-            'approved_quantity' => 2,
-            'quantity_to_receive' => 2,
-            'actual_released_quantity' => 2,
-            'returned_quantity' => 2,
+            'approved_quantity' => $quantity,
+            'quantity_to_receive' => $quantity,
+            'actual_released_quantity' => $quantity,
+            'returned_quantity' => 0,
             'release_condition' => 'SERVICEABLE',
-            'item_status' => 'RETURNED',
+            'item_status' => 'RELEASED_PENDING_RETURN',
             'compliance_status' => 'FOR_LAUNDRY',
         ]);
 
@@ -384,10 +356,6 @@ class SimpleLaundryWorkflowTest extends TestCase
             'generated_at' => now(),
         ]);
 
-        /*
-         * LaundryJob is auto-created at physical release time in the real
-         * workflow (CustodyService::release()); replicated here directly.
-         */
         $job = LaundryJob::create([
             'custody_transaction_id' => $custody->id,
             'generated_document_id' => $document->id,
@@ -397,30 +365,8 @@ class SimpleLaundryWorkflowTest extends TestCase
         $jobLine = LaundryJobLine::create([
             'laundry_job_id' => $job->id,
             'custody_line_id' => $custodyLine->id,
-            'issued_quantity' => 2,
+            'issued_quantity' => $quantity,
             'affected_quantity' => 0,
-        ]);
-
-        /*
-         * The SPMU return inspection already happened: record it exactly
-         * as CustodyService::receiveReturn() would, with a FINE condition
-         * for a laundry-required item routed to disposition_state=LAUNDRY.
-         */
-        $return = ReturnTransaction::create([
-            'return_no' => 'RET-LAUNDRY-'.uniqid(),
-            'custody_transaction_id' => $custody->id,
-            'received_by_user_id' => $officer->id,
-            'return_type' => 'NORMAL',
-            'received_at' => now(),
-            'status' => 'INSPECTED',
-        ]);
-
-        ReturnLine::create([
-            'return_transaction_id' => $return->id,
-            'custody_line_id' => $custodyLine->id,
-            'quantity_received' => 2,
-            'condition_code' => 'FINE',
-            'disposition_state' => 'LAUNDRY',
         ]);
 
         return [

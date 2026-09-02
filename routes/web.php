@@ -408,10 +408,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     |--------------------------------------------------------------------------
     |
     | SPMU Action Officer responsibility:
-    | - receive used linen + the borrower-signed physical Laundry Form
-    | - record actual receipt and laundry completion details
-    | - keep the cleaned linen + the same form in the SPMU return process
-    | - upload the fully signed form after SPMU final acceptance
+    | - verify/upload the accomplished Laundry Form in Return Inspection
+    | - encode the linen quantity/condition exactly as written by Laundry Personnel
+    | - monitor the resulting internal Laundry queue
+    | - mark serviceable linen Available after washing is actually complete
     |
     | The Borrower does not collect cleaned linen or encode laundry quantities.
     |
@@ -426,9 +426,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/laundry/{laundryJob}', [LaundryController::class, 'show'])
             ->name('laundry.show');
-
-        Route::post('/laundry/{laundryJob}/receive', [LaundryController::class, 'receive'])
-            ->name('laundry.receive');
 
         Route::post('/laundry/{laundryJob}/complete-processing', [LaundryController::class, 'completeProcessing'])
             ->name('laundry.complete-processing');
@@ -445,21 +442,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/spmu/laundry/{laundryJob}/upload-form', [LaundryController::class, 'upload'])
             ->name('laundry.spmu.upload-form');
     });
-
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | Laundry Processing
-    |--------------------------------------------------------------------------
-    */
-
-    Route::post(
-        '/laundry/{laundry}/verify',
-        [ConditionalProcessingController::class, 'laundry']
-    )
-        ->middleware('workspace:SPMU')
-        ->name('laundry.verify');
 
 
     /*

@@ -18,14 +18,6 @@ class OperationalCalendarService
     public const PICKUP = 'PICKUP';
     public const RETURN = 'RETURN';
 
-    /*
-     * Physical pickup / release is an SPMU counter transaction with a fixed
-     * institutional window. Both ends are inclusive, matching the existing
-     * betweenIncluded() convention used for configured operating hours.
-     */
-    public const PICKUP_WINDOW_START = '13:00';
-    public const PICKUP_WINDOW_END = '16:00';
-
     public function profile(CarbonInterface|string $date): array
     {
         $day = $this->asDate($date);
@@ -118,9 +110,9 @@ class OperationalCalendarService
     /**
      * Resolve the effective time window for an activity on a given day.
      *
-     * Pickup / release is additionally bounded by the fixed physical release
-     * window. A narrower configured window still applies; a wider one cannot
-     * extend the counter beyond 1:00 PM - 4:00 PM.
+     * The time window comes directly from Operational Configuration for the
+     * selected date, including any date-specific exception. Pickup / release
+     * therefore follows the administrator's current Open Time and Close Time.
      *
      * @return array{0: ?CarbonImmutable, 1: ?CarbonImmutable}
      */
@@ -137,14 +129,6 @@ class OperationalCalendarService
         $close = $profile['close_time']
             ? CarbonImmutable::parse($date.' '.$profile['close_time'], $timezone)
             : null;
-
-        if (strtoupper($activity) === self::PICKUP) {
-            $windowOpen = CarbonImmutable::parse($date.' '.self::PICKUP_WINDOW_START, $timezone);
-            $windowClose = CarbonImmutable::parse($date.' '.self::PICKUP_WINDOW_END, $timezone);
-
-            $open = $open && $open->gt($windowOpen) ? $open : $windowOpen;
-            $close = $close && $close->lt($windowClose) ? $close : $windowClose;
-        }
 
         return [$open, $close];
     }
@@ -222,22 +206,24 @@ class OperationalCalendarService
         if ($this->isOpenFor($activity, $date, false)) {
             [$open, $close] = $this->operatingWindow($activity, $at, $profile);
 
-            if ($open && $close && $at->lt($open)) {
-                throw ValidationException::withMessages([
-                    $field => ucfirst($label).' is available from '.$open->format('g:i A').' to '.$close->format('g:i A').'.',
-                ]);
-            }
+            if ($open && $close && ($at->lt($open) || $at->gt($close))) {
+                if (strtoupper($activity) === self::PICKUP) {
+                    throw ValidationException::withMessages([
+                        $field => 'Please choose a pickup time between '
+                            .$open->format('g:i A').' and '.$close->format('g:i A')
+                            .' for the selected date.',
+                    ]);
+                }
 
-            if ($open && $close && $at->gt($close)) {
-                $nextWindow = strtoupper($activity) === self::PICKUP
-                    ? $this->nextPickupWindow($at)
-                    : null;
+                if ($at->lt($open)) {
+                    throw ValidationException::withMessages([
+                        $field => ucfirst($label).' is available from '.$open->format('g:i A').' to '.$close->format('g:i A').'.',
+                    ]);
+                }
 
                 throw ValidationException::withMessages([
-                    $field => "Today's ".$label.' window has ended.'
-                        .($nextWindow
-                            ? ' Next available '.$label.': '.$nextWindow->format('d M Y, g:i A').'.'
-                            : ' Allowed window: '.$open->format('g:i A').' – '.$close->format('g:i A').'.'),
+                    $field => "Today's ".$label.' window has ended. Allowed window: '
+                        .$open->format('g:i A').' – '.$close->format('g:i A').'.',
                 ]);
             }
         }
@@ -250,6 +236,13 @@ class OperationalCalendarService
             self::RETURN => 'return transaction',
             default => 'transaction',
         };
+
+        if (strtoupper($activity) === self::PICKUP) {
+            throw ValidationException::withMessages([
+                $field => 'Pickup and release are not available on '.$date->format('F j, Y').'.'
+                    .$reason.' Please choose the next open date: '.$next->format('F j, Y').'.',
+            ]);
+        }
 
         throw ValidationException::withMessages([
             $field => ucfirst($label).' is closed on '.$date->format('F j, Y').'.'.$reason.' Next open date: '.$next->format('F j, Y').'.',
