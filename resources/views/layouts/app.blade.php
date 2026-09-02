@@ -460,7 +460,6 @@
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
                     ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
                     ['reports.index', 'reports.index', 'Reports', 'report-document'],
-                    ['reports.notifications', 'reports.notifications', 'Delivery Records', 'notifications'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [

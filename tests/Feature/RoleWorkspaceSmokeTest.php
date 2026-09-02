@@ -80,7 +80,7 @@ class RoleWorkspaceSmokeTest extends TestCase
             ],
             UserRole::Spmu->value => [
                 'see' => ['For Approval', 'Inventory Overview', 'Release & Return Oversight', 'Analytics', 'Reports', 'Operational Configuration'],
-                'hide' => ['User Accounts', 'Audit Trail', 'Laundry Operations'],
+                'hide' => ['User Accounts', 'Audit Trail', 'Delivery Records', 'Laundry Operations'],
             ],
             UserRole::Ictu->value => [
                 'see' => ['User Accounts', 'System Settings', 'Audit Trail', 'Delivery Records'],

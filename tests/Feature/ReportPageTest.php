@@ -126,8 +126,8 @@ class ReportPageTest extends TestCase
     public function test_reports_header_does_not_carry_audit_trail_or_delivery_buttons(): void
     {
         /*
-         * Both are separate sidebar destinations. Repeating them as header
-         * buttons in Reports is what the redesign removed.
+         * These dedicated modules do not belong among the report-generation
+         * actions in the page header.
          */
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
@@ -137,15 +137,14 @@ class ReportPageTest extends TestCase
         $response->assertDontSee('<a class="button secondary" href="'.route('reports.notifications').'"', false);
     }
 
-    public function test_spmu_head_sidebar_hides_audit_trail_and_keeps_delivery_records(): void
+    public function test_spmu_head_sidebar_hides_audit_trail_and_delivery_records(): void
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index'));
 
         $response->assertDontSee('<span>Audit Trail</span>', false);
-        $response->assertSee('<span>Delivery Records</span>', false);
-        $response->assertSee(route('reports.notifications'), false);
+        $response->assertDontSee('<span>Delivery Records</span>', false);
     }
 
     public function test_reports_links_to_the_existing_audit_trail_rather_than_repeating_it(): void
