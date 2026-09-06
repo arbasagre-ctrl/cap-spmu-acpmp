@@ -7,37 +7,41 @@
     $formComplete = $job->hasVerifiedAccomplishedForm();
     $returnEncoded = $inspectionComplete
         || in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
-    $laundryProcessing = $job->status === 'TURNED_OVER_TO_LAUNDRY';
-    $laundryComplete = $job->status === 'LAUNDRY_COMPLETED';
+    $availabilityPending = $job->status === 'TURNED_OVER_TO_LAUNDRY';
+    $available = $job->status === 'LAUNDRY_COMPLETED';
 
     $progressLabel = match (true) {
-        $laundryComplete => 'Clean & Available',
-        $laundryProcessing => 'Laundry Processing',
-        $returnEncoded => 'Return Encoded',
+        $available => 'Available',
+        $availabilityPending => 'Finalize Availability',
+        $returnEncoded => 'Finalize Availability',
         $formComplete => 'Ready for SPMU Encoding',
-        default => 'Accomplished Form Pending',
+        default => 'Laundry Processing / Form Pending',
     };
 
     $steps = [
         [
-            'label' => 'SPMU Return Encoding',
-            'icon' => 'requests',
-            'state' => $returnEncoded ? 'complete' : 'current',
-            'description' => $formComplete
-                ? 'The accomplished Laundry Form is ready for Action Officer encoding.'
-                : 'Upload the accomplished Laundry Form before encoding the linen return.',
-        ],
-        [
             'label' => 'Laundry Processing',
             'icon' => 'linen',
-            'state' => $laundryComplete ? 'complete' : ($laundryProcessing ? 'current' : 'pending'),
-            'description' => 'Serviceable returned linen is washed in the Laundry Area.',
+            'state' => $formComplete ? 'complete' : 'current',
+            'description' => 'Laundry Personnel physically receive, wash/assess the linen, complete the printed Laundry Form, and deliver the completed form to SPMU. No Laundry portal login is used.',
+        ],
+        [
+            'label' => 'SPMU Records Final Form',
+            'icon' => 'requests',
+            'state' => $returnEncoded ? 'complete' : ($formComplete ? 'current' : 'pending'),
+            'description' => 'The Action Officer uploads the completed Laundry Form and records the final quantity and condition exactly as written by Laundry Personnel.',
+        ],
+        [
+            'label' => 'Finalize Availability',
+            'icon' => 'approval',
+            'state' => $available ? 'complete' : ($returnEncoded ? 'current' : 'pending'),
+            'description' => 'After SPMU encoding, the system restores only the serviceable linen quantity to Available inventory.',
         ],
         [
             'label' => 'Available',
-            'icon' => 'approval',
-            'state' => $laundryComplete ? 'complete' : 'pending',
-            'description' => 'Clean serviceable linen is available for future borrowing.',
+            'icon' => 'success',
+            'state' => $available ? 'complete' : 'pending',
+            'description' => 'Serviceable linen is available for future borrowing. Adverse-condition quantities remain outside normal Available stock.',
         ],
     ];
 @endphp
@@ -48,7 +52,7 @@
             <p class="eyebrow">Laundry tracker</p>
             <h2>Where this linen is now</h2>
         </div>
-        <span class="status-badge {{ $laundryComplete ? 'status-success' : 'status-info' }} laundry-progress-status">{{ $progressLabel }}</span>
+        <span class="status-badge {{ $available ? 'status-success' : 'status-info' }} laundry-progress-status">{{ $progressLabel }}</span>
     </div>
     <ol class="laundry-progress-rail">
         @foreach($steps as $step)

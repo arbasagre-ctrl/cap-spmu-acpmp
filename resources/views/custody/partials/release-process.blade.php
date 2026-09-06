@@ -157,7 +157,7 @@
                 @if($hasOffCampusItem)
                     After Physical Release, the borrower presents the printed Gate Pass to the Guard on Duty. The guard completes <strong>Released by</strong>, Date, and Time. The borrower keeps the accomplished Gate Pass and submits it to SPMU when returning the barricade.
                 @elseif($hasLaundryItem)
-                    Laundry Personnel are the physical issuer for linen. After <strong>Issued by</strong> is signed, SPMU records the completed release. On return, the borrower goes to the Laundry Area first for checking and the <strong>Received by</strong> signature, then brings the accomplished Laundry Form to SPMU.
+                    Laundry Personnel are the physical issuer for linen. After <strong>Issued by</strong> is signed, SPMU records the completed release. On return, the borrower goes to the Laundry Area first for checking and the <strong>Received by</strong> signature. The Laundry Worker keeps the accomplished form and later delivers it directly to SPMU; the borrower is not responsible for that document handoff.
                 @else
                     After Physical Release, the item is under the borrower's custody. On return, the Action Officer inspects the item and records the returned quantity and condition.
                 @endif

@@ -6,54 +6,14 @@
     $scheduleDate = $scheduleDateValue ? \Illuminate\Support\Carbon::parse($scheduleDateValue) : null;
     $returnDate = $returnDateValue ? \Illuminate\Support\Carbon::parse($returnDateValue) : null;
 
-    $hasActivePickupSchedule = (bool) $custody->scheduled_release_at
-        && (bool) $custody->pickup_expires_at
-        && ! $custody->pickup_expired_at;
-
-    $isCompleted = $custody->status === 'CLOSED' || $custody->closed_at !== null;
-
-    /*
-     * Borrower Cleared vs. Completed (see custody/show.blade.php for the full
-     * rule): Completed requires, for linen, that internal Laundry processing
-     * has finished AND the Laundry Form has been archived - not archival alone.
-     */
-    $rowHasLaundryItem = $custody->lines->contains(
-        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
-    );
-    $rowLaundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
-    $isFullyComplete = $isCompleted
-        && (
-            ! $rowHasLaundryItem
-            || ($rowLaundryJob?->status === 'LAUNDRY_COMPLETED' && $rowLaundryJob?->latestEvidence?->file)
-        );
-
-    // Detailed operational stage, kept as the badge tooltip so the oversight
-    // list stays readable without losing the precise workflow position.
-    $operationalLabel = match (true) {
-        $isCompleted => $isFullyComplete ? 'Completed' : 'Borrower Cleared',
-        $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
-        $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
-        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
-        $custody->status === 'OVERDUE' => 'Overdue',
-        (bool) $custody->released_at => 'Items Released / On Custody',
-        (bool) $custody->prepared_at && $hasActivePickupSchedule => 'Ready for Release',
-        $hasActivePickupSchedule => 'Pickup Scheduled / For Item Preparation',
-        $custody->status === 'PREPARING_RELEASE' => 'For Pickup Scheduling',
-        default => null,
-    };
-
-    $group = $groupForCustody($custody);
+    $workflowStatus = $custody->workflowStatus();
+    $operationalLabel = $workflowStatus['label'];
+    $operationalStatusKey = $workflowStatus['key'];
+    $group = $workflowStatus['group'];
     $priority = $priorityForCustody($custody);
 
-    $groupLabel = $oversightTabs[$group] ?? 'Active';
-    $badgeStatus = match ($group) {
-        'attention' => 'OVERDUE',
-        'return' => 'RETURN_PROCESSING',
-        'custody' => 'BORROWED',
-        'release' => 'PREPARING_RELEASE',
-        'completed' => 'COMPLETED',
-        default => 'ACTIVE',
-    };
+    $groupLabel = $oversightTabs[$group] ?? $operationalLabel;
+    $badgeStatus = $operationalStatusKey;
 
     $borrowerName = $custody->borrower?->full_name ?: 'Borrower';
     $borrowerUnit = $custody->borrower?->organizationalUnit?->unit_name;
@@ -163,8 +123,8 @@
             <small>Status</small>
             <x-status-badge
                 :status="$badgeStatus"
-                :label="$groupLabel"
-                :title="$operationalLabel ?: $groupLabel"
+                :label="$operationalLabel"
+                :title="$operationalLabel"
             />
         </span>
     </div>

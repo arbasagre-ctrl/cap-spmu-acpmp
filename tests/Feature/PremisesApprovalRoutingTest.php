@@ -23,7 +23,9 @@ use Tests\TestCase;
  *   OFF-CAMPUS  submit -> Action Officer verification (sequence 1) first,
  *                         then SPMU Head For Approval
  *
- * Both stay visible in Request Records throughout.
+ * Active Request Records follow responsibility:
+ * - Action Officer sees an under-review request only while sequence 1 applies.
+ * - Head/Admin sees an under-review request only when sequence 2 applies.
  */
 class PremisesApprovalRoutingTest extends TestCase
 {
@@ -84,17 +86,83 @@ class PremisesApprovalRoutingTest extends TestCase
         $this->assertFalse($this->officerQueueContains($request));
     }
 
-    public function test_both_premises_stay_visible_in_request_records(): void
+    public function test_active_request_records_follow_current_reviewer_responsibility(): void
     {
         $onCampus = $this->submittedRequest(offCampus: false);
         $offCampus = $this->submittedRequest(offCampus: true);
 
+        $officer = $this->classificationUser(
+            AccessClassification::SpmuOfficer
+        );
+
+        $head = $this->classificationUser(
+            AccessClassification::SpmuHead
+        );
+
+        /*
+         * BEFORE AO VERIFICATION
+         *
+         * AO:
+         * - sees OFF-CAMPUS request
+         * - does NOT see ON-CAMPUS request
+         *
+         * Head/Admin:
+         * - sees ON-CAMPUS request
+         * - does NOT yet see OFF-CAMPUS request
+         */
         $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($this->classificationUser(AccessClassification::SpmuHead))
+            ->actingAs($officer)
+            ->get(route('requests.index'))
+            ->assertOk()
+            ->assertDontSeeText($onCampus->request_no)
+            ->assertSeeText($offCampus->request_no);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->get(route('requests.index'))
+            ->assertOk()
+            ->assertSeeText($onCampus->request_no)
+            ->assertDontSeeText($offCampus->request_no);
+
+        /*
+         * Direct URL access must follow the same active responsibility.
+         */
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->get(route('requests.show', $onCampus))
+            ->assertForbidden();
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->get(route('requests.show', $offCampus))
+            ->assertForbidden();
+
+        /*
+         * AFTER AO VERIFICATION
+         *
+         * The OFF-CAMPUS request leaves the Action Officer's active review
+         * responsibility and becomes a Head/Admin decision record.
+         */
+        $this->verifyAsActionOfficer($offCampus);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($officer)
+            ->get(route('requests.index'))
+            ->assertOk()
+            ->assertDontSeeText($offCampus->request_no);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
             ->get(route('requests.index'))
             ->assertOk()
             ->assertSeeText($onCampus->request_no)
             ->assertSeeText($offCampus->request_no);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->get(route('requests.show', $offCampus))
+            ->assertOk()
+            ->assertSeeText('Review and decide');
     }
 
     public function test_head_may_decide_an_on_campus_request_without_officer_verification(): void

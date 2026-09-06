@@ -548,3 +548,4 @@ html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="RE
     .spmu-confirm-dialog__actions .button { width: 100%; }
 }
 </style>
+

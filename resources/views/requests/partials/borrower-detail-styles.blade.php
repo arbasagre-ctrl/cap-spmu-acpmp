@@ -58,3 +58,4 @@ html[data-theme="dark"] .borrower-request-detail .button.borrower-cancel-button:
     .borrower-request-detail .button.borrower-cancel-button { justify-content: center; }
 }
 </style>
+

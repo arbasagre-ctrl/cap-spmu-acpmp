@@ -36,6 +36,7 @@
         <h1>{{ $job->custody->custody_no }}</h1>
         <p>{{ $job->custody->borrower->full_name }} · Request {{ $job->custody->request->request_no }}</p>
     </div>
+    <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-summary">Back to Return</a>
 </section>
 
 <section class="content-area laundry-detail-tracker">
@@ -50,7 +51,7 @@
                 <h2>Laundry Form</h2>
             </div>
 
-            <p class="laundry-form-description">The same printed form travels with the borrower from linen release through return.</p>
+            <p class="laundry-form-description">The same printed form travels with the borrower during custody. On return, the borrower brings the linen and form to the Laundry Area. The offline Laundry Worker checks the quantity/condition, wet-signs Received by and the Date row, keeps the accomplished form, and later delivers it directly to SPMU. No Laundry portal login is used.</p>
 
             <div class="inline-actions laundry-form-actions">
                 @if($job->latestEvidence?->file)
@@ -60,16 +61,17 @@
                 @endif
             </div>
 
-            <p class="meta top-gap">Laundry Personnel sign the printed form; SPMU uploads it before return encoding.</p>
+            <p class="meta top-gap">The Laundry Worker checks and signs the physical form at return, then later delivers it directly to SPMU. The Action Officer uploads and encodes it while the linen remains in the Laundry Area for the internal washing cycle.</p>
         </article>
 
         <article class="card laundry-linen-card">
             <div class="card-header laundry-detail-card-title"><x-icon name="box" size="27" /><h2>Linen Status</h2></div>
             <dl class="detail-list laundry-linen-facts">
                 <dt>Total issued:</dt><dd>{{ $totalIssued }}</dd>
-                <dt>SPMU return:</dt><dd>{{ $returnEncoded ? 'Complete' : 'Pending' }}</dd>
-                <dt>Serviceable in Laundry:</dt><dd>{{ $totalInternalLaundry }}</dd>
-                <dt>Laundry processing:</dt><dd>{{ $job->status === 'LAUNDRY_COMPLETED' ? 'Complete' : ($returnEncoded ? 'Pending' : 'Not started') }}</dd>
+                <dt>Completed form:</dt><dd>{{ $formArchived ? 'Received by SPMU' : 'Pending from Laundry Personnel' }}</dd>
+                <dt>SPMU return encoding:</dt><dd>{{ $returnEncoded ? 'Complete' : 'Pending' }}</dd>
+                <dt>Serviceable quantity:</dt><dd>{{ $totalInternalLaundry }}</dd>
+                <dt>Availability:</dt><dd>{{ $job->status === 'LAUNDRY_COMPLETED' ? 'Available' : ($returnEncoded ? 'Pending finalization' : 'Waiting for final form') }}</dd>
             </dl>
         </article>
     </div>
@@ -81,11 +83,11 @@
         <x-icon name="requests" size="36" />
         <div>
             @if(! $formArchived)
-                <h2>Return linen to the Laundry Area first</h2>
-                <p>Laundry Personnel physically check the returned linen, record the actual quantity/condition, and wet-sign <strong>Received by</strong>. The borrower then brings the accomplished Laundry Form and Borrower Slip to SPMU for upload and encoding.</p>
+                <h2>Laundry processing / final form pending</h2>
+                <p>The borrower returns the linen and Laundry Form to the Laundry Area first. The Laundry Worker checks the actual quantity and condition at handover, records any finding, wet-signs <strong>Received by</strong> and the <strong>Date</strong> row, then keeps the accomplished form for delivery to SPMU. Even if SPMU receives it days later, the Date written on the form is the borrower's linen return date.</p>
             @else
                 <h2>Encode the accomplished Laundry Form in SPMU Return</h2>
-                <p>The signed form is already on file. Record the linen quantities and conditions exactly as written by Laundry Personnel. No separate Laundry turnover confirmation is required afterward.</p>
+                <p>The accomplished form delivered by the Laundry Worker is already on file. Record the linen quantities and conditions exactly as written. No second linen inspection or Laundry portal action is required.</p>
             @endif
         </div>
         <a class="button primary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-primary">Open SPMU Return</a>
@@ -107,8 +109,8 @@
         </article>
 
         <article class="card">
-            <div class="card-header"><div><p class="eyebrow">Laundry processing</p><h2>Mark clean linen available</h2></div></div>
-            <p class="meta">Quantity comes from SPMU Return. No reclassification is needed here.</p>
+            <div class="card-header"><div><p class="eyebrow">Inventory reconciliation</p><h2>Finalize linen availability</h2></div></div>
+            <p class="meta">The returned quantity/condition has already been documented on the accomplished Laundry Form and encoded by SPMU. This step only restores the serviceable quantity after the internal washing cycle to Available inventory.</p>
 
             <form method="post" action="{{ route('laundry.complete-processing', $job) }}" class="form-grid top-gap">
                 @csrf
@@ -129,10 +131,10 @@
                     </table>
                 </div>
                 <label>
-                    Laundry remarks <small>Optional</small>
-                    <textarea name="worker_remarks" placeholder="Optional laundry note">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
+                    Availability remarks <small>Optional</small>
+                    <textarea name="worker_remarks" placeholder="Optional reconciliation note">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
                 </label>
-                <button class="button primary ui-pressable link-button" type="submit">Mark Laundry Complete</button>
+                <button class="button primary ui-pressable link-button" type="submit">Finalize Linen Availability</button>
             </form>
         </article>
     </div>
@@ -144,14 +146,14 @@
     <article class="card">
         <div class="card-header">
             <div>
-                <p class="eyebrow">Laundry complete</p>
-                <h2>Laundry processing completed</h2>
+                <p class="eyebrow">Inventory available</p>
+                <h2>Serviceable linen available</h2>
             </div>
             <x-status-badge status="LAUNDRY_COMPLETED" />
         </div>
         <div class="callout success">
-            <strong>Clean/serviceable linen is available in the Laundry Area.</strong>
-            <p>The linen is ready for future borrowing.</p>
+            <strong>Serviceable linen is available for future borrowing.</strong>
+            <p>Any adverse-condition quantity remains outside normal Available stock and follows the applicable accountability process.</p>
         </div>
         @if($job->completed_at)
             <p class="meta">Recorded {{ $job->completed_at->format('d M Y, g:i A') }}</p>

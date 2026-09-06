@@ -16,3 +16,4 @@
         <rect x="61" y="100" width="22" height="6" rx="3" />
     </g>
 </svg>
+

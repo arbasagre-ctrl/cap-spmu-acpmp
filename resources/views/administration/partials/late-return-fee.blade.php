@@ -50,7 +50,7 @@
 
                     <p>
                         <strong>{{ $setting->description }}</strong>
-                        Set the daily late return fee to be used for all late or overdue returns.
+                        This is the daily tariff used when a late-return accountability case is first created.
                     </p>
                 </div>
             @endif
@@ -66,7 +66,7 @@
                     inputmode="decimal"
                     placeholder="Not configured"
                 >
-                <small>Enter the daily fee amount (e.g., 15.00) that will be charged per item per day.</small>
+                <small>Enter the daily tariff (e.g., 15.00). It is multiplied by calendar days late for a custody case; no grace period is applied.</small>
             </label>
 
             <label class="late-fee-field">
@@ -98,8 +98,7 @@
         <div>
             <h3>About Late Return Fee</h3>
             <p>
-                This fee is applied per overdue item per day starting from the effective return deadline until the item is returned. The rate
-                set here will be used across all borrowing transactions.
+                Lateness begins on the calendar day after the effective return deadline. Operational Calendar closures may move that deadline to the next open return day. The tariff is copied to each new overdue case, so later changes do not rewrite existing accountability amounts.
             </p>
         </div>
 

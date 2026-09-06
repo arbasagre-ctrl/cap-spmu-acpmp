@@ -12,26 +12,28 @@
     $version = $request->currentVersion;
     $custody = $request->custody;
 
-    $custodyStatus = $custody?->status;
-
-    $effectiveCustodyStatus = ($custody && ($custodyStatus === 'CLOSED' || $custody->closed_at !== null))
-        ? 'CLOSED'
-        : $custodyStatus;
-
     $requestStatus = $request->status;
+    $custodyWorkflow = $custody?->workflowStatus();
 
-    /*
-     * [badge label, badge tone, tile tone, tile icon]
-     */
-    [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($effectiveCustodyStatus) {
-        'ACTIVE' => ['Released / On Custody', 'blue', 'blue', 'custody'],
-        'RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN' => ['Return Processing', 'amber', 'amber', 'cycle'],
-        'OVERDUE' => ['Overdue', 'red', 'red', 'warning'],
-        'INCIDENT_OPEN' => ['Incident Open', 'red', 'red', 'warning'],
-        'OBLIGATION_OPEN' => ['Obligation Open', 'amber', 'amber', 'receipt'],
-        'CLOSED' => ['Completed', 'green', 'green', 'check-circle'],
-
-        default => match ($requestStatus) {
+    if ($custodyWorkflow) {
+        [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($custodyWorkflow['key']) {
+            'BORROWED' => ['Released / On Custody', 'blue', 'blue', 'custody'],
+            'RETURN_PROCESSING' => ['Return Processing', 'amber', 'amber', 'cycle'],
+            'OVERDUE' => ['Overdue', 'red', 'red', 'warning'],
+            'INCIDENT_OPEN' => ['Incident Open', 'red', 'red', 'warning'],
+            'OBLIGATION_OPEN' => ['Obligation Open', 'amber', 'amber', 'receipt'],
+            'COMPLETED' => ['Completed', 'green', 'green', 'check-circle'],
+            'BORROWER_CLEARED' => ['Borrower Cleared', 'green', 'green', 'check-circle'],
+            'CANCELLED' => ['Cancelled', 'neutral', 'neutral', 'close'],
+            'READY_FOR_RELEASE' => ['Ready for Release', 'green', 'green', 'check-circle'],
+            'PICKUP_SCHEDULED' => ['Pickup Scheduled', 'blue', 'blue', 'calendar'],
+            'ITEM_PREPARATION' => ['For Item Preparation', 'blue', 'blue', 'box'],
+            'PICKUP_SCHEDULING' => ['For Pickup Scheduling', 'blue', 'blue', 'calendar'],
+            'PICKUP_EXPIRED' => ['Pickup Window Expired', 'amber', 'amber', 'clock'],
+            default => [$custodyWorkflow['label'], 'blue', 'blue', 'requests'],
+        };
+    } else {
+        [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($requestStatus) {
             App\Enums\RequestStatus::Draft
                 => ['Draft', 'neutral', 'neutral', 'edit'],
 
@@ -59,8 +61,8 @@
                 => ['Inactive', 'neutral', 'neutral', 'clock'],
 
             default => ['In Progress', 'blue', 'blue', 'requests'],
-        },
-    };
+        };
+    }
 
     $requiresAction = ! $custody
         && in_array(
@@ -73,17 +75,10 @@
         );
 
     $statusGroup = match (true) {
-        $effectiveCustodyStatus === 'CLOSED' => 'completed',
-
-        in_array($effectiveCustodyStatus, [
-            'ACTIVE',
-            'RETURN_PROCESSING',
-            'PARTIALLY_RETURNED',
-            'OVERDUE',
-            'EARLY_RETURN',
-            'INCIDENT_OPEN',
-            'OBLIGATION_OPEN',
-        ], true) => 'custody',
+        ($custodyWorkflow['group'] ?? null) === 'completed' => 'completed',
+        ($custodyWorkflow['group'] ?? null) === 'cancelled' => 'closed',
+        in_array(($custodyWorkflow['group'] ?? null), ['custody', 'return', 'attention'], true) => 'custody',
+        ($custodyWorkflow['group'] ?? null) === 'release' => 'approved',
 
         $requiresAction => 'action',
 
@@ -211,3 +206,4 @@
         </div>
     </div>
 </article>
+

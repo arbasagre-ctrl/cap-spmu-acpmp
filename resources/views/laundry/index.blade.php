@@ -9,8 +9,8 @@
     ]);
     $hasLaundryCases = $jobs->total() > 0;
     $laundryStatusLabels = [
-        'FOR_LAUNDRY' => 'Accomplished Form Pending',
-        'TURNED_OVER_TO_LAUNDRY' => 'Laundry Processing',
+        'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
+        'TURNED_OVER_TO_LAUNDRY' => 'Availability Finalization',
     ];
     $laundryStatuses = collect(array_keys($laundryStatusLabels))
         ->merge($jobs->pluck('status'))->unique();
@@ -23,7 +23,7 @@
         <div>
             <p class="eyebrow">SPMU Action Officer</p>
             <h1>Laundry Operations</h1>
-            <p>Monitor accomplished Laundry Forms and complete laundry processing for serviceable linen.</p>
+            <p>Monitor linen cases handled physically by Laundry Personnel and record the completed Laundry Form when it reaches SPMU.</p>
         </div>
         <a class="button secondary ui-pressable laundry-completed-link" href="{{ route('laundry.completed') }}">Completed</a>
     </section>
@@ -65,7 +65,7 @@
             <div class="laundry-table-wrap">
                 <table class="laundry-cases-table">
                     <thead>
-                        <tr><th scope="col">Request No.</th><th scope="col">Borrower</th><th scope="col">Event / Purpose</th><th scope="col">Custody No.</th><th scope="col">Status</th><th scope="col">Returned On</th><th scope="col">Actions</th></tr>
+                        <tr><th scope="col">Request No.</th><th scope="col">Borrower</th><th scope="col">Event / Purpose</th><th scope="col">Custody No.</th><th scope="col">Status</th><th scope="col">Last Update</th><th scope="col">Actions</th></tr>
                     </thead>
                     <tbody data-laundry-list>
                         @foreach($jobs as $job)
@@ -95,7 +95,7 @@
                                 <td>{{ $casePurpose ?: '—' }}</td>
                                 <td>{{ $caseCustody?->custody_no ?: '—' }}</td>
                                 <td><x-status-badge :status="$job->status" :label="$statusText" :title="$statusDescription" /></td>
-                                <td class="laundry-returned-date">{{ $caseReturnedAt?->format('M d, Y') ?: '—' }}</td>
+                                <td class="laundry-returned-date">{{ $job->updated_at?->format('M d, Y') ?: '—' }}</td>
                                 <td><a class="button secondary small ui-pressable laundry-view-link" href="{{ route('laundry.show', $job) }}">View details</a></td>
                             </tr>
                         @endforeach
@@ -116,7 +116,7 @@
         <section class="card laundry-empty-card" aria-label="No active laundry cases">
             @include('laundry.partials.empty-illustration')
             <h2>No laundry cases need action.</h2>
-            <p>New linen cases will appear here after physical release.</p>
+            <p>New linen cases will appear here after physical release and remain visible while the completed Laundry Form is pending.</p>
         </section>
     @endif
 </div>

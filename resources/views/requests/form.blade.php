@@ -13,25 +13,17 @@
     --}}
     <section class="content-area">
         <div class="callout warning request-pickup-availability">
-    <div style="display: flex; align-items: flex-start; gap: 10px;">
-        <span style="display: flex; flex: 0 0 auto; margin-top: 1px;">
             <x-icon name="information" size="21" />
-        </span>
-
-        <div>
-            <strong style="display: block;">
-                Borrowing requests are currently being accepted.
-            </strong>
-
-            <p>
-                However, physical pickup and release are unavailable at this time.
-                @if($pickupAvailability['next'])
-                    The next available pickup/release schedule is {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
-                @endif
-            </p>
+            <div>
+                <strong>Borrowing requests are currently being accepted.</strong>
+                <p>
+                    However, physical pickup and release are unavailable at this time.
+                    @if($pickupAvailability['next'])
+                        The next available pickup/release schedule is {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
+                    @endif
+                </p>
+            </div>
         </div>
-    </div>
-</div>
     </section>
 @endif
 
@@ -72,13 +64,16 @@
     );
 
 
-    /* Labels come from the same canonical source Analytics reports on. */
-    $divisionOptions = App\Support\OrganizationalStructure::DIVISIONS;
+    $divisionOptions = [
+        'ADMINISTRATION' => 'Administrative',
+        'ACADEMIC' => 'Academic',
+        'RESEARCH_INNOVATION_COLLABORATION' => 'Research, Innovation and Collaboration',
+    ];
 
     /*
-     * Canonical Office/Academic/Research Unit list is passed in from
-     * OrganizationalStructure, so this form can never drift from what the
-     * backend actually accepts.
+     * Canonical Office/Academic/Research Unit list comes from the
+     * controller (BorrowingRequestController::officeUnitsByDivision()) so
+     * this form can never drift from what the backend actually accepts.
      */
     $officeUnitsByDivision = $officeUnitsByDivision ?? [];
 
@@ -90,6 +85,22 @@
         'office_unit',
         $version->office_unit ?? ($prefillOfficeUnit ?? '')
     );
+
+    $requestingUnitOptions = $requestingUnitOptions ?? [];
+    $selectedRequestingUnitId = old(
+        'requesting_organizational_unit_id',
+        $prefillRequestingUnitId
+            ?? $borrowingRequest->accountable_unit_id
+            ?? ''
+    );
+
+    $selectedRequestingUnitOption = collect($requestingUnitOptions)
+        ->firstWhere('id', (int) $selectedRequestingUnitId);
+
+    if ($selectedRequestingUnitOption) {
+        $selectedDivision = $selectedRequestingUnitOption['division_code'];
+        $selectedOfficeUnit = $selectedRequestingUnitOption['name'];
+    }
 
     $oldLocations = collect(old('locations', []));
     $requestUsesOffCampus = $oldLocations->contains('OFF_CAMPUS')
@@ -110,6 +121,7 @@
     $stageOneValues = [
         old('purpose_event', $version->purpose_event),
         old('location', $version->location),
+        $selectedRequestingUnitId,
         $selectedDivision,
         $selectedOfficeUnit,
         old('schedule_date', optional($version->schedule_date ?: $version->needed_from)->format('Y-m-d')),
@@ -822,10 +834,19 @@
         line-height: 1.55;
     }
 
+
+    /* Create Request final action must always receive pointer input when enabled. */
+    #request-submit-button:not(:disabled) {
+        pointer-events: auto !important;
+        cursor: pointer;
+        position: relative;
+        z-index: 2;
+    }
 </style>
 
 @include('requests.partials.create-styles')
 @include('requests.partials.create-review-styles')
+@include('requests.partials.create-validation-styles')
 
 <section class="page-heading create-request-heading">
     <div>
@@ -1066,7 +1087,7 @@
                     No items added yet. Use the search field above, then select <strong>+ Add</strong>.
                 </div>
 
-                <div class="table-wrap selected-items-table">
+                <div class="table-wrap selected-items-table" @if(!$stageTwoComplete) hidden @endif>
                     <table id="selected-items-table">
                         <thead>
                             <tr>
@@ -1192,11 +1213,11 @@
 
                 <div
                     id="off-campus-mode-note"
-                    class="callout picker-warning"
+                    class="callout info picker-warning picker-guidance"
                     hidden
                 >
-                    <strong>Off-campus borrowing is active.</strong>
-                    <p>Only Barricade may be selected, and it must be borrowed by itself for off-campus use. This request is automatically marked as requiring a Gate Pass.</p>
+                    <strong>Gate Pass required for off-campus borrowing.</strong>
+                    <p>Search and select exactly one eligible Barricade item. It must be the only item in this request.</p>
                 </div>
 
                 <div
@@ -1225,7 +1246,7 @@
 
         <div class="stage-actions request-picker-actions" data-stage-panel="2">
             <button type="button" class="button secondary ui-pressable" data-stage-back="1"><x-icon name="chevron-right" class="request-back-icon" size="16" />Back</button>
-            <button type="button" class="button primary ui-pressable" data-stage-next="3">
+            <button type="button" class="button primary ui-pressable" data-stage-next="3" disabled>
                 Confirm Items &amp; Continue
                 <svg class="ui-icon request-continue-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
             </button>
@@ -1385,10 +1406,10 @@
             </div>
         </section>
 
-        <section class="request-card confirmation-card" data-stage-panel="3" aria-labelledby="final-confirmation-heading">
-            <p class="request-section-label" id="final-confirmation-heading">Final Confirmation</p>
+        <section class="request-card confirmation-card" data-stage-panel="3" aria-labelledby="acknowledgement-heading">
+            <p class="request-section-label" id="acknowledgement-heading">Acknowledgement</p>
 
-            <label class="final-confirmation">
+            <div class="final-confirmation acknowledgement-confirmation">
                 <input type="hidden" name="borrower_acknowledgement" value="0">
                 <input
                     id="final-confirmation"
@@ -1396,43 +1417,37 @@
                     name="borrower_acknowledgement"
                     value="1"
                     @checked(old('borrower_acknowledgement'))
-                >
-                <span>
-                    <strong>I certify that the information provided in this request is true and correct.</strong>
-                    <small>I confirm that all details, selected items, quantities, premises, and borrowing period are accurate.</small>
-                </span>
-            </label>
-
-            <label class="final-confirmation">
-                <input
-                    id="e-signature-confirmation"
-                    type="checkbox"
-                    name="confirm_e_signature"
-                    value="1"
-                    @checked(old('confirm_e_signature'))
                     @disabled(!$hasCurrentESignature)
                     required
                 >
-                <span>
-                    <strong>I authorize the use of my registered E-signature for this request.</strong>
-                    <small>I understand that my E-signature is required to submit this request to SPMU.</small>
-                </span>
-            </label>
+                <input
+                    id="e-signature-confirmation"
+                    type="hidden"
+                    name="confirm_e_signature"
+                    value="{{ old('borrower_acknowledgement') ? '1' : '0' }}"
+                >
+                <div class="acknowledgement-copy">
+                    <label for="final-confirmation">
+                        <strong>
+                            I hereby certify that the information, supporting documents, selected items, quantities, premises, and borrowing period provided in this request are true and correct. I authorize the use of my registered E-signature for this submission and acknowledge that I have read and agree to comply with the applicable SPMU
+                            <a href="#request-terms-dialog" class="request-terms-link" data-open-request-terms>Terms and Conditions</a>.
+                        </strong>
+                    </label>
+                </div>
+            </div>
 
             @error('borrower_acknowledgement')
                 <p class="field-error">{{ $message }}</p>
             @enderror
 
             <p class="field-error" id="final-confirmation-error" hidden>
-                Read and accept the certification above before submitting to SPMU.
+                Read and accept the acknowledgement and Terms and Conditions before submitting to SPMU.
             </p>
 
             @error('confirm_e_signature')<p class="field-error">{{ $message }}</p>@enderror
             @error('signature')<p class="field-error">{{ $message }}</p>@enderror
 
-            @if($hasCurrentESignature)
-                <p class="meta">Your current registered E-signature will be captured as an immutable snapshot only when you submit.</p>
-            @else
+            @unless($hasCurrentESignature)
                 <div class="esignature-notice" role="status">
                     <x-icon name="warning" size="19" />
                     <div>
@@ -1440,7 +1455,7 @@
                         <p>Register your E-signature in <a href="{{ route('profile.show') }}">Account Settings</a> before submission.</p>
                     </div>
                 </div>
-            @endif
+            @endunless
         </section>
 
         <div class="sticky-actions request-review-actions" data-stage-panel="3">
@@ -1463,13 +1478,66 @@
                 <button
                     id="request-submit-button"
                     class="button primary ui-pressable request-submit-button"
-                    type="submit"
-                    name="intent"
-                    value="submit"
-                >
+                    type="button">
                     <x-icon name="requests" size="17" />
                     E-sign &amp; Submit to SPMU
                 </button>
+
+                <button
+                    id="request-submit-trigger"
+                    type="submit"
+                    name="intent"
+                    value="submit"
+                    hidden
+                    tabindex="-1"
+                    aria-hidden="true"
+                ></button>
+            </div>
+        </div>
+
+        <div class="request-dialog-backdrop" id="request-terms-dialog" data-request-terms-dialog role="dialog" aria-modal="true" aria-labelledby="request-terms-title" hidden>
+            <div class="request-dialog request-terms-dialog" role="document">
+                <div class="request-dialog-header">
+                    <div>
+                        <p class="request-section-label">SPMU Borrowing</p>
+                        <h2 id="request-terms-title">Terms and Conditions</h2>
+                    </div>
+                    <button type="button" class="request-dialog-close" data-close-request-terms aria-label="Close Terms and Conditions">&times;</button>
+                </div>
+                <div class="request-dialog-body">
+                    <p>By submitting this request, the borrower acknowledges the following conditions for this borrowing transaction:</p>
+                    <ol class="request-terms-list">
+                        <li>The information and supporting documents submitted must be complete, accurate, and authentic.</li>
+                        <li>Submission does not guarantee approval or reservation. Inventory is allocated only after the authorized final approval and availability check.</li>
+                        <li>Approved items must be used only for the approved purpose, premises, and borrowing period stated in the request.</li>
+                        <li>The borrower is responsible for borrowed items from confirmed physical release until the applicable physical return is properly received and documented. For linen, physical custody ends when Laundry Personnel receive the returned linen and record the receipt on the Laundry Form; any later verified damage, loss, or other accountability finding remains subject to applicable SPMU rules.</li>
+                        <li>Items must be physically returned on or before the effective Expected Return Date, subject to the applicable SPMU operational calendar. Damage, loss, missing quantity, or other adverse findings may result in accountability processing under applicable SPMU rules.</li>
+                        <li>Linen and off-campus barricade transactions must follow the applicable Laundry Form and Gate Pass procedures.</li>
+                        <li>The borrower's registered E-signature snapshot will be bound to this submitted request version and retained with the corresponding audit record.</li>
+                    </ol>
+                </div>
+                <div class="request-dialog-actions">
+                    <button type="button" class="button primary ui-pressable" data-close-request-terms>Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="request-dialog-backdrop" id="request-submit-confirmation-dialog" data-request-submit-dialog role="dialog" aria-modal="true" aria-labelledby="request-submit-confirmation-title" hidden>
+            <div class="request-dialog request-submit-dialog" role="document">
+                <div class="request-dialog-header">
+                    <div>
+                        <p class="request-section-label">Confirmation</p>
+                        <h2 id="request-submit-confirmation-title">Confirm E-signature and Submission</h2>
+                    </div>
+                </div>
+                <div class="request-dialog-body">
+                    <p>You are about to submit this request using your registered E-signature.</p>
+                    <p>By continuing, you confirm that you have reviewed the request and agree to the SPMU Terms and Conditions.</p>
+                </div>
+                <div class="request-dialog-actions">
+                    <button type="button" class="button secondary ui-pressable" data-cancel-request-submit>Cancel</button>
+                    <button type="button" class="button primary ui-pressable" data-confirm-request-submit>Confirm E-sign &amp; Submit</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1480,11 +1548,17 @@
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('request-form');
     const submitButton = document.getElementById('request-submit-button');
+    const submitTrigger = document.getElementById('request-submit-trigger');
     const saveDraftButton = document.getElementById('request-save-draft-button');
     const finalConfirmation = document.getElementById('final-confirmation');
     const finalConfirmationError = document.getElementById('final-confirmation-error');
     const eSignatureConfirmation = document.getElementById('e-signature-confirmation');
+    const termsDialog = document.querySelector('[data-request-terms-dialog]');
+    const submitDialog = document.querySelector('[data-request-submit-dialog]');
+    const confirmSubmitButton = document.querySelector('[data-confirm-request-submit]');
+    const cancelSubmitButton = document.querySelector('[data-cancel-request-submit]');
     const signatureReady = {{ $hasCurrentESignature ? 'true' : 'false' }};
+    let submissionConfirmed = false;
 
     const scheduleDate = document.getElementById('schedule_date');
     const returnDate = document.getElementById('return_date');
@@ -1492,7 +1566,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const availabilityMessage = document.getElementById('availability-message');
 
     const divisionSelect = document.getElementById('division_code');
+    const divisionDisplay = document.getElementById('division-display');
     const officeInput = document.getElementById('office_unit');
+    const requestingUnitSelect = document.getElementById('requesting_organizational_unit_id');
     const officeDatalist = document.getElementById('office-unit-options');
 
     const summaryPurpose = document.getElementById('summary-purpose');
@@ -1506,6 +1582,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const summaryItemsBody = document.getElementById('summary-items-body');
 
     const officeUnitsByDivision = @json($officeUnitsByDivision);
+    const divisionLabels = @json($divisionOptions);
 
     const studentToggle = document.getElementById('student-activity-toggle');
     const ptcDocumentBox = document.getElementById('ptc-document-box');
@@ -1528,6 +1605,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const premisesHelp = document.getElementById('request-premises-help');
     const offCampusModeNote = document.getElementById('off-campus-mode-note');
     const campusModeConflict = document.getElementById('campus-mode-conflict');
+    const stageOneNextButton = document.querySelector('[data-stage-next="2"]');
+    const stageTwoNextButton = document.querySelector('[data-stage-next="3"]');
+    const requestLetterInput = form?.querySelector('[name="approved_request_letter"]');
+    const ptcInput = form?.querySelector('[name="permission_to_conduct_letter"]');
+    const requestLetterAlreadyUploaded = {{ $requestLetter ? 'true' : 'false' }};
+    const ptcAlreadyUploaded = {{ $ptc ? 'true' : 'false' }};
+    const selectedItemsTableWrap = document.getElementById('selected-items-table')?.closest('.selected-items-table');
 
     const stagePanels = Array.from(
         document.querySelectorAll('[data-stage-panel]')
@@ -1566,7 +1650,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setSummaryText(summaryLocation, locationField?.value);
         setSummaryText(
             summaryDivision,
-            divisionSelect?.selectedOptions?.[0]?.textContent
+            divisionLabels[divisionSelect?.value || ''] || divisionDisplay?.value
         );
         setSummaryText(summaryOffice, officeInput?.value);
         setSummaryText(summaryFrom, formatDateLabel(scheduleDate?.value));
@@ -1659,7 +1743,10 @@ document.addEventListener('DOMContentLoaded', () => {
             zone.classList.toggle('has-file', name !== '');
         };
 
-        input.addEventListener('change', showSelection);
+        input.addEventListener('change', () => {
+            showSelection();
+            syncForwardActionStates();
+        });
 
         ['dragenter', 'dragover'].forEach((event) => {
             zone.addEventListener(event, (dragEvent) => {
@@ -1782,31 +1869,175 @@ document.addEventListener('DOMContentLoaded', () => {
         return true;
     }
 
-    function syncOfficeOptions(clearWhenInvalid = false) {
-        if (!divisionSelect || !officeDatalist) {
+    function isStageOneReady() {
+        const fields = Array.from(
+            document.querySelectorAll(
+                '[data-stage-panel="1"] input[required], ' +
+                '[data-stage-panel="1"] select[required], ' +
+                '[data-stage-panel="1"] textarea[required]'
+            )
+        ).filter((field) => !field.disabled);
+
+        const allRequiredFieldsReady = fields.every((field) => {
+            const value = String(field.value ?? '').trim();
+            return value !== '' && field.checkValidity();
+        });
+
+        if (!allRequiredFieldsReady) {
+            return false;
+        }
+
+        if (scheduleDate?.value && returnDate?.value) {
+            const from = new Date(`${scheduleDate.value}T00:00:00`);
+            const to = new Date(`${returnDate.value}T00:00:00`);
+            if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    function isStageTwoReady() {
+        const rows = getSelectedRows();
+        if (rows.length === 0 || !availabilityLoaded) {
+            return false;
+        }
+
+        if (isOffCampusMode()) {
+            if (rows.length !== 1 || rows[0]?.dataset.offCampusAllowed !== '1') {
+                return false;
+            }
+        }
+
+        return rows.every((row) => {
+            const itemId = row.dataset.selectedItem;
+            const quantity = document.querySelector(`[data-selected-quantity="${itemId}"]`);
+            const requested = Math.trunc(Number(quantity?.value || 0));
+            const available = Math.max(0, Math.floor(Number(availability[itemId]?.available) || 0));
+            return requested > 0 && available > 0 && requested <= available;
+        });
+    }
+
+    function areRequiredDocumentsReady() {
+        const requestLetterReady = Boolean(
+            requestLetterAlreadyUploaded || requestLetterInput?.files?.length
+        );
+        const ptcRequired = Boolean(studentToggle?.checked);
+        const ptcReady = Boolean(
+            !ptcRequired || ptcAlreadyUploaded || ptcInput?.files?.length
+        );
+
+        return requestLetterReady && ptcReady;
+    }
+
+    function syncForwardActionStates() {
+        if (stageOneNextButton) {
+            stageOneNextButton.disabled = !isStageOneReady();
+        }
+
+        if (stageTwoNextButton) {
+            stageTwoNextButton.disabled = !isStageTwoReady();
+        }
+
+        /*
+         * FINAL E-SIGN / SUBMIT READINESS
+         *
+         * E-sign & Submit to SPMU stays DISABLED until all required
+         * submission requirements are complete.
+         *
+         * Borrowing Request Letter = always required.
+         * PTC = required only for Student Activity.
+         * Save Draft is NOT affected by this rule.
+         */
+
+        const requestLetterReady = Boolean(
+            requestLetterAlreadyUploaded ||
+            requestLetterInput?.files?.length
+        );
+
+        const ptcRequired = Boolean(studentToggle?.checked);
+
+        const ptcReady = Boolean(
+            !ptcRequired ||
+            ptcAlreadyUploaded ||
+            ptcInput?.files?.length
+        );
+
+        const detailsReady = isStageOneReady();
+        const itemsReady = isStageTwoReady();
+        const acknowledgementReady = Boolean(finalConfirmation?.checked);
+
+        const canSubmit =
+            detailsReady &&
+            itemsReady &&
+            requestLetterReady &&
+            ptcReady &&
+            signatureReady &&
+            acknowledgementReady;
+
+        if (submitButton) {
+            submitButton.disabled = !canSubmit;
+
+            /*
+             * Helpful explanation for why submission is unavailable.
+             */
+            if (!detailsReady) {
+                submitButton.title =
+                    'Complete all required Request Details first.';
+            } else if (!itemsReady) {
+                submitButton.title =
+                    'Complete the item selection and valid quantities first.';
+            } else if (!requestLetterReady) {
+                submitButton.title =
+                    'Upload the fully signed Borrowing Request Letter before submitting.';
+            } else if (!ptcReady) {
+                submitButton.title =
+                    'Upload the Permission to Conduct Letter for this Student Activity before submitting.';
+            } else if (!signatureReady) {
+                submitButton.title =
+                    'Register your E-signature in Account Settings before submitting.';
+            } else if (!acknowledgementReady) {
+                submitButton.title =
+                    'Check the Acknowledgement before submitting.';
+            } else {
+                submitButton.title = '';
+            }
+        }
+    }
+
+    function syncRequestingUnitProfile() {
+        if (!requestingUnitSelect || !divisionSelect || !officeInput) {
             return;
         }
 
-        const division = divisionSelect.value;
-        const units = officeUnitsByDivision[division] || [];
-        const current = (officeInput?.value || '').trim();
+        const option = requestingUnitSelect.tagName === 'SELECT'
+            ? requestingUnitSelect.selectedOptions?.[0]
+            : null;
 
-        officeDatalist.innerHTML = '';
+        if (option) {
+            const divisionCode = option.dataset.divisionCode || '';
+            const divisionLabel = option.dataset.divisionLabel || divisionLabels[divisionCode] || '';
+            const unitName = option.dataset.unitName || option.textContent?.trim() || '';
 
-        units.forEach((unit) => {
-            const option = document.createElement('option');
-            option.value = unit;
-            officeDatalist.appendChild(option);
-        });
+            divisionSelect.value = divisionCode;
+            officeInput.value = unitName;
 
-        if (
-            clearWhenInvalid
-            && officeInput
-            && current
-            && !units.includes(current)
-        ) {
-            officeInput.value = '';
+            if (divisionDisplay) {
+                divisionDisplay.value = divisionLabel;
+            }
         }
+
+        updateReviewSummary();
+        syncForwardActionStates();
+    }
+
+    function syncOfficeOptions() {
+        /*
+         * Division / office are no longer borrower-editable. Kept as a small
+         * compatibility hook so older event calls do not break this page.
+         */
+        syncRequestingUnitProfile();
     }
 
     function formatDateLabel(value) {
@@ -2029,6 +2260,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function syncSelectedItems() {
+        if (eSignatureConfirmation) {
+            eSignatureConfirmation.value = finalConfirmation?.checked ? '1' : '0';
+        }
+
         let count = 0;
         let conflict = false;
 
@@ -2093,33 +2328,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const offCampusMode = isOffCampusMode();
         const selectedRows = getSelectedRows();
-        const offCampusInvalid = offCampusMode && (
-            selectedRows.length !== 1
-            || selectedRows[0]?.dataset.offCampusAllowed !== '1'
+        const offCampusConflict = offCampusMode && (
+            selectedRows.length > 1
+            || selectedRows.some((row) => row.dataset.offCampusAllowed !== '1')
         );
 
         if (selectedEmpty) selectedEmpty.hidden = count !== 0;
+        if (selectedItemsTableWrap) selectedItemsTableWrap.hidden = count === 0;
         if (selectedCount) selectedCount.textContent = String(count);
-        if (offCampusModeNote) offCampusModeNote.hidden = !offCampusMode || offCampusInvalid;
-        if (campusModeConflict) campusModeConflict.hidden = !offCampusInvalid;
+        if (offCampusModeNote) offCampusModeNote.hidden = !offCampusMode || offCampusConflict;
+        if (campusModeConflict) campusModeConflict.hidden = !offCampusConflict;
         if (availabilityConflict) {
             availabilityConflict.hidden = !availabilityLoaded || !conflict;
         }
 
-        const itemSelectionInvalid =
-            count === 0 || offCampusInvalid || (availabilityLoaded && conflict);
-
-        if (submitButton) {
-            submitButton.disabled =
-                itemSelectionInvalid ||
-                !signatureReady ||
-                !finalConfirmation?.checked ||
-                !eSignatureConfirmation?.checked;        }
-
-        if (saveDraftButton) {
-            saveDraftButton.disabled = itemSelectionInvalid;
-        }
-
+        syncForwardActionStates();
         syncCatalogButtons();
 
         if (activeStage === 3) {
@@ -2268,16 +2491,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    divisionSelect?.addEventListener('change', () => syncOfficeOptions(true));
-    studentToggle?.addEventListener('change', syncStudentFields);
+    requestingUnitSelect?.addEventListener('change', syncRequestingUnitProfile);
+    studentToggle?.addEventListener('change', () => {
+        syncStudentFields();
+        syncForwardActionStates();
+    });
 
     form?.addEventListener('input', () => {
+        syncForwardActionStates();
         if (activeStage === 3) {
             updateReviewSummary();
         }
     });
 
     form?.addEventListener('change', () => {
+        syncForwardActionStates();
         if (activeStage === 3) {
             updateReviewSummary();
         }
@@ -2358,6 +2586,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     requestOffCampusToggle?.addEventListener('change', handlePremisesChange);
     requestOnCampusToggle?.addEventListener('change', handlePremisesChange);
+    /*
+     * PRE-CONFIRMATION CLICK
+     * ----------------------
+     * The visible E-sign button is intentionally type="button".
+     * We run the existing submit validation path with the hidden submit trigger,
+     * but temporarily opt this preflight submit out of the global duplicate-submit
+     * lock. This lets the local handler validate the request and open the
+     * confirmation modal WITHOUT changing the visible button to Processing...
+     * and WITHOUT locking the form before the borrower confirms.
+     */
+    submitButton?.addEventListener('click', () => {
+        if (!form || !submitTrigger || submitButton.disabled) return;
+
+        submissionConfirmed = false;
+
+        form.dataset.allowRepeatedSubmit = 'true';
+        try {
+            form.requestSubmit(submitTrigger);
+        } finally {
+            delete form.dataset.allowRepeatedSubmit;
+        }
+    });
 
     form?.addEventListener('submit', (event) => {
         if (activeStage !== 3) {
@@ -2416,11 +2666,20 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (!signatureReady) {
+            event.preventDefault();
+            const signatureNotice = form.querySelector('.esignature-notice');
+            signatureNotice?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            signatureNotice?.querySelector('a')?.focus();
+            return;
+        }
+
         if (!finalConfirmation?.checked) {
             event.preventDefault();
             if (finalConfirmationError) {
                 finalConfirmationError.hidden = false;
             }
+            finalConfirmation?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             finalConfirmation?.focus();
             return;
         }
@@ -2428,21 +2687,116 @@ document.addEventListener('DOMContentLoaded', () => {
         if (finalConfirmationError) {
             finalConfirmationError.hidden = true;
         }
+
+        if (!submissionConfirmed) {
+            event.preventDefault();
+            if (eSignatureConfirmation) eSignatureConfirmation.value = '1';
+            if (submitDialog) {
+                if (confirmSubmitButton) confirmSubmitButton.disabled = false;
+                submitDialog.hidden = false;
+                document.body.classList.add('request-dialog-open');
+                confirmSubmitButton?.focus();
+            }
+        }
     });
 
+    function closeDialog(dialog) {
+        if (!dialog) return;
+        dialog.hidden = true;
+        if (termsDialog?.hidden !== false && submitDialog?.hidden !== false) {
+            document.body.classList.remove('request-dialog-open');
+        }
+    }
+
+    document.querySelectorAll('[data-open-request-terms]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (termsDialog) {
+                termsDialog.hidden = false;
+                document.body.classList.add('request-dialog-open');
+                termsDialog.querySelector('[data-close-request-terms]')?.focus();
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-close-request-terms]').forEach((button) => {
+        button.addEventListener('click', () => closeDialog(termsDialog));
+    });
+    termsDialog?.addEventListener('click', (event) => {
+        if (event.target === termsDialog) closeDialog(termsDialog);
+    });
+    cancelSubmitButton?.addEventListener('click', () => {
+        submissionConfirmed = false;
+        closeDialog(submitDialog);
+        submitButton?.focus();
+    });
+    confirmSubmitButton?.addEventListener('click', () => {
+        if (!form || !finalConfirmation?.checked) return;
+
+        submissionConfirmed = true;
+        if (eSignatureConfirmation) eSignatureConfirmation.value = '1';
+        if (confirmSubmitButton) confirmSubmitButton.disabled = true;
+
+        /*
+         * Re-enter the same submit path using the visible submitter so the
+         * submit intent stays "submit" and all existing backend validation,
+         * E-sign snapshot handling, and duplicate-submission protection remain intact.
+         *
+         * submitButton must stay enabled until AFTER requestSubmit() dispatches
+         * the form's submit event: that listener reads submitButton.disabled to
+         * decide whether the "submit" intent is blocked, so disabling it first
+         * caused this confirmed re-submission to be cancelled every time.
+         */
+        if (typeof form.requestSubmit === 'function' && submitTrigger) {
+            form.requestSubmit(submitTrigger);
+        } else {
+            // Older-browser fallback. Backend validation remains authoritative.
+            const fallbackIntent = document.createElement('input');
+            fallbackIntent.type = 'hidden';
+            fallbackIntent.name = 'intent';
+            fallbackIntent.value = 'submit';
+            form.appendChild(fallbackIntent);
+            form.submit();
+        }
+
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.textContent = 'Processing...';
+        }
+    });
+    submitDialog?.addEventListener('click', (event) => {
+        if (event.target === submitDialog) {
+            submissionConfirmed = false;
+            closeDialog(submitDialog);
+            submitButton?.focus();
+        }
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (termsDialog && !termsDialog.hidden) {
+            closeDialog(termsDialog);
+            return;
+        }
+        if (submitDialog && !submitDialog.hidden) {
+            submissionConfirmed = false;
+            closeDialog(submitDialog);
+            submitButton?.focus();
+        }
+    });
 
     finalConfirmation?.addEventListener('change', () => {
         if (finalConfirmationError) {
             finalConfirmationError.hidden = Boolean(finalConfirmation.checked);
         }
+        if (eSignatureConfirmation) {
+            eSignatureConfirmation.value = finalConfirmation.checked ? '1' : '0';
+        }
+        submissionConfirmed = false;
         syncSelectedItems();
     });
 
-    eSignatureConfirmation?.addEventListener('change', () => {
-        syncSelectedItems();
-    });
-
-    syncOfficeOptions(false);
+    syncRequestingUnitProfile();
     syncStudentFields();
     syncRequestPremises();
     syncDateContext();
@@ -2450,7 +2804,341 @@ document.addEventListener('DOMContentLoaded', () => {
     syncSelectedItems();
     refreshAvailability();
     showStage(resumeStage, false);
+    syncForwardActionStates();
 });
 </script>
 
 @endsection
+
+<!-- SPMU-QUANTITY-WHOLE-NUMBER-FIX:START -->
+
+<style>
+    /*
+     * Quantity fields:
+     * - whole numbers only
+     * - remove browser number spinner arrows
+     */
+
+    input[type="number"][name^="quantities"]::-webkit-inner-spin-button,
+    input[type="number"][name^="quantities"]::-webkit-outer-spin-button {
+        -webkit-appearance: none !important;
+        margin: 0 !important;
+    }
+
+    input[type="number"][name^="quantities"] {
+        -moz-appearance: textfield !important;
+        appearance: textfield !important;
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const quantitySelector =
+        'input[type="number"][name^="quantities"]';
+
+    const isQuantityInput = (element) =>
+        element instanceof HTMLInputElement &&
+        element.matches(quantitySelector);
+
+    /*
+     * Make every current/future quantity input integer-only.
+     *
+     * Do NOT set min="1" here: unselected rows keep their template default
+     * value of 0 while hidden, and forcing min="1" makes that 0 natively
+     * invalid on a field the browser cannot focus (it's inside a hidden
+     * row) — the browser then silently blocks the whole form submission
+     * (native constraint validation fails before the JS submit handler
+     * ever runs) any time not every catalog item is selected. Whole-number
+     * / minimum-1 enforcement for an actually selected quantity is already
+     * handled by the input/paste/change handlers below plus backend
+     * validation, so no native min constraint is needed here.
+     */
+    const configureQuantityInput = (input) => {
+        if (!isQuantityInput(input)) {
+            return;
+        }
+
+        input.setAttribute('step', '1');
+        input.setAttribute('inputmode', 'numeric');
+    };
+
+    document
+        .querySelectorAll(quantitySelector)
+        .forEach(configureQuantityInput);
+
+    /*
+     * Create Request can dynamically add selected-item rows,
+     * so configure quantity fields added later as well.
+     */
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (!(node instanceof HTMLElement)) {
+                    return;
+                }
+
+                if (isQuantityInput(node)) {
+                    configureQuantityInput(node);
+                }
+
+                node
+                    .querySelectorAll?.(quantitySelector)
+                    .forEach(configureQuantityInput);
+            });
+        });
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    /*
+     * Prevent mouse wheel / touchpad scrolling from changing
+     * the focused number input.
+     */
+    document.addEventListener(
+        'wheel',
+        (event) => {
+            const input = event.target;
+
+            if (!isQuantityInput(input)) {
+                return;
+            }
+
+            event.preventDefault();
+            input.blur();
+        },
+        {
+            passive: false,
+            capture: true
+        }
+    );
+
+    /*
+     * Prevent decimal, scientific notation, plus and minus.
+     */
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            const input = event.target;
+
+            if (!isQuantityInput(input)) {
+                return;
+            }
+
+            if (
+                ['.', ',', 'e', 'E', '+', '-'].includes(event.key)
+            ) {
+                event.preventDefault();
+            }
+        },
+        true
+    );
+
+    /*
+     * Handle pasted values.
+     *
+     * Examples:
+     *  5     -> 5
+     *  3.7   -> 3
+     *  -4    -> rejected / minimum 1
+     *  abc   -> rejected
+     */
+    document.addEventListener(
+        'paste',
+        (event) => {
+            const input = event.target;
+
+            if (!isQuantityInput(input)) {
+                return;
+            }
+
+            const pasted =
+                event.clipboardData?.getData('text')?.trim() ?? '';
+
+            if (pasted === '') {
+                return;
+            }
+
+            const parsed = Number.parseInt(pasted, 10);
+
+            event.preventDefault();
+
+            if (!Number.isFinite(parsed) || parsed < 1) {
+                input.value = '';
+            } else {
+                input.value = String(parsed);
+            }
+
+            input.dispatchEvent(
+                new Event('input', {
+                    bubbles: true
+                })
+            );
+
+            input.dispatchEvent(
+                new Event('change', {
+                    bubbles: true
+                })
+            );
+        },
+        true
+    );
+
+    /*
+     * Final safety normalization.
+     */
+    document.addEventListener(
+        'change',
+        (event) => {
+            const input = event.target;
+
+            if (!isQuantityInput(input)) {
+                return;
+            }
+
+            if (input.value === '') {
+                return;
+            }
+
+            const value = Number(input.value);
+
+            if (!Number.isFinite(value) || value < 1) {
+                input.value = '';
+                return;
+            }
+
+            input.value = String(Math.trunc(value));
+        },
+        true
+    );
+});
+</script>
+
+<!-- SPMU-QUANTITY-WHOLE-NUMBER-FIX:END -->
+
+<!-- SPMU-QUANTITY-SCROLL-LOCK:START -->
+
+<style>
+    /*
+     * Hide the browser's own number-spinner controls.
+     * Keep the custom minus / plus buttons unchanged.
+     */
+    input[type="number"][name^="quantities"]::-webkit-inner-spin-button,
+    input[type="number"][name^="quantities"]::-webkit-outer-spin-button {
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        margin: 0 !important;
+    }
+
+    input[type="number"][name^="quantities"] {
+        -moz-appearance: textfield !important;
+    }
+</style>
+
+<script>
+(() => {
+    /*
+     * Targets only the center quantity field.
+     *
+     * Custom - and + buttons are NOT affected.
+     */
+    const isQuantityField = (element) => {
+        return element instanceof HTMLInputElement
+            && element.matches(
+                'input[name^="quantities"], ' +
+                'input[data-quantity-input], ' +
+                '.quantity-input'
+            );
+    };
+
+    /*
+     * BLOCK mouse-wheel / touchpad scrolling from modifying
+     * the number while the center quantity field is focused.
+     */
+    document.addEventListener(
+        'wheel',
+        (event) => {
+            if (!isQuantityField(event.target)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+        },
+        {
+            capture: true,
+            passive: false
+        }
+    );
+
+    /*
+     * BLOCK keyboard number stepping.
+     *
+     * ArrowUp / ArrowDown normally increment/decrement
+     * <input type="number"> values.
+     */
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            if (!isQuantityField(event.target)) {
+                return;
+            }
+
+            if (
+                event.key === 'ArrowUp' ||
+                event.key === 'ArrowDown'
+            ) {
+                event.preventDefault();
+                return;
+            }
+
+            /*
+             * Whole-number quantity only.
+             */
+            if (
+                event.key === '.' ||
+                event.key === ',' ||
+                event.key === 'e' ||
+                event.key === 'E' ||
+                event.key === '+' ||
+                event.key === '-'
+            ) {
+                event.preventDefault();
+            }
+        },
+        true
+    );
+
+    /*
+     * Normalize manually entered / pasted values.
+     */
+    document.addEventListener(
+        'input',
+        (event) => {
+            const input = event.target;
+
+            if (!isQuantityField(input)) {
+                return;
+            }
+
+            if (input.value === '') {
+                return;
+            }
+
+            /*
+             * Strip anything except digits.
+             */
+            const clean = input.value.replace(/[^0-9]/g, '');
+
+            if (input.value !== clean) {
+                input.value = clean;
+            }
+        },
+        true
+    );
+})();
+</script>
+
+<!-- SPMU-QUANTITY-SCROLL-LOCK:END -->

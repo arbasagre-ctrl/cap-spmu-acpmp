@@ -32,7 +32,10 @@
     // badge so the request detail never shows a stale "Ready for Release".
     $custody = $borrowingRequest->custody;
     $isOperationalRequestLayout = $isSpmu && (bool) $custody && ! $isUnderSpmuReview;
-    $requestIsCompleted = $custody?->status === 'CLOSED';
+    $custodyWorkflowStatus = $custody?->workflowStatus();
+    $requestIsCompleted = ($custodyWorkflowStatus['key'] ?? null) === 'COMPLETED';
+    $requestIsCancelled = ($custodyWorkflowStatus['key'] ?? null) === 'CANCELLED'
+        || $borrowingRequest->status === App\Enums\RequestStatus::Cancelled;
     $detailStatus = $borrowingRequest->status->value;
     $detailStatusLabel = null;
 
@@ -96,15 +99,9 @@
             && (bool) $custody->pickup_expires_at
             && ! $custody->pickup_expired_at;
 
-        [$detailStatus, $detailStatusLabel] = match (true) {
-            $custody->status === 'CLOSED' => ['CLOSED', 'Completed'],
-            $custody->status === 'PREPARING_RELEASE' && $custody->pickup_expired_at => ['PREPARING_RELEASE', 'Pickup Window Expired'],
-            $custody->status === 'PREPARING_RELEASE' && $preparationComplete && $hasPickupSchedule => ['READY_FOR_RELEASE', 'Ready for Release'],
-            $custody->status === 'PREPARING_RELEASE' && ! $hasPickupSchedule => ['PREPARING_RELEASE', 'For Pickup Scheduling'],
-            $custody->status === 'PREPARING_RELEASE' && $hasPickupSchedule && ! $preparationComplete => ['PREPARING_RELEASE', 'For Item Preparation'],
-            $custody->status === 'ACTIVE' && (bool) $custody->released_at => ['BORROWED', 'Items Released / On Custody'],
-            default => [$custody->status, null],
-        };
+        $custodyWorkflowStatus ??= $custody->workflowStatus();
+        $detailStatus = $custodyWorkflowStatus['key'];
+        $detailStatusLabel = $custodyWorkflowStatus['label'];
     }
 @endphp
 
@@ -1946,3 +1943,4 @@ dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
     </div>
 @endif
 @endsection
+

@@ -27,3 +27,4 @@
         <span class="mr-page-link" aria-disabled="true" aria-label="Next page"><x-icon name="chevron-right" size="15" /></span>
     @endif
 </nav>
+

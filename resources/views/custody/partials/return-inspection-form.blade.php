@@ -42,16 +42,20 @@
 
         @if($linenReturnLines->isNotEmpty())
             @if($laundryFormMissing)
-                <div class="callout danger return-linen-note">
+                <div class="callout warning return-linen-note">
                     <x-icon name="warning" size="22" />
-                    <div><strong>Completed Laundry Form required</strong>
-                    <p>Upload the accomplished Laundry Form before encoding the linen return.</p></div>
+                    <div>
+                        <strong>Linen pending</strong>
+                        <p>
+                            Upload the Laundry Form first before encoding linen.
+                        </p>
+                    </div>
                 </div>
             @else
                 <div class="callout info return-linen-note">
                     <x-icon name="information" size="22" />
-                    <div><strong>Encode from Laundry Form</strong>
-                    <p>For linen, record the quantity and condition exactly as written by Laundry Personnel. Non-linen remains an Action Officer physical inspection.</p></div>
+                    <div><strong>Linen ready for encoding</strong>
+                    <p>Use the Laundry Form for linen.</p></div>
                 </div>
             @endif
         @endif
@@ -78,6 +82,9 @@
                 <tbody>
                     @foreach($eligibleReturnLines as $line)
                         @php
+                            $isLinenLine = (bool) $line->requestItem?->inventoryItem?->laundry_required;
+                            $linenLinePending = $isLinenLine && $laundryFormMissing;
+
                             $outstanding = max(
                                 0,
                                 (float) $line->actual_released_quantity
@@ -107,18 +114,23 @@
                         <tr
                             class="return-accounting-row"
                             data-outstanding="{{ $outstanding }}"
+                            @if($linenLinePending) data-linen-pending="1" @endif
                         >
                             <td class="return-item-cell">
                                 <strong>
                                     {{ $line->requestItem->description_snapshot }}
                                 </strong>
                                 <small>
-                                    {{ (bool) $line->requestItem?->inventoryItem?->laundry_required
-                                        ? 'Linen · condition from Laundry Form'
-                                        : 'Non-linen · inspected by Action Officer' }}
+                                    {{ $isLinenLine
+                                        ? 'Linen'
+                                        : 'Non-linen' }}
                                     · {{ $line->requestItem->unit_snapshot }}
                                 </small>
-                                <small>Outstanding: {{ $outstanding + 0 }}</small>
+                                @if($linenLinePending)
+                                    
+                                @else
+                                    <small>Outstanding: {{ $outstanding + 0 }}</small>
+                                @endif
                             </td>
 
                             @foreach([
@@ -141,24 +153,29 @@
                                         name="accounting[{{ $line->id }}][{{ $conditionCode }}]"
                                         value="{{ old('accounting.'.$line->id.'.'.$conditionCode, 0) }}"
                                         aria-label="{{ str($conditionCode)->replace('_', ' ')->title() }} quantity for {{ $line->requestItem->description_snapshot }}"
+                                        @disabled($linenLinePending)
                                     >
                                 </td>
                             @endforeach
 
                             <td>
-                                <strong class="return-accounted-total">
-                                    0 / {{ $outstanding + 0 }}
-                                </strong>
-                                <small class="return-accounted-state">
-                                    0% accounted
-                                </small>
+                                @if($linenLinePending)
+                                    <span class="status-badge status-warning">Pending Form</span>
+                                @else
+                                    <strong class="return-accounted-total">
+                                        0 / {{ $outstanding + 0 }}
+                                    </strong>
+                                    <small class="return-accounted-state">
+                                        0% accounted
+                                    </small>
+                                @endif
                             </td>
                         </tr>
 
                         <tr
                             class="return-issue-details"
                             data-return-issue-details
-                            @if($oldNonFine <= 0) hidden @endif
+                            @if($linenLinePending || $oldNonFine <= 0) hidden @endif
                         >
                             <td colspan="8">
                                 <div class="return-issue-details__grid">
@@ -205,10 +222,13 @@
                 class="callout warning return-accounting-message"
                 id="return-accounting-message"
                 role="status"
+                @if($eligibleReturnLines->every(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required) && $laundryFormMissing) hidden @endif
             >
                 <x-icon name="warning" size="21" data-return-accounting-warning />
                 <x-icon name="success" size="21" data-return-accounting-success hidden />
-                <span data-return-accounting-copy>@if($laundryFormMissing)Completed Laundry Form required before the linen return can be finalized.@else For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.@endif</span>
+                <span data-return-accounting-copy>
+                    Accounted quantities must match the outstanding total.
+                </span>
             </div>
 
             <div class="return-action-footer">

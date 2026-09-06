@@ -48,6 +48,7 @@
         min-height: 0 !important;
     }
 
+
     .signature-card { display: grid; gap: 14px; }
     .signature-preview {
         display: grid;
@@ -69,9 +70,6 @@
     @media (max-width: 640px) { .profile-photo-layout { grid-template-columns: 1fr; } }
 </style>
 
-@php
-    $isBorrower = $user->access_classification === App\Enums\AccessClassification::BorrowerOnly;
-@endphp
 <section class="page-heading">
     <div>
         <p class="eyebrow">Personal account</p>
@@ -86,56 +84,56 @@
 
         <section class="account-settings-section" aria-labelledby="account-details-heading">
             <div class="section-heading">
-                <div><p class="eyebrow">Identity</p><h2 id="account-details-heading">Account Details</h2></div>
+                <div><p class="eyebrow">Identity</p><h2 id="account-details-heading">Official Account Details</h2></div>
             </div>
 
-            @if($isBorrower)
-                <div class="form-columns">
-                    <label>Borrower Number
-                        <input name="employee_no" value="{{ old('employee_no', $user->employee_no) }}" required maxlength="80" autocomplete="off">
-                        @error('employee_no')<small class="field-error">{{ $message }}</small>@enderror
-                    </label>
-
-                    <label>Designation / Position
-                        <input name="designation" value="{{ old('designation', $profileDesignation) }}" placeholder="e.g. Instructor I, Administrative Officer IV" autocomplete="organization-title">
-                        @error('designation')<small class="field-error">{{ $message }}</small>@enderror
-                    </label>
+            <div class="profile-readonly-grid">
+                <div><span>Borrower / Employee Number</span><strong>{{ $user->employee_no ?: 'Not recorded' }}</strong></div>
+                <div><span>Full Name</span><strong>{{ $user->full_name }}</strong></div>
+                <div><span>Designation / Position</span><strong>{{ $user->designation ?: 'Not recorded' }}</strong></div>
+                <div>
+                    <span>Personnel Type</span>
+                    <strong>
+                        {{
+                            match ($user->employment_type?->value) {
+                                'FACULTY' => 'Faculty',
+                                'EMPLOYEE' => 'Employee',
+                                'STAFF' => 'Staff',
+                                default => 'Not recorded',
+                            }
+                        }}
+                    </strong>
                 </div>
-
-                <label>Full name
-                    <input name="full_name" value="{{ old('full_name', $user->full_name) }}" required autocomplete="name">
-                    @error('full_name')<small class="field-error">{{ $message }}</small>@enderror
-                </label>
-
-                <label>Office / Department
-                    <select name="organizational_unit_id" required>
-                        <option value="">Select office or department</option>
-                        @foreach($borrowerUnits as $unit)
-                            <option value="{{ $unit->id }}" @selected((string) old('organizational_unit_id', $user->organizational_unit_id) === (string) $unit->id)>{{ $unit->unit_name }}</option>
-                        @endforeach
-                    </select>
-                    @error('organizational_unit_id')<small class="field-error">{{ $message }}</small>@enderror
-                </label>
-            @else
-                <div class="profile-readonly-grid">
-                    <div><span>Employee Number</span><strong>{{ $user->employee_no }}</strong></div>
-                    <div><span>Office / Department</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
+                <div>
+                    <span>Employment Status</span>
+                    <strong>
+                        {{
+                            match ($user->employment_status) {
+                                'FULL_TIME' => 'Full-time',
+                                'PART_TIME' => 'Part-time',
+                                default => 'Not recorded',
+                            }
+                        }}
+                    </strong>
                 </div>
+                <div class="full-span"><span>Office / Unit</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
+                @php
+                    $additionalRequestingUnits = $user->authorizedOrganizationalUnits
+                        ->where('id', '!=', $user->organizational_unit_id)
+                        ->values();
+                @endphp
+                @if($additionalRequestingUnits->isNotEmpty())
+                    <div class="full-span">
+                        <span>Additional Authorized Requesting Unit{{ $additionalRequestingUnits->count() > 1 ? 's' : '' }}</span>
+                        <strong>{{ $additionalRequestingUnits->pluck('unit_name')->join(', ') }}</strong>
+                    </div>
+                @endif
+            </div>
 
-                <p class="field-help">Institutional identifiers and organizational assignments are maintained by ICTU because they determine portal authority, approval routing, and delegation eligibility.</p>
-
-                <div class="form-columns">
-                    <label>Full name
-                        <input name="full_name" value="{{ old('full_name', $user->full_name) }}" required autocomplete="name">
-                        @error('full_name')<small class="field-error">{{ $message }}</small>@enderror
-                    </label>
-
-                    <label>Designation
-                        <input name="designation" value="{{ old('designation', $user->designation) }}" autocomplete="organization-title">
-                        @error('designation')<small class="field-error">{{ $message }}</small>@enderror
-                    </label>
-                </div>
-            @endif
+            <p class="field-help">
+                Official identity, designation, personnel type, employment status, and organizational assignments are centrally managed by ICTU.
+                If any of these details are incorrect, contact ICTU for an account update.
+            </p>
         </section>
 
         <section class="account-settings-section" aria-labelledby="contact-information-heading">

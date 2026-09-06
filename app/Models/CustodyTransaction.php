@@ -151,4 +151,93 @@ class CustodyTransaction extends Model
     {
         return $this->hasMany(EarlyReturnRequest::class);
     }
+
+    /**
+     * Return one borrower/SPMU-facing lifecycle status for this custody.
+     * This is the single source of truth used by list/detail pages so a
+     * cancelled record cannot also appear as Completed just because closed_at
+     * was populated as part of cancellation cleanup.
+     *
+     * @return array{key:string,label:string,group:string}
+     */
+    public function workflowStatus(): array
+    {
+        $requestStatus = $this->request?->status;
+        $requestStatusValue = $requestStatus instanceof \BackedEnum
+            ? $requestStatus->value
+            : (string) $requestStatus;
+
+        if (strtoupper((string) $this->status) === 'CANCELLED' || strtoupper($requestStatusValue) === 'CANCELLED') {
+            return ['key' => 'CANCELLED', 'label' => 'Cancelled', 'group' => 'cancelled'];
+        }
+
+        if ((string) $this->status === 'CLOSED') {
+            $hasLaundryItem = $this->lines->contains(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $laundryJob = $this->laundryJob;
+            $fullyComplete = ! $hasLaundryItem
+                || ($laundryJob?->status === 'LAUNDRY_COMPLETED' && $laundryJob?->latestEvidence?->file);
+
+            return $fullyComplete
+                ? ['key' => 'COMPLETED', 'label' => 'Completed', 'group' => 'completed']
+                : ['key' => 'BORROWER_CLEARED', 'label' => 'Borrower Cleared', 'group' => 'completed'];
+        }
+
+        if ((string) $this->status === 'OBLIGATION_OPEN') {
+            return ['key' => 'OBLIGATION_OPEN', 'label' => 'Obligation Open', 'group' => 'attention'];
+        }
+
+        if ((string) $this->status === 'INCIDENT_OPEN') {
+            return ['key' => 'INCIDENT_OPEN', 'label' => 'Incident Open', 'group' => 'attention'];
+        }
+
+        if (in_array((string) $this->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'], true)) {
+            return ['key' => 'RETURN_PROCESSING', 'label' => 'Return Processing', 'group' => 'return'];
+        }
+
+        if ((string) $this->status === 'OVERDUE') {
+            return ['key' => 'OVERDUE', 'label' => 'Overdue', 'group' => 'attention'];
+        }
+
+        if ($this->released_at) {
+            return ['key' => 'BORROWED', 'label' => 'Items Released / On Custody', 'group' => 'custody'];
+        }
+
+        if ((string) $this->status === 'PREPARING_RELEASE') {
+            $hasSchedule = (bool) $this->scheduled_release_at && (bool) $this->pickup_expires_at;
+            $expired = (bool) $this->pickup_expired_at
+                || ($hasSchedule && now()->gt($this->pickup_expires_at));
+            $upcoming = $hasSchedule && ! $expired && now()->lt($this->scheduled_release_at);
+            $open = $hasSchedule && ! $expired && ! $upcoming;
+
+            if ($expired) {
+                return ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Window Expired', 'group' => 'release'];
+            }
+
+            if ($this->prepared_at && $open) {
+                return ['key' => 'READY_FOR_RELEASE', 'label' => 'Ready for Release', 'group' => 'release'];
+            }
+
+            if ($this->prepared_at && $upcoming) {
+                return ['key' => 'PICKUP_SCHEDULED', 'label' => 'Pickup Scheduled', 'group' => 'release'];
+            }
+
+            if ($hasSchedule && ! $this->prepared_at) {
+                return ['key' => 'ITEM_PREPARATION', 'label' => 'For Item Preparation', 'group' => 'release'];
+            }
+
+            if (! $hasSchedule) {
+                return ['key' => 'PICKUP_SCHEDULING', 'label' => 'For Pickup Scheduling', 'group' => 'release'];
+            }
+
+            return ['key' => 'PREPARING_RELEASE', 'label' => 'Preparing for Release', 'group' => 'release'];
+        }
+
+        return [
+            'key' => strtoupper((string) $this->status),
+            'label' => str((string) $this->status)->replace('_', ' ')->lower()->title()->toString(),
+            'group' => 'active',
+        ];
+    }
 }

@@ -146,8 +146,6 @@
         .sidebar-nav .nav-icon-users { color: #7A5AF8; }
         .sidebar-nav .nav-icon-settings { color: #0F9488; }
         .sidebar-nav .nav-icon-reports { color: #2F80ED; }
-        .sidebar-nav .nav-icon-analytics { color: #2F80ED; }
-        .sidebar-nav .nav-icon-report-document { color: #2F80ED; }
         .sidebar-nav .nav-icon-notifications { color: #E9870C; }
 
         .sidebar-nav a.active .nav-icon,
@@ -458,8 +456,8 @@
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
-                    ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
-                    ['reports.index', 'reports.index', 'Reports', 'report-document'],
+                    ['analytics.index', 'analytics.*', 'Analytics', 'reports'],
+                    ['reports.index', 'reports.index', 'Reports', 'reports'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [
@@ -477,7 +475,7 @@
             'ICTU' => [
                 ['dashboard', 'dashboard', 'Dashboard', 'dashboard'],
                 ['administration.users.index', 'administration.users.*', 'User Accounts', 'users'],
-                ['administration.settings.index', 'administration.settings.*', 'System Settings', 'settings'],
+                ['administration.settings.index', 'administration.settings.*', 'System Configuration', 'settings'],
                 ['reports.audit', 'reports.audit', 'Audit Trail', 'reports'],
                 ['reports.notifications', 'reports.notifications', 'Delivery Records', 'notifications'],
             ],
@@ -689,5 +687,62 @@
     })();
     </script>
     {{-- SPMU-ACPMP ANTI-DUPLICATE-SUBMISSION END --}}
+
+    {{-- SPMU-ACPMP NUMBER INPUT SAFETY START --}}
+    <style>
+        /*
+         * Hide native spinner arrows on all numeric fields so a stray click
+         * cannot silently bump a manually-typed value.
+         */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        input[type="number"] {
+            -moz-appearance: textfield;
+        }
+    </style>
+    <script>
+    (() => {
+        'use strict';
+
+        /*
+         * Prevent mouse-wheel / touchpad scrolling from changing the value of
+         * a focused <input type="number">. Only acts while the field is
+         * focused, so normal page scrolling while the pointer happens to
+         * pass over a number field elsewhere in the app is never affected.
+         */
+        document.addEventListener('wheel', (event) => {
+            const input = event.target;
+            if (
+                input instanceof HTMLInputElement &&
+                input.type === 'number' &&
+                document.activeElement === input
+            ) {
+                event.preventDefault();
+            }
+        }, { passive: false, capture: true });
+
+        /*
+         * Prevent Arrow Up / Arrow Down from stepping the value of a focused
+         * <input type="number">. Every other key (digits, Backspace, Delete,
+         * Tab, Shift+Tab, arrow-left/right for cursor movement, etc.) is left
+         * untouched, so typing and keyboard navigation keep working normally.
+         */
+        document.addEventListener('keydown', (event) => {
+            const input = event.target;
+            if (
+                (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+                input instanceof HTMLInputElement &&
+                input.type === 'number'
+            ) {
+                event.preventDefault();
+            }
+        }, { capture: true });
+    })();
+    </script>
+    {{-- SPMU-ACPMP NUMBER INPUT SAFETY END --}}
 </body>
 </html>

@@ -1,14 +1,17 @@
 @extends('layouts.app', ['title' => 'Gate Pass'])
 @section('content')
 @php
-    $gatePasses->loadMissing('custody.borrower.organizationalUnit');
-    $gatePassStatusLabels = [
-        'PENDING' => 'Legacy / Incomplete',
-        'READY_FOR_PRINTING' => 'Approved / Awaiting Handover',
-        'VERIFIED' => 'Completed',
-    ];
-    $gatePassStatusTones = ['PENDING' => 'warning', 'READY_FOR_PRINTING' => 'info', 'VERIFIED' => 'success'];
-    $statuses = collect(array_keys($gatePassStatusLabels))->merge($gatePasses->pluck('status')->filter())->unique();
+    $gatePasses->loadMissing([
+        'custody.borrower.organizationalUnit',
+        'custody.request',
+        'custody.lines.requestItem.inventoryItem',
+        'custody.laundryJob.latestEvidence.file',
+    ]);
+
+    $statuses = $gatePasses
+        ->map(fn ($gatePass) => $gatePass->workflowStatus())
+        ->unique('key')
+        ->values();
 @endphp
 
 @include('gate-passes.partials.index-styles')
@@ -40,7 +43,7 @@
                 <select id="gate-pass-status" data-gate-pass-status>
                     <option value="">All Statuses</option>
                     @foreach($statuses as $status)
-                        <option value="{{ $status }}">{{ $gatePassStatusLabels[$status] ?? str($status)->replace('_', ' ')->title() }}</option>
+                        <option value="{{ $status['key'] }}">{{ $status['label'] }}</option>
                     @endforeach
                 </select>
             </label>

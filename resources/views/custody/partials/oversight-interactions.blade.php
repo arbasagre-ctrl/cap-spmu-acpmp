@@ -42,13 +42,13 @@
             const mode = sort?.value || 'return-soonest';
 
             const ordered = [...records].sort((left, right) => {
-                const leftCompleted = left.dataset.custodyGroup === 'completed';
-                const rightCompleted = right.dataset.custodyGroup === 'completed';
+                const leftArchived = ['completed', 'cancelled'].includes(left.dataset.custodyGroup);
+                const rightArchived = ['completed', 'cancelled'].includes(right.dataset.custodyGroup);
 
-                // Keep completed records after active operational work unless
-                // the user explicitly opens the Completed tab.
-                if (activeTab !== 'completed' && leftCompleted !== rightCompleted) {
-                    return leftCompleted ? 1 : -1;
+                // Keep completed/cancelled records after active operational work
+                // unless the user explicitly opens one of those archive tabs.
+                if (! ['completed', 'cancelled'].includes(activeTab) && leftArchived !== rightArchived) {
+                    return leftArchived ? 1 : -1;
                 }
 
                 if (mode === 'return-soonest') {
@@ -97,7 +97,7 @@
             }
 
             if (activeTab === 'active') {
-                return group !== 'completed';
+                return group !== 'completed' && group !== 'cancelled';
             }
 
             return group === activeTab;

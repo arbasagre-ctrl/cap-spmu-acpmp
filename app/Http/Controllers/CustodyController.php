@@ -60,6 +60,7 @@ class CustodyController extends Controller
 
         $custodies = CustodyTransaction::with($relations)
             ->whereNotNull('released_at')
+            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
             ->latest()
             ->get();
 
@@ -237,12 +238,6 @@ class CustodyController extends Controller
         $data = $request->validate([
             'pickup_at' => ['required', 'date'],
             'pickup_expires_at' => ['required', 'date', 'after:pickup_at'],
-        ], [
-            'pickup_at.required' => 'Please select the Pickup Date & Time.',
-            'pickup_at.date' => 'Please enter a valid Pickup Date & Time.',
-            'pickup_expires_at.required' => 'Please select the Claim Until date and time.',
-            'pickup_expires_at.date' => 'Please enter a valid Claim Until date and time.',
-            'pickup_expires_at.after' => 'Please set "Claim Until" to a later time than the Pickup Date & Time.',
         ]);
 
         $service->schedulePickup(
@@ -347,11 +342,11 @@ class CustodyController extends Controller
         /*
          * RETURN INPUT SANITIZATION
          * -------------------------
-         * Non-linen remains a direct Action Officer inspection. For linen, the
-         * physical inspection happens first in the Laundry Area: Laundry
-         * Personnel record quantity/condition and wet-sign Received by on the
-         * same printed Laundry Form. The Action Officer then encodes those
-         * findings here from the uploaded accomplished form.
+         * Non-linen may be inspected and fully accounted as soon as it is
+         * physically returned to SPMU. Linen remains excluded from encoding
+         * until the offline Laundry Worker has checked it, wet-signed the same
+         * physical Laundry Form with the actual receipt date, and delivered
+         * that accomplished form to SPMU. No Laundry portal user exists.
          */
         $custody->loadMissing('lines.requestItem.inventoryItem', 'laundryJob');
         $eligibleLineIds = [];
@@ -401,9 +396,58 @@ class CustodyController extends Controller
             conditionBreakdowns: $data['accounting'] ?? [],
         );
 
+        /*
+         * GUIDED TRANSACTION HANDOFF
+         * --------------------------
+         * Keep the Action Officer inside the same transaction. After Return
+         * Inspection, send them directly to the exact next required record
+         * instead of making them search the Gate Pass or Laundry queues.
+         */
+        $custody->refresh()->loadMissing([
+            'gatePass',
+            'laundryJob.latestEvidence',
+            'lines.requestItem.inventoryItem',
+        ]);
+
+        $remainingOnCustody = $custody->lines->sum(
+            fn ($line) => max(
+                0,
+                (float) $line->actual_released_quantity - (float) $line->returned_quantity
+            )
+        );
+
+        if ($remainingOnCustody <= 0) {
+            $gatePass = $custody->gatePass;
+
+            if ($gatePass
+                && $gatePass->status !== 'VERIFIED'
+                && ! $gatePass->accomplished_file_id) {
+                return redirect()
+                    ->route('gate-passes.show', $gatePass)
+                    ->with(
+                        'status',
+                        'Return inspection recorded. Next: record the accomplished Gate Pass for this transaction.'
+                    );
+            }
+
+            $laundryJob = $custody->laundryJob;
+
+            if ($laundryJob
+                && ($laundryJob->status === 'TURNED_OVER_TO_LAUNDRY'
+                    || ($laundryJob->status === 'FOR_LAUNDRY'
+                        && $laundryJob->hasVerifiedAccomplishedForm()))) {
+                return redirect()
+                    ->route('laundry.show', $laundryJob)
+                    ->with(
+                        'status',
+                        'Return inspection recorded. Next: finalize the serviceable linen availability for this transaction.'
+                    );
+            }
+        }
+
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
-            ->with('status', 'Return inspection recorded. Linen findings were encoded from the accomplished Laundry Form; any serviceable linen now continues through internal Laundry processing with no further borrower turnover step.');
+            ->with('status', 'Return inspection recorded.');
     }
 
     public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse

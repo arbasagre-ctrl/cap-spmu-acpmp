@@ -35,8 +35,17 @@
             $description .= ' +'.($lines->count() - 1).' more';
         }
 
-        $daysLate = $dueAt && now()->greaterThan($dueAt)
-            ? (int) $dueAt->diffInDays(now())
+        $isStillOverdue = $overdue->status === 'OVERDUE';
+        $isReturnedLate = in_array($overdue->status, ['RETURNED_PENDING_SETTLEMENT', 'BILLED'], true);
+        $actualReturnAt = $isReturnedLate
+            ? ($custody?->returns?->pluck('received_at')->filter()->sort()->last())
+            : null;
+        $lateThrough = $isStillOverdue
+            ? now()->startOfDay()
+            : ($actualReturnAt?->copy()->startOfDay());
+        $dueDay = $dueAt?->copy()->startOfDay();
+        $daysLate = $dueDay && $lateThrough && $lateThrough->gt($dueDay)
+            ? (int) $dueDay->diffInDays($lateThrough)
             : null;
 
         $obligationRows[] = [
@@ -45,18 +54,19 @@
             'date' => $recordDate,
             'tone' => 'danger',
             'icon' => 'calendar',
-            'type' => 'Overdue Return',
+            'type' => $isReturnedLate ? 'Returned Late' : 'Overdue Return',
             'reference' => $custody?->custody_no ?: 'No custody reference',
             'reference_sub' => $custody?->request?->request_no,
             'description' => $description,
             'description_sub' => $dueAt ? 'Due date: '.$dueAt->format('d M Y') : null,
-            'badge' => 'Overdue',
-            'badge_tone' => 'danger',
+            'badge' => $isReturnedLate ? 'Returned Late' : 'Overdue',
+            'badge_tone' => $isReturnedLate ? 'warning' : 'danger',
             'status_sub' => $daysLate !== null
                 ? $daysLate.' '.($daysLate === 1 ? 'day' : 'days').' late'
                 : null,
             'facts' => [
                 ['Expected return', optional($dueAt)->format('d M Y') ?: '—'],
+                ['Actual physical return', $actualReturnAt?->format('d M Y') ?: ($isStillOverdue ? 'Not yet completed' : '—')],
                 ['Late fee rate', $overdue->rate_snapshot === null
                     ? 'Not configured'
                     : '₱'.number_format((float) $overdue->rate_snapshot, 2)],
@@ -65,8 +75,12 @@
                     : '₱'.number_format((float) $overdue->accrued_amount, 2)],
             ],
             'action_tone' => 'warning',
-            'action_title' => 'Return the outstanding items to SPMU',
-            'action_text' => 'Bring the issued items to SPMU for physical return inspection. Do not record the return yourself; the Action Officer confirms the actual quantities and condition during handover.',
+            'action_title' => $isReturnedLate
+                ? 'Late return is under Accountability Processing'
+                : 'Return the outstanding items to SPMU',
+            'action_text' => $isReturnedLate
+                ? 'The physical return is already complete. SPMU is processing the date-based late-return obligation; follow the Billing Statement or settlement instructions when issued.'
+                : 'Bring the issued items to SPMU for physical return inspection. Do not record the return yourself; the Action Officer confirms the actual quantities and condition during handover.',
             'links' => $custody
                 ? [['Open borrowing record', route('custody.show', $custody)]]
                 : [],

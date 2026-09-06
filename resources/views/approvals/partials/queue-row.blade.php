@@ -81,7 +81,15 @@
             :label="$needsAttention ? 'Needs Attention' : 'For Review'"
             :title="$needsAttention
                 ? 'Missing: '.$missingDocuments->implode(', ')
-                : ($mode === 'ACTION_OFFICER_VERIFICATION' ? 'Ready for Action Officer verification' : 'Verified and ready for Head decision')"
+                : (
+                    $mode === 'ACTION_OFFICER_VERIFICATION'
+                        ? 'Ready for Action Officer verification'
+                        : (
+                            $version->off_campus
+                                ? 'Action Officer verified; ready for Head / Admin decision'
+                                : 'On-campus request; ready for Head / Admin decision'
+                        )
+                )"
         />
     </td>
 

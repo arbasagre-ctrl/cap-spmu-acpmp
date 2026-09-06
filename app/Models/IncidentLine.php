@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class IncidentLine extends Model
 {
@@ -11,5 +12,10 @@ class IncidentLine extends Model
     protected function casts(): array
     {
         return ['quantity' => 'integer', 'assessed_value' => 'decimal:2'];
+    }
+
+    public function custodyLine(): BelongsTo
+    {
+        return $this->belongsTo(CustodyLine::class);
     }
 }

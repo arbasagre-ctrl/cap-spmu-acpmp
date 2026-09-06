@@ -6,6 +6,7 @@ use App\Enums\AccessClassification;
 use App\Models\DocumentTemplate;
 use App\Models\SystemSetting;
 use App\Services\AuditService;
+use App\Services\DocumentTemplateLayoutService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,49 +14,106 @@ use Illuminate\View\View;
 
 class SettingController extends Controller
 {
-    public function index(Request $request): View
+    private const ICTU_SETTING_KEYS = [
+        'sms_provider',
+        'max_upload_mb',
+        'backup_schedule',
+    ];
+
+    private const PROTECTED_DIRECT_SETTING_KEYS = [
+        'overdue_grace_hours',
+        'due_soon_hours',
+        'billing_statement_template_version',
+        'laundry_form_template_version',
+        'gate_pass_template_version',
+    ];
+
+    public function index(Request $request, DocumentTemplateLayoutService $layouts): View
     {
         $this->authorizeConfiguration($request);
 
-        $hiddenSettingKeys = [
-            'overdue_grace_hours',
-            'due_soon_hours',
-            'billing_statement_template_version',
-            'laundry_form_template_version',
-            'gate_pass_template_version',
-        ];
+        $classification = $request->user()?->access_classification;
+        $isIctu = $classification === AccessClassification::IctuMaintainer;
 
-        $settings = SystemSetting::query()
-            ->whereNotIn('setting_key', $hiddenSettingKeys)
-            ->orderBy('group_code')
-            ->orderBy('setting_key')
-            ->get();
+        if ($isIctu) {
+            /*
+             * ICTU owns only technical configuration. Operational policy,
+             * fees, workflow deadlines, and controlled SPMU documents are
+             * intentionally excluded from this workspace.
+             */
+            $settings = SystemSetting::query()
+                ->whereIn('setting_key', self::ICTU_SETTING_KEYS)
+                ->orderBy('group_code')
+                ->orderBy('setting_key')
+                ->get();
 
-        $templateTypes = [
-            'BILLING_STATEMENT' => 'Billing Statement Template',
-            'GATE_PASS' => 'Gate Pass Template',
-            'LAUNDRY_FORM' => 'Laundry Form Template',
-        ];
+            $templateTypes = [];
+            $documentTemplates = collect();
+            $templateFields = [];
+            $templateRequiredFields = [];
+        } else {
+            /*
+             * SPMU Admin/Head owns business/operational configuration.
+             * ICTU-owned technical settings and legacy compatibility rows are
+             * not exposed here.
+             */
+            $hiddenSettingKeys = array_values(array_unique(array_merge(
+                self::PROTECTED_DIRECT_SETTING_KEYS,
+                self::ICTU_SETTING_KEYS,
+            )));
 
-        $documentTemplates = DocumentTemplate::query()
-            ->with('file')
-            ->whereIn('document_type', array_keys($templateTypes))
-            ->orderByDesc('template_version')
-            ->get()
-            ->groupBy('document_type');
+            $settings = SystemSetting::query()
+                ->whereNotIn('setting_key', $hiddenSettingKeys)
+                ->orderBy('group_code')
+                ->orderBy('setting_key')
+                ->get();
+
+            $templateTypes = [
+                'BORROWER_SLIP' => "Borrower's Slip Template",
+                'LAUNDRY_FORM' => 'Laundry Form Template',
+                'GATE_PASS' => 'Gate Pass Template',
+                'BILLING_STATEMENT' => 'Billing Statement Template',
+                'RSLDDP' => 'RSLDDP Template',
+            ];
+
+            $documentTemplates = DocumentTemplate::query()
+                ->with('file')
+                ->whereIn('document_type', array_keys($templateTypes))
+                ->orderByDesc('template_version')
+                ->get()
+                ->groupBy('document_type');
+
+
+            $templateFields = collect($templateTypes)
+                ->mapWithKeys(fn (string $label, string $type): array => [$type => $layouts->fields($type)])
+                ->all();
+            $templateRequiredFields = collect($templateTypes)
+                ->mapWithKeys(fn (string $label, string $type): array => [$type => $layouts->requiredFields($type)])
+                ->all();
+        }
 
         return view('administration.settings', compact(
             'settings',
             'templateTypes',
-            'documentTemplates'
+            'documentTemplates',
+            'templateFields',
+            'templateRequiredFields',
+            'isIctu'
         ));
     }
 
-    public function update(Request $request, SystemSetting $setting, AuditService $audit): RedirectResponse
-    {
+    public function update(
+        Request $request,
+        SystemSetting $setting,
+        AuditService $audit
+    ): RedirectResponse {
         $this->authorizeConfiguration($request);
+        $this->authorizeSettingOwnership($request, $setting);
 
-        $data = $request->validate(['value' => ['nullable', 'string', 'max:2000'], 'reason' => ['nullable', 'string', 'max:1000']]);
+        $data = $request->validate([
+            'value' => ['nullable', 'string', 'max:2000'],
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
 
         /*
          * The change log column is not nullable, so an omitted reason is
@@ -66,13 +124,26 @@ class SettingController extends Controller
             : 'No reason provided.';
 
         $before = $setting->value_json;
+
         $after = match ($setting->data_type) {
             'INTEGER' => filled($data['value']) ? (int) $data['value'] : null,
             'MONEY' => filled($data['value']) ? round((float) $data['value'], 2) : null,
             default => filled($data['value']) ? $data['value'] : null,
         };
-        DB::transaction(function () use ($setting, $request, $before, $after, $data, $audit): void {
-            $setting->update(['value_json' => $after, 'updated_by_user_id' => $request->user()->id]);
+
+        DB::transaction(function () use (
+            $setting,
+            $request,
+            $before,
+            $after,
+            $data,
+            $audit
+        ): void {
+            $setting->update([
+                'value_json' => $after,
+                'updated_by_user_id' => $request->user()->id,
+            ]);
+
             DB::table('configuration_changes')->insert([
                 'system_setting_id' => $setting->id,
                 'changed_by_user_id' => $request->user()->id,
@@ -83,10 +154,53 @@ class SettingController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
-            $audit->record('SYSTEM_SETTING_CHANGED', $setting, reason: $data['reason'], before: ['value' => $before], after: ['value' => $after]);
+
+            $audit->record(
+                'SYSTEM_SETTING_CHANGED',
+                $setting,
+                reason: $data['reason'],
+                before: ['value' => $before],
+                after: ['value' => $after]
+            );
         });
 
-        return back()->with('status', 'Configuration updated prospectively with before/after history.');
+        return back()->with(
+            'status',
+            $request->user()?->access_classification === AccessClassification::IctuMaintainer
+                ? 'System configuration updated with before/after audit history.'
+                : 'Operational configuration updated with before/after audit history.'
+        );
+    }
+
+    private function authorizeSettingOwnership(
+        Request $request,
+        SystemSetting $setting
+    ): void {
+        $classification = $request->user()?->access_classification;
+        $key = (string) $setting->setting_key;
+
+        abort_if(
+            in_array($key, self::PROTECTED_DIRECT_SETTING_KEYS, true),
+            403,
+            'This compatibility or template-version value is not directly editable.'
+        );
+
+        if ($classification === AccessClassification::IctuMaintainer) {
+            abort_unless(
+                in_array($key, self::ICTU_SETTING_KEYS, true),
+                403,
+                'ICTU may change only technical system configuration.'
+            );
+
+            return;
+        }
+
+        abort_unless(
+            $classification === AccessClassification::SpmuHead
+                && ! in_array($key, self::ICTU_SETTING_KEYS, true),
+            403,
+            'This setting is not owned by SPMU Admin/Head.'
+        );
     }
 
     private function authorizeConfiguration(Request $request): void
@@ -94,11 +208,14 @@ class SettingController extends Controller
         abort_unless(
             in_array(
                 $request->user()?->access_classification,
-                [AccessClassification::SpmuHead, AccessClassification::IctuMaintainer],
+                [
+                    AccessClassification::SpmuHead,
+                    AccessClassification::IctuMaintainer,
+                ],
                 true
             ),
             403,
-            'Only the SPMU Head or ICTU Maintainer may change operational configuration.'
+            'Only SPMU Admin/Head or ICTU Maintainer may access configuration.'
         );
     }
 }

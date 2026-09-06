@@ -13,7 +13,7 @@
             <p>
                 {{ $mode === 'ACTION_OFFICER_VERIFICATION'
                     ? 'Verify submitted documents and request details before routing the request to the SPMU Head. Verification is not approval.'
-                    : 'Review only requests already VERIFIED by the Action Officer and record the final Head decision.' }}
+                    : 'Review requests routed for final decision. On-campus requests arrive directly; off-campus Gate Pass requests arrive after Action Officer verification.' }}
             </p>
         </div>
 
@@ -33,10 +33,10 @@
             'emptyVariant' => null,
             'emptyTitle' => $mode === 'ACTION_OFFICER_VERIFICATION'
                 ? 'No requests waiting for verification.'
-                : 'No verified requests waiting for approval.',
+                : 'No requests waiting for final approval.',
             'emptyMessage' => $mode === 'ACTION_OFFICER_VERIFICATION'
                 ? 'New borrower submissions will appear here first.'
-                : 'Requests appear here only after Action Officer verification.',
+                : 'On-campus submissions and Action Officer-verified off-campus requests will appear here.',
         ])
     @else
         <div class="approval-queue-filters">

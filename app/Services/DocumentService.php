@@ -23,7 +23,12 @@ use Throwable;
 
 class DocumentService
 {
-    public function __construct(private SimplePdfService $pdf, private ProtectedFileService $files) {}
+    public function __construct(
+        private SimplePdfService $pdf,
+        private ProtectedFileService $files,
+        private DocumentTemplateDefinitionService $templateDefinitions,
+        private DocumentTemplateRenderer $templateRenderer,
+    ) {}
 
     public function requestLetter(BorrowingRequest $request, bool $final = false): GeneratedDocument
     {
@@ -141,6 +146,7 @@ class DocumentService
             'returns.receivedBy',
             'returns.inspectionSignature.file',
             'returns.lines.custodyLine.requestItem',
+            'releasedBy',
         ]);
 
         /*
@@ -152,11 +158,24 @@ class DocumentService
          * after release or return so their operational sections stay current.
          */
 
-        $this->supersede(
-            $custody,
-            'BORROWER_SLIP',
-            'Replaced by the latest controlled operational copy.'
-        );
+        $customTemplate = $this->activeUploadedTemplate('BORROWER_SLIP');
+        if ($customTemplate) {
+            $bytes = $this->templateRenderer->render($customTemplate, $this->borrowerSlipRenderData($custody));
+            $this->supersede($custody, 'BORROWER_SLIP', 'Replaced by the latest controlled operational copy.');
+
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'BORROWER_SLIP',
+                $bytes,
+                $custody->request->currentVersion,
+                $custody::class,
+                $custody->id,
+                'FINAL',
+                $custody->custody_no.'-BORROWER-SLIP.pdf',
+            );
+        }
+
+        $this->supersede($custody, 'BORROWER_SLIP', 'Replaced by the latest controlled operational copy.');
 
         return $this->saveHtml(
             'BORROWER_SLIP',
@@ -173,6 +192,32 @@ class DocumentService
     {
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
+        $activeTemplate = $this->activeTemplate('BORROWER_SLIP');
+
+        $templateConfig = $this->templateDefinitions->resolve('BORROWER_SLIP');
+
+        $formCode = e($templateConfig['form_code']);
+        $documentTitle = e($templateConfig['title']);
+        $referenceLabel = e($templateConfig['reference_label']);
+        $requestLabel = e($templateConfig['request_label']);
+        $recipientName = e($templateConfig['recipient_name']);
+        $recipientPosition = e($templateConfig['recipient_position']);
+        $recipientInstitution = e($templateConfig['recipient_institution']);
+        $dateLabel = e($templateConfig['date_label']);
+        $salutation = e($templateConfig['salutation']);
+        $introPrefix = e($templateConfig['intro_prefix']);
+        $introSuffix = e($templateConfig['intro_suffix']);
+        $qtyLabel = e($templateConfig['qty_label']);
+        $unitLabel = e($templateConfig['unit_label']);
+        $descriptionLabel = e($templateConfig['description_label']);
+        $receiptSignatureLabel = nl2br(e($templateConfig['receipt_signature_label']));
+        $remarksHeading = e($templateConfig['remarks_heading']);
+        $closing = e($templateConfig['closing']);
+        $signatureCaption = e($templateConfig['borrower_signature_caption']);
+        $designationLabel = e($templateConfig['designation_label']);
+        $approvedLabel = e($templateConfig['approved_label']);
+        $footerEffectivity = e($templateConfig['footer_effectivity']);
+        $footerRevision = e($templateConfig['footer_revision']);
 
         $logoPath = resource_path('images/cspc-logo-print.jpg');
 
@@ -407,7 +452,7 @@ class DocumentService
                 font-size:6.5pt;
                 font-weight:bold;
             ">
-                CSPC-F-SPMU-26
+                {$formCode}
             </td>
 
         </tr>
@@ -426,7 +471,7 @@ class DocumentService
         line-height:1;
         font-weight:bold;
     ">
-        BORROWER'S SLIP
+        {$documentTitle}
     </div>
 
     <!--
@@ -441,7 +486,7 @@ class DocumentService
         font-weight:bold;
         letter-spacing:0.3pt;
     ">
-        Reference No.: {$custodyNo} &nbsp;|&nbsp; Request No.: {$requestNo}
+        {$referenceLabel} {$custodyNo} &nbsp;|&nbsp; {$requestLabel} {$requestNo}
     </div>
 
 
@@ -468,15 +513,15 @@ class DocumentService
                     font-weight:bold;
                     line-height:1.08;
                 ">
-                    ANGELICA P. REGONDOLA, PhD
+                    {$recipientName}
                 </div>
 
                 <div style="margin-top:2pt;">
-                    Administrative Officer V, Supply Officer III
+                    {$recipientPosition}
                 </div>
 
                 <div style="margin-top:1pt;">
-                    This Institution
+                    {$recipientInstitution}
                 </div>
 
             </td>
@@ -488,7 +533,7 @@ class DocumentService
                 padding-top:2pt;
             ">
 
-                <strong>Date:</strong>
+                <strong>{$dateLabel}</strong>
 
                 <span style="
                     display:inline-block;
@@ -515,7 +560,7 @@ class DocumentService
         width:93%;
         margin:0 auto 8pt;
     ">
-        Ma'am:
+        {$salutation}
     </div>
 
     <p style="
@@ -527,10 +572,7 @@ class DocumentService
         text-indent:31pt;
         text-align:justify;
     ">
-        I have the honor to borrow the equipment indicated hereunder which will be used
-        for <strong>{$purpose}</strong>. It is understood that I shall be held responsible
-        for said items while in my possession until officially returned on
-        <strong>{$returnDate}</strong>.
+        {$introPrefix} <strong>{$purpose}</strong>. {$introSuffix} <strong>{$returnDate}</strong>.
     </p>
 
 
@@ -564,7 +606,7 @@ class DocumentService
                     vertical-align:middle;
                     font-weight:bold;
                 ">
-                    QTY.
+                    {$qtyLabel}
                 </th>
 
                 <th style="
@@ -575,7 +617,7 @@ class DocumentService
                     vertical-align:middle;
                     font-weight:bold;
                 ">
-                    UNIT
+                    {$unitLabel}
                 </th>
 
                 <th style="
@@ -586,7 +628,7 @@ class DocumentService
                     vertical-align:middle;
                     font-weight:bold;
                 ">
-                    ARTICLE/DESCRIPTION
+                    {$descriptionLabel}
                 </th>
 
                 <th style="
@@ -598,8 +640,7 @@ class DocumentService
                     font-weight:bold;
                     line-height:1.05;
                 ">
-                    BORROWER'S SIGNATURE<br>
-                    UPON RECEIPT OF ITEMS
+                    {$receiptSignatureLabel}
                 </th>
 
             </tr>
@@ -661,7 +702,7 @@ class DocumentService
                     font-weight:bold;
                     margin-bottom:8pt;
                 ">
-                    Remarks upon return of items
+                    {$remarksHeading}
                 </div>
 
 
@@ -689,7 +730,7 @@ class DocumentService
                     margin:7pt 0 25pt 7pt;
                     font-size:9.5pt;
                 ">
-                    Very truly yours,
+                    {$closing}
                 </div>
 
 
@@ -734,7 +775,7 @@ class DocumentService
                     line-height:1;
                     font-style:italic;
                 ">
-                    Signature over Printed Name
+                    {$signatureCaption}
                 </div>
 
 
@@ -759,7 +800,7 @@ class DocumentService
                     line-height:1;
                     font-style:italic;
                 ">
-                    Designation
+                    {$designationLabel}
                 </div>
 
             </td>
@@ -784,7 +825,7 @@ class DocumentService
             font-weight:bold;
             margin-bottom:6pt;
         ">
-            APPROVED:
+            {$approvedLabel}
         </div>
 
 
@@ -844,7 +885,7 @@ class DocumentService
                 width:33%;
                 padding-top:4pt;
             ">
-                Effective Date: August 2025
+                Effective Date: {$footerEffectivity}
             </td>
 
             <td style="
@@ -852,7 +893,7 @@ class DocumentService
                 padding-top:4pt;
                 text-align:center;
             ">
-                Rev. 3
+                {$footerRevision}
             </td>
 
             <td style="
@@ -898,6 +939,7 @@ HTML;
             'gatePass.delegation',
             'releaseSignature.file',
             'borrower',
+            'laundryJob',
         ]);
 
         $hasOffCampusProperty = $custody->lines->contains(
@@ -930,11 +972,27 @@ HTML;
             ]);
         }
 
-        $this->supersede(
-            $custody,
-            $type,
-            'Replaced by the latest generated physical form.'
-        );
+        $customTemplate = $this->activeUploadedTemplate($type);
+        if ($customTemplate) {
+            $data = $type === 'LAUNDRY_FORM'
+                ? $this->laundryFormRenderData($custody)
+                : $this->gatePassRenderData($custody);
+            $bytes = $this->templateRenderer->render($customTemplate, $data);
+            $this->supersede($custody, $type, 'Replaced by the latest generated physical form.');
+
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                $type,
+                $bytes,
+                $custody->request->currentVersion,
+                $custody::class,
+                $custody->id,
+                'FINAL',
+                $custody->custody_no.'-'.$type.'.pdf',
+            );
+        }
+
+        $this->supersede($custody, $type, 'Replaced by the latest generated physical form.');
 
         if ($type === 'LAUNDRY_FORM') {
             return $this->saveHtml(
@@ -964,6 +1022,34 @@ HTML;
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
         $gatePass = $custody->gatePass;
+        $activeTemplate = $this->activeTemplate('GATE_PASS');
+
+        $templateConfig = $this->templateDefinitions->resolve('GATE_PASS');
+
+        $formCode = e($templateConfig['form_code']);
+        $gpNoLabel = e($templateConfig['gp_no_label']);
+        $dateLabel = e($templateConfig['date_label']);
+        $documentTitle = e($templateConfig['title']);
+        $toLabel = e($templateConfig['to_label']);
+        $toValue = e($templateConfig['to_value']);
+        $introPrefix = e($templateConfig['intro_prefix']);
+        $introSuffix = e($templateConfig['intro_suffix']);
+        $quantityLabel = e($templateConfig['quantity_label']);
+        $unitLabel = e($templateConfig['unit_label']);
+        $descriptionLabel = e($templateConfig['description_label']);
+        $purposeLabel = e($templateConfig['purpose_label']);
+        $remarksLabel = e($templateConfig['remarks_label']);
+        $bearerLabel = e($templateConfig['bearer_label']);
+        $verifiedByLabel = e($templateConfig['verified_by_label']);
+        $verifiedRole = e($templateConfig['verified_role']);
+        $approvedByLabel = e($templateConfig['approved_by_label']);
+        $approvedRole = e($templateConfig['approved_role']);
+        $releasedByLabel = e($templateConfig['released_by_label']);
+        $guardRole = e($templateConfig['guard_role']);
+        $releasedDateLabel = e($templateConfig['released_date_label']);
+        $releasedTimeLabel = e($templateConfig['released_time_label']);
+        $footerEffectivity = e($templateConfig['footer_effectivity']);
+        $footerRevision = e($templateConfig['footer_revision']);
 
         $logoPath = resource_path('images/cspc-logo-print.jpg');
 
@@ -1106,7 +1192,7 @@ HTML;
                 font-size:9px;
                 font-weight:bold;
             ">
-                CSPC-F-SPMU
+                {$formCode}
             </td>
         </tr>
     </table>
@@ -1126,7 +1212,7 @@ HTML;
 
             <td style="width:33%;font-size:11px;">
                 <div>
-                    <strong>GP No.</strong>
+                    <strong>{$gpNoLabel}</strong>
                     <span style="
                         display:inline-block;
                         width:110px;
@@ -1138,7 +1224,7 @@ HTML;
                 </div>
 
                 <div style="margin-top:3px;">
-                    <strong>Date:</strong>
+                    <strong>{$dateLabel}</strong>
                     <span style="
                         display:inline-block;
                         width:110px;
@@ -1163,7 +1249,7 @@ HTML;
         font-size:15px;
         margin:2px 0 16px;
     ">
-        GATE PASS
+        {$documentTitle}
     </div>
 
 
@@ -1182,11 +1268,11 @@ HTML;
                 vertical-align:top;
                 font-weight:bold;
             ">
-                TO:
+                {$toLabel}
             </td>
 
             <td style="vertical-align:top;">
-                <strong>Security Guard on Duty</strong>
+                <strong>{$toValue}</strong>
             </td>
         </tr>
     </table>
@@ -1196,7 +1282,7 @@ HTML;
         text-align:justify;
         line-height:1.4;
     ">
-        Please allow the bearer
+        {$introPrefix}
         <span style="
             display:inline-block;
             min-width:190px;
@@ -1206,8 +1292,7 @@ HTML;
         ">
             {$borrowerName}
         </span>
-        whose signature appears below to bring out of the CSPC premises
-        the articles listed below.
+        {$introSuffix}
     </p>
 
 
@@ -1230,15 +1315,15 @@ HTML;
         <thead>
             <tr>
                 <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    Quantity
+                    {$quantityLabel}
                 </th>
 
                 <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    Unit
+                    {$unitLabel}
                 </th>
 
                 <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    Description
+                    {$descriptionLabel}
                 </th>
             </tr>
         </thead>
@@ -1252,7 +1337,7 @@ HTML;
                     padding:6px;
                     min-height:24px;
                 ">
-                    <strong>Purpose:</strong>
+                    <strong>{$purposeLabel}</strong>
                     &nbsp; {$purpose}
                 </td>
             </tr>
@@ -1263,7 +1348,7 @@ HTML;
                     padding:6px;
                     min-height:24px;
                 ">
-                    <strong>Remarks:</strong>
+                    <strong>{$remarksLabel}</strong>
                     &nbsp;
                 </td>
             </tr>
@@ -1289,7 +1374,7 @@ HTML;
                 vertical-align:top;
             ">
                 <div style="font-weight:bold;font-size:10px;">
-                    Name &amp; Signature of Bearer (Accountable Person)
+                    {$bearerLabel}
                 </div>
 
                 <div style="
@@ -1333,7 +1418,7 @@ HTML;
             ">
 
                 <div style="font-weight:bold;margin-bottom:4px;">
-                    Verified By:
+                    {$verifiedByLabel}
                 </div>
 
                 <div style="
@@ -1355,7 +1440,7 @@ HTML;
                     text-align:center;
                     font-size:10px;
                 ">
-                    SPMU Action Officer
+                    {$verifiedRole}
                 </div>
 
             </td>
@@ -1368,7 +1453,7 @@ HTML;
             ">
 
                 <div style="font-weight:bold;margin-bottom:4px;">
-                    Approved By:
+                    {$approvedByLabel}
                 </div>
 
                 <div style="
@@ -1390,7 +1475,7 @@ HTML;
                     text-align:center;
                     font-size:10px;
                 ">
-                    Head, Supply and Property Management Unit
+                    {$approvedRole}
                 </div>
 
             </td>
@@ -1416,7 +1501,7 @@ HTML;
                 vertical-align:top;
             ">
         <div style="font-weight:bold;margin-bottom:8px;">
-            Released by:
+            {$releasedByLabel}
         </div>
 
         <div style="
@@ -1430,11 +1515,11 @@ HTML;
             font-size:10px;
             margin-top:3px;
         ">
-            Guard on Duty
+            {$guardRole}
         </div>
 
         <div style="margin-top:8px;font-size:10px;">
-            Date:
+            {$releasedDateLabel}
             <span style="
                 display:inline-block;
                 width:105px;
@@ -1443,7 +1528,7 @@ HTML;
         </div>
 
         <div style="margin-top:6px;font-size:10px;">
-            Time:
+            {$releasedTimeLabel}
             <span style="
                 display:inline-block;
                 width:105px;
@@ -1470,11 +1555,11 @@ HTML;
     ">
         <tr>
             <td style="width:33%;padding-top:4px;">
-                Effective Date: August 2025
+                Effective Date: {$footerEffectivity}
             </td>
 
             <td style="width:34%;padding-top:4px;text-align:center;">
-                Rev. 3
+                {$footerRevision}
             </td>
 
             <td style="width:33%;padding-top:4px;text-align:right;">
@@ -1504,6 +1589,29 @@ HTML;
 
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
+        $activeTemplate = $this->activeTemplate('LAUNDRY_FORM');
+
+        $templateConfig = $this->templateDefinitions->resolve('LAUNDRY_FORM');
+
+        $formCode = e($templateConfig['form_code']);
+        $documentTitle = e($templateConfig['title']);
+        $requestingOfficeLabel = e($templateConfig['requesting_office_label']);
+        $requestNoLabel = e($templateConfig['request_no_label']);
+        $qtyLabel = e($templateConfig['qty_label']);
+        $unitLabel = e($templateConfig['unit_label']);
+        $descriptionLabel = e($templateConfig['description_label']);
+        $dateRequestedLabel = e($templateConfig['date_requested_label']);
+        $dateCompletedLabel = e($templateConfig['date_completed_label']);
+        $requestedByLabel = e($templateConfig['requested_by_label']);
+        $approvedByLabel = e($templateConfig['approved_by_label']);
+        $issuedByLabel = e($templateConfig['issued_by_label']);
+        $receivedByLabel = e($templateConfig['received_by_label']);
+        $signatureLabel = e($templateConfig['signature_label']);
+        $printedNameLabel = e($templateConfig['printed_name_label']);
+        $designationLabel = e($templateConfig['designation_label']);
+        $dateRowLabel = e($templateConfig['date_label']);
+        $footerEffectivity = e($templateConfig['footer_effectivity']);
+        $footerRevision = e($templateConfig['footer_revision']);
 
         /*
          * =========================================================
@@ -1719,7 +1827,7 @@ HTML;
                 font-size:6.5pt;
                 font-weight:bold;
             ">
-                CSPC-F-SPMU-62
+                {$formCode}
             </td>
 
         </tr>
@@ -1743,7 +1851,7 @@ HTML;
         font-weight:bold;
         line-height:1;
     ">
-        REQUEST AND COMPLETION FOR LAUNDRY SERVICES
+        {$documentTitle}
     </div>
 
 
@@ -1796,7 +1904,7 @@ HTML;
                             vertical-align:bottom;
                             font-weight:bold;
                             white-space:nowrap;
-                        ">Requesting Office:</td>
+                        ">{$requestingOfficeLabel}</td>
 
                         <td style="
                             border:0;
@@ -1822,7 +1930,7 @@ HTML;
                 font-weight:bold;
                 white-space:nowrap;
             ">
-                Request No.:
+                {$requestNoLabel}
             </td>
 
 
@@ -1897,7 +2005,7 @@ HTML;
 
                     font-weight:bold;
                 ">
-                    QTY
+                    {$qtyLabel}
                 </th>
 
 
@@ -1913,7 +2021,7 @@ HTML;
 
                     font-weight:bold;
                 ">
-                    UNIT
+                    {$unitLabel}
                 </th>
 
 
@@ -1929,7 +2037,7 @@ HTML;
 
                     font-weight:bold;
                 ">
-                    DESCRIPTION
+                    {$descriptionLabel}
                 </th>
 
 
@@ -1948,7 +2056,7 @@ HTML;
 
                     white-space:nowrap;
                 ">
-                    DATE REQUESTED
+                    {$dateRequestedLabel}
                 </th>
 
 
@@ -1967,7 +2075,7 @@ HTML;
 
                     white-space:nowrap;
                 ">
-                    DATE COMPLETED
+                    {$dateCompletedLabel}
                 </th>
 
 
@@ -2119,7 +2227,7 @@ HTML;
                 text-align:center;
                 vertical-align:middle;
             ">
-                Requested by:
+                {$requestedByLabel}
             </td>
 
 
@@ -2131,7 +2239,7 @@ HTML;
                 text-align:center;
                 vertical-align:middle;
             ">
-                Approved By:
+                {$approvedByLabel}
             </td>
 
 
@@ -2143,7 +2251,7 @@ HTML;
                 text-align:center;
                 vertical-align:middle;
             ">
-                Issued by:
+                {$issuedByLabel}
             </td>
 
 
@@ -2155,7 +2263,7 @@ HTML;
                 text-align:center;
                 vertical-align:middle;
             ">
-                Received by:
+                {$receivedByLabel}
             </td>
 
 
@@ -2175,7 +2283,7 @@ HTML;
 
                 vertical-align:middle;
             ">
-                Signature
+                {$signatureLabel}
             </td>
 
 
@@ -2208,7 +2316,7 @@ HTML;
 
                 vertical-align:middle;
             ">
-                Printed Name
+                {$printedNameLabel}
             </td>
 
 
@@ -2266,7 +2374,7 @@ HTML;
 
                 vertical-align:middle;
             ">
-                Designation
+                {$designationLabel}
             </td>
 
 
@@ -2316,7 +2424,7 @@ HTML;
 
                 vertical-align:middle;
             ">
-                Date
+                {$dateRowLabel}
             </td>
 
 
@@ -2374,7 +2482,7 @@ HTML;
 
                 font-weight:bold;
             ">
-                Effective Date: December 2025
+                Effective Date: {$footerEffectivity}
             </td>
 
 
@@ -2387,7 +2495,7 @@ HTML;
 
                 font-weight:bold;
             ">
-                Rev. 2
+                {$footerRevision}
             </td>
 
 
@@ -2617,6 +2725,18 @@ HTML;
     public function billingStatement(BillingStatement $billing): GeneratedDocument
     {
         $billing->loadMissing(['borrower', 'lines', 'responsibleSpmuUser']);
+        if ($customTemplate = $this->activeUploadedTemplate('BILLING_STATEMENT')) {
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'BILLING_STATEMENT',
+                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing)),
+                null,
+                $billing::class,
+                $billing->id,
+                'FINAL',
+                $billing->billing_no.'.pdf',
+            );
+        }
         $lines = [
             'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
             'BILLING STATEMENT - PENALTIES AND PROPERTY CHARGES ONLY',
@@ -2646,26 +2766,27 @@ HTML;
         $lines[] = (string) ($billing->responsibleSpmuUser?->designation ?: 'Supply and Property Management Unit');
         $lines[] = 'Signature over Printed Name / Date';
 
-        $activeTemplate = $this->activeTemplate('BILLING_STATEMENT');
-
-        if ($activeTemplate?->source_mode === 'HTML_PLACEHOLDER' && $activeTemplate->file) {
-            return $this->saveHtml(
-                'BILLING_STATEMENT',
-                $this->officialHtml('Billing Statement', $lines),
-                null,
-                $billing::class,
-                $billing->id,
-                'FINAL',
-                $billing->billing_no.'.pdf'
-            );
-        }
-
         return $this->save('BILLING_STATEMENT', $lines, null, $billing::class, $billing->id, 'FINAL', $billing->billing_no.'.pdf');
     }
 
     public function rslddp(Incident $incident): GeneratedDocument
     {
-        $incident->loadMissing(['borrower', 'custody.request.currentVersion', 'lines']);
+        $incident->loadMissing(['borrower', 'custody.request.currentVersion', 'lines.custodyLine.requestItem', 'reportedBy']);
+        if ($customTemplate = $this->activeUploadedTemplate('RSLDDP')) {
+            $document = $this->saveRenderedTemplate(
+                $customTemplate,
+                'RSLDDP',
+                $this->templateRenderer->render($customTemplate, $this->rslddpRenderData($incident)),
+                $incident->custody->request->currentVersion,
+                $incident::class,
+                $incident->id,
+                'FINAL',
+                $incident->incident_no.'-RSLDDP.pdf',
+            );
+            $incident->update(['rslddp_reference' => $document->document_no]);
+
+            return $document;
+        }
         $lines = [
             'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
             'OFFICIAL RSLDDP REPORT',
@@ -2763,7 +2884,6 @@ HTML;
     private function saveHtml(string $type, string $html, ?RequestVersion $version, string $subjectType, int $subjectId, string $status, string $filename, bool $pageNumbers = false): GeneratedDocument
     {
         $template = $this->activeTemplate($type);
-        $html = $this->applyConfiguredHtmlTemplate($type, $html, $template);
         $bytes = $this->pdf->html($html, $pageNumbers);
         $file = $this->files->storeBytes($bytes, 'generated-documents', $filename, 'application/pdf', 'pdf', 'CONTROLLED_DOCUMENT');
 
@@ -2782,72 +2902,356 @@ HTML;
         ]);
     }
 
+    /** @param array<string,mixed> $data */
+    private function saveRenderedTemplate(DocumentTemplate $template, string $type, string $bytes, ?RequestVersion $version, string $subjectType, int $subjectId, string $status, string $filename): GeneratedDocument
+    {
+        $file = $this->files->storeBytes($bytes, 'generated-documents', $filename, 'application/pdf', 'pdf', 'CONTROLLED_DOCUMENT');
+
+        return GeneratedDocument::query()->create([
+            'template_id' => $template->id,
+            'stored_file_id' => $file->id,
+            'request_version_id' => $version?->id,
+            'subject_type' => $subjectType,
+            'subject_id' => $subjectId,
+            'document_no' => strtoupper($type).'-'.now()->format('YmdHis').'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT),
+            'document_type' => $type,
+            'version_no' => $version?->version_no ?? 1,
+            'sha256' => $file->sha256,
+            'status' => $status,
+            'generated_at' => now(),
+        ]);
+    }
+
+    private function activeUploadedTemplate(string $type): ?DocumentTemplate
+    {
+        $template = $this->activeTemplate($type);
+
+        return $template?->source_mode === 'OFFICIAL_LAYOUT' ? $template : null;
+    }
+
+    /** @return array<string,mixed> */
+    private function borrowerSlipRenderData(CustodyTransaction $custody): array
+    {
+        $version = $custody->request->currentVersion;
+        $borrower = $custody->request->borrower;
+        $return = $this->returnInspectionData($custody);
+        $approval = $this->approvalSignatory($version);
+        $issuance = $this->issuanceSignatory($custody);
+        $employmentType = strtoupper((string) ($borrower?->employment_type?->value ?? ''));
+        $borrowerDesignation = trim((string) ($borrower?->designation ?? ''));
+        if ($borrowerDesignation === ''
+            || strcasecmp($borrowerDesignation, AccessClassification::BorrowerOnly->label()) === 0
+            || $borrowerDesignation === $borrower?->access_classification?->label()) {
+            $borrowerDesignation = '';
+        }
+        $otherClassification = $employmentType !== '' && $employmentType !== 'EMPLOYEE'
+            ? str($employmentType)->replace('_', ' ')->title()->toString()
+            : '';
+
+        return [
+            'document_date' => $custody->scheduled_release_at?->format('F j, Y') ?: '',
+            'employee_checkbox' => $employmentType === 'EMPLOYEE' ? 'X' : '',
+            'others_checkbox' => $employmentType !== '' && $employmentType !== 'EMPLOYEE' ? 'X' : '',
+            'other_classification' => $otherClassification,
+            'purpose' => (string) ($version?->purpose_event ?? ''),
+            'expected_return_date' => $custody->due_at?->format('F j, Y') ?: '',
+            'date_released' => $custody->released_at?->copy()->timezone('Asia/Manila')->format('F j, Y') ?: '',
+            'release_time' => $custody->released_at?->copy()->timezone('Asia/Manila')->format('g:i A') ?: '',
+            'date_returned' => $return['signed_at']?->format('F j, Y') ?: '',
+            'remarks' => implode('; ', $return['findings'] ?? []),
+            'borrowed_by_printed_name' => (string) ($borrower?->full_name ?? ''),
+            'borrowed_by_designation' => $borrowerDesignation,
+            'borrowed_by_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'approved_by_printed_name' => (string) ($approval['name'] ?? ''),
+            'approved_by_designation' => (string) ($approval['designation'] ?? ''),
+            'approved_by_date' => $approval['signed_at']?->format('F j, Y') ?: '',
+            'issued_by_printed_name' => (string) ($issuance['name'] ?? ''),
+            'issued_by_designation' => (string) ($issuance['designation'] ?? ''),
+            'issued_by_date' => $issuance['signed_at']?->format('F j, Y') ?: '',
+            'return_received_by_printed_name' => (string) ($return['received_by_name'] ?? ''),
+            'return_received_by_designation' => (string) ($return['received_by_designation'] ?? ''),
+            'return_received_by_date' => $return['signed_at']?->format('F j, Y') ?: '',
+            'approved_by' => (string) ($approval['name'] ?? ''),
+            'items' => $custody->lines
+                ->filter(fn ($line) => (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function laundryFormRenderData(CustodyTransaction $custody): array
+    {
+        $version = $custody->request->currentVersion;
+        $borrower = $custody->request->borrower;
+
+        return [
+            'request_no' => (string) ($custody->request->request_no ?? ''),
+            'borrower_name' => (string) ($borrower?->full_name ?? ''),
+            'requesting_office' => (string) ($version?->office_unit ?? ''),
+            'date_requested' => $version?->schedule_date?->format('F j, Y') ?: $version?->needed_from?->format('F j, Y') ?: '',
+            'date_completed' => $custody->laundryJob?->worker_completed_at?->format('F j, Y') ?: '',
+            'items' => $custody->lines
+                ->filter(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required && (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function gatePassRenderData(CustodyTransaction $custody): array
+    {
+        $version = $custody->request->currentVersion;
+        $gatePass = $custody->gatePass;
+
+        return [
+            'gate_pass_no' => (string) $custody->custody_no,
+            'borrower_name' => (string) ($custody->request->borrower?->full_name ?? ''),
+            'purpose' => (string) ($gatePass?->purpose ?: $version?->purpose_event ?: ''),
+            'destination' => (string) ($gatePass?->destination ?? ''),
+            'verified_by' => (string) ($gatePass?->preparedVerifier?->full_name ?? ''),
+            'approved_by' => (string) ($gatePass?->approver?->full_name ?? ''),
+            'items' => $custody->lines
+                ->filter(fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS' && (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function billingStatementRenderData(BillingStatement $billing): array
+    {
+        return [
+            'billing_no' => (string) $billing->billing_no,
+            'borrower_name' => (string) ($billing->borrower?->full_name ?? ''),
+            'issued_date' => $billing->issued_at?->format('F j, Y') ?: '',
+            'due_date' => $billing->due_at?->format('F j, Y') ?: '',
+            'total_amount' => 'PHP '.number_format((float) $billing->total_amount, 2),
+            'items' => $billing->lines->map(fn ($line): array => [
+                'description' => (string) $line->description,
+                'amount' => 'PHP '.number_format((float) $line->amount, 2),
+            ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function rslddpRenderData(Incident $incident): array
+    {
+        return [
+            'incident_no' => (string) $incident->incident_no,
+            'borrower_name' => (string) ($incident->borrower?->full_name ?? ''),
+            'incident_type' => (string) $incident->incident_type,
+            'reported_date' => $incident->reported_at?->format('F j, Y g:i A') ?: '',
+            'items' => $incident->lines->map(fn ($line): array => [
+                'qty' => (string) ($line->quantity + 0),
+                'description' => (string) ($line->custodyLine?->requestItem?->description_snapshot ?? 'Custody line '.$line->custody_line_id),
+                'condition' => (string) $line->observed_condition,
+            ])->values()->all(),
+        ];
+    }
+
+
+    /** @return array<string,mixed> */
+    private function borrowerSlipExcelData(CustodyTransaction $custody, int $pageNumber, int $pageCount): array
+    {
+        $custody->loadMissing([
+            'request.borrower',
+            'request.currentVersion.borrowerSignature.file',
+            'request.currentVersion.approvalSteps.approver',
+            'request.currentVersion.approvalSteps.signatureSnapshot.file',
+            'releasedBy',
+            'lines.requestItem.inventoryItem',
+            'returns.lines.custodyLine.requestItem',
+        ]);
+
+        $version = $custody->request->currentVersion;
+        $borrower = $custody->request->borrower;
+        $approval = $this->approvalSignatory($version);
+        $returnInspection = $this->returnInspectionData($custody);
+        $defaults = $this->templateDefinitions->defaults('BORROWER_SLIP');
+        $employmentType = strtoupper((string) ($borrower?->employment_type?->value ?? ''));
+        $otherType = $employmentType !== '' && $employmentType !== 'EMPLOYEE'
+            ? str($employmentType)->replace('_', ' ')->title()->toString()
+            : '';
+
+        $borrowerDesignation = trim((string) ($borrower?->designation ?? ''));
+        if ($borrowerDesignation === ''
+            || strcasecmp($borrowerDesignation, AccessClassification::BorrowerOnly->label()) === 0
+            || $borrowerDesignation === $borrower?->access_classification?->label()) {
+            $borrowerDesignation = '';
+        }
+
+        $returnDate = $returnInspection['signed_at']?->format('F j, Y') ?: '';
+        $returnRemarks = implode('; ', $returnInspection['findings'] ?? []);
+
+        return [
+            'document_date' => $custody->scheduled_release_at?->format('F j, Y') ?: '',
+            'employee_checkbox' => $employmentType === 'EMPLOYEE' ? '☒' : '☐',
+            'others_checkbox' => $employmentType === 'EMPLOYEE' ? '☐' : '☒',
+            'other_type' => $otherType,
+            'reference_no' => (string) $custody->custody_no,
+            'request_no' => (string) ($custody->request->request_no ?? ''),
+            'purpose' => (string) ($version?->purpose_event ?? ''),
+            'expected_return_date' => $custody->due_at?->format('F j, Y') ?: '',
+            'borrower_signature' => ['html' => $this->signatureImage($version?->borrowerSignature, 120, 24)],
+            'borrower_name' => (string) ($borrower?->full_name ?? ''),
+            'borrower_position' => $borrowerDesignation,
+            'borrower_sign_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'head_signature' => ['html' => $this->signatureImage($approval['snapshot'], 120, 24)],
+            'head_name' => (string) ($approval['name'] ?? ''),
+            'head_role' => (string) ($approval['designation'] ?? 'SPMU Admin / Head'),
+            'approval_date' => '',
+            'issued_by_name' => (string) ($custody->releasedBy?->full_name ?? ''),
+            'issued_by_role' => $custody->releasedBy ? 'SPMU Action Officer' : '',
+            'date_released' => $custody->released_at?->format('F j, Y')
+                ?: $custody->scheduled_release_at?->format('F j, Y')
+                ?: '',
+            /* The official-layout field uses the actual physical release
+             * event, never approval, generation, or pickup-schedule time. */
+            'release_time' => $custody->released_at
+                ? $custody->released_at->copy()->timezone('Asia/Manila')->format('g:i A')
+                : '',
+            'date_returned' => $returnDate,
+            'return_remarks' => $returnRemarks,
+            'effectivity_date' => (string) ($defaults['footer_effectivity'] ?? ''),
+            'revision' => preg_replace('/^Rev\.\s*/i', '', (string) ($defaults['footer_revision'] ?? '')),
+            'page_no' => (string) $pageNumber,
+            'page_total' => (string) $pageCount,
+            'items' => $custody->lines
+                ->filter(fn ($line) => (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function laundryFormExcelData(CustodyTransaction $custody, int $pageNumber, int $pageCount): array
+    {
+        $custody->loadMissing([
+            'request.borrower',
+            'request.currentVersion.borrowerSignature.file',
+            'request.currentVersion.approvalSteps.approver',
+            'request.currentVersion.approvalSteps.signatureSnapshot.file',
+            'lines.requestItem.inventoryItem',
+            'laundryJob',
+        ]);
+
+        $version = $custody->request->currentVersion;
+        $borrower = $custody->request->borrower;
+        $approval = $this->approvalSignatory($version);
+        $defaults = $this->templateDefinitions->defaults('LAUNDRY_FORM');
+
+        $designation = trim((string) ($borrower?->designation ?? ''));
+        if ($designation === ''
+            || strcasecmp($designation, AccessClassification::BorrowerOnly->label()) === 0
+            || $designation === $borrower?->access_classification?->label()) {
+            $designation = '';
+        }
+
+        return [
+            'office_unit' => (string) ($version?->office_unit ?? ''),
+            'request_no' => (string) ($custody->request->request_no ?? ''),
+            'date_requested' => $version?->schedule_date?->format('F j, Y')
+                ?: $version?->needed_from?->format('F j, Y')
+                ?: '',
+            'date_completed' => $custody->laundryJob?->worker_completed_at?->format('F j, Y') ?: '',
+            'borrower_signature' => ['html' => $this->signatureImage($version?->borrowerSignature, 105, 20)],
+            'borrower_name' => (string) ($borrower?->full_name ?? ''),
+            'borrower_position' => $designation,
+            'request_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'head_signature' => ['html' => $this->signatureImage($approval['snapshot'], 105, 20)],
+            'head_name' => (string) ($approval['name'] ?? ''),
+            'head_role' => (string) ($approval['designation'] ?? 'SPMU Admin / Head'),
+            'approval_date' => '',
+            /* Laundry Personnel are offline/wet-signature actors. */
+            'issued_by_name' => '',
+            'issued_by_role' => '',
+            'date_released' => '',
+            'effectivity_date' => (string) ($defaults['footer_effectivity'] ?? ''),
+            'revision' => preg_replace('/^Rev\.\s*/i', '', (string) ($defaults['footer_revision'] ?? '')),
+            'page_no' => (string) $pageNumber,
+            'page_total' => (string) $pageCount,
+            'items' => $custody->lines
+                ->filter(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+                    && (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function gatePassExcelData(CustodyTransaction $custody, int $pageNumber, int $pageCount): array
+    {
+        $custody->loadMissing([
+            'request.borrower',
+            'request.currentVersion.borrowerSignature.file',
+            'lines.requestItem.inventoryItem',
+            'gatePass.preparedVerifier',
+            'gatePass.preparedVerifierSignature.file',
+            'gatePass.approver',
+            'gatePass.approverSignature.file',
+        ]);
+
+        $version = $custody->request->currentVersion;
+        $borrower = $custody->request->borrower;
+        $gatePass = $custody->gatePass;
+        $defaults = $this->templateDefinitions->defaults('GATE_PASS');
+
+        return [
+            'gate_pass_no' => (string) $custody->custody_no,
+            'document_date' => $custody->scheduled_release_at?->format('m-d-Y') ?: now()->format('m-d-Y'),
+            'borrower_name' => (string) ($borrower?->full_name ?? ''),
+            'borrower_signature' => ['html' => $this->centeredSignatureImage($version?->borrowerSignature, 120, 24)],
+            'purpose' => (string) ($gatePass?->purpose ?: $version?->purpose_event ?: ''),
+            'destination' => (string) ($gatePass?->destination ?? ''),
+            'ao_signature' => ['html' => $this->centeredSignatureImage($gatePass?->preparedVerifierSignature, 120, 24)],
+            'ao_name' => (string) ($gatePass?->preparedVerifier?->full_name ?: 'SPMU ACTION OFFICER'),
+            'ao_role' => 'SPMU Action Officer',
+            'head_signature' => ['html' => $this->centeredSignatureImage($gatePass?->approverSignature, 120, 24)],
+            'head_name' => (string) ($gatePass?->approver?->full_name ?: 'SPMU HEAD'),
+            'head_role' => 'Head, Supply and Property Management Unit',
+            'effectivity_date' => (string) ($defaults['footer_effectivity'] ?? ''),
+            'revision' => preg_replace('/^Rev\.\s*/i', '', (string) ($defaults['footer_revision'] ?? '')),
+            'page_no' => (string) $pageNumber,
+            'page_total' => (string) $pageCount,
+            'items' => $custody->lines
+                ->filter(fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+                    && (float) $line->quantity_to_receive > 0)
+                ->map(fn ($line): array => [
+                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                ])->values()->all(),
+        ];
+    }
+
     private function activeTemplate(string $type): ?DocumentTemplate
     {
-        if (! in_array($type, ['BILLING_STATEMENT', 'GATE_PASS', 'LAUNDRY_FORM'], true)) {
+        if (! in_array($type, ['BORROWER_SLIP', 'LAUNDRY_FORM', 'GATE_PASS', 'BILLING_STATEMENT', 'RSLDDP'], true)) {
             return null;
         }
 
         return DocumentTemplate::query()
-            ->with('file')
+            ->with(['file', 'renderFile'])
             ->where('document_type', $type)
             ->where('status', 'ACTIVE')
             ->orderByDesc('template_version')
             ->first();
-    }
-
-    private function applyConfiguredHtmlTemplate(string $type, string $generatedHtml, ?DocumentTemplate $template): string
-    {
-        if (! $template || $template->source_mode !== 'HTML_PLACEHOLDER' || ! $template->file) {
-            return $generatedHtml;
-        }
-
-        $source = $this->files->bytes($template->file);
-        if (! str_contains($source, '{{generated_content}}')) {
-            return $generatedHtml;
-        }
-
-        $body = $generatedHtml;
-        $generatedStyles = '';
-
-        if (preg_match('/<body[^>]*>(.*)<\/body>/is', $generatedHtml, $matches) === 1) {
-            $body = $matches[1];
-        }
-        if (preg_match('/<head[^>]*>(.*)<\/head>/is', $generatedHtml, $matches) === 1) {
-            $generatedStyles = $matches[1];
-        }
-
-        $rendered = str_replace(
-            [
-                '{{generated_content}}',
-                '{{generated_styles}}',
-                '{{document_type}}',
-                '{{template_version}}',
-                '{{generated_at}}',
-            ],
-            [
-                $body,
-                $generatedStyles,
-                e(str($type)->replace('_', ' ')->title()->toString()),
-                e($template->version_label ?: 'v'.$template->template_version.'.0'),
-                e(now()->setTimezone('Asia/Manila')->format('d F Y')),
-            ],
-            $source
-        );
-
-        if ($generatedStyles !== '' && ! str_contains($source, '{{generated_styles}}')) {
-            if (stripos($rendered, '</head>') !== false) {
-                $rendered = preg_replace('/<\/head>/i', $generatedStyles.'</head>', $rendered, 1) ?? $rendered;
-            } else {
-                $rendered = $generatedStyles.$rendered;
-            }
-        }
-
-        if (! str_contains(strtolower($rendered), '<html')) {
-            return '<!doctype html><html><head><meta charset="utf-8">'.$generatedStyles.'</head><body>'.$rendered.'</body></html>';
-        }
-
-        return $rendered;
     }
 
     private function officialHtml(
@@ -3012,7 +3416,9 @@ HTML;
      * @return array{
      *     exists: bool,
      *     signed_at: ?CarbonInterface,
-     *     findings: list<string>
+     *     findings: list<string>,
+     *     received_by_name: string,
+     *     received_by_designation: string
      * }
      */
     private function returnInspectionData(CustodyTransaction $custody): array
@@ -3065,6 +3471,8 @@ HTML;
             'exists' => $return !== null,
             'signed_at' => $return?->received_at,
             'findings' => $findings,
+            'received_by_name' => (string) ($return?->receivedBy?->full_name ?? ''),
+            'received_by_designation' => (string) ($return?->receivedBy?->designation ?? ''),
         ];
     }
 

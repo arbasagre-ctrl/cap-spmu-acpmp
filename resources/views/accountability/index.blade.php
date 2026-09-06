@@ -482,6 +482,16 @@
             $isStillOverdue = $overdue->status === 'OVERDUE';
             $isReturnedLate = in_array($overdue->status, ['RETURNED_PENDING_SETTLEMENT', 'BILLED'], true);
             $hasBilling = $overdue->status === 'BILLED';
+            $actualReturnAt = $isReturnedLate
+                ? $overdue->custody->returns->pluck('received_at')->filter()->sort()->last()
+                : null;
+            $lateThrough = $isStillOverdue
+                ? now()->startOfDay()
+                : ($actualReturnAt?->copy()->startOfDay());
+            $effectiveDueDay = $overdue->custody->due_at?->copy()->startOfDay();
+            $lateDays = $effectiveDueDay && $lateThrough && $lateThrough->gt($effectiveDueDay)
+                ? (int) $effectiveDueDay->diffInDays($lateThrough)
+                : 0;
         @endphp
 
         <article class="card top-gap">
@@ -504,6 +514,14 @@
                 <div>
                     <dt>Expected Return Date</dt>
                     <dd>{{ $overdue->custody->due_at->format('d M Y') }}</dd>
+                </div>
+                <div>
+                    <dt>Actual Physical Return</dt>
+                    <dd>{{ $actualReturnAt ? $actualReturnAt->format('d M Y') : 'Not yet completed' }}</dd>
+                </div>
+                <div>
+                    <dt>{{ $isStillOverdue ? 'Late Days So Far' : 'Final Late Days' }}</dt>
+                    <dd>{{ $lateDays }} {{ $lateDays === 1 ? 'day' : 'days' }}</dd>
                 </div>
                 <div>
                     <dt>Late Fee Rate</dt>

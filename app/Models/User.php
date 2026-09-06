@@ -25,6 +25,7 @@ class User extends Authenticatable
         'employee_no',
         'full_name', 'designation',
         'employment_type',
+        'employment_status',
         'email',
         'mobile_no',
         'notification_preferences',
@@ -56,6 +57,27 @@ class User extends Authenticatable
     public function organizationalUnit(): BelongsTo
     {
         return $this->belongsTo(OrganizationalUnit::class);
+    }
+
+    /**
+     * Organizational units that ICTU has explicitly authorized this user to
+     * represent when creating borrowing requests. The primary unit remains in
+     * users.organizational_unit_id; this relation also supports additional
+     * assignments for legitimate part-time/cross-office appointments.
+     */
+    public function authorizedOrganizationalUnits(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            OrganizationalUnit::class,
+            'user_organizational_units'
+        )
+            ->withPivot([
+                'assignment_type',
+                'assigned_by_user_id',
+                'assigned_at',
+                'revoked_at',
+            ])
+            ->wherePivotNull('revoked_at');
     }
 
     public function roles(): BelongsToMany

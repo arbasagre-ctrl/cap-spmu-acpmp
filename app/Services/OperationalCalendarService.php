@@ -140,22 +140,42 @@ class OperationalCalendarService
      * closures included) and then applies the pickup window, so there is no
      * second schedule resolver.
      */
-    public function nextPickupWindow(CarbonInterface|string $from): CarbonImmutable
+    public function nextPickupWindow(CarbonInterface|string $from): ?CarbonImmutable
     {
         $at = $this->asDateTime($from);
 
-        // The same day still counts while its window has not closed yet.
+        // The current day may still be used when Pickup / Release is enabled
+        // and a complete operating window is configured.
         if ($this->isOpenFor(self::PICKUP, $at, false)) {
             [$open, $close] = $this->operatingWindow(self::PICKUP, $at);
 
-            if ($close && $at->lte($close)) {
-                return $open && $at->lt($open) ? $open : $at;
+            if ($open && $close && $at->lte($close)) {
+                return $at->lt($open) ? $open : $at;
             }
         }
 
-        $date = $this->nextOpenDate(self::PICKUP, $at->addDay()->startOfDay(), true);
+        /*
+         * Find the next Pickup / Release day that also has a complete
+         * Open Time and Close Time. An enabled day without both times is
+         * not a valid physical transaction window.
+         */
+        $candidate = $at->addDay()->startOfDay();
 
-        return $this->operatingWindow(self::PICKUP, $date)[0];
+        for ($i = 0; $i <= 370; $i++) {
+            if ($this->isOpenFor(self::PICKUP, $candidate, false)) {
+                [$open, $close] = $this->operatingWindow(self::PICKUP, $candidate);
+
+                if ($open && $close && $open->lt($close)) {
+                    return $open;
+                }
+            }
+
+            $candidate = $candidate->addDay();
+        }
+
+        // Request creation must remain available even when no future
+        // Pickup / Release window is currently configured.
+        return null;
     }
 
     public function nextOpenDate(string $activity, CarbonInterface|string $from, bool $includeCurrent = true): CarbonImmutable
@@ -385,3 +405,4 @@ class OperationalCalendarService
             : CarbonImmutable::parse($value, $timezone);
     }
 }
+

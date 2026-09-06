@@ -4,8 +4,10 @@
     $requestRecord = $custody?->request;
     $version = $requestRecord?->currentVersion;
     $destination = $gatePass->destination ?: ($version?->location ?: '—');
-    $statusLabel = $gatePassStatusLabels[$gatePass->status] ?? str($gatePass->status)->replace('_', ' ')->title();
-    $statusTone = $gatePassStatusTones[$gatePass->status] ?? 'neutral';
+    $statusMeta = $gatePass->workflowStatus();
+    $statusLabel = $statusMeta['label'];
+    $statusTone = $statusMeta['tone'];
+    $statusKey = $statusMeta['key'];
     $releasedAt = $gatePass->guard_signed_at ?: $custody?->released_at;
     $hasFinalDocument = in_array($gatePass->status, ['READY_FOR_PRINTING', 'VERIFIED'], true) && $gatePass->passDocument;
     $hasMoreActions = $custody || $hasFinalDocument || $gatePass->accomplishedFile;
@@ -19,7 +21,7 @@
         $statusLabel,
     ]);
 @endphp
-<tr data-gate-pass-record data-search="{{ $search }}" data-status="{{ $gatePass->status }}" data-date="{{ $gatePass->updated_at?->timestamp ?? 0 }}">
+<tr data-gate-pass-record data-search="{{ $search }}" data-status="{{ $statusKey }}" data-date="{{ $gatePass->updated_at?->timestamp ?? 0 }}">
     <td><a class="gate-pass-request-link" href="{{ route('gate-passes.show', $gatePass) }}">{{ $requestRecord?->request_no ?: 'Gate Pass #'.$gatePass->id }}</a></td>
     <td><strong>{{ $borrower?->full_name ?: '—' }}</strong><small>{{ $borrower?->organizationalUnit?->unit_name ?: '—' }}</small></td>
     <td class="gate-pass-destination">{{ $destination }}</td>
@@ -30,7 +32,7 @@
             <span title="Physical release has not been recorded">—</span>
         @endif
     </td>
-    <td><span class="status-badge status-{{ $statusTone }}" title="{{ str($gatePass->status)->replace('_', ' ')->title() }}">{{ $statusLabel }}</span></td>
+    <td><span class="status-badge status-{{ $statusTone }}" title="{{ $statusLabel }}">{{ $statusLabel }}</span></td>
     <td>
         <div class="gate-pass-row-actions">
             <a class="button secondary small gate-pass-view" href="{{ route('gate-passes.show', $gatePass) }}">View details</a>

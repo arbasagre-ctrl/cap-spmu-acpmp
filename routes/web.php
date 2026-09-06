@@ -407,13 +407,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     | SPMU Laundry Operations
     |--------------------------------------------------------------------------
     |
-    | SPMU Action Officer responsibility:
-    | - verify/upload the accomplished Laundry Form in Return Inspection
-    | - encode the linen quantity/condition exactly as written by Laundry Personnel
-    | - monitor the resulting internal Laundry queue
-    | - mark serviceable linen Available after washing is actually complete
-    |
-    | The Borrower does not collect cleaned linen or encode laundry quantities.
+    | Current workflow:
+    | - the Laundry Worker is an offline actor with no system account
+    | - borrower returns linen + the physical Laundry Form to the Laundry Area
+    | - Laundry Worker checks/signs it and later delivers the form to SPMU
+    | - Action Officer uploads the form, transcribes its actual receipt date,
+    |   and encodes the linen findings without a second physical inspection
+    | - SPMU later finalizes serviceable linen availability after washing
     |
     */
 
@@ -443,6 +443,18 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->name('laundry.spmu.upload-form');
     });
 
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Laundry Processing
+    |--------------------------------------------------------------------------
+    |
+    | No separate Laundry Worker portal action is exposed. Historical
+    | LaundryRecord verification remains in code only for legacy data, while
+    | the current workflow is handled through LaundryJob + SPMU Return.
+    |
+    */
 
     /*
     |--------------------------------------------------------------------------
@@ -556,13 +568,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/reports/export/{type}', [ReportController::class, 'export'])
             ->name('reports.export');
-
-        /*
-         * The printable copy resolves its scope exactly as the screen did,
-         * so it prints the whole record set rather than the page in view.
-         */
-        Route::get('/reports/print/{type}', [ReportController::class, 'print'])
-            ->name('reports.print');
     });
 
     Route::get('/reports/audit', [ReportController::class, 'audit'])
@@ -595,9 +600,49 @@ Route::middleware(['auth', 'active'])->group(function (): void {
                 ->name('settings.update');
 
 
-            Route::post('/document-templates/{type}', [DocumentTemplateController::class, 'store'])
-                ->where('type', 'billing-statement|gate-pass|laundry-form')
-                ->name('document-templates.store');
+            Route::post('/document-templates/{type}/draft', [DocumentTemplateController::class, 'storeDraft'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->name('document-templates.draft.store');
+
+            Route::post('/document-templates/{type}/{template}/prepare', [DocumentTemplateController::class, 'prepare'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.prepare');
+
+            Route::get('/document-templates/{type}/{template}/preview', [DocumentTemplateController::class, 'preview'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.preview');
+
+            Route::get('/document-templates/{type}/{template}/sample', [DocumentTemplateController::class, 'sample'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.sample');
+
+            Route::get('/document-templates/{type}/{template}/download', [DocumentTemplateController::class, 'download'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.download');
+
+            Route::get('/document-templates/{type}/{template}/review', [DocumentTemplateController::class, 'review'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.review');
+
+            Route::get('/document-templates/{type}/{template}/render', [DocumentTemplateController::class, 'render'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.render');
+
+            Route::post('/document-templates/{type}/{template}/activate', [DocumentTemplateController::class, 'activate'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.activate');
+
+            Route::delete('/document-templates/{type}/{template}', [DocumentTemplateController::class, 'destroyDraft'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.draft.destroy');
         });
 
 

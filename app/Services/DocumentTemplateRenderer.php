@@ -1,0 +1,589 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\DocumentTemplate;
+use App\Models\StoredFile;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use setasign\Fpdi\Fpdi;
+use Symfony\Component\Process\Process;
+use Throwable;
+
+/**
+ * Produces controlled documents from an activated, immutable PDF render
+ * representation. The approved layout is always imported as the page
+ * background; transaction values are written only at confirmed positions.
+ */
+class DocumentTemplateRenderer
+{
+    public function __construct(
+        private ProtectedFileService $files,
+        private DocumentTemplateLayoutService $layouts,
+    ) {}
+
+    /**
+     * Returns a production-safe PDF representation without altering the
+     * submitted source. DOCX/XLSX conversion is deliberately done once at
+     * registration, so preview and production share the exact same base PDF.
+     *
+     * @return array{bytes:string,representation:'DIRECT_PDF'|'NORMALIZED_PDF'}
+     */
+    public function renderRepresentation(UploadedFile $upload, string $format): array
+    {
+        $bytes = (string) file_get_contents($upload->getRealPath());
+        if ($format === 'PDF') {
+            if ($this->assertImportablePdf($bytes, true)) {
+                return ['bytes' => $bytes, 'representation' => 'DIRECT_PDF'];
+            }
+
+            return ['bytes' => $this->normalizePdf($bytes), 'representation' => 'NORMALIZED_PDF'];
+        }
+
+        if (! in_array($format, ['DOCX', 'XLSX'], true)) {
+            throw ValidationException::withMessages(['template_file' => 'The uploaded layout has no supported production renderer.']);
+        }
+
+        $directory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'spmu-template-'.bin2hex(random_bytes(8));
+        if (! mkdir($directory, 0700, true) && ! is_dir($directory)) {
+            throw ValidationException::withMessages(['template_file' => 'Could not prepare a secure document-rendering workspace.']);
+        }
+
+        $extension = strtolower($format);
+        $sourcePath = $directory.DIRECTORY_SEPARATOR.'approved-layout.'.$extension;
+
+        try {
+            file_put_contents($sourcePath, $bytes);
+            $process = new Process([
+                'soffice', '--headless', '--nologo', '--nodefault', '--nolockcheck',
+                '--convert-to', 'pdf', '--outdir', $directory, $sourcePath,
+            ]);
+            $process->setTimeout(45);
+            $process->run();
+
+            $renderPath = $directory.DIRECTORY_SEPARATOR.'approved-layout.pdf';
+            if (! $process->isSuccessful() || ! is_file($renderPath)) {
+                throw ValidationException::withMessages([
+                    'template_file' => 'This layout cannot be activated because a production-ready document could not be generated.',
+                ]);
+            }
+
+            $renderBytes = (string) file_get_contents($renderPath);
+            $this->assertImportablePdf($renderBytes);
+
+            return ['bytes' => $renderBytes, 'representation' => 'NORMALIZED_PDF'];
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            report($exception);
+
+            throw ValidationException::withMessages([
+                'template_file' => 'This layout cannot be activated because a production-ready document could not be generated.',
+            ]);
+        } finally {
+            foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $path) {
+                @unlink($path);
+            }
+            @rmdir($directory);
+        }
+    }
+
+    public function canRender(DocumentTemplate $template): bool
+    {
+        try {
+            $this->assertReady($template);
+
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    public function pageCount(DocumentTemplate $template): int
+    {
+        $path = $this->temporaryPdfPath($this->renderFile($template));
+
+        try {
+            return (new Fpdi('P', 'pt'))->setSourceFile($path);
+        } catch (Throwable) {
+            return 1;
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    /** @param array<string,mixed> $data */
+    public function render(DocumentTemplate $template, array $data): string
+    {
+        $configuration = $this->assertReady($template);
+        $path = $this->temporaryPdfPath($this->renderFile($template));
+
+        try {
+            $pdf = new Fpdi('P', 'pt');
+            $pageCount = $pdf->setSourceFile($path);
+            $mappings = collect($configuration['mappings'])->keyBy('field');
+            $tableLayouts = $configuration['table_layouts'];
+            $definitions = $this->layouts->fieldDefinitions($template->document_type);
+
+            for ($page = 1; $page <= $pageCount; $page++) {
+                $imported = $pdf->importPage($page);
+                $size = $pdf->getTemplateSize($imported);
+                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                $pdf->useTemplate($imported, 0, 0, $size['width'], $size['height']);
+
+                $pageTables = [];
+                foreach ($mappings as $field => $mapping) {
+                    if ((int) $mapping['page'] !== $page || ! isset($definitions[$field])) {
+                        continue;
+                    }
+
+                    $table = $definitions[$field]['table'] ?? null;
+                    if ($table !== null) {
+                        $pageTables[$table][$field] = $mapping;
+                        continue;
+                    }
+
+                    $this->writeValue(
+                        $pdf,
+                        $mapping,
+                        $mappings->all(),
+                        (string) ($data[$field] ?? ''),
+                        $size,
+                    );
+                }
+
+                foreach ($pageTables as $table => $mappingsForTable) {
+                    $hasItemColumns = collect(array_keys($mappingsForTable))
+                        ->contains(fn (string $field): bool => str_starts_with($field, 'items.'));
+                    $rows = $hasItemColumns
+                        ? (is_array($data['items'] ?? null) ? $data['items'] : [])
+                        : ($table === 'release_return' ? [$data] : []);
+                    $this->writeTableRows(
+                        $pdf,
+                        $table,
+                        $mappingsForTable,
+                        $mappings->all(),
+                        $tableLayouts,
+                        $rows,
+                        $data,
+                        $size,
+                    );
+                }
+            }
+
+            $bytes = $pdf->Output('S');
+            $this->assertImportablePdf($bytes);
+
+            return $bytes;
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            report($exception);
+
+            throw ValidationException::withMessages([
+                'template' => 'This layout cannot be activated because a production-ready document could not be generated.',
+            ]);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    /** @return array<string,mixed> */
+    public function sampleData(string $type): array
+    {
+        $sample = $this->layouts->sampleValues($type);
+
+        return [
+            ...$sample,
+            'items' => [[
+                'qty' => (string) ($sample['items.qty'] ?? '1'),
+                'unit' => (string) ($sample['items.unit'] ?? 'Piece'),
+                'description' => (string) ($sample['items.description'] ?? 'Sample Item'),
+                'amount' => (string) ($sample['items.amount'] ?? 'PHP 150.00'),
+                'condition' => (string) ($sample['items.condition'] ?? 'Serviceable'),
+            ]],
+        ];
+    }
+
+    /** @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array{row_height_percent:float,max_rows:int}>} */
+    private function assertReady(DocumentTemplate $template): array
+    {
+        $template->loadMissing('renderFile');
+        if ($template->source_mode !== 'OFFICIAL_LAYOUT' || ! $template->renderFile) {
+            throw ValidationException::withMessages(['template' => 'The active layout has no production render representation.']);
+        }
+
+        $configuration = $this->layouts->configuration($template);
+        $analysis = $this->layouts->analysis(
+            $template->document_type,
+            $configuration['mappings'],
+            $configuration['analysis']['suggestions'] ?? [],
+            $configuration['table_layouts'],
+        );
+        if (! $analysis['ready']) {
+            throw ValidationException::withMessages(['template' => 'The active layout is missing confirmed production positions or table settings.']);
+        }
+
+        return [
+            'mappings' => $configuration['mappings'],
+            'table_layouts' => $configuration['table_layouts'],
+        ];
+    }
+
+    private function renderFile(DocumentTemplate $template): StoredFile
+    {
+        $file = $template->renderFile;
+        if (! $file) {
+            throw ValidationException::withMessages(['template' => 'The active layout has no production render representation.']);
+        }
+
+        return $file;
+    }
+
+    private function temporaryPdfPath(StoredFile $file): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'spmu-render-');
+        if ($path === false) {
+            throw ValidationException::withMessages(['template' => 'Could not prepare the controlled document renderer.']);
+        }
+
+        file_put_contents($path, $this->files->bytes($file));
+
+        return $path;
+    }
+
+    /** @param array<string,mixed> $mapping @param array<string,array<string,mixed>> $allMappings @param array{width:float,height:float} $size */
+    private function writeValue(Fpdi $pdf, array $mapping, array $allMappings, string $value, array $size): void
+    {
+        if ($value === '') {
+            return;
+        }
+
+        $x = ((float) $mapping['x'] / 100) * $size['width'];
+        $y = ((float) $mapping['y'] / 100) * $size['height'];
+        $width = $this->availableWidth($mapping, $allMappings, $size);
+        if (is_numeric($mapping['max_width_percent'] ?? null)) {
+            $width = min($width, ((float) $mapping['max_width_percent'] / 100) * $size['width']);
+        }
+        $this->writeFittedText($pdf, $x, $y, $width, $value);
+    }
+
+    /**
+     * Render a complete row at once so the tallest wrapped cell controls the
+     * height of every cell in that row. This preserves the approved table
+     * boundary and makes the preview use the same production layout path.
+     *
+     * @param array<string,array<string,mixed>> $mappingsForTable
+     * @param array<string,array<string,mixed>> $allMappings
+     * @param array<string,array<string,mixed>> $tableLayouts
+     * @param list<array<string,mixed>> $rows
+     * @param array<string,mixed> $data
+     * @param array{width:float,height:float} $size
+     */
+    private function writeTableRows(Fpdi $pdf, string $table, array $mappingsForTable, array $allMappings, array $tableLayouts, array $rows, array $data, array $size): void
+    {
+        if ($rows === []) {
+            return;
+        }
+
+        $layout = $tableLayouts[$table] ?? null;
+        if (! is_array($layout)) {
+            // Existing activated layouts may predate boundary metadata. Keep
+            // their established one-line behavior until they are prepared
+            // again, rather than inventing a table boundary at render time.
+            foreach ($mappingsForTable as $field => $mapping) {
+                foreach ($rows as $index => $row) {
+                    $value = str_starts_with($field, 'items.')
+                        ? (string) ($row[substr($field, strlen('items.'))] ?? '')
+                        : ($index === 0 ? (string) ($data[$field] ?? '') : '');
+                    $legacyMapping = $mapping;
+                    if (str_starts_with($field, 'items.')) {
+                        $legacyMapping['y'] = (float) $mapping['y']
+                            + ((float) ($tableLayouts[$table]['row_height_percent'] ?? 1.8) * $index);
+                    }
+                    $this->writeValue($pdf, $legacyMapping, $allMappings, $value, $size);
+                }
+            }
+
+            return;
+        }
+        if (count($rows) > (int) ($layout['max_rows'] ?? 0)) {
+            throw ValidationException::withMessages([
+                'template' => 'This document contains more item text than the approved form can display safely.',
+            ]);
+        }
+
+        uasort($mappingsForTable, fn (array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
+        $minimumRowHeight = ((float) $layout['row_height_percent'] / 100) * $size['height'];
+        $firstRowY = max(array_map(fn (array $mapping): float => ((float) $mapping['y'] / 100) * $size['height'], $mappingsForTable));
+        $maximumHeight = is_numeric($layout['max_height_percent'] ?? null)
+            ? ((float) $layout['max_height_percent'] / 100) * $size['height']
+            : $minimumRowHeight * (int) $layout['max_rows'];
+        $tableBottom = $firstRowY + $maximumHeight;
+        $cursorY = $firstRowY;
+
+        foreach ($rows as $index => $row) {
+            $cells = [];
+            $rowHeight = $minimumRowHeight;
+            foreach ($mappingsForTable as $field => $mapping) {
+                $value = str_starts_with($field, 'items.')
+                    ? (string) ($row[substr($field, strlen('items.'))] ?? '')
+                    : ($index === 0 ? (string) ($data[$field] ?? '') : '');
+                $x = ((float) $mapping['x'] / 100) * $size['width'];
+                $width = $this->availableWidth($mapping, $allMappings, $size);
+                $textWidth = max(12.0, $width - 3.0);
+                $lines = $this->wrappedTableLines($pdf, $value, $textWidth);
+                $lineHeight = 9.6;
+                $requiredHeight = $lines === [] ? $minimumRowHeight : max($minimumRowHeight, count($lines) * $lineHeight + 2.6);
+                $rowHeight = max($rowHeight, $requiredHeight);
+                $cells[] = compact('field', 'x', 'textWidth', 'lines', 'lineHeight');
+            }
+            if ($cursorY + $rowHeight > $tableBottom + 0.01) {
+                throw ValidationException::withMessages([
+                    'template' => 'This document contains more item text than the approved form can display safely.',
+                ]);
+            }
+
+            foreach ($cells as $cell) {
+                if ($cell['lines'] === []) {
+                    continue;
+                }
+                $textHeight = count($cell['lines']) * $cell['lineHeight'];
+                $y = $cursorY + max(1.3, ($rowHeight - $textHeight) / 2);
+                $alignment = in_array($cell['field'], ['items.qty', 'items.unit', 'date_released', 'release_time', 'date_returned'], true) ? 'C' : 'L';
+                $pdf->SetFont('Helvetica', '', 8.0);
+                foreach ($cell['lines'] as $line) {
+                    $pdf->SetXY($cell['x'] + 1.5, $y);
+                    $pdf->Cell($cell['textWidth'], $cell['lineHeight'], $this->pdfText($line), 0, 0, $alignment);
+                    $y += $cell['lineHeight'];
+                }
+            }
+            $cursorY += $rowHeight;
+        }
+    }
+
+    /** @return list<string> */
+    private function wrappedTableLines(Fpdi $pdf, string $value, float $width): array
+    {
+        $value = trim(preg_replace('/\s+/u', ' ', $value) ?? '');
+        if ($value === '') {
+            return [];
+        }
+
+        $pdf->SetFont('Helvetica', '', 8.0);
+        $lines = [];
+        $line = '';
+        foreach (preg_split('/\s+/u', $value) ?: [] as $word) {
+            $candidate = $line === '' ? $word : $line.' '.$word;
+            if ($pdf->GetStringWidth($this->pdfText($candidate)) <= $width) {
+                $line = $candidate;
+                continue;
+            }
+            if ($line !== '') {
+                $lines[] = $line;
+                $line = '';
+            }
+            foreach (mb_str_split($word) as $character) {
+                $candidate = $line.$character;
+                if ($line !== '' && $pdf->GetStringWidth($this->pdfText($candidate)) > $width) {
+                    $lines[] = $line;
+                    $line = $character;
+                } else {
+                    $line = $candidate;
+                }
+            }
+        }
+        if ($line !== '') {
+            $lines[] = $line;
+        }
+
+        return $lines;
+    }
+
+    /** @param array<string,mixed> $mapping @param array<string,array<string,mixed>> $allMappings @param array{width:float,height:float} $size */
+    private function availableWidth(array $mapping, array $allMappings, array $size, ?string $sameTable = null): float
+    {
+        $x = ((float) $mapping['x'] / 100) * $size['width'];
+        $nextX = $size['width'] - 18;
+        foreach ($allMappings as $candidate) {
+            if ((int) ($candidate['page'] ?? 0) !== (int) ($mapping['page'] ?? 0)
+                || abs((float) ($candidate['y'] ?? 0) - (float) ($mapping['y'] ?? 0)) > 1.0
+                || (float) ($candidate['x'] ?? 0) <= (float) $mapping['x']) {
+                continue;
+            }
+            if ($sameTable !== null && ! str_starts_with((string) ($candidate['field'] ?? ''), 'items.')) {
+                continue;
+            }
+            $candidateX = ((float) $candidate['x'] / 100) * $size['width'];
+            $nextX = min($nextX, $candidateX - 5);
+        }
+
+        return max(32.0, $nextX - $x);
+    }
+
+    private function writeFittedText(Fpdi $pdf, float $x, float $y, float $width, string $value): void
+    {
+        $value = trim(preg_replace('/\s+/u', ' ', $value) ?? '');
+        if ($value === '') {
+            return;
+        }
+
+        foreach ([9.0, 8.0, 7.0, 6.0] as $size) {
+            $pdf->SetFont('Helvetica', '', $size);
+            $encoded = $this->pdfText($value);
+            if ($pdf->GetStringWidth($encoded) <= $width) {
+                $pdf->SetXY($x, $y);
+                $pdf->Cell($width, $size + 2, $encoded, 0, 0, 'L');
+
+                return;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'template' => 'A transaction value does not fit in the approved mapped space. The layout needs a wider field; text was not overlapped or truncated.',
+        ]);
+    }
+
+    private function pdfText(string $value): string
+    {
+        return iconv('UTF-8', 'windows-1252//TRANSLIT//IGNORE', $value) ?: $value;
+    }
+
+    private function assertImportablePdf(string $bytes, bool $allowCompatibilityFallback = false): bool
+    {
+        if (! str_starts_with(ltrim($bytes), '%PDF-')) {
+            throw ValidationException::withMessages([
+                'template_file' => 'The uploaded file could not be read as a valid PDF.',
+            ]);
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'spmu-check-');
+        if ($path === false) {
+            throw ValidationException::withMessages([
+                'template_file' => 'This PDF is valid but could not be prepared for document generation.',
+            ]);
+        }
+
+        try {
+            @chmod($path, 0600);
+            if (file_put_contents($path, $bytes) === false) {
+                throw new \RuntimeException('Could not write the temporary PDF import file.');
+            }
+
+            $pdf = new Fpdi('P', 'pt');
+            $pageCount = $pdf->setSourceFile($path);
+            if ($pageCount < 1) {
+                throw new \RuntimeException('FPDI found no importable pages in the PDF.');
+            }
+
+            for ($page = 1; $page <= $pageCount; $page++) {
+                $template = $pdf->importPage($page);
+                $size = $pdf->getTemplateSize($template);
+                if (! isset($size['width'], $size['height']) || (float) $size['width'] <= 0 || (float) $size['height'] <= 0) {
+                    throw new \RuntimeException("FPDI imported page {$page} with invalid dimensions.");
+                }
+            }
+        } catch (Throwable $exception) {
+            $diagnostic = trim(preg_replace('/[\r\n\t]+/', ' ', $exception->getMessage()) ?? '');
+            Log::warning('Document template PDF import failed', [
+                'exception' => $exception::class,
+                'message' => mb_substr($diagnostic, 0, 500),
+                'document_format' => 'PDF',
+                'operation' => 'template_pdf_import',
+            ]);
+
+            $reason = strtolower($diagnostic);
+            $userMessage = match (true) {
+                preg_match('/encrypt|password|security|permission|protected/', $reason) === 1
+                    => 'This PDF is password-protected or encrypted. Upload an unprotected copy.',
+                preg_match('/corrupt|malformed|unexpected end|xref|cross-reference|trailer|invalid pdf|not a pdf|unable to find/', $reason) === 1
+                    => 'The uploaded file could not be read as a valid PDF.',
+                default => 'This PDF is valid but could not be prepared for document generation.',
+            };
+
+            if ($allowCompatibilityFallback && $this->isFpdiCompatibilityFailure($reason)) {
+                return false;
+            }
+
+            throw ValidationException::withMessages(['template_file' => $userMessage]);
+        } finally {
+            @unlink($path);
+        }
+
+        return true;
+    }
+
+    private function isFpdiCompatibilityFailure(string $reason): bool
+    {
+        return preg_match('/compression technique.*not supported|unsupported.*(?:compression|object stream|filter|parser)|object stream.*not supported|free parser/', $reason) === 1;
+    }
+
+    private function normalizePdf(string $bytes): string
+    {
+        $directory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'spmu-pdf-normalize-'.bin2hex(random_bytes(8));
+        if (! mkdir($directory, 0700, true) && ! is_dir($directory)) {
+            throw ValidationException::withMessages([
+                'template_file' => 'This PDF could not be prepared for document generation.',
+            ]);
+        }
+
+        $sourcePath = $directory.DIRECTORY_SEPARATOR.'approved-layout.pdf';
+        $normalizedPath = $directory.DIRECTORY_SEPARATOR.'production-layout.pdf';
+
+        try {
+            if (file_put_contents($sourcePath, $bytes) === false) {
+                throw new \RuntimeException('Could not write the temporary PDF normalization source.');
+            }
+            @chmod($sourcePath, 0600);
+
+            $process = new Process([
+                'gs',
+                '-dSAFER',
+                '-dBATCH',
+                '-dNOPAUSE',
+                '-dQUIET',
+                '-sDEVICE=pdfwrite',
+                '-dCompatibilityLevel=1.4',
+                '-dPDFSETTINGS=/prepress',
+                '-dEmbedAllFonts=true',
+                '-dSubsetFonts=true',
+                '-dAutoRotatePages=/None',
+                '-sOutputFile='.$normalizedPath,
+                $sourcePath,
+            ]);
+            $process->setTimeout(90);
+            $process->run();
+
+            if (! $process->isSuccessful() || ! is_file($normalizedPath)) {
+                throw new \RuntimeException('Ghostscript did not produce a normalized PDF (exit code '.($process->getExitCode() ?? 'unknown').').');
+            }
+
+            $normalized = file_get_contents($normalizedPath);
+            if (! is_string($normalized) || $normalized === '') {
+                throw new \RuntimeException('Ghostscript produced an empty normalized PDF.');
+            }
+
+            $this->assertImportablePdf($normalized);
+
+            return $normalized;
+        } catch (Throwable $exception) {
+            $diagnostic = trim(preg_replace('/[\r\n\t]+/', ' ', $exception->getMessage()) ?? '');
+            Log::warning('Document template PDF normalization failed', [
+                'exception' => $exception::class,
+                'message' => mb_substr($diagnostic, 0, 500),
+                'document_format' => 'PDF',
+                'operation' => 'template_pdf_normalization',
+            ]);
+
+            throw ValidationException::withMessages([
+                'template_file' => 'This PDF could not be prepared for document generation.',
+            ]);
+        } finally {
+            foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $path) {
+                @unlink($path);
+            }
+            @rmdir($directory);
+        }
+    }
+}

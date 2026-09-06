@@ -8,3 +8,4 @@
 <button class="button secondary ui-pressable" type="button" id="request-filter-reset">
     Clear filters
 </button>
+

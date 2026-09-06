@@ -63,8 +63,9 @@ class LaundryJob extends Model
 
     /**
      * The accomplished Laundry Form is on file and verified, which is the
-     * evidence that Laundry Personnel physically received the returned linen,
-     * recorded quantity/condition, and wet-signed "Received by".
+     * evidence that the offline Laundry Worker physically received the returned
+     * linen, recorded quantity/condition, wet-signed "Received by", and later
+     * delivered the accomplished form to SPMU.
      */
     public function hasVerifiedAccomplishedForm(): bool
     {
@@ -74,18 +75,20 @@ class LaundryJob extends Model
     /*
      * DISPLAY-ONLY READING OF THE PHYSICAL SEQUENCE
      * ---------------------------------------------
-     * FOR_LAUNDRY covers the period from physical release until SPMU has
-     * encoded the completed linen return. The verified accomplished form tells
-     * us that Laundry Personnel have already received the linen and wet-signed
-     * the physical form, even if SPMU has not encoded the return yet.
+     * Laundry Personnel are a physical/offline actor with no portal account.
+     * FOR_LAUNDRY covers the offline period while Laundry Personnel receive,
+     * wash/assess the linen, complete the physical form, and deliver that form
+     * to SPMU. TURNED_OVER_TO_LAUNDRY is retained as the internal post-encoding
+     * state, but the UI presents it as availability finalization rather than a
+     * second physical Laundry step.
      */
     public function displayStatusLabel(): string
     {
         return match (true) {
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
                 => 'Ready for SPMU Encoding',
-            $this->status === 'FOR_LAUNDRY' => 'Accomplished Form Pending',
-            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Laundry Processing',
+            $this->status === 'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Availability Finalization',
             $this->status === 'LAUNDRY_COMPLETED' => 'Available',
             default => str($this->status)->replace('_', ' ')->title(),
         };
@@ -95,13 +98,13 @@ class LaundryJob extends Model
     {
         return match (true) {
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
-                => 'Accomplished Laundry Form on file · awaiting SPMU return encoding',
+                => 'Completed Laundry Form received · awaiting SPMU return encoding',
             $this->status === 'FOR_LAUNDRY'
-                => 'Accomplished Laundry Form has not yet been uploaded',
+                => 'Laundry Personnel are processing the linen offline · completed form not yet received by SPMU',
             $this->status === 'TURNED_OVER_TO_LAUNDRY'
-                => 'SPMU return encoded · laundry processing pending',
+                => 'SPMU return encoded · serviceable linen ready for availability finalization',
             $this->status === 'LAUNDRY_COMPLETED'
-                => 'Clean/serviceable linen available',
+                => 'Serviceable linen available',
             default => $this->displayStatusLabel(),
         };
     }

@@ -15,6 +15,7 @@ class DocumentTemplate extends Model
         'template_name',
         'content_template',
         'stored_file_id',
+        'render_stored_file_id',
         'source_mode',
         'change_reason',
         'status',
@@ -34,6 +35,11 @@ class DocumentTemplate extends Model
     public function file(): BelongsTo
     {
         return $this->belongsTo(StoredFile::class, 'stored_file_id');
+    }
+
+    public function renderFile(): BelongsTo
+    {
+        return $this->belongsTo(StoredFile::class, 'render_stored_file_id');
     }
 
     public function configuredBy(): BelongsTo

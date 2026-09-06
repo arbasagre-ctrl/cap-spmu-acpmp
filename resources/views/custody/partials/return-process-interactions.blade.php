@@ -8,6 +8,58 @@
         });
     }
 
+    // Classify the selected Laundry RECEIVED BY date against the expected return date.
+    // The calendar has no upper cap so early, on-time, and late dates remain selectable.
+    const laundryDateInput = document.querySelector('[data-laundry-return-date]');
+    const laundryDateStatus = document.querySelector('[data-laundry-return-date-status]');
+
+    if (laundryDateInput && laundryDateInput.dataset.dynamicDateInitialized !== '1') {
+        laundryDateInput.dataset.dynamicDateInitialized = '1';
+
+        const dateOrdinal = (value) => {
+            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+            if (!match) return null;
+            return Math.floor(Date.UTC(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3])
+            ) / 86400000);
+        };
+
+        const refreshLaundryDateStatus = () => {
+            if (!laundryDateStatus) return;
+
+            const selected = laundryDateInput.value;
+            const due = laundryDateInput.dataset.dueDate || '';
+
+            if (!selected) {
+                laundryDateStatus.textContent = '';
+                return;
+            }
+
+            if (laundryDateInput.min && selected < laundryDateInput.min) {
+                laundryDateStatus.textContent = 'Date cannot be earlier than the release date.';
+                return;
+            }
+
+            const selectedDay = dateOrdinal(selected);
+            const dueDay = dateOrdinal(due);
+
+            if (selectedDay === null || dueDay === null) {
+                laundryDateStatus.textContent = '';
+                return;
+            }
+
+            const difference = selectedDay - dueDay;
+            laundryDateStatus.textContent = difference > 0
+                ? `Late by ${difference} day${difference === 1 ? '' : 's'}.`
+                : '';
+        };
+
+        laundryDateInput.addEventListener('change', refreshLaundryDateStatus);
+        refreshLaundryDateStatus();
+    }
+
     const form = document.getElementById('full-return-accounting-form');
     if (!form || form.dataset.returnInspectionInitialized === '1') return;
     form.dataset.returnInspectionInitialized = '1';
@@ -36,10 +88,22 @@
     const refresh = () => {
         let selected = 0;
         let allValid = true;
+        let availableRows = 0;
 
         rows.forEach((row) => {
+            const linenPending = row.dataset.linenPending === '1';
             const outstanding = Number.parseFloat(row.dataset.outstanding || '0');
             const inputs = [...row.querySelectorAll('.return-accounting-input')];
+
+            if (linenPending) {
+                const totalLabel = row.querySelector('.return-accounted-total');
+                const stateLabel = row.querySelector('.return-accounted-state');
+                if (totalLabel) totalLabel.textContent = `0 / ${outstanding}`;
+                if (stateLabel) stateLabel.textContent = 'Pending Form';
+                return;
+            }
+
+            availableRows++;
             if (inputs.some((input) => !input.validity.valid)) allValid = false;
             const total = inputs.reduce((sum, input) => sum + numberValue(input), 0);
             const nonFine = inputs
@@ -76,19 +140,26 @@
             }
         });
 
-        // Mirrors the server-side linen rule in CustodyService::receiveReturn.
-        const laundryFormMissing = form.dataset.laundryFormMissing === '1';
-        const ready = selected > 0 && allValid && !laundryFormMissing;
+        // Linen rows with a pending form are disabled individually. They must
+        // not block an otherwise valid non-linen inspection in the same custody.
+        if (availableRows === 0) {
+            button.disabled = true;
+            message.hidden = true;
+            return;
+        }
+
+        message.hidden = false;
+        const ready = selected > 0 && allValid;
         button.disabled = !ready;
         message.classList.toggle('warning', !ready);
         message.classList.toggle('success', ready);
         if (warningIcon) warningIcon.hidden = ready;
         if (successIcon) successIcon.hidden = !ready;
-        messageCopy.textContent = laundryFormMissing
-            ? 'Completed Laundry Form required before the linen return can be finalized.'
-            : (ready
-                ? 'Selected item quantities are fully accounted. You may record the SPMU inspection.'
-                : 'For each selected item, Fine + Damaged + Destroyed + Missing + Lost + Stolen must equal its full outstanding quantity.');
+        messageCopy.textContent = ready
+            ? 'Ready to record inspection.'
+            : (availableRows > 0
+                ? 'Accounted quantities must match the outstanding total.'
+                : 'Upload the Laundry Form to continue.');
     };
 
     rows.forEach((row) => {

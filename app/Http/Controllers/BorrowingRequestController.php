@@ -6,13 +6,14 @@ use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Models\BorrowingRequest;
 use App\Models\InventoryItem;
+use App\Models\OrganizationalUnit;
 use App\Models\RequestItem;
 use App\Models\RequestSupportingDocument;
 use App\Models\RequestVersion;
+use App\Models\User;
 use App\Services\InventoryService;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
-use App\Support\OrganizationalStructure;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -25,29 +26,51 @@ use Illuminate\View\View;
 class BorrowingRequestController extends Controller
 {
     /**
-     * The canonical office/unit list, grouped by division.
-     *
-     * Kept as a thin accessor so the existing call sites and the request form
-     * contract stay identical; OrganizationalStructure owns the data.
-     *
-     * @return array<string, list<string>>
+     * Return active Office / Unit assignments that ICTU has authorized this
+     * borrower to represent. The primary assignment is always included.
      */
-    private static function officeUnitsByDivision(): array
+    private function authorizedRequestingUnits(User $user)
     {
-        return OrganizationalStructure::unitsByDivision();
+        $unitIds = $user->authorizedOrganizationalUnits()
+            ->pluck('organizational_units.id')
+            ->push($user->organizational_unit_id)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        return OrganizationalUnit::query()
+            ->where('active', true)
+            ->whereIn('id', $unitIds)
+            ->orderBy('unit_name')
+            ->get();
     }
 
     /**
-     * Reverse-lookup: given a borrower's home organizational-unit name,
-     * find which division key (if any) contains a matching office/unit
-     * entry, so a brand-new request can be prefilled instead of forcing
-     * the borrower to retype what is already on their profile.
-     *
-     * @return array{0: ?string, 1: ?string}
+     * @return list<array{id:int,name:string,division_code:string,division_label:string,is_primary:bool}>
      */
-    private static function divisionAndOfficeUnitFor(?string $unitName): array
+    private function requestingUnitOptions(User $user): array
     {
-        return OrganizationalStructure::divisionAndUnitFor($unitName);
+        return $this->authorizedRequestingUnits($user)
+            ->map(function (OrganizationalUnit $unit) use ($user): ?array {
+                $divisionCode = $unit->divisionCode();
+                $divisionLabel = $unit->divisionLabel();
+
+                if (! $divisionCode || ! $divisionLabel) {
+                    return null;
+                }
+
+                return [
+                    'id' => (int) $unit->id,
+                    'name' => $unit->unit_name,
+                    'division_code' => $divisionCode,
+                    'division_label' => $divisionLabel,
+                    'is_primary' => (int) $unit->id === (int) $user->organizational_unit_id,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
     }
 
     public function index(Request $request): View
@@ -65,14 +88,134 @@ class BorrowingRequestController extends Controller
                 'borrower_user_id',
                 $request->user()->id
             );
-        } elseif (
-            $workspace === 'SPMU'
-            && $request->user()->access_classification === AccessClassification::SpmuOfficer
-        ) {
-            $query->where(function ($query): void {
-                $query->where('status', RequestStatus::UnderSpmu)
-                    ->orWhereNotNull('final_approved_at');
-            });
+        } elseif ($workspace === 'SPMU') {
+            $user = $request->user();
+
+            if (
+                $user->access_classification
+                    === AccessClassification::SpmuOfficer
+            ) {
+                $isDelegatedOfficer =
+                    $user->activeDelegationFor('SPMU') !== null;
+
+                /*
+                 * ACTION OFFICER RECORD VISIBILITY
+                 *
+                 * During active review:
+                 * - show only requests currently waiting for AO verification
+                 *   (sequence 1).
+                 *
+                 * After final approval:
+                 * - show again because AO handles pickup, release, return,
+                 *   Gate Pass, Laundry, and custody operations.
+                 *
+                 * A formally delegated officer may additionally see the
+                 * Head/Admin decision step while that delegation is active.
+                 */
+                $query->where(
+                    function ($query) use ($isDelegatedOfficer): void {
+                        $query
+                            ->whereNotNull('final_approved_at')
+                            ->orWhere(
+                                function ($query) use ($isDelegatedOfficer): void {
+                                    $query
+                                        ->where(
+                                            'status',
+                                            RequestStatus::UnderSpmu
+                                        )
+                                        ->where(
+                                            function ($query) use ($isDelegatedOfficer): void {
+                                                $query->whereHas(
+                                                    'currentVersion.approvalSteps',
+                                                    fn ($step) => $step
+                                                        ->where(
+                                                            'stage_code',
+                                                            'SPMU'
+                                                        )
+                                                        ->where(
+                                                            'sequence_no',
+                                                            1
+                                                        )
+                                                        ->whereIn(
+                                                            'decision',
+                                                            [
+                                                                'PENDING',
+                                                                'RECEIVED',
+                                                            ]
+                                                        )
+                                                );
+
+                                                if ($isDelegatedOfficer) {
+                                                    $query->orWhereHas(
+                                                        'currentVersion.approvalSteps',
+                                                        fn ($step) => $step
+                                                            ->where(
+                                                                'stage_code',
+                                                                'SPMU'
+                                                            )
+                                                            ->where(
+                                                                'sequence_no',
+                                                                2
+                                                            )
+                                                            ->whereIn(
+                                                                'decision',
+                                                                [
+                                                                    'PENDING',
+                                                                    'RECEIVED',
+                                                                ]
+                                                            )
+                                                    );
+                                                }
+                                            }
+                                        );
+                                }
+                            );
+                    }
+                );
+            } elseif (
+                $user->access_classification
+                    === AccessClassification::SpmuHead
+            ) {
+                /*
+                 * HEAD / ADMIN RECORD VISIBILITY
+                 *
+                 * While UNDER_SPMU:
+                 * - show only requests that already have sequence 2
+                 *   (Head/Admin final decision).
+                 *
+                 * Therefore an OFF-CAMPUS request still waiting for AO
+                 * verification is not yet visible as an active Admin record.
+                 *
+                 * Historical records remain available for oversight.
+                 */
+                $query->where(function ($query): void {
+                    $query
+                        ->where(
+                            'status',
+                            '!=',
+                            RequestStatus::UnderSpmu
+                        )
+                        ->orWhereHas(
+                            'currentVersion.approvalSteps',
+                            fn ($step) => $step
+                                ->where(
+                                    'stage_code',
+                                    'SPMU'
+                                )
+                                ->where(
+                                    'sequence_no',
+                                    2
+                                )
+                                ->whereIn(
+                                    'decision',
+                                    [
+                                        'PENDING',
+                                        'RECEIVED',
+                                    ]
+                                )
+                        );
+                });
+            }
         }
 
         /*
@@ -92,16 +235,22 @@ class BorrowingRequestController extends Controller
     public function create(Request $request): View
     {
         /*
-         * Prefill Division / Office from the borrower's own profile so they
-         * are not asked to retype information already on file. This is only
-         * a default: the field stays editable and is still snapshotted onto
-         * the request version, since a specific borrowing can legitimately
-         * be attributed to a different unit than the borrower's home office.
+         * Organizational identity is centrally managed by ICTU. A borrower
+         * with one authorized unit sees it read-only. A borrower with multiple
+         * official assignments may choose only from those authorized units.
          */
-        $borrower = $request->user()->loadMissing('organizationalUnit');
-        [$prefillDivisionCode, $prefillOfficeUnit] = self::divisionAndOfficeUnitFor(
-            $borrower->organizationalUnit?->unit_name
-        );
+        $borrower = $request->user()->loadMissing(['organizationalUnit', 'authorizedOrganizationalUnits']);
+        $requestingUnitOptions = $this->requestingUnitOptions($borrower);
+
+        $prefillRequestingUnitId = collect($requestingUnitOptions)
+            ->firstWhere('is_primary', true)['id']
+            ?? ($requestingUnitOptions[0]['id'] ?? null);
+
+        $prefillOption = collect($requestingUnitOptions)
+            ->firstWhere('id', $prefillRequestingUnitId);
+
+        $prefillDivisionCode = $prefillOption['division_code'] ?? null;
+        $prefillOfficeUnit = $prefillOption['name'] ?? null;
 
         return view(
             'requests.form',
@@ -116,7 +265,9 @@ class BorrowingRequestController extends Controller
                  */
                 'pickupAvailability' => $this->pickupAvailability(),
 
-                'officeUnitsByDivision' => self::officeUnitsByDivision(),
+                'officeUnitsByDivision' => [],
+                'requestingUnitOptions' => $requestingUnitOptions,
+                'prefillRequestingUnitId' => $prefillRequestingUnitId,
                 'prefillDivisionCode' => $prefillDivisionCode,
                 'prefillOfficeUnit' => $prefillOfficeUnit,
 
@@ -208,7 +359,7 @@ class BorrowingRequestController extends Controller
                             $user->id,
 
                         'accountable_unit_id' =>
-                            $user->organizational_unit_id,
+                            $data['requesting_organizational_unit_id'],
 
                         'current_version_no' =>
                             1,
@@ -360,6 +511,13 @@ class BorrowingRequestController extends Controller
             'currentVersion.approvalSteps',
         ]);
 
+        $borrower = $request->user()->loadMissing(['organizationalUnit', 'authorizedOrganizationalUnits']);
+        $requestingUnitOptions = $this->requestingUnitOptions($borrower);
+        $prefillRequestingUnitId = collect($requestingUnitOptions)
+            ->contains(fn (array $option) => (int) $option['id'] === (int) $borrowingRequest->accountable_unit_id)
+                ? (int) $borrowingRequest->accountable_unit_id
+                : null;
+
         return view(
             'requests.form',
             [
@@ -369,7 +527,9 @@ class BorrowingRequestController extends Controller
                 'version' =>
                     $borrowingRequest->currentVersion,
 
-                'officeUnitsByDivision' => self::officeUnitsByDivision(),
+                'officeUnitsByDivision' => [],
+                'requestingUnitOptions' => $requestingUnitOptions,
+                'prefillRequestingUnitId' => $prefillRequestingUnitId,
                 'prefillDivisionCode' => null,
                 'prefillOfficeUnit' => null,
 
@@ -421,6 +581,10 @@ class BorrowingRequestController extends Controller
                 $request,
                 $inventory
             ): void {
+                $borrowingRequest->update([
+                    'accountable_unit_id' => $data['requesting_organizational_unit_id'],
+                ]);
+
                 $versionNo =
                     $borrowingRequest->status
                         === RequestStatus::ReturnedForRevision
@@ -715,15 +879,9 @@ class BorrowingRequestController extends Controller
                 'max:255',
             ],
 
-            'division_code' => [
+            'requesting_organizational_unit_id' => [
                 'required',
-                Rule::in(OrganizationalStructure::divisionCodes()),
-            ],
-
-            'office_unit' => [
-                'required',
-                'string',
-                'max:255',
+                'integer',
             ],
 
             'schedule_date' => [
@@ -861,6 +1019,43 @@ class BorrowingRequestController extends Controller
             ],
         ]);
 
+        $borrower = $request->user()->loadMissing([
+            'organizationalUnit',
+            'authorizedOrganizationalUnits',
+        ]);
+
+        $authorizedUnit = $this->authorizedRequestingUnits($borrower)
+            ->firstWhere(
+                'id',
+                (int) $data['requesting_organizational_unit_id']
+            );
+
+        if (! $authorizedUnit) {
+            throw ValidationException::withMessages([
+                'requesting_organizational_unit_id' =>
+                    'Choose one of the Office / Unit assignments authorized for your account by ICTU.',
+            ]);
+        }
+
+        $divisionCode = $authorizedUnit->divisionCode();
+        $officeUnit = $authorizedUnit->unit_name;
+
+        if (! $divisionCode) {
+            throw ValidationException::withMessages([
+                'requesting_organizational_unit_id' =>
+                    'The selected Office / Unit does not have a valid Division classification. Contact ICTU.',
+            ]);
+        }
+
+        /*
+         * Snapshot the official ICTU-managed affiliation onto this request
+         * version. Analytics already reads division_code / office_unit from
+         * the request snapshot, so later profile changes do not rewrite
+         * historical borrowing results.
+         */
+        $data['division_code'] = $divisionCode;
+        $data['office_unit'] = $officeUnit;
+
         $timezone =
             config('app.timezone')
             ?: 'Asia/Manila';
@@ -903,17 +1098,6 @@ class BorrowingRequestController extends Controller
             ]);
         }
 
-
-        if (! in_array(
-            $data['office_unit'],
-            self::officeUnitsByDivision()[$data['division_code']] ?? [],
-            true
-        )) {
-            throw ValidationException::withMessages([
-                'office_unit' =>
-                    'Choose an Office / Academic Unit / Research Unit that belongs to the selected Division.',
-            ]);
-        }
 
         if (
             ($data['intent'] ?? 'draft') === 'submit'
@@ -1333,24 +1517,38 @@ class BorrowingRequestController extends Controller
 
         $isDelegatedOfficer = $workspace === 'SPMU'
             && $user->access_classification === AccessClassification::SpmuOfficer
-            && $user->activeDelegationFor('SPMU') !== null
-            && $borrowingRequest->status === RequestStatus::UnderSpmu;
+            && $user->activeDelegationFor('SPMU') !== null;
 
+        /*
+         * During UNDER_SPMU review, access follows the CURRENT approval step:
+         *
+         * sequence 1 = Action Officer only
+         * sequence 2 = Head / Admin only
+         */
+        $isAuthorizedActiveReviewer =
+            $borrowingRequest->status === RequestStatus::UnderSpmu
+            && ($canVerify || $canDecide);
+
+        /*
+         * After final approval, AO regains access because responsibility
+         * transfers to pickup/release/return operations.
+         */
         $isOperationalOfficer = $workspace === 'SPMU'
             && $user->access_classification === AccessClassification::SpmuOfficer
-            && (
-                $borrowingRequest->final_approved_at !== null
-                || $borrowingRequest->status === RequestStatus::UnderSpmu
-                || $canVerify
-            );
+            && $borrowingRequest->final_approved_at !== null;
+
+        /*
+         * Head/Admin keeps historical oversight after the active review stage.
+         */
+        $isHistoricalDecisionViewer =
+            $borrowingRequest->status !== RequestStatus::UnderSpmu
+            && ($isSpmuHead || $isDelegatedOfficer);
 
         abort_unless(
             $isBorrowerOwner
-            || $isSpmuHead
-            || $isDelegatedOfficer
+            || $isAuthorizedActiveReviewer
             || $isOperationalOfficer
-            || $canVerify
-            || $canDecide,
+            || $isHistoricalDecisionViewer,
             403
         );
     }

@@ -3,14 +3,17 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
+use App\Models\BorrowerRestriction;
 use App\Models\EvidenceSubmission;
 use App\Models\GeneratedDocument;
 use App\Models\LaundryJob;
+use App\Models\OverdueCase;
 use App\Models\User;
 use App\Services\AuditService;
 use App\Services\CustodyService;
 use App\Services\NotificationService;
 use App\Services\ProtectedFileService;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -101,10 +104,15 @@ class LaundryController extends Controller
     }
 
     /**
-     * Internal Laundry processing step. The quantity/condition split has already
-     * been encoded by the Action Officer from the accomplished Laundry Form at
-     * Return Inspection. Only serviceable linen entered the LAUNDRY inventory
-     * state, so this action simply marks that known quantity clean/available.
+     * Availability-finalization step.
+     *
+     * Laundry Personnel are physical/offline actors and do not use the portal.
+     * By the time this action is available, the offline Laundry Worker has
+     * received/checked the linen, completed the physical Laundry Form, and
+     * delivered that form to SPMU. The Action Officer has already uploaded the
+     * form and encoded the return findings. This action
+     * does not represent washing; it only restores the already-confirmed
+     * serviceable quantity to Available inventory.
      */
     public function completeProcessing(
         Request $request,
@@ -151,7 +159,7 @@ class LaundryController extends Controller
 
                 if (! $job->hasVerifiedAccomplishedForm() || ! $allLinenReturned) {
                     throw ValidationException::withMessages([
-                        'laundry' => 'Encode the accomplished Laundry Form in SPMU Return first. Internal laundry completion begins only after the serviceable linen quantity has been recorded from that form.',
+                        'laundry' => 'Encode the accomplished Laundry Form in SPMU Return first. Availability finalization begins only after the serviceable linen quantity has been recorded from the completed form.',
                     ]);
                 }
 
@@ -168,14 +176,12 @@ class LaundryController extends Controller
 
                 $job->update([
                     'status' => 'TURNED_OVER_TO_LAUNDRY',
-                    'worker_received_at' => $job->worker_received_at
-                        ?: ($job->form_verified_at ?: now()),
                 ]);
             }
 
             if ($job->status !== 'TURNED_OVER_TO_LAUNDRY') {
                 throw ValidationException::withMessages([
-                    'laundry' => 'Encode the accomplished Laundry Form in SPMU Return first. Internal laundry completion begins only after the serviceable linen quantity has been recorded from that form.',
+                    'laundry' => 'Encode the accomplished Laundry Form in SPMU Return first. Availability finalization begins only after the serviceable linen quantity has been recorded from the completed form.',
                 ]);
             }
 
@@ -184,7 +190,7 @@ class LaundryController extends Controller
                 'transaction_type' => 'LAUNDRY_COMPLETION',
                 'source_type' => LaundryJob::class,
                 'source_id' => $job->id,
-                'reason' => 'Internal Laundry washing completed for serviceable linen already classified from the accomplished Laundry Form.',
+                'reason' => 'Serviceable linen confirmed from the completed Laundry Form and SPMU return encoding; restored to Available inventory.',
                 'correlation_id' => (string) Str::uuid(),
                 'occurred_at' => now(),
                 'created_at' => now(),
@@ -219,8 +225,6 @@ class LaundryController extends Controller
 
             $job->update([
                 'status' => 'LAUNDRY_COMPLETED',
-                'worker_name' => $job->worker_name ?: $request->user()->full_name,
-                'worker_completed_at' => now(),
                 'worker_remarks' => $data['worker_remarks'] ?? $job->worker_remarks,
                 'ready_at' => now(),
                 'completed_at' => now(),
@@ -241,28 +245,32 @@ class LaundryController extends Controller
             $notifications->send(
                 'LAUNDRY_PROCESSING_COMPLETED',
                 $this->spmuRecipients(),
-                "Internal laundry processing for {$job->custody->custody_no} was completed. The serviceable linen already classified from the accomplished Laundry Form was restored to Available inventory.",
+                "Linen availability for {$job->custody->custody_no} was finalized. The serviceable quantity was restored to Available inventory.",
                 $job,
                 ['SYSTEM']
             );
         }, 3);
 
-        return back()->with(
-            'status',
-            'Internal laundry completion recorded. Clean linen is back in Available inventory.'
-        );
+        return redirect()
+            ->to(route('custody.return.show', $laundryJob->custody_transaction_id).'#return-summary')
+            ->with(
+                'status',
+                'Linen availability finalized. Serviceable linen is Available. The transaction has returned to Return tracking.'
+            );
     }
 
     /**
      * Verify and archive the same travelling physical Laundry Form once it
      * carries the Laundry Personnel wet signatures.
      *
-     * The borrower returns linen to the Laundry Area first, so the
-     * accomplished form normally arrives while the case is still
-     * FOR_LAUNDRY. It is the documentary basis for the linen condition
-     * encoded in the SPMU Return Inspection, which is blocked until this
-     * upload exists. Laundry Operations only reads the archived form; it does
-     * not provide a second upload/turnover step.
+     * The borrower returns linen to the Laundry Area first. The Laundry Worker
+     * checks the actual quantity/condition at handover, records any finding,
+     * wet-signs Received by and the Date row, and keeps the accomplished form.
+     * The Laundry Worker later delivers that physical form directly to SPMU.
+     * The Action Officer uploads it while the case is still FOR_LAUNDRY. The
+     * physical Laundry receipt
+     * date — not the later SPMU upload/encoding time — is the borrower's return
+     * compliance date. No Laundry portal login or second turnover action exists.
      */
     public function upload(
         Request $request,
@@ -282,6 +290,11 @@ class LaundryController extends Controller
                 'mimes:pdf,png,jpg,jpeg,webp',
                 'max:'.$maxKb,
             ],
+            'laundry_received_on' => [
+                $laundryJob->status === 'FOR_LAUNDRY' ? 'required' : 'nullable',
+                'date',
+                'before_or_equal:today',
+            ],
         ]);
 
         DB::transaction(function () use (
@@ -294,31 +307,39 @@ class LaundryController extends Controller
         ): void {
             $job = LaundryJob::query()
                 ->lockForUpdate()
-                ->with(['custody.borrower'])
+                ->with([
+                    'custody.borrower',
+                    'custody.lines.requestItem.inventoryItem',
+                ])
                 ->findOrFail($laundryJob->id);
 
             if (! in_array($job->status, ['FOR_LAUNDRY', 'TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
                 throw ValidationException::withMessages([
-                    'evidence' => 'Upload the Laundry Form only after Laundry Personnel has physically received the returned linen, recorded the condition, and signed Received by.',
+                    'evidence' => 'Upload the Laundry Form only after Laundry Personnel have checked the returned linen, recorded the quantity/condition, signed Received by, and written the Date.',
                 ]);
             }
 
             /*
-             * FOR_LAUNDRY starts at physical release, so it also covers the
-             * period while the borrower still holds the linen. Laundry
-             * Personnel are not system users: at this stage the upload is the
-             * system record that the physical receipt happened. The Action
-             * Officer therefore attests that the uploaded accomplished form
-             * contains the Laundry Personnel RECEIVED BY wet signature. Later
-             * stages already have that receipt recorded and are left untouched.
+             * FOR_LAUNDRY starts at physical release and remains the portal
+             * state while the physical/offline Laundry process is underway.
+             * The Laundry Worker is not a system user. The Action Officer uploads
+             * the accomplished form and records the physical RECEIVED BY date.
              */
             $attestsPhysicalReceipt = $job->status === 'FOR_LAUNDRY';
 
-            if ($attestsPhysicalReceipt
-                && ! $request->boolean('laundry_received_signature_confirmed')) {
-                throw ValidationException::withMessages([
-                    'laundry_received_signature_confirmed' => 'Confirm that this is the accomplished Laundry Form signed by Laundry Personnel.',
-                ]);
+            $physicalReceivedAt = $job->worker_received_at;
+
+            if ($attestsPhysicalReceipt) {
+                $physicalReceivedAt = CarbonImmutable::parse(
+                    (string) $data['laundry_received_on']
+                )->startOfDay();
+
+                if ($job->custody->released_at
+                    && $physicalReceivedAt->lt($job->custody->released_at->copy()->startOfDay())) {
+                    throw ValidationException::withMessages([
+                        'laundry_received_on' => 'Laundry received date cannot be earlier than the physical release date.',
+                    ]);
+                }
             }
 
             $document = $this->currentLaundryDocument($job);
@@ -345,7 +366,70 @@ class LaundryController extends Controller
                 'latest_evidence_submission_id' => $submission->id,
                 'form_verified_by_user_id' => $request->user()->id,
                 'form_verified_at' => now(),
+                'worker_received_at' => $physicalReceivedAt,
             ]);
+
+            /*
+             * If the scheduler temporarily marked the custody overdue only
+             * because the linen form had not reached SPMU yet, clear that
+             * automatic late state when the signed form proves that Laundry
+             * physically received the linen on or before the effective due
+             * date. A genuinely late physical Laundry receipt is not cleared.
+             */
+            if ($attestsPhysicalReceipt
+                && $physicalReceivedAt
+                && $job->custody->due_at
+                && ! $physicalReceivedAt->startOfDay()->gt($job->custody->due_at->copy()->startOfDay())) {
+                $hasOtherBorrowerOutstanding = $job->custody->lines->contains(
+                    function ($line): bool {
+                        $outstanding = (float) $line->returned_quantity
+                            < (float) $line->actual_released_quantity;
+
+                        if (! $outstanding) {
+                            return false;
+                        }
+
+                        return ! (bool) $line->requestItem?->inventoryItem?->laundry_required;
+                    }
+                );
+
+                if (! $hasOtherBorrowerOutstanding) {
+                    $overdue = OverdueCase::query()
+                        ->where('custody_transaction_id', $job->custody_transaction_id)
+                        ->first();
+
+                    $canReverseAutomaticLateState = ! $overdue
+                        || ($overdue->status === 'OVERDUE'
+                            && ! $overdue->penalties()->where('status', '!=', 'VOID')->exists());
+
+                    if ($canReverseAutomaticLateState) {
+                        if ($overdue) {
+                            $overdue->update([
+                                'status' => 'RESOLVED',
+                                'accrued_amount' => 0,
+                                'sanction_type' => null,
+                            ]);
+                        }
+
+                        BorrowerRestriction::query()
+                            ->where('borrower_user_id', $job->custody->borrower_user_id)
+                            ->whereIn('restriction_type', ['PENDING_RETURN', 'OVERDUE_RETURN'])
+                            ->where('status', 'ACTIVE')
+                            ->update([
+                                'status' => 'LIFTED',
+                                'effective_to' => now(),
+                                'lifted_by_user_id' => $request->user()->id,
+                            ]);
+
+                        if ($job->custody->status === 'OVERDUE') {
+                            $job->custody->update([
+                                'status' => 'RETURN_PROCESSING',
+                                'closed_at' => null,
+                            ]);
+                        }
+                    }
+                }
+            }
 
             $audit->record(
                 'LAUNDRY_SIGNED_FORM_ARCHIVED',
@@ -359,6 +443,7 @@ class LaundryController extends Controller
                      * Action Officer is only the system verifier / encoder.
                      */
                     'laundry_received_wet_signature_confirmed' => $attestsPhysicalReceipt,
+                    'physical_laundry_received_on' => $physicalReceivedAt?->toDateString(),
                     'physical_condition_source' => 'LAUNDRY_PERSONNEL',
                     'system_verified_by_user_id' => $request->user()->id,
                 ]
@@ -367,13 +452,18 @@ class LaundryController extends Controller
             $notifications->send(
                 'LAUNDRY_FINAL_FORM_ARCHIVED',
                 $this->spmuRecipients(),
-                "The signed physical Laundry Form for {$job->custody->custody_no} was archived. This archive does not change borrower clearance or the internal washing schedule.",
+                "The completed physical Laundry Form for {$job->custody->custody_no} was delivered by the Laundry Worker and archived by SPMU. The Action Officer may now encode the final linen findings.",
                 $job,
                 ['SYSTEM']
             );
         }, 3);
 
-        return back()->with('status', 'Accomplished Laundry Form verified and archived. Linen condition may now be encoded in the Return Inspection.');
+        return redirect()
+            ->to(route('custody.return.show', $laundryJob->custody_transaction_id).'#return-primary')
+            ->with(
+                'status',
+                'Completed Laundry Form received from the Laundry Worker and recorded. Encode the final linen findings exactly as written on the form.'
+            );
     }
 
     private function authorizeSpmuActionOfficer(Request $request): void

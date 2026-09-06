@@ -244,11 +244,11 @@
         <h2 class="operational-config-group-title">Document templates</h2>
 
         <div class="operational-config-grid operational-config-grid-3">
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-billing-statement']) }}">
+            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-borrower-slip']) }}">
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="requests" size="24" /></span>
                 <span class="operational-config-card-text">
-                    <strong>Billing Statement Template</strong>
-                    <span>Manage approved billing statement template</span>
+                    <strong>Borrower's Slip Template</strong>
+                    <span>Manage approved Borrower's Slip template</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -267,6 +267,24 @@
                 <span class="operational-config-card-text">
                     <strong>Gate Pass Template</strong>
                     <span>Manage approved Gate Pass template</span>
+                </span>
+                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+            </a>
+
+            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-billing-statement']) }}">
+                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="reports" size="24" /></span>
+                <span class="operational-config-card-text">
+                    <strong>Billing Statement Template</strong>
+                    <span>Manage approved billing statement template</span>
+                </span>
+                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+            </a>
+
+            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-rslddp']) }}">
+                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
+                <span class="operational-config-card-text">
+                    <strong>RSLDDP Template</strong>
+                    <span>Manage approved accountability report template</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -857,21 +875,10 @@
         @foreach([1 => '1st Offense', 2 => '2nd Offense', 3 => '3rd Offense'] as $offenseNo => $offenseLabel)
             @php
                 $rule = $sanctionRules->get($offenseNo);
-                $defaultCode = $rule?->sanction_code ?: match($offenseNo) {
-                    1 => 'WRITTEN_REPRIMAND',
-                    default => 'BORROWING_SUSPENSION',
-                };
-                $defaultLabel = $rule?->sanction_label ?: match($offenseNo) {
-                    1 => 'Written Reprimand',
-                    2 => '1-Month Borrowing Suspension',
-                    default => 'Borrowing Suspension Until End of Current Semester',
-                };
-                $durationMode = $rule?->duration_mode ?: match($offenseNo) {
-                    1 => 'NONE',
-                    2 => 'MONTHS',
-                    default => 'UNTIL_ACADEMIC_PERIOD_END',
-                };
-                $durationValue = $rule?->duration_value ?: ($offenseNo === 2 ? 1 : null);
+                $defaultCode = $rule?->sanction_code;
+                $defaultLabel = $rule?->sanction_label;
+                $durationMode = $rule?->duration_mode;
+                $durationValue = $rule?->duration_value;
             @endphp
             <form method="post" action="{{ route('policies.sanctions.update', $offenseNo) }}" class="card sanction-rule-card">
                 @csrf @method('PUT')
@@ -881,8 +888,13 @@
                     {{ $offenseLabel }}
                 </h3>
 
+                @if(! $rule)
+                    <p class="sanction-policy-required">NEEDS POLICY VALUE FROM SPMU — no official default is configured for this offense level.</p>
+                @endif
+
                 <label>Default action
                     <select name="sanction_code" required>
+                        @if(! $rule)<option value="" selected disabled>Select official action</option>@endif
                         @foreach(['NOTICE'=>'Notice','WRITTEN_REPRIMAND'=>'Written Reprimand','BORROWING_SUSPENSION'=>'Borrowing Suspension','OTHER'=>'Other'] as $code=>$label)
                             <option value="{{ $code }}" @selected($defaultCode === $code)>{{ $label }}</option>
                         @endforeach
@@ -891,6 +903,7 @@
 
                 <label>Duration
                     <select name="duration_mode" required data-duration-mode>
+                        @if(! $rule)<option value="" selected disabled>Select official duration</option>@endif
                         <option value="NONE" @selected($durationMode === 'NONE')>No borrowing suspension</option>
                         <option value="MONTHS" @selected($durationMode === 'MONTHS')>Fixed number of months</option>
                         <option value="UNTIL_ACADEMIC_PERIOD_END" @selected($durationMode === 'UNTIL_ACADEMIC_PERIOD_END')>Until end of current semester</option>
@@ -903,7 +916,7 @@
                 </label>
 
                 <label>Display label
-                    <input name="sanction_label" value="{{ $defaultLabel }}" maxlength="255" required>
+                    <input name="sanction_label" value="{{ $defaultLabel }}" maxlength="255" required placeholder="Official policy wording">
                 </label>
 
                 <button class="button secondary ui-pressable sanction-rule-save" type="submit">
@@ -916,7 +929,7 @@
 
     <p class="sanction-rules-note">
         <x-icon name="warning" size="18" />
-        <span><strong>Note:</strong> These defaults are applied when the Head confirms a violation in Accountability Oversight. You can update the values at any time.</span>
+        <span><strong>Policy history:</strong> These defaults apply only when the Head confirms a new violation in Accountability Oversight. Existing confirmed sanctions retain their stored action, label, dates, and restriction.</span>
     </p>
 </section>
 @endif
@@ -938,6 +951,7 @@
 .operational-config-card:hover .operational-config-card-chevron,.operational-config-card:focus-visible .operational-config-card-chevron{color:var(--config-blue);transform:translateX(2px)}
 .operational-config-footnote{display:flex;align-items:center;gap:11px;margin-top:4px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface-elevated);color:var(--text-secondary);font-size:12.5px}
 .operational-config-footnote>.ui-icon{flex-shrink:0;color:var(--text-muted)}
+.sanction-policy-required{margin:-6px 0 14px;padding:9px 10px;border:1px solid var(--warning-border,#e7c875);border-radius:8px;background:var(--warning-bg,#fff8e4);color:var(--text-secondary);font-size:11.5px;font-weight:750;line-height:1.45}
 html[data-theme="dark"] .operational-config-hub{--config-blue:#4a8ff7}
 @media(prefers-reduced-motion:reduce){.operational-config-card,.operational-config-card-chevron{transition:none}}
 .schedule-check{display:flex!important;align-items:center;gap:7px!important;min-height:38px;margin:0!important;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:11px!important;color:var(--text)!important}.schedule-check input[type=checkbox]{width:16px;height:16px;margin:0}

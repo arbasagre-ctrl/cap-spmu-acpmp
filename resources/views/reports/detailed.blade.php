@@ -46,18 +46,14 @@
                             Export CSV
                         </a>
 
-                        <a
-                            class="button secondary ui-pressable"
-                            href="{{ route('reports.print', array_merge(
-                                ['type' => $selectedReport],
-                                $reportFilters->toQuery()
-                            )) }}"
-                            target="_blank"
-                            rel="noopener"
-                        >
-                            <x-icon name="printer" size="16" />
-                            Print
-                        </a>
+                        <button
+    class="button secondary ui-pressable"
+    type="button"
+    onclick="window.print()"
+>
+    <x-icon name="printer" size="16" />
+    Print
+</button>
                     </div>
                 </div>
 

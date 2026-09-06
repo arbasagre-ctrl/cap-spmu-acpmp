@@ -1,0 +1,488 @@
+{
+  "sheet_name": "Laundry Form",
+  "orientation": "landscape",
+  "max_row": 21,
+  "max_col": 8,
+  "rows": {
+    "1": {
+      "height": 26
+    },
+    "5": {
+      "height": 28
+    },
+    "6": {
+      "height": 24
+    }
+  },
+  "cols": {
+    "1": 9,
+    "2": 9,
+    "3": 15,
+    "4": 15,
+    "5": 15,
+    "6": 13,
+    "7": 13,
+    "8": 14
+  },
+  "merges": [
+    "A1:H1",
+    "A3:C3",
+    "F3:H3",
+    "C5:E5",
+    "F5:G5",
+    "C6:E6",
+    "F6:G6",
+    "C7:E7",
+    "C8:E8",
+    "C9:E9",
+    "C10:E10",
+    "C11:E11",
+    "C12:E12",
+    "F7:G7",
+    "F8:G8",
+    "F9:G9",
+    "F10:G10",
+    "F11:G11",
+    "F12:G12",
+    "B14:C14",
+    "D14:E14",
+    "F14:G14",
+    "B15:C15",
+    "B16:C16",
+    "B17:C17",
+    "B18:C18",
+    "D15:E15",
+    "D16:E16",
+    "D17:E17",
+    "D18:E18",
+    "F15:G15",
+    "F16:G16",
+    "F17:G17",
+    "F18:G18",
+    "A21:C21",
+    "D21:F21",
+    "G21:H21"
+  ],
+  "cells": [
+    {
+      "row": 1,
+      "col": 1,
+      "value": "REQUEST AND COMPLETION FOR LAUNDRY SERVICES",
+      "css": "font-weight:700;text-align:center;font-size:14pt;padding:4px;"
+    },
+    {
+      "row": 3,
+      "col": 1,
+      "value": "Requesting Office: {{office_unit}}",
+      "css": "font-weight:700;"
+    },
+    {
+      "row": 3,
+      "col": 6,
+      "value": "Request No.: {{request_no}}",
+      "css": "font-weight:700;text-align:right;"
+    },
+    {
+      "row": 5,
+      "col": 1,
+      "value": "QTY",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 5,
+      "col": 2,
+      "value": "UNIT",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 5,
+      "col": 3,
+      "value": "DESCRIPTION",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 5,
+      "col": 6,
+      "value": "DATE REQUESTED",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 5,
+      "col": 8,
+      "value": "DATE COMPLETED",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 6,
+      "col": 1,
+      "value": "{{items.qty}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 6,
+      "col": 2,
+      "value": "{{items.unit}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 6,
+      "col": 3,
+      "value": "{{items.description}}",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 6,
+      "col": 6,
+      "value": "{{date_requested}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 6,
+      "col": 8,
+      "value": "{{date_completed}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 7,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 7,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 7,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 7,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 7,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 8,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 8,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 8,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 8,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 8,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 9,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 9,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 9,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 9,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 9,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 2,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 6,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 8,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 2,
+      "value": "Requested by:",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 4,
+      "value": "Approved By:",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 6,
+      "value": "Issued by:",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 8,
+      "value": "Received by:",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 1,
+      "value": "Signature",
+      "css": "font-weight:700;font-size:8pt;border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 1,
+      "value": "Printed Name",
+      "css": "font-weight:700;font-size:8pt;border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 1,
+      "value": "Designation",
+      "css": "font-weight:700;font-size:8pt;border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 1,
+      "value": "Date",
+      "css": "font-weight:700;font-size:8pt;border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 2,
+      "value": "{{borrower_signature}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 2,
+      "value": "{{borrower_name}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 2,
+      "value": "{{borrower_position}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 2,
+      "value": "{{request_date}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 4,
+      "value": "{{head_signature}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 4,
+      "value": "{{head_name}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 4,
+      "value": "{{head_role}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 4,
+      "value": "{{approval_date}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 6,
+      "value": "",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 6,
+      "value": "{{issued_by_name}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 6,
+      "value": "{{issued_by_role}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 6,
+      "value": "{{date_released}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 8,
+      "value": "",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 8,
+      "value": "",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 8,
+      "value": "",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 8,
+      "value": "",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 21,
+      "col": 1,
+      "value": "Effectivity Date: {{effectivity_date}}",
+      "css": "font-size:8pt;"
+    },
+    {
+      "row": 21,
+      "col": 4,
+      "value": "Rev. {{revision}}",
+      "css": "font-size:8pt;text-align:center;"
+    },
+    {
+      "row": 21,
+      "col": 7,
+      "value": "Page {{page_no}} of {{page_total}}",
+      "css": "font-size:8pt;text-align:right;"
+    }
+  ]
+}

@@ -12,6 +12,9 @@
     | login area so it is no longer cut in half by the page boundary.
     */
     .login-page {
+        position: relative;
+        min-height: calc(100vh - 86px);
+        overflow: hidden;
         background:
             radial-gradient(
                 circle at 92% 52%,
@@ -28,8 +31,9 @@
         z-index: 0;
         width: clamp(240px, 21vw, 350px);
         aspect-ratio: 1;
-        left: clamp(24px, 4vw, 68px);
-        bottom: 24px;
+        left: 0;
+                transform: translateX(-50%);
+bottom: -35px;
         border-radius: 50%;
         background: rgba(72, 139, 230, 0.08);
         pointer-events: none;
@@ -43,11 +47,48 @@
     @media (max-width: 760px) {
         .login-page::before {
             width: 220px;
-            left: 18px;
-            bottom: 18px;
+            left: 0;
+                    transform: translateX(-50%);
+bottom: -35px;
             opacity: .75;
         }
     }
+
+    /* LOGIN FINAL CIRCLE FIX START */
+
+    /* Continue the login background down to the bottom of the screen. */
+    .login-page {
+        position: relative !important;
+        min-height: calc(100vh - 86px) !important;
+        min-height: calc(100dvh - 86px) !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+    }
+
+    /* Left decoration: exactly half visible from the LEFT edge,
+       lower on the page, but never cut by the bottom boundary. */
+    .login-page::before {
+        left: 0 !important;
+        bottom: 70px !important;
+        transform: translateX(-50%) !important;
+        z-index: 0 !important;
+    }
+
+    .login-page .login-card {
+        position: relative !important;
+        z-index: 1 !important;
+    }
+
+    @media (max-width: 760px) {
+        .login-page::before {
+            left: 0 !important;
+            bottom: 45px !important;
+            transform: translateX(-50%) !important;
+        }
+    }
+
+    /* LOGIN FINAL CIRCLE FIX END */
+
 </style>
 
 <div class="login-page">
@@ -270,3 +311,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 @endsection
+
+
+
+

@@ -1,6 +1,7 @@
 @php
     // Presentation only: the custody page continues to authorize and gate every action.
     $nextActionLabel = match (true) {
+        $requestIsCancelled => 'No further action required',
         $requestIsCompleted => 'Review the custody record',
         $detailStatus === 'READY_FOR_RELEASE' => 'Proceed to physical release',
         $detailStatus === 'PREPARING_RELEASE' && (bool) $custody->pickup_expired_at => 'Reschedule the pickup window',
@@ -30,3 +31,4 @@
         </a>
     </div>
 </section>
+

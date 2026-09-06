@@ -6,6 +6,7 @@
         </div>
         <span class="visually-hidden" id="inventory-date-context">Select dates</span>
     </div>
+
     <div class="request-card-body request-information-fields">
         <div class="field-grid">
             <label>
@@ -36,40 +37,99 @@
                 @enderror
             </label>
 
+            @php
+                $requestingUnitOptions = $requestingUnitOptions ?? [];
+                $hasMultipleRequestingUnits = count($requestingUnitOptions) > 1;
+                $effectiveRequestingUnitId = (int) old(
+                    'requesting_organizational_unit_id',
+                    $prefillRequestingUnitId ?? ($borrowingRequest->accountable_unit_id ?? 0)
+                );
+                $selectedRequestingOption = collect($requestingUnitOptions)
+                    ->firstWhere('id', $effectiveRequestingUnitId)
+                    ?? ($requestingUnitOptions[0] ?? null);
+                $effectiveDivisionCode = $selectedRequestingOption['division_code'] ?? '';
+                $effectiveOfficeUnit = $selectedRequestingOption['name'] ?? '';
+            @endphp
+
             <label>
                 Division
-                <select id="division_code" name="division_code" required>
-                    <option value="">Select division</option>
-                    @foreach($divisionOptions as $code => $label)
-                        <option value="{{ $code }}" @selected($selectedDivision === $code)>
-                            {{ $label }}
-                        </option>
-                    @endforeach
-                </select>
-                @error('division_code')
-                    <small class="field-error">{{ $message }}</small>
-                @enderror
+                <input
+                    id="division-display"
+                    value="{{ $selectedRequestingOption['division_label'] ?? '' }}"
+                    readonly
+                    tabindex="-1"
+                    aria-readonly="true"
+                    placeholder="No division assigned"
+                >
+                <input id="division_code" type="hidden" name="division_code" value="{{ $effectiveDivisionCode }}">
             </label>
 
             <label>
-                Office / Academic Unit / Research Unit
-                <input
-                    id="office_unit"
-                    name="office_unit"
-                    list="office-unit-options"
-                    value="{{ $selectedOfficeUnit }}"
-                    maxlength="255"
-                    required
-                    autocomplete="off"
-                    placeholder="Select or search the unit"
-                >
-                <datalist id="office-unit-options"></datalist>
-                @error('office_unit')
+                Requesting Office / Unit
+                @if($hasMultipleRequestingUnits)
+                    <select
+                        id="requesting_organizational_unit_id"
+                        name="requesting_organizational_unit_id"
+                        required
+                        aria-describedby="requesting-unit-help"
+                    >
+                        @foreach($requestingUnitOptions as $option)
+                            <option
+                                value="{{ $option['id'] }}"
+                                data-division-code="{{ $option['division_code'] }}"
+                                data-division-label="{{ $option['division_label'] }}"
+                                data-unit-name="{{ $option['name'] }}"
+                                @selected((int) ($selectedRequestingOption['id'] ?? 0) === (int) $option['id'])
+                            >
+                                {{ $option['name'] }}{{ $option['is_primary'] ? ' — Primary' : '' }}
+                            </option>
+                        @endforeach
+                    </select>
+                    <small class="field-help" id="requesting-unit-help">
+                        Select the Office / Unit you are officially representing for this request.
+                    </small>
+                @elseif(count($requestingUnitOptions) === 1)
+                    <input
+                        id="requesting-unit-display"
+                        value="{{ $requestingUnitOptions[0]['name'] }}"
+                        readonly
+                        tabindex="-1"
+                        aria-readonly="true"
+                    >
+                    <input
+                        id="requesting_organizational_unit_id"
+                        type="hidden"
+                        name="requesting_organizational_unit_id"
+                        value="{{ $requestingUnitOptions[0]['id'] }}"
+                        required
+                    >
+                @else
+                    <input
+                        id="requesting-unit-display"
+                        value=""
+                        readonly
+                        tabindex="-1"
+                        aria-readonly="true"
+                        placeholder="No authorized Office / Unit"
+                    >
+                    <input
+                        id="requesting_organizational_unit_id"
+                        type="hidden"
+                        name="requesting_organizational_unit_id"
+                        value=""
+                        required
+                    >
+                    <small class="field-error">No borrowing Office / Unit is authorized for this account. Contact ICTU.</small>
+                @endif
+
+                <input id="office_unit" type="hidden" name="office_unit" value="{{ $effectiveOfficeUnit }}">
+                @error('requesting_organizational_unit_id')
                     <small class="field-error">{{ $message }}</small>
                 @enderror
             </label>
         </div>
     </div>
+
     <div class="request-schedule-fields" aria-labelledby="borrowing-schedule-heading">
         <h3 class="eyebrow" id="borrowing-schedule-heading">Borrowing schedule</h3>
         <div class="field-grid">
@@ -102,6 +162,7 @@
             </label>
         </div>
     </div>
+
     <div class="student-activity-panel">
         <input type="hidden" name="represents_student_activity" value="0">
         <label class="checkbox" for="student-activity-toggle">
@@ -119,11 +180,40 @@
             </span>
         </label>
     </div>
+
     <div class="stage-actions request-details-actions" data-stage-panel="1">
         <a class="button secondary ui-pressable" href="{{ route('requests.index') }}">Cancel</a>
-        <button type="button" class="button primary ui-pressable" data-stage-next="2">
+        <button type="button" class="button primary ui-pressable" data-stage-next="2" disabled>
             Continue to Select Items
             <svg class="ui-icon request-continue-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
         </button>
     </div>
 </section>
+
+
+<script data-authorized-unit-sync>
+document.addEventListener('DOMContentLoaded', () => {
+    const unitSelect = document.getElementById('requesting_organizational_unit_id');
+    if (!(unitSelect instanceof HTMLSelectElement)) return;
+
+    const divisionDisplay = document.getElementById('division-display');
+    const divisionCode = document.getElementById('division_code');
+    const officeUnit = document.getElementById('office_unit');
+
+    const syncAuthorizedUnit = () => {
+        const option = unitSelect.selectedOptions?.[0];
+        if (!option) return;
+
+        const code = option.dataset.divisionCode || '';
+        const label = option.dataset.divisionLabel || '';
+        const name = option.dataset.unitName || option.textContent?.replace(/\s+—\s+Primary\s*$/, '').trim() || '';
+
+        if (divisionDisplay) divisionDisplay.value = label;
+        if (divisionCode) divisionCode.value = code;
+        if (officeUnit) officeUnit.value = name;
+    };
+
+    unitSelect.addEventListener('change', syncAuthorizedUnit);
+    syncAuthorizedUnit();
+});
+</script>

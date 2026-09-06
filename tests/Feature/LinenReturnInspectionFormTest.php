@@ -13,11 +13,13 @@ use App\Models\Incident;
 use App\Models\InventoryItem;
 use App\Models\LaundryJob;
 use App\Models\LaundryJobLine;
+use App\Models\OverdueCase;
 use App\Models\RequestItem;
 use App\Models\ReturnLine;
 use App\Models\ReturnTransaction;
 use App\Models\Sanction;
 use App\Models\StoredFile;
+use App\Models\SystemSetting;
 use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -187,9 +189,9 @@ class LinenReturnInspectionFormTest extends TestCase
         $this->assertSame('FOR_LAUNDRY', $job->status);
     }
 
-    public function test_upload_while_for_laundry_requires_the_received_by_attestation(): void
+    public function test_upload_while_for_laundry_does_not_require_a_confirmation_checkbox(): void
     {
-        ['job' => $job, 'lines' => $lines] = $this->outstandingCustody(linen: true);
+        ['job' => $job] = $this->outstandingCustody(linen: true);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($this->classificationUser(AccessClassification::SpmuOfficer))
@@ -199,17 +201,13 @@ class LinenReturnInspectionFormTest extends TestCase
                     20,
                     'application/pdf'
                 ),
+                'laundry_received_on' => now()->toDateString(),
             ])
-            ->assertSessionHasErrors('laundry_received_signature_confirmed');
+            ->assertSessionHasNoErrors();
 
-        // Nothing is verified, so the linen return stays blocked.
         $job->refresh();
-        $this->assertNull($job->form_verified_at);
-        $this->assertNull($job->latest_evidence_submission_id);
-
-        $this->recordReturn($job->custody, [
-            $lines['linen']->id => ['FINE' => 3],
-        ])->assertSessionHasErrors('laundry_form');
+        $this->assertNotNull($job->form_verified_at);
+        $this->assertNotNull($job->latest_evidence_submission_id);
     }
 
     public function test_return_inspection_proceeds_exactly_once_after_the_form_is_verified(): void
@@ -287,6 +285,216 @@ class LinenReturnInspectionFormTest extends TestCase
         );
     }
 
+    public function test_mixed_custody_allows_non_linen_inspection_while_laundry_form_is_pending_without_partial_status(): void
+    {
+        ['custody' => $custody, 'lines' => $lines] = $this->outstandingCustody(
+            linen: true,
+            nonLinen: true
+        );
+
+        // The pending linen document must not disable the whole inspection.
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(2.0, (float) $lines['non_linen']->fresh()->returned_quantity);
+        $this->assertSame(0.0, (float) $lines['linen']->fresh()->returned_quantity);
+
+        // No PARTIALLY_RETURNED state is introduced. The single overall
+        // transaction simply stays in Return Processing until linen can be
+        // encoded from the accomplished Laundry Form.
+        $this->assertSame('RETURN_PROCESSING', $custody->fresh()->status);
+        $this->assertNotSame('PARTIALLY_RETURNED', $custody->fresh()->status);
+
+        // Linen itself is still protected until the signed form arrives.
+        $this->recordReturn($custody, [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasErrors('laundry_form');
+    }
+
+    public function test_linen_return_uses_actual_laundry_receipt_date_when_worker_delivers_form_two_days_later(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
+            linen: true,
+            nonLinen: true
+        );
+
+        $actualReturnDate = $custody->due_at->copy()->startOfDay();
+
+        // Non-linen is recorded on the due date while the Laundry Worker still
+        // has the physical form.
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        // Two days later the offline Laundry Worker delivers the accomplished
+        // form to SPMU. The Action Officer transcribes the original receipt date.
+        $this->travelTo(now()->addDays(2)->setTime(10, 0));
+
+        $this->uploadAccomplishedForm($job, $actualReturnDate->toDateString())
+            ->assertSessionHasNoErrors();
+
+        $job->refresh();
+        $this->assertNull($job->worker_name);
+        $this->assertSame(
+            $actualReturnDate->toDateString(),
+            $job->worker_received_at?->toDateString()
+        );
+
+        $this->recordReturn($custody->fresh(), [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors();
+
+        $linenReturn = ReturnTransaction::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->latest('id')
+            ->firstOrFail();
+
+        // Administrative delay does not make the borrower late.
+        $this->assertSame('NORMAL', $linenReturn->return_type);
+        $this->assertSame(
+            $actualReturnDate->toDateString(),
+            $linenReturn->received_at?->toDateString()
+        );
+
+        // A delayed paper delivery does not create a late-return accountability
+        // when the Laundry Worker's actual RECEIVED BY date was on time.
+        $this->assertFalse(
+            OverdueCase::query()
+                ->where('custody_transaction_id', $custody->id)
+                ->where('status', '!=', 'RESOLVED')
+                ->exists()
+        );
+    }
+
+    public function test_actual_linen_return_date_can_be_after_due_date_once_that_date_has_arrived(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(linen: true);
+
+        // Simulate a form that reaches SPMU two days after the actual
+        // physical linen return. The custody was due three days ago and the
+        // Laundry Worker received the linen one day late (two days ago). The
+        // calendar must accept that real date, and Accountability Processing
+        // must charge only that one late day — never the later encoding date.
+        $custody->update([
+            'released_at' => now()->subDays(4)->setTime(9, 0),
+            'due_at' => now()->subDays(3)->endOfDay(),
+        ]);
+
+        $actualReturnDate = now()->subDays(2)->toDateString();
+
+        $lateFee = SystemSetting::query()
+            ->where('setting_key', 'daily_overdue_tariff')
+            ->firstOrFail();
+        $lateFee->value_json = 50;
+        $lateFee->save();
+
+        $this->uploadAccomplishedForm($job->fresh(), $actualReturnDate)
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(
+            $actualReturnDate,
+            $job->fresh()->worker_received_at?->toDateString()
+        );
+
+        $this->recordReturn($custody->fresh(), [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors();
+
+        $linenReturn = ReturnTransaction::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('OVERDUE', $linenReturn->return_type);
+        $this->assertSame($actualReturnDate, $linenReturn->received_at?->toDateString());
+
+        // The late actual Laundry receipt date is not only a display label.
+        // Completing the SPMU return encoding must immediately hand the case
+        // to Accountability Processing even if the daily overdue scheduler has
+        // not run yet.
+        $overdue = OverdueCase::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->firstOrFail();
+
+        $this->assertSame('RETURNED_PENDING_SETTLEMENT', $overdue->status);
+        $this->assertSame(50.0, (float) $overdue->rate_snapshot);
+        $this->assertSame(50.0, (float) $overdue->accrued_amount);
+        $this->assertSame(
+            $custody->due_at->copy()->startOfDay()->toDateString(),
+            $overdue->grace_expires_at?->toDateString()
+        );
+        $this->assertSame(
+            $custody->due_at->copy()->addDay()->startOfDay()->toDateString(),
+            $overdue->overdue_started_at?->toDateString()
+        );
+        $this->assertSame('OBLIGATION_OPEN', $custody->fresh()->status);
+
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'borrower_user_id' => $custody->borrower_user_id,
+            'restriction_type' => 'OVERDUE_RETURN',
+            'status' => 'ACTIVE',
+        ]);
+    }
+
+    public function test_action_officer_can_encode_a_much_later_actual_linen_return_date_and_accountability_uses_all_late_days(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(linen: true);
+
+        // The expected return was 15 days ago, but the Laundry Worker actually
+        // received the linen only 3 days ago. The Action Officer is encoding the
+        // accomplished form today, so the exact RECEIVED BY date is 12 calendar
+        // days late. The calendar/backend must not cap the entry at the due date
+        // or replace it with today's SPMU upload date.
+        $custody->update([
+            'released_at' => now()->subDays(20)->setTime(9, 0),
+            'due_at' => now()->subDays(15)->endOfDay(),
+        ]);
+
+        $actualReturnDate = now()->subDays(3)->toDateString();
+
+        $lateFee = SystemSetting::query()
+            ->where('setting_key', 'daily_overdue_tariff')
+            ->firstOrFail();
+        $lateFee->value_json = 25;
+        $lateFee->save();
+
+        $this->uploadAccomplishedForm($job->fresh(), $actualReturnDate)
+            ->assertSessionHasNoErrors();
+
+        $this->recordReturn($custody->fresh(), [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors();
+
+        $linenReturn = ReturnTransaction::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->latest('id')
+            ->firstOrFail();
+
+        $this->assertSame('OVERDUE', $linenReturn->return_type);
+        $this->assertSame($actualReturnDate, $linenReturn->received_at?->toDateString());
+
+        $overdue = OverdueCase::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->firstOrFail();
+
+        $this->assertSame('RETURNED_PENDING_SETTLEMENT', $overdue->status);
+        $this->assertSame(25.0, (float) $overdue->rate_snapshot);
+        $this->assertSame(300.0, (float) $overdue->accrued_amount);
+        $this->assertSame('OBLIGATION_OPEN', $custody->fresh()->status);
+    }
+
+    public function test_future_linen_return_date_is_rejected(): void
+    {
+        ['job' => $job] = $this->outstandingCustody(linen: true);
+
+        $this->uploadAccomplishedForm($job, now()->addDay()->toDateString())
+            ->assertSessionHasErrors('laundry_received_on');
+
+        $this->assertNull($job->fresh()->worker_received_at);
+        $this->assertNull($job->fresh()->form_verified_at);
+    }
+
     public function test_borrower_cannot_finalize_the_spmu_return_inspection(): void
     {
         ['custody' => $custody, 'lines' => $lines] = $this->outstandingCustody(linen: false);
@@ -345,7 +553,7 @@ class LinenReturnInspectionFormTest extends TestCase
             );
     }
 
-    private function uploadAccomplishedForm(LaundryJob $job)
+    private function uploadAccomplishedForm(LaundryJob $job, ?string $laundryReceivedOn = null)
     {
         return $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($this->classificationUser(AccessClassification::SpmuOfficer))
@@ -355,7 +563,7 @@ class LinenReturnInspectionFormTest extends TestCase
                     20,
                     'application/pdf'
                 ),
-                'laundry_received_signature_confirmed' => 1,
+                'laundry_received_on' => $laundryReceivedOn ?: now()->toDateString(),
             ]);
     }
 

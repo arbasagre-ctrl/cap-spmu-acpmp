@@ -6,6 +6,8 @@
     $offCampusLines = $custody?->lines?->filter(fn($line) => $line->requestItem?->use_location === 'OFF_CAMPUS') ?? collect();
     $gatePassFinalized = in_array($gatePass->status, ['READY_FOR_PRINTING', 'VERIFIED'], true)
         && (bool) $gatePass->passDocument;
+    $gatePassStatus = $gatePass->workflowStatus();
+    $gatePassVoided = $gatePassStatus['key'] === 'VOID';
 @endphp
 <section class="page-heading">
     <div>
@@ -13,7 +15,11 @@
         <h1>{{ $custody?->custody_no }}</h1>
         <p>{{ $custody?->request?->request_no }} · {{ $custody?->borrower?->full_name }}</p>
     </div>
-    <a class="button secondary ui-pressable" href="{{ route('gate-passes.index') }}">Back to Gate Pass</a>
+    @if($custody?->released_at)
+        <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $custody) }}#return-summary">Back to Return</a>
+    @else
+        <a class="button secondary ui-pressable" href="{{ route('gate-passes.index') }}">Back to Gate Pass</a>
+    @endif
 </section>
 
 <section class="content-area">
@@ -22,17 +28,20 @@
             <div class="card-header">
                 <div>
                     <p class="eyebrow">SPMU Gate Pass workflow</p>
-                    <h2>{{ $gatePassFinalized ? 'Approved Gate Pass' : 'Gate Pass Document Missing' }}</h2>
+                    <h2>{{ $gatePassVoided ? 'Voided Gate Pass' : ($gatePassFinalized ? 'Approved Gate Pass' : 'Gate Pass Pending') }}</h2>
                 </div>
-                <x-status-badge :status="$gatePass->status" />
+                <x-status-badge :status="$gatePassStatus['key']" :label="$gatePassStatus['label']" />
             </div>
 
-            @if(!$gatePassFinalized)
+            @if($gatePassVoided)
+                <div class="callout neutral">
+                    <strong>This Gate Pass is voided.</strong>
+                    <p>The related borrowing request was cancelled. No release or Gate Pass completion action is required.</p>
+                </div>
+            @elseif(!$gatePassFinalized)
                 <div class="callout info">
-                    <strong>Do not release the off-campus property.</strong>
-                    <p>
-                        This approved off-campus request does not have a valid generated Gate Pass. Have the authoritative approval workflow record reviewed before preparation or release.
-                    </p>
+                    <strong>Gate Pass is not ready for release.</strong>
+                    <p>Complete the approved Gate Pass record before any off-campus handover.</p>
                 </div>
             @else
                 @if(!$custody?->released_at)
@@ -73,11 +82,13 @@
             @elseif($gatePass->status === 'VERIFIED')
                 <div class="callout success top-gap">
                     <strong>Accomplished Gate Pass recorded.</strong>
-                    @if($gatePass->accomplishedFile)
-                        <div class="inline-actions top-gap">
+                    <p>Continue with this same borrowing transaction; there is no need to search the Gate Pass queue.</p>
+                    <div class="inline-actions top-gap">
+                        @if($gatePass->accomplishedFile)
                             <a class="button secondary small ui-pressable" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Accomplished Gate Pass</a>
-                        </div>
-                    @endif
+                        @endif
+                        <a class="button primary small ui-pressable" href="{{ route('custody.return.show', $custody) }}#return-summary">Continue Transaction</a>
+                    </div>
                 </div>
             @endif
         </article>
@@ -94,9 +105,9 @@
                 @endif
             </dl>
 
-            @unless($gatePassFinalized)
+            @if(! $gatePassFinalized && ! $gatePassVoided)
                 <span class="status-badge status-danger">Missing approved document</span>
-            @endunless
+            @endif
 
             <div class="table-wrap top-gap">
                 <table><thead><tr><th>Item</th><th>Qty</th><th>Use</th></tr></thead><tbody>

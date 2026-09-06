@@ -27,7 +27,9 @@ use Tests\TestCase;
 /**
  * Covers the current linen workflow:
  *
- *   Laundry Personnel receive returned linen first and wet-sign Received by
+ *   Borrower returns linen to the offline Laundry Worker
+ *     -> Laundry Worker checks it, wet-signs Received by + Date, and later
+ *        delivers the accomplished physical Laundry Form directly to SPMU
  *     -> Action Officer uploads/verifies the accomplished Laundry Form
  *     -> Action Officer encodes the form in SPMU Return
  *          -> serviceable linen automatically enters the internal Laundry queue
@@ -64,7 +66,10 @@ class SimpleLaundryWorkflowTest extends TestCase
 
         $this->assertSame('TURNED_OVER_TO_LAUNDRY', $job->status);
         $this->assertSame(2, $jobLine->received_quantity);
-        $this->assertSame($officer->full_name, $job->worker_name);
+        // No Laundry Worker portal account is created or mapped. The legacy
+        // worker_name field stays empty; only the actual physical receipt date
+        // from the signed form is persisted.
+        $this->assertNull($job->worker_name);
         $this->assertNotNull($job->worker_received_at);
         $this->assertSame('CLOSED', $custody->status);
         $this->assertFalse(Route::has('laundry.receive'));
@@ -74,8 +79,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('Mark Laundry Complete')
-            ->assertSeeText('No reclassification is needed here.')
+            ->assertSeeText('Finalize linen availability')
+            ->assertSeeText('This step only restores the serviceable quantity after the internal washing cycle to Available inventory.')
             ->assertDontSeeText('Confirm Laundry Turnover')
             ->assertDontSeeText('Archive accomplished Laundry Form')
             ->assertDontSeeText('Clean / Available')
@@ -177,7 +182,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('laundry.show', $job->fresh()))
             ->assertOk()
-            ->assertSeeText('Mark Laundry Complete')
+            ->assertSeeText('Finalize linen availability')
             ->assertSeeText('Serviceable quantity in Laundry')
             ->assertDontSeeText('Confirm Laundry Turnover')
             ->assertDontSeeText('Open SPMU Return');
@@ -203,7 +208,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('Return linen to the Laundry Area first')
+            ->assertSeeText('Laundry processing / final form pending')
+            ->assertSeeText('later delivers it directly to SPMU')
             ->assertSeeText('Open SPMU Return')
             ->assertDontSeeText('Archive accomplished Laundry Form')
             ->assertDontSeeText('Confirm Laundry Turnover');
@@ -213,7 +219,8 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->get(route('custody.return.show', $custody))
             ->assertOk()
             ->assertSeeText('Upload Form')
-            ->assertSeeText('I confirm this is the accomplished Laundry Form signed by Laundry Personnel.');
+            ->assertDontSeeText('I confirm the signed form is complete.')
+            ->assertSeeText('Use the RECEIVED BY date on the signed form.');
     }
 
     private function recordReturn(
@@ -240,7 +247,7 @@ class SimpleLaundryWorkflowTest extends TestCase
                     20,
                     'application/pdf'
                 ),
-                'laundry_received_signature_confirmed' => 1,
+                'laundry_received_on' => now()->toDateString(),
             ]);
     }
 

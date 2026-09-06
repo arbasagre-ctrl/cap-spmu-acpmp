@@ -36,7 +36,13 @@ class AccountabilityController extends Controller
         $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines'])->latest('reported_at');
         $billingQuery = BillingStatement::with(['borrower', 'lines', 'payments', 'documents'])->latest('issued_at');
         $restrictionQuery = BorrowerRestriction::latest('effective_from');
-        $overdueQuery = OverdueCase::with(['borrower', 'custody.lines', 'penalties'])->latest('overdue_started_at');
+        $overdueQuery = OverdueCase::with([
+            'borrower',
+            'custody.lines',
+            'custody.returns',
+            'custody.laundryJob',
+            'penalties',
+        ])->latest('overdue_started_at');
         $violationQuery = BorrowerViolation::with(['borrower', 'custody.request', 'academicPeriod', 'sanction'])
             ->latest('detected_at');
         $sanctionQuery = Sanction::with(['borrower', 'academicPeriod', 'violation', 'confirmedBy'])

@@ -69,9 +69,9 @@
             <tbody>
             @forelse($requests as $request)
                 @php
-                    $recordStatus = $request->custody?->closed_at
-                        ? 'COMPLETED'
-                        : ($request->custody?->status ?: $request->status->value);
+                    $recordStatus = $request->custody
+                        ? $request->custody->workflowStatus()['key']
+                        : $request->status->value;
                     $recordSearch = strtolower(trim(
                         $request->request_no.' '.
                         ($request->borrower?->full_name ?? '').' '.
@@ -104,57 +104,15 @@
                     <td>
                         @php
                             $custody = $request->custody;
-                            $custodyStatus = $custody?->status;
 
-                $effectiveCustodyStatus = $custody?->closed_at
-                    ? 'CLOSED'
-                    : $custodyStatus;
-
-                            /*
-                             * Request Records must reflect the real custody lifecycle,
-                             * not a stale request-level approval status.
-                             *
-                             * Example:
-                             * borrowing_requests.status = APPROVED_READY_FOR_RELEASE
-                             * custody_transactions.status = CLOSED
-                             *
-                             * The correct visible status is Completed.
-                             */
-                            $custodyCompleted =
-                                $custody
-                                && (
-                                    $custodyStatus === 'CLOSED'
-                                    || $custody->closed_at !== null
-                                );
-
-                            $effectiveCustodyStatus =
-                                $custodyCompleted
-                                    ? 'CLOSED'
-                                    : $custodyStatus;
-
-                            $tableDisplayStatus = match($effectiveCustodyStatus) {
-                                'ACTIVE' => 'ACTIVE',
-                                'RETURN_PROCESSING' => 'RETURN_PROCESSING',
-                                'PARTIALLY_RETURNED' => 'RETURN_PROCESSING',
-                                'OVERDUE' => 'OVERDUE',
-                                'EARLY_RETURN' => 'RETURN_PROCESSING',
-                                'INCIDENT_OPEN' => 'INCIDENT_OPEN',
-                                'OBLIGATION_OPEN' => 'OBLIGATION_OPEN',
-                                'CLOSED' => 'COMPLETED',
-                                default => $request->status,
-                            };
-
-                            $tableDisplayLabel = match($effectiveCustodyStatus) {
-                                'ACTIVE' => 'Released / On Custody',
-                                'RETURN_PROCESSING',
-                                'PARTIALLY_RETURNED' => 'Return Processing',
-                                'OVERDUE' => 'Overdue',
-                                'EARLY_RETURN' => 'Return Processing',
-                                'INCIDENT_OPEN' => 'Incident Open',
-                                'OBLIGATION_OPEN' => 'Obligation Open',
-                                'CLOSED' => 'Completed',
-                                default => null,
-                            };
+                            if ($custody) {
+                                $workflowStatus = $custody->workflowStatus();
+                                $tableDisplayStatus = $workflowStatus['key'];
+                                $tableDisplayLabel = $workflowStatus['label'];
+                            } else {
+                                $tableDisplayStatus = $request->status;
+                                $tableDisplayLabel = null;
+                            }
                         @endphp
 
                         <x-status-badge
@@ -196,7 +154,7 @@
  const rows=[...document.querySelectorAll('[data-request-record]')];
  const search=document.querySelector('[data-record-search]'); const status=document.querySelector('[data-record-status-filter]'); const sort=document.querySelector('[data-record-sort]'); const empty=document.querySelector('[data-record-empty]');
  if(!rows.length || !search || !status || !sort) return;
- const labels={PREPARING_RELEASE:'Preparing Release',ACTIVE:'Released / On Custody',RETURN_PROCESSING:'Return Processing',PARTIALLY_RETURNED:'Return Processing',OVERDUE:'Overdue',EARLY_RETURN:'Return Processing',INCIDENT_OPEN:'Incident Open',OBLIGATION_OPEN:'Obligation Open',CLOSED:'Completed',COMPLETED:'Completed',DRAFT:'Draft',UNDER_SPMU:'Under SPMU Review',APPROVED_READY_FOR_RELEASE:'Approved / Ready for Release',FINAL_APPROVED_AWAITING_DOWNLOAD:'Approved',RETURNED_FOR_REVISION:'Returned for Revision',REJECTED:'Rejected',CANCELLED:'Cancelled'};
+ const labels={PREPARING_RELEASE:'Preparing Release',ACTIVE:'Released / On Custody',RETURN_PROCESSING:'Return Processing',PARTIALLY_RETURNED:'Return Processing',OVERDUE:'Overdue',EARLY_RETURN:'Return Processing',INCIDENT_OPEN:'Incident Open',OBLIGATION_OPEN:'Obligation Open',CLOSED:'Completed',COMPLETED:'Completed',BORROWER_CLEARED:'Borrower Cleared',BORROWED:'Released / On Custody',READY_FOR_RELEASE:'Ready for Release',PICKUP_SCHEDULED:'Pickup Scheduled',ITEM_PREPARATION:'For Item Preparation',PICKUP_SCHEDULING:'For Pickup Scheduling',PICKUP_EXPIRED:'Pickup Window Expired',DRAFT:'Draft',UNDER_SPMU:'Under SPMU Review',APPROVED_READY_FOR_RELEASE:'Approved / Ready for Release',FINAL_APPROVED_AWAITING_DOWNLOAD:'Approved',RETURNED_FOR_REVISION:'Returned for Revision',REJECTED:'Rejected',CANCELLED:'Cancelled'};
  [...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=labels[v]||v.replaceAll('_',' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());status.appendChild(o)});
  const body=rows[0].parentElement;
  const render=()=>{const q=search.value.trim().toLowerCase(); const st=status.value; const ordered=[...rows].sort((a,b)=>(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)); ordered.forEach(r=>body.appendChild(r)); let n=0; rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++}); if(empty)empty.hidden=n>0;};
@@ -211,3 +169,4 @@
 @endif
 
 @endsection
+

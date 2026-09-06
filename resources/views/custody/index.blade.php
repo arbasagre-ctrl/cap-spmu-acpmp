@@ -23,29 +23,7 @@
 
     $isOversightView = ! $isBorrower && $isHead && $mode === null;
 
-    $groupForCustody = function ($custody): string {
-        if ($custody->status === 'CLOSED' || $custody->closed_at !== null) {
-            return 'completed';
-        }
-
-        if (in_array($custody->status, ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'], true)) {
-            return 'attention';
-        }
-
-        if (in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true)) {
-            return 'return';
-        }
-
-        if ($custody->released_at) {
-            return 'custody';
-        }
-
-        if ($custody->status === 'PREPARING_RELEASE') {
-            return 'release';
-        }
-
-        return 'active';
-    };
+    $groupForCustody = fn ($custody): string => $custody->workflowStatus()['group'];
 
     $priorityForCustody = fn ($custody): int => match ($groupForCustody($custody)) {
         'attention' => 1,
@@ -53,14 +31,16 @@
         'custody' => 3,
         'release' => 4,
         'active' => 5,
+        'cancelled' => 8,
         'completed' => 9,
         default => 8,
     };
 
     $borrowerCounts = $isBorrower
         ? [
-            'active' => $custodies->filter(fn ($custody) => $groupForCustody($custody) !== 'completed')->count(),
+            'active' => $custodies->filter(fn ($custody) => ! in_array($groupForCustody($custody), ['completed', 'cancelled'], true))->count(),
             'completed' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'completed')->count(),
+            'cancelled' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'cancelled')->count(),
         ]
         : [];
 
@@ -72,6 +52,7 @@
         'custody' => 'On Custody',
         'return' => 'Return Processing',
         'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
     ];
 
     $oversightTabIcons = [
@@ -82,16 +63,18 @@
         'custody' => 'box',
         'return' => 'cycle',
         'completed' => 'check-circle',
+        'cancelled' => 'close',
     ];
 
     $oversightCounts = $isOversightView
         ? [
-            'active' => $custodies->filter(fn ($custody) => $groupForCustody($custody) !== 'completed')->count(),
+            'active' => $custodies->filter(fn ($custody) => ! in_array($groupForCustody($custody), ['completed', 'cancelled'], true))->count(),
             'attention' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'attention')->count(),
             'release' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'release')->count(),
             'custody' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'custody')->count(),
             'return' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'return')->count(),
             'completed' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'completed')->count(),
+            'cancelled' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'cancelled')->count(),
             'all' => $custodies->count(),
         ]
         : [];
@@ -205,6 +188,20 @@
                     Completed
                     <span class="borrowings-tab-count">{{ $borrowerCounts['completed'] ?? 0 }}</span>
                 </button>
+
+
+                <button
+                    class="borrowings-tab"
+                    type="button"
+                    role="tab"
+                    data-borrowings-tab="cancelled"
+                    aria-selected="false"
+                    aria-controls="borrowings-panel-cancelled"
+                    tabindex="-1"
+                >
+                    Cancelled
+                    <span class="borrowings-tab-count">{{ $borrowerCounts['cancelled'] ?? 0 }}</span>
+                </button>
             </div>
 
             @foreach([
@@ -216,13 +213,21 @@
                     'No completed borrowings yet.',
                     'A borrowing moves here once every item is returned and the record is cleared.',
                 ],
+                'cancelled' => [
+                    'No cancelled borrowings.',
+                    'Cancelled borrowing records will appear here for reference.',
+                ],
             ] as $panel => $emptyCopy)
                 @php
-                    $panelCustodies = $custodies->filter(
-                        fn ($custody) => $panel === 'completed'
-                            ? $groupForCustody($custody) === 'completed'
-                            : $groupForCustody($custody) !== 'completed'
-                    );
+                    $panelCustodies = $custodies->filter(function ($custody) use ($panel, $groupForCustody) {
+                        $group = $groupForCustody($custody);
+
+                        return match ($panel) {
+                            'completed' => $group === 'completed',
+                            'cancelled' => $group === 'cancelled',
+                            default => ! in_array($group, ['completed', 'cancelled'], true),
+                        };
+                    });
                 @endphp
 
                 <div
@@ -296,36 +301,12 @@
                             ->first(fn ($earlyReturn) => $earlyReturn->status === 'REQUESTED')
                         : null;
 
-                    $isCompleted = $custody->status === 'CLOSED' || $custody->closed_at !== null;
-
-                    /*
-                     * Borrower Cleared vs. Completed (see custody/show.blade.php
-                     * for the full rule): Completed requires, for linen, that
-                     * internal Laundry processing has finished AND the Laundry
-                     * Form has been archived — not archival alone.
-                     */
-                    $rowHasLaundryItem = $custody->lines->contains(
-                        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
-                    );
-                    $rowLaundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
-                    $isFullyComplete = $isCompleted
-                        && (
-                            ! $rowHasLaundryItem
-                            || ($rowLaundryJob?->status === 'LAUNDRY_COMPLETED' && $rowLaundryJob?->latestEvidence?->file)
-                        );
-
-                    $operationalLabel = match (true) {
-                        $isCompleted => $isFullyComplete ? 'Completed' : 'Borrower Cleared',
-                        $custody->status === 'OBLIGATION_OPEN' => 'Obligation Open',
-                        $custody->status === 'INCIDENT_OPEN' => 'Incident Open',
-                        in_array($custody->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => 'Return Processing',
-                        $custody->status === 'OVERDUE' => 'Overdue',
-                        (bool) $custody->released_at => 'Items Released / On Custody',
-                        (bool) $custody->prepared_at && $hasActivePickupSchedule => 'Ready for Release',
-                        $hasActivePickupSchedule => 'For Item Preparation',
-                        $custody->status === 'PREPARING_RELEASE' => 'For Pickup Scheduling',
-                        default => null,
-                    };
+                    $workflowStatus = $custody->workflowStatus();
+                    $operationalLabel = $workflowStatus['label'];
+                    $operationalStatusKey = $workflowStatus['key'];
+                    $isCompleted = $workflowStatus['group'] === 'completed';
+                    $isCancelled = $workflowStatus['group'] === 'cancelled';
+                    $isFullyComplete = $operationalStatusKey === 'COMPLETED';
 
                     $detailRoute = match ($mode) {
                         'release' => route('custody.release.show', $custody),
@@ -339,7 +320,7 @@
                     data-operational-record
                     data-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
                     data-priority="{{ $activeEarlyReturn ? 1 : 0 }}"
-                    data-status="{{ $activeEarlyReturn ? 'Early Return Requested' : ($operationalLabel ?: $custody->status) }}"
+                    data-status="{{ $activeEarlyReturn ? 'Early Return Requested' : $operationalLabel }}"
                     data-search="{{ strtolower(trim(($custody->borrower?->full_name ?? '').' '.($custody->request?->request_no ?? '').' '.($custody->custody_no ?? '').' '.($custody->request?->currentVersion?->purpose_event ?? ''))) }}"
                     @endif
                 >
@@ -368,8 +349,10 @@
                         @else
                             <span><small>Pickup</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong></span>
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: 'Not yet' }}</strong></span>
-                            @if($custody->status === 'CLOSED' || $custody->closed_at !== null)
-                                <span><small>{{ $isFullyComplete ? 'Completed' : 'Borrower Cleared' }}</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: ($isFullyComplete ? 'Completed' : 'Borrower Cleared') }}</strong></span>
+                            @if($isCancelled)
+                                <span><small>Cancelled</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: 'Cancelled' }}</strong></span>
+                            @elseif($isCompleted)
+                                <span><small>{{ $operationalLabel }}</small><strong>{{ optional($custody->closed_at)->format('d M Y, g:i A') ?: $operationalLabel }}</strong></span>
                             @else
                                 <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
                             @endif
@@ -381,7 +364,7 @@
                             <x-status-badge status="INFORMATIONAL" label="Early Return Requested" />
                         @endif
                         <x-status-badge
-                            :status="$custody->status === 'CLOSED' || $custody->closed_at !== null ? 'COMPLETED' : $custody->status"
+                            :status="$operationalStatusKey"
                             :label="$operationalLabel"
                         />
                         <strong>View<x-icon name="chevron-right" size="16" /></strong>

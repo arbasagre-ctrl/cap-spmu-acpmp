@@ -2,8 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\AccessClassification;
-use App\Models\OrganizationalUnit;
 use App\Models\SystemSetting;
 use App\Models\UserSignature;
 use App\Services\AuditService;
@@ -11,105 +9,57 @@ use App\Services\ProtectedFileService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class ProfileController extends Controller
 {
-    /** @var list<string> */
-    private const BORROWER_DEPARTMENT_NAMES = [
-        'College of Health and Sciences',
-        'College of Engineering and Architecture',
-        'College of Tourism, Hospitality and Business Management',
-        'College of Computer Studies',
-        'College of Arts and Sciences',
-        'College of Technological Developmental Education',
-    ];
-
     public function show(Request $request): View
     {
-        $user = $request->user()->load('organizationalUnit', 'currentSignature.file');
-
-        $profileDesignation = trim((string) $user->designation);
-        if ($user->access_classification === AccessClassification::BorrowerOnly
-            && strcasecmp($profileDesignation, AccessClassification::BorrowerOnly->label()) === 0) {
-            $profileDesignation = '';
-        }
+        $user = $request->user()->load([
+            'organizationalUnit',
+            'authorizedOrganizationalUnits',
+            'currentSignature.file',
+        ]);
 
         return view('profile.show', [
             'user' => $user,
-            'profileDesignation' => $profileDesignation,
             'signatureMaxUploadMb' => max(1, (int) SystemSetting::value('max_upload_mb', 5)),
-            'borrowerUnits' => $user->access_classification === AccessClassification::BorrowerOnly
-                ? OrganizationalUnit::query()
-                    ->where('active', true)
-                    ->whereIn('unit_name', self::BORROWER_DEPARTMENT_NAMES)
-                    ->orderBy('unit_name')
-                    ->get()
-                : collect(),
         ]);
     }
 
     public function update(Request $request, AuditService $audit): RedirectResponse
     {
-        $user = $request->user();
-        $isBorrower = $user->access_classification === AccessClassification::BorrowerOnly;
-
-        $rules = [
-            'full_name' => ['required', 'string', 'max:255'],
-            'designation' => ['nullable', 'string', 'max:255'],
+        /*
+         * Official identity and organizational data are centrally managed by
+         * ICTU. Account Settings may change communication preferences only.
+         */
+        $data = $request->validate([
             'mobile_no' => ['nullable', 'string', 'max:30'],
             'system_notifications' => ['nullable', 'boolean'],
             'email_notifications' => ['nullable', 'boolean'],
             'sms_notifications' => ['nullable', 'boolean'],
-        ];
+        ]);
 
-        if ($isBorrower) {
-            $allowedBorrowerUnitIds = OrganizationalUnit::query()
-                ->where('active', true)
-                ->whereIn('unit_name', self::BORROWER_DEPARTMENT_NAMES)
-                ->pluck('id')
-                ->all();
+        $user = $request->user();
+        $before = $user->only(['mobile_no', 'notification_preferences']);
 
-            $rules['employee_no'] = [
-                'required',
-                'string',
-                'max:80',
-                Rule::unique('users')->ignore($user->id),
-            ];
-            $rules['organizational_unit_id'] = ['required', Rule::in($allowedBorrowerUnitIds)];
-        }
-
-        $data = $request->validate($rules);
-
-        if ($isBorrower
-            && strcasecmp(trim((string) ($data['designation'] ?? '')), AccessClassification::BorrowerOnly->label()) === 0) {
-            $data['designation'] = null;
-        }
-
-        $updatedFields = ['full_name', 'designation', 'mobile_no', 'notification_preferences'];
-        $updates = [
-            'full_name' => $data['full_name'],
-            'designation' => $data['designation'] ?? null,
+        $user->update([
             'mobile_no' => $data['mobile_no'] ?? null,
             'notification_preferences' => [
                 'system' => $request->boolean('system_notifications'),
                 'email' => $request->boolean('email_notifications'),
                 'sms' => $request->boolean('sms_notifications'),
             ],
-        ];
+        ]);
 
-        if ($isBorrower) {
-            $updates['employee_no'] = $data['employee_no'];
-            $updates['organizational_unit_id'] = $data['organizational_unit_id'];
-            array_push($updatedFields, 'employee_no', 'organizational_unit_id');
-        }
+        $audit->record(
+            'PROFILE_UPDATED',
+            $user,
+            before: $before,
+            after: $user->only(['mobile_no', 'notification_preferences'])
+        );
 
-        $before = $user->only($updatedFields);
-        $user->update($updates);
-        $audit->record('PROFILE_UPDATED', $user, before: $before, after: $user->only($updatedFields));
-
-        return back()->with('status', 'Account settings updated.');
+        return back()->with('status', 'Contact and notification settings updated.');
     }
 
     public function signature(

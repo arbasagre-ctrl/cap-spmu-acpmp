@@ -49,6 +49,19 @@
 .return-flow-page .return-total-column { width: 12.5%; }
 .return-flow-page .return-inspection-table th { padding: 9px 5px; border-bottom: 1px solid var(--row-border); color: var(--text-secondary); background: var(--surface-subtle); font-size: clamp(9px, .65vw, 11px); font-weight: 750; letter-spacing: .025em; text-align: center; text-transform: uppercase; white-space: nowrap; }
 .return-flow-page .return-inspection-table td { padding: 10px 7px; border-bottom: 1px solid var(--row-border); vertical-align: middle; }
+.return-flow-page .return-inspection-section-row td { padding: 10px 14px !important; background: var(--surface-subtle); }
+.return-flow-page .return-inspection-section-row--linen td { border-top: 0; }
+.return-flow-page .return-inspection-section-row--non-linen td { border-top: 2px solid var(--border); }
+.return-flow-page .return-inspection-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.return-flow-page .return-inspection-section-heading > div { min-width: 0; }
+.return-flow-page .return-inspection-section-heading strong,
+.return-flow-page .return-inspection-section-heading small { display: block; }
+.return-flow-page .return-inspection-section-heading strong { color: var(--heading); font-size: 12px; font-weight: 750; letter-spacing: .02em; text-transform: uppercase; }
+.return-flow-page .return-inspection-section-heading small { margin-top: 2px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.return-flow-page .return-inspection-section-heading .status-badge { flex-shrink: 0; font-size: 10px; white-space: nowrap; }
+.return-flow-page .return-accounting-row.is-locked { background: color-mix(in srgb, var(--surface-subtle) 76%, transparent); }
+.return-flow-page .return-accounting-row.is-locked input { cursor: not-allowed; opacity: .52; }
+.return-flow-page .return-linen-locked-copy { margin-top: 5px !important; color: var(--warning) !important; font-weight: 650; }
 .return-flow-page .return-inspection-table th:first-child, .return-flow-page .return-inspection-table td:first-child { padding-left: 14px; text-align: left; }
 .return-flow-page .return-item-cell strong, .return-flow-page .return-item-cell small { display: block; }
 .return-flow-page .return-item-cell strong { margin-bottom: 3px; color: var(--heading); font-size: 13px; line-height: 1.4; }

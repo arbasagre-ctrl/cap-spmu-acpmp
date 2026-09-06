@@ -122,6 +122,15 @@ class ProcessOperationalDeadlines extends Command
                 'custody_transaction_id' => $custody->id,
             ]);
             $isNew = ! $case->exists;
+            /*
+             * A policy revision must affect new cases only. Existing cases
+             * retain the rate captured when they first became overdue; their
+             * accrued total continues to grow only because another late day
+             * elapsed, not because an administrator changed today's tariff.
+             */
+            $rateSnapshot = $case->exists && is_numeric($case->rate_snapshot)
+                ? (float) $case->rate_snapshot
+                : (is_numeric($rate) ? (float) $rate : null);
 
             $case->fill([
                 'borrower_user_id' => $custody->borrower_user_id,
@@ -129,9 +138,9 @@ class ProcessOperationalDeadlines extends Command
                 'grace_expires_at' => $custody->due_at,
                 'overdue_started_at' => $custody->due_at->copy()->addDay()->startOfDay(),
                 'offense_level' => $case->offense_level ?: 1,
-                'rate_snapshot' => is_numeric($rate) ? (float) $rate : null,
-                'accrued_amount' => is_numeric($rate)
-                    ? round($daysLate * (float) $rate, 2)
+                'rate_snapshot' => $rateSnapshot,
+                'accrued_amount' => $rateSnapshot !== null
+                    ? round($daysLate * $rateSnapshot, 2)
                     : 0,
                 'sanction_type' => null,
                 'status' => 'OVERDUE',
@@ -166,7 +175,7 @@ class ProcessOperationalDeadlines extends Command
                         'original_expected_return_date' => $custody->original_due_at?->toDateString(),
                         'current_date' => $today->toDateString(),
                         'days_late' => $daysLate,
-                        'rate_snapshot' => is_numeric($rate) ? (float) $rate : null,
+                        'rate_snapshot' => $rateSnapshot,
                         'sanction_auto_imposed' => false,
                     ]
                 );

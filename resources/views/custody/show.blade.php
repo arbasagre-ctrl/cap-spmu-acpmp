@@ -88,48 +88,26 @@
 
     $laundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
 
-    /*
-     * Borrower Cleared vs. Completed
-     * ------------------------------
-     * Borrower Cleared = custody.status === 'CLOSED': the borrower has
-     * physically returned everything required and no unresolved
-     * accountability remains (linen at least turned over to Laundry).
-     * Completed = Borrower Cleared AND, only when linen is involved,
-     * internal Laundry processing has actually finished AND the
-     * accomplished Laundry Form has been archived. Archival alone (without
-     * LAUNDRY_COMPLETED) is NOT enough to call the transaction Completed —
-     * it stays Borrower Cleared until internal processing is also done.
-     */
-    $transactionFullyComplete = $custody->status === 'CLOSED'
-        && (
-            ! $hasLaundryItem
-            || ($laundryJob?->status === 'LAUNDRY_COMPLETED' && $laundryJob?->latestEvidence?->file)
-        );
-
-    $operationalLabel = match (true) {
-        $custody->status === 'CLOSED' => $transactionFullyComplete ? 'Completed' : 'Borrower Cleared',
-        $custody->status === 'OBLIGATION_OPEN' => 'Return Reconciliation / Obligation Open',
-        $custody->status === 'RETURN_PROCESSING' => 'Return Processing',
-        $custody->status === 'OVERDUE' => 'Overdue',
-        (bool) $custody->released_at => 'Items Released / On Custody',
-        $preparationComplete && $pickupWindowOpen => 'Ready for Release',
-        $preparationComplete && $pickupWindowUpcoming => 'Scheduled for Pickup',
-        $pickupWindowPassed => 'Pickup Window Expired',
-        ! $hasPickupSchedule && $custody->status === 'PREPARING_RELEASE' => 'For Pickup Scheduling',
-        $hasPickupSchedule && ! $preparationComplete => 'For Item Preparation',
-        $custody->status === 'PREPARING_RELEASE' => 'Preparing for Release',
-        default => null,
-    };
+    $workflowStatus = $custody->workflowStatus();
+    $operationalStatusKey = $workflowStatus['key'];
+    $operationalLabel = $workflowStatus['label'];
+    $transactionFullyComplete = $operationalStatusKey === 'COMPLETED';
+    $transactionCancelled = $operationalStatusKey === 'CANCELLED';
 
     [$borrowerStateTitle, $borrowerStateCopy, $borrowerStateTone] = match (true) {
-        $custody->status === 'CLOSED' && $transactionFullyComplete => [
+        $transactionCancelled => [
+            'Borrowing cancelled',
+            'This borrowing was cancelled before completion. No pickup or release action is required.',
+            'neutral',
+        ],
+        $operationalStatusKey === 'COMPLETED' => [
             'Borrowing completed',
             'All issued items were returned and reconciled. No further action is required.',
             'success',
         ],
-        $custody->status === 'CLOSED' => [
+        $operationalStatusKey === 'BORROWER_CLEARED' => [
             'Borrower cleared',
-            'Your return has been accepted and your obligation is cleared. Any remaining laundry processing is handled by SPMU.',
+            'Your return has been accepted and your obligation is cleared. Any remaining internal processing is handled by SPMU.',
             'success',
         ],
         $custody->status === 'OBLIGATION_OPEN' => [
@@ -207,7 +185,7 @@
             @endif
         </p>
     </div>
-    <x-status-badge :status="$custody->status" :label="$operationalLabel" />
+    <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
 </section>
 @endif
 
@@ -262,11 +240,10 @@
         $borrowerGatePassComplete = $hasOffCampusItem
             && $custody->gatePass
             && $custody->gatePass->status === 'VERIFIED';
-
+        $borrowerGatePassStatus = $custody->gatePass?->workflowStatus();
         $borrowerGatePassLabel = match (true) {
             ! $hasOffCampusItem => null,
-            $borrowerGatePassComplete => 'Completed',
-            $custody->gatePass !== null => 'Pending',
+            $borrowerGatePassStatus !== null => $borrowerGatePassStatus['label'],
             default => 'Applicable',
         };
 
@@ -275,6 +252,8 @@
          * the borrower does not have to read the summary grid to find it.
          */
         [$borrowerStateFactLabel, $borrowerStateFactValue] = match (true) {
+            $transactionCancelled && (bool) $custody->closed_at
+                => ['Cancelled', $custody->closed_at->format('d M Y')],
             (bool) $custody->closed_at
                 => ['Closed', $custody->closed_at->format('d M Y')],
             $custody->status === 'OVERDUE' && $returnDate
@@ -333,7 +312,7 @@
 
         if ($custody->closed_at) {
             $borrowerFacts[] = [
-                'Closed',
+                $transactionCancelled ? 'Cancelled' : 'Closed',
                 $custody->closed_at->format('d M Y, g:i A'),
                 null,
             ];
@@ -415,7 +394,7 @@
                 <div class="card-header">
                     <div>
                         <p class="eyebrow">Your items</p>
-                        <h2>{{ $borrowerReleased ? 'Issued and returned quantities' : 'Approved items for pickup' }}</h2>
+                        <h2>{{ $borrowerReleased ? 'Issued and returned quantities' : ($transactionCancelled ? 'Approved items — cancelled' : 'Approved items for pickup') }}</h2>
                     </div>
                     <span class="borrower-section-note">
                         {{ $borrowerItemCount }} {{ $borrowerItemCount === 1 ? 'item' : 'items' }}
@@ -459,7 +438,7 @@
                                         <td class="is-quantity"><strong>{{ $lineOnCustody + 0 }}</strong></td>
                                     @else
                                         <td>{{ $line->approved_quantity + 0 }}</td>
-                                        <td class="is-muted">Not issued yet</td>
+                                        <td class="is-muted">{{ $transactionCancelled ? 'Not issued — cancelled' : 'Not issued yet' }}</td>
                                     @endif
                                 </tr>
                             @endforeach
@@ -515,7 +494,9 @@
                             <div class="borrower-processing-copy">
                                 <strong>Gate Pass</strong>
                                 <small>
-                                    @if($borrowerGatePassComplete)
+                                    @if(($borrowerGatePassStatus['key'] ?? null) === 'VOID')
+                                        Voided because the borrowing was cancelled.
+                                    @elseif($borrowerGatePassComplete)
                                         Off-campus release recorded{{ $custody->gatePass?->guard_signed_at ? ' on '.$custody->gatePass->guard_signed_at->format('d M Y, g:i A') : '' }}.
                                     @else
                                         Required for the approved off-campus use. Handled during physical release.
@@ -524,7 +505,7 @@
                             </div>
 
                             <x-status-badge
-                                :status="$borrowerGatePassComplete ? 'COMPLETED' : 'PREPARING_RELEASE'"
+                                :status="$borrowerGatePassStatus['key'] ?? ($borrowerGatePassComplete ? 'COMPLETED' : 'PREPARING_RELEASE')"
                                 :label="$borrowerGatePassLabel"
                             />
 

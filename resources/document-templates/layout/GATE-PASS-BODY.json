@@ -1,0 +1,397 @@
+{
+  "sheet_name": "Gate Pass",
+  "orientation": "portrait",
+  "max_row": 41,
+  "max_col": 6,
+  "rows": {
+    "1": {
+      "height": 26
+    },
+    "8": {
+      "height": 34
+    },
+    "10": {
+      "height": 28
+    },
+    "11": {
+      "height": 24
+    }
+  },
+  "cols": {
+    "1": 12,
+    "2": 12,
+    "3": 12,
+    "4": 12,
+    "5": 18,
+    "6": 18
+  },
+  "merges": [
+    "A1:F1",
+    "D3:F3",
+    "D4:F4",
+    "A6:F6",
+    "A8:F8",
+    "A10:B10",
+    "C10:D10",
+    "E10:F10",
+    "A11:B11",
+    "C11:D11",
+    "E11:F11",
+    "A12:B12",
+    "A13:B13",
+    "A14:B14",
+    "A15:B15",
+    "A16:B16",
+    "A17:B17",
+    "A18:B18",
+    "C12:D12",
+    "C13:D13",
+    "C14:D14",
+    "C15:D15",
+    "C16:D16",
+    "C17:D17",
+    "C18:D18",
+    "E12:F12",
+    "E13:F13",
+    "E14:F14",
+    "E15:F15",
+    "E16:F16",
+    "E17:F17",
+    "E18:F18",
+    "A20:F20",
+    "A21:F21",
+    "A23:C23",
+    "A24:C24",
+    "A25:C25",
+    "A28:C28",
+    "D28:F28",
+    "A29:C29",
+    "D29:F29",
+    "A30:C30",
+    "D30:F30",
+    "A31:C31",
+    "D31:F31",
+    "A34:C34",
+    "A35:C35",
+    "A36:C36",
+    "A37:B37",
+    "A38:B38",
+    "A41:B41",
+    "C41:D41",
+    "E41:F41"
+  ],
+  "cells": [
+    {
+      "row": 1,
+      "col": 1,
+      "value": "GATE PASS",
+      "css": "font-weight:700;text-align:center;font-size:15pt;padding:4px;"
+    },
+    {
+      "row": 3,
+      "col": 4,
+      "value": "GP No.: {{gate_pass_no}}",
+      "css": "font-weight:700;text-align:right;"
+    },
+    {
+      "row": 4,
+      "col": 4,
+      "value": "Date: {{document_date}}",
+      "css": "font-weight:700;text-align:right;"
+    },
+    {
+      "row": 6,
+      "col": 1,
+      "value": "TO: Security Guard on Duty",
+      "css": "font-weight:700;"
+    },
+    {
+      "row": 8,
+      "col": 1,
+      "value": "Please allow the bearer {{borrower_name}} whose signature appears below to bring out of the CSPC premises the articles listed below.",
+      "css": "white-space:normal;"
+    },
+    {
+      "row": 10,
+      "col": 1,
+      "value": "Quantity",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 3,
+      "value": "Unit",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 10,
+      "col": 5,
+      "value": "Description",
+      "css": "font-weight:700;text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 1,
+      "value": "{{items.qty}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 3,
+      "value": "{{items.unit}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 11,
+      "col": 5,
+      "value": "{{items.description}}",
+      "css": "text-align:center;border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 12,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 13,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 13,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 13,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 14,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 15,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 16,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 17,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 1,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 3,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 18,
+      "col": 5,
+      "value": "",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 20,
+      "col": 1,
+      "value": "Purpose: {{purpose}}",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 21,
+      "col": 1,
+      "value": "Remarks: Destination: {{destination}}",
+      "css": "border:1px solid #444;"
+    },
+    {
+      "row": 23,
+      "col": 1,
+      "value": "Name & Signature of Bearer (Accountable Person)",
+      "css": "font-weight:700;font-size:8pt;"
+    },
+    {
+      "row": 24,
+      "col": 1,
+      "value": "{{borrower_signature}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 25,
+      "col": 1,
+      "value": "{{borrower_name}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 28,
+      "col": 1,
+      "value": "Verified By:",
+      "css": "font-weight:700;"
+    },
+    {
+      "row": 28,
+      "col": 4,
+      "value": "Approved By:",
+      "css": "font-weight:700;"
+    },
+    {
+      "row": 29,
+      "col": 1,
+      "value": "{{ao_signature}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 29,
+      "col": 4,
+      "value": "{{head_signature}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 30,
+      "col": 1,
+      "value": "{{ao_name}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 30,
+      "col": 4,
+      "value": "{{head_name}}",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 31,
+      "col": 1,
+      "value": "{{ao_role}}",
+      "css": "text-align:center;font-size:8pt;"
+    },
+    {
+      "row": 31,
+      "col": 4,
+      "value": "{{head_role}}",
+      "css": "text-align:center;font-size:8pt;"
+    },
+    {
+      "row": 34,
+      "col": 1,
+      "value": "Released by:",
+      "css": "font-weight:700;"
+    },
+    {
+      "row": 36,
+      "col": 1,
+      "value": "Guard on Duty",
+      "css": "text-align:center;"
+    },
+    {
+      "row": 37,
+      "col": 1,
+      "value": "Date: ____________",
+      "css": "vertical-align:middle;padding:2px 4px;"
+    },
+    {
+      "row": 38,
+      "col": 1,
+      "value": "Time: ____________",
+      "css": "vertical-align:middle;padding:2px 4px;"
+    },
+    {
+      "row": 41,
+      "col": 1,
+      "value": "Effectivity Date: {{effectivity_date}}",
+      "css": "font-size:8pt;"
+    },
+    {
+      "row": 41,
+      "col": 3,
+      "value": "Rev. {{revision}}",
+      "css": "font-size:8pt;text-align:center;"
+    },
+    {
+      "row": 41,
+      "col": 5,
+      "value": "Page {{page_no}} of {{page_total}}",
+      "css": "font-size:8pt;text-align:right;"
+    }
+  ]
+}

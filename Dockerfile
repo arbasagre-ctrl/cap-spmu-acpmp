@@ -3,13 +3,7 @@ FROM composer:2 AS vendor
 WORKDIR /app
 COPY composer.json composer.lock ./
 
-RUN composer install \
-    --no-dev \
-    --prefer-dist \
-    --no-interaction \
-    --no-progress \
-    --no-scripts \
-    --optimize-autoloader
+RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --no-scripts --optimize-autoloader --ignore-platform-req=ext-gd
 
 
 FROM php:8.4-apache
@@ -25,6 +19,14 @@ RUN apt-get update \
         libpng-dev \
         libjpeg62-turbo-dev \
         libfreetype6-dev \
+        libreoffice-calc \
+        libreoffice-writer \
+        ghostscript \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        fonts-dejavu-core \
+        fonts-liberation \
     && docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
