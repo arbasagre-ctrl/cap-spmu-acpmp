@@ -3,13 +3,10 @@
      * Return workflow:
      * non-linen is physically inspected by the Action Officer. Linen goes to
      * the Laundry Area first. Laundry Personnel are an offline actor: they
-     * count/check the linen at handover, record the quantity/condition and
-     * wet-sign Received by (including the Date row) on the physical Laundry
-     * Form and keep it for documentation. The Laundry Worker later delivers
-     * that accomplished form directly to SPMU while the linen remains in the
-     * Laundry Area for the internal washing cycle. The Action Officer uploads
-     * the form and encodes its
-     * findings here; there is no Laundry portal login.
+     * record the physical RECEIVED BY date, process/wash the linen, fill DATE
+     * COMPLETED, and then deliver the fully accomplished Laundry Form to SPMU.
+     * The Action Officer uploads the form and encodes the returned quantity plus
+     * any issue reported on/with the form; there is no Laundry portal login.
      */
     $eligibleReturnLines = $custody->lines->filter(function ($line) {
         return max(
@@ -50,13 +47,13 @@
             'info',
         ],
         $linenOutstanding > 0 && $laundryJob?->hasVerifiedAccomplishedForm() => [
-            'Encode the final Laundry Form',
-            'Laundry Personnel have completed the physical form. Record the returned quantity and condition exactly as written on it.',
+            'Encode the completed Laundry Form',
+            'Record the received quantity and any reported issue. If no issue was reported, encode the full received quantity as Fine / Good.',
             'warning',
         ],
         $linenOutstanding > 0 => [
-            'Accomplished Laundry Form pending',
-            'The borrower returns the linen and physical Laundry Form to the Laundry Area. The Laundry Worker checks the quantity/condition, wet-signs RECEIVED BY and the Date row, then later delivers the accomplished form directly to SPMU. The recorded Laundry receipt date—not the SPMU upload date—controls lateness.',
+            'Completed Laundry Form pending',
+            'The borrower returns the linen and form to the Laundry Area. Laundry Personnel record RECEIVED BY, finish the laundry process, fill DATE COMPLETED, then deliver the completed form to SPMU. RECEIVED BY—not DATE COMPLETED or the SPMU upload date—controls borrower lateness.',
             'warning',
         ],
         $laundryJob?->status === 'FOR_LAUNDRY' => [
@@ -65,9 +62,9 @@
             'info',
         ],
         $laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY' => [
-            'Return encoded',
-            'Linen return has been encoded.',
-            'success',
+            'Availability reconciliation pending',
+            'This older record is waiting for automatic inventory reconciliation; no separate Action Officer step is required.',
+            'info',
         ],
         $laundryJob?->status === 'LAUNDRY_COMPLETED' => [
             'Linen available',
@@ -202,10 +199,10 @@
                                         autocomplete="off"
                                         aria-describedby="laundry-return-date-help laundry-return-date-status"
                                     >
-                                    <small id="laundry-return-date-help">Use the RECEIVED BY date on the signed form.</small>
+                                    <small id="laundry-return-date-help">Use the RECEIVED BY date on the completed form. This controls borrower return timeliness.</small>
                                     <small id="laundry-return-date-status" data-laundry-return-date-status aria-live="polite"></small>
                                 </label>
-                                <button class="button secondary small ui-pressable" type="submit">Upload Form</button>
+                                <button class="button secondary small ui-pressable" type="submit">Upload Completed Form</button>
                             </form>
                         @else
                             <span class="status-badge status-warning">Pending scan</span>

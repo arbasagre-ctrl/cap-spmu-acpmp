@@ -7,13 +7,12 @@
     $formComplete = $job->hasVerifiedAccomplishedForm();
     $returnEncoded = $inspectionComplete
         || in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
-    $availabilityPending = $job->status === 'TURNED_OVER_TO_LAUNDRY';
     $available = $job->status === 'LAUNDRY_COMPLETED';
+    $legacyReconciliationPending = $job->status === 'TURNED_OVER_TO_LAUNDRY';
 
     $progressLabel = match (true) {
         $available => 'Available',
-        $availabilityPending => 'Finalize Availability',
-        $returnEncoded => 'Finalize Availability',
+        $legacyReconciliationPending => 'Availability Reconciliation Pending',
         $formComplete => 'Ready for SPMU Encoding',
         default => 'Laundry Processing / Form Pending',
     };
@@ -23,25 +22,21 @@
             'label' => 'Laundry Processing',
             'icon' => 'linen',
             'state' => $formComplete ? 'complete' : 'current',
-            'description' => 'Laundry Personnel physically receive, wash/assess the linen, complete the printed Laundry Form, and deliver the completed form to SPMU. No Laundry portal login is used.',
+            'description' => 'Laundry Personnel receive the linen, record RECEIVED BY, finish the offline laundry process, fill DATE COMPLETED, and deliver the completed form to SPMU.',
         ],
         [
             'label' => 'SPMU Records Final Form',
             'icon' => 'requests',
             'state' => $returnEncoded ? 'complete' : ($formComplete ? 'current' : 'pending'),
-            'description' => 'The Action Officer uploads the completed Laundry Form and records the final quantity and condition exactly as written by Laundry Personnel.',
-        ],
-        [
-            'label' => 'Finalize Availability',
-            'icon' => 'approval',
-            'state' => $available ? 'complete' : ($returnEncoded ? 'current' : 'pending'),
-            'description' => 'After SPMU encoding, the system restores only the serviceable linen quantity to Available inventory.',
+            'description' => 'The Action Officer uploads the completed form and encodes the received quantity plus any reported issue. If no issue was reported, the full received quantity is recorded as Fine / Good.',
         ],
         [
             'label' => 'Available',
             'icon' => 'success',
-            'state' => $available ? 'complete' : 'pending',
-            'description' => 'Serviceable linen is available for future borrowing. Adverse-condition quantities remain outside normal Available stock.',
+            'state' => $available ? 'complete' : ($legacyReconciliationPending ? 'current' : 'pending'),
+            'description' => $legacyReconciliationPending
+                ? 'This older record is waiting for the system one-time reconciliation. No separate Action Officer finalization is required.'
+                : 'After SPMU encoding, serviceable linen becomes Available automatically. Adverse or late findings continue through Accountability Processing.',
         ],
     ];
 @endphp

@@ -258,12 +258,6 @@ class BorrowingRequestController extends Controller
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
 
-                /*
-                 * Online request submission and physical pickup/release are
-                 * separate availabilities. This is informational only and
-                 * never blocks the form.
-                 */
-                'pickupAvailability' => $this->pickupAvailability(),
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
@@ -279,25 +273,6 @@ class BorrowingRequestController extends Controller
                     ->get(),
             ]
         );
-    }
-
-    /**
-     * Informational pickup/release availability for the borrower form.
-     *
-     * @return array{available: bool, next: ?\Carbon\CarbonImmutable}
-     */
-    private function pickupAvailability(): array
-    {
-        $calendar = app(\App\Services\OperationalCalendarService::class);
-
-        return [
-            'available' => $calendar->isOpenFor(
-                \App\Services\OperationalCalendarService::PICKUP,
-                now(),
-                true
-            ),
-            'next' => $calendar->nextPickupWindow(now()),
-        ];
     }
 
     public function store(
@@ -778,10 +753,18 @@ class BorrowingRequestController extends Controller
             $data['reason']
         );
 
-        return back()->with(
-            'status',
-            'Request cancelled. Any approved but unreleased allocation has been restored to Available inventory, and any pending pickup schedule/documents are no longer active.'
-        );
+        $message = 'Request cancelled. Any approved but unreleased allocation has been restored to Available inventory, and any pending pickup schedule/documents are no longer active.';
+
+        if (
+            $request->input('return_to') === 'release'
+            && strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU'
+        ) {
+            return redirect()
+                ->route('custody.release.index')
+                ->with('status', $message);
+        }
+
+        return back()->with('status', $message);
     }
 
     public function reviewCancellation(

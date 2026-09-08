@@ -2,19 +2,48 @@
     // Display-only ID; links continue to use the original LaundryJob key.
     $caseId = 'LND-'.($job->created_at ? $job->created_at->format('Y').'-' : '').str_pad((string) $job->id, 5, '0', STR_PAD_LEFT);
     $caseBorrower = $job->custody?->borrower?->full_name ?: '—';
-    $cleanedQuantity = (int) $job->lines->sum('completed_quantity');
-    $maintenanceQuantity = (int) $job->lines->where('issue_type', 'DAMAGED')->sum('affected_quantity');
+    $serviceableQuantity = (int) $job->lines->sum('completed_quantity');
     $receivedQuantity = (int) $job->lines->sum('received_quantity');
     $hasRecordedQuantities = $job->lines->isNotEmpty()
         && $job->lines->every(fn ($line) => $line->received_quantity !== null);
-    $noProcessingRequired = $hasRecordedQuantities && $receivedQuantity === 0 && $job->worker_received_at;
+
+    $adverseConditions = $job->lines
+        ->flatMap(fn ($line) => $line->custodyLine?->returnLines ?? collect())
+        ->map(fn ($returnLine) => strtoupper((string) $returnLine->condition_code))
+        ->filter(fn ($condition) => $condition !== '' && $condition !== 'FINE')
+        ->unique()
+        ->values();
+    $hasAdverseFinding = $adverseConditions->isNotEmpty();
+
+    $expectedReturn = $job->custody?->original_due_at;
+    $isLateReturn = $job->worker_received_at && $expectedReturn
+        ? $job->worker_received_at->copy()->startOfDay()->gt($expectedReturn->copy()->startOfDay())
+        : false;
+
+    $hasAccountability = $hasAdverseFinding || $isLateReturn;
     $caseOutcomes = array_filter([
-        $cleanedQuantity > 0 ? 'available' : null,
-        $maintenanceQuantity > 0 ? 'maintenance' : null,
+        $serviceableQuantity > 0 ? 'available' : null,
+        $hasAccountability ? 'accountability' : null,
     ]);
+
     if (! $caseOutcomes) {
-        $caseOutcomes = [$noProcessingRequired ? 'not-needed' : 'unrecorded'];
+        $caseOutcomes = ['completed'];
     }
+
+    $adverseReason = $adverseConditions
+        ->map(fn ($condition) => match ($condition) {
+            'DAMAGED' => 'Damaged Item',
+            'DESTROYED' => 'Destroyed Item',
+            'MISSING' => 'Missing Item',
+            'LOST' => 'Lost Item',
+            'STOLEN' => 'Stolen Item',
+            default => ucwords(strtolower(str_replace('_', ' ', $condition))),
+        })
+        ->implode(' + ');
+    $accountabilityReason = collect([
+        $isLateReturn ? 'Late Return' : null,
+        $hasAdverseFinding ? $adverseReason : null,
+    ])->filter()->implode(' + ') ?: null;
     $itemSummary = $hasRecordedQuantities
         ? $job->lines->groupBy(fn ($line) => $line->custodyLine?->requestItem?->unit_snapshot ?: 'items')
             ->map(function ($lines, $unit) {
@@ -50,14 +79,14 @@
     </td>
     <td>
         <div class="completed-laundry-outcomes">
-            @if($cleanedQuantity > 0)
-                <span class="completed-laundry-badge is-available" title="{{ $cleanedQuantity }} clean / available">Cleaned /<br>Available</span>
+            @if($serviceableQuantity > 0)
+                <span class="completed-laundry-badge is-available" title="{{ $serviceableQuantity }} serviceable linen available">Available</span>
             @endif
-            @if($maintenanceQuantity > 0)
-                <span class="completed-laundry-badge is-maintenance" title="{{ $maintenanceQuantity }} routed to maintenance">Routed to<br>Maintenance</span>
+            @if($hasAccountability)
+                <span class="completed-laundry-badge is-maintenance" title="Referred to Accountability Processing: {{ $accountabilityReason }}">Accountability Required<br>{{ $accountabilityReason }}</span>
             @endif
-            @if($cleanedQuantity === 0 && $maintenanceQuantity === 0)
-                <span class="completed-laundry-badge is-neutral">{{ $noProcessingRequired ? 'No laundry required' : 'Outcome not recorded' }}</span>
+            @if($serviceableQuantity === 0 && ! $hasAccountability)
+                <span class="completed-laundry-badge is-neutral">Completed</span>
             @endif
         </div>
     </td>

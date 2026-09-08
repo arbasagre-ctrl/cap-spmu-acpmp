@@ -97,6 +97,7 @@
         $preparationComplete = (bool) $custody->prepared_at;
         $hasPickupSchedule = (bool) $custody->scheduled_release_at
             && (bool) $custody->pickup_expires_at
+            && (bool) $custody->pickup_scheduled_at
             && ! $custody->pickup_expired_at;
 
         $custodyWorkflowStatus ??= $custody->workflowStatus();
@@ -1102,7 +1103,7 @@
     && !$pendingCancellation
 )
 <div class="content-area borrower-request-detail">
-    <article class="request-cancel-card" data-request-cancel-workspace>
+    <article class="request-cancel-card" id="request-actions" data-request-cancel-workspace>
         <div class="borrower-cancel-copy">
             <h2 class="borrower-cancel-title">
                 <x-icon name="warning" size="20" />

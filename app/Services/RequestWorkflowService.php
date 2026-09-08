@@ -64,11 +64,6 @@ class RequestWorkflowService
             abort(403);
         }
 
-        $this->operationalCalendar->assertOpenFor(
-            OperationalCalendarService::REQUEST,
-            now(),
-            'submission'
-        );
         if (! $signatureConfirmed) {
             throw ValidationException::withMessages([
                 'confirm_e_signature' => 'Confirm that you want to apply your registered E-signature before submitting.',
@@ -154,22 +149,15 @@ class RequestWorkflowService
                     ]);
                 }
 
-                if (! $this->operationalCalendar->isOpenFor(
-                    OperationalCalendarService::PICKUP,
-                    $scheduleDate
-                )) {
-                    $nextOpen = $this->operationalCalendar->nextOpenDate(
-                        OperationalCalendarService::PICKUP,
-                        $scheduleDate,
-                        true
-                    );
-
-                    throw ValidationException::withMessages([
-                        'schedule_date' =>
-                            'The selected Items Needed From / pickup date is closed for SPMU physical transactions. Next open pickup date: '
-                            .$nextOpen->format('F j, Y').'.',
-                    ]);
-                }
+                /*
+                 * Items Needed From records when the borrower first needs the
+                 * item(s). It is not the physical pickup appointment. The AO
+                 * schedules pickup/release after approval, and the Operational
+                 * Calendar validates the actual physical transaction date/time.
+                 * Therefore a weekend, closure, or special date must not block
+                 * online request submission solely because the need date itself
+                 * is not a Pickup / Release day.
+                 */
 
                 /*
                  * Make sure the requested inventory items
@@ -885,15 +873,33 @@ class RequestWorkflowService
                 );
 
                 /*
-                 * This is the only point in this workflow
-                 * where inventory reservation is created.
-                 *
-                 * InventoryService::allocate() performs
-                 * the final locked availability check.
+                 * The client-defined Pickup / Issuance date is automatic:
+                 * use the latest valid SPMU operating day strictly before
+                 * Items Needed From. Weekends, holidays, suspensions, and
+                 * closed dates are skipped by the Operational Calendar.
+                 */
+                $automaticPickupWindow = $this->operationalCalendar
+                    ->automaticPickupWindowBefore(
+                        $version->needed_from,
+                        now()
+                    );
+
+                if (! $automaticPickupWindow) {
+                    throw ValidationException::withMessages([
+                        'pickup' => 'No valid SPMU Pickup / Issuance operating window remains before the approved Items Needed From date. Revise the borrowing schedule before approval.',
+                    ]);
+                }
+
+                /*
+                 * This is the only point in this workflow where inventory
+                 * reservation is created. Because physical custody begins on
+                 * the earlier Pickup / Issuance date, reservation protection
+                 * also begins on that system-generated date.
                  */
                 try {
                     $this->inventory->allocate(
-                        $version
+                        $version,
+                        $automaticPickupWindow['start']->startOfDay()
                     );
                 } catch (
                     ValidationException $exception
@@ -1063,13 +1069,15 @@ class RequestWorkflowService
                  * Create the pickup/custody record immediately
                  * after SPMU approval and reservation.
                  *
-                 * No exact pickup time is assigned here.
-                 * SPMU will configure the pickup date/time and
-                 * pickup expiration from the Pickup workflow.
+                 * The system assigns the automatic Pickup / Issuance
+                 * operating window here. The Action Officer only confirms
+                 * that generated schedule before the borrower is notified.
                  */
                 $custody = $this->custody->ensurePickupRecord(
                     $request->fresh(),
-                    $approver
+                    $approver,
+                    $automaticPickupWindow['start'],
+                    $automaticPickupWindow['end']
                 );
 
                 /*
@@ -1172,7 +1180,16 @@ class RequestWorkflowService
                             true,
 
                         'pickup_schedule_created' =>
+                            true,
+
+                        'pickup_schedule_confirmed' =>
                             false,
+
+                        'automatic_pickup_at' =>
+                            $automaticPickupWindow['start']->toIso8601String(),
+
+                        'automatic_pickup_expires_at' =>
+                            $automaticPickupWindow['end']->toIso8601String(),
 
                         'borrower_documents_generated' =>
                             true,
@@ -1187,7 +1204,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. Bring the generated documents and proceed to SPMU on the scheduled pickup date.",
+                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. SPMU will notify you after the Action Officer confirms the system-generated Pickup / Issuance schedule.",
                     $request
                 );
 
@@ -1199,7 +1216,7 @@ class RequestWorkflowService
                 $this->notifications->send(
                     'REQUEST_APPROVED',
                     $actionOfficers,
-                    "Request {$request->request_no} was verified and approved by the SPMU Head. The approved quantity is allocated/held and is ready for pickup scheduling and release processing.",
+                    "Request {$request->request_no} was approved. The system generated the Pickup / Issuance window for {$automaticPickupWindow['start']->format('F j, Y g:i A')} to {$automaticPickupWindow['end']->format('g:i A')}. Review and confirm the schedule before borrower notification and item preparation.",
                     $request,
                     ['SYSTEM', 'EMAIL']
                 );

@@ -154,6 +154,7 @@ class DocumentTemplateController extends Controller
             'layout_source' => $productionReview['layout_source'],
             'layout_words' => $productionReview['layout_words'],
             'layout_lines' => $productionReview['layout_lines'],
+            'layout_model' => $productionReview['layout_model'],
         ];
         $automatic = $layouts->autoMap($type, $format, $review);
         $analysis = $automatic['analysis'];
@@ -513,6 +514,8 @@ class DocumentTemplateController extends Controller
             'layout_source' => (string) ($review['layout_source'] ?? 'NOT_REQUESTED'),
             'layout_word_count' => is_array($review['layout_words'] ?? null) ? count($review['layout_words']) : 0,
             'layout_line_count' => is_array($review['layout_lines'] ?? null) ? count($review['layout_lines']) : 0,
+            'layout_table_count' => is_array($review['layout_model']['tables'] ?? null) ? count($review['layout_model']['tables']) : 0,
+            'layout_writable_region_count' => is_array($review['layout_model']['writable_regions'] ?? null) ? count($review['layout_model']['writable_regions']) : 0,
             'fillable_field_count' => is_array($review['fillable_fields'] ?? null) ? count($review['fillable_fields']) : 0,
         ];
     }

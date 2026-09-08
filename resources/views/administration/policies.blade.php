@@ -313,7 +313,7 @@
             <div>
                 <p class="eyebrow">Schedule exceptions</p>
                 <h2>Special Dates &amp; Closures</h2>
-                <p class="meta">Override the normal weekly schedule for holidays, typhoons, emergency campus closures, semester breaks, or approved special working days.</p>
+                <p class="meta">Override the normal weekly schedule for physical Pickup / Release and Return transactions during holidays, typhoons, emergency campus closures, semester breaks, or approved special working days. Online borrowing request submission remains available at all times.</p>
             </div>
         </header>
 
@@ -339,7 +339,6 @@
             </div>
 
             <div class="special-date-capabilities">
-                <label class="special-date-check"><input type="hidden" name="accepts_requests" value="0"><input type="checkbox" name="accepts_requests" value="1"><span>Accept requests</span></label>
                 <label class="special-date-check"><input type="hidden" name="allows_pickup" value="0"><input type="checkbox" name="allows_pickup" value="1"><span>Pickup / Release</span></label>
                 <label class="special-date-check"><input type="hidden" name="allows_return" value="0"><input type="checkbox" name="allows_return" value="1"><span>Returns</span></label>
             </div>
@@ -395,12 +394,11 @@
                         @forelse($dateExceptions as $exception)
                             @php
                                 $transactionSummary = $exception->status === 'CLOSED'
-                                    ? 'All SPMU transactions closed'
+                                    ? 'Physical SPMU transactions closed'
                                     : (collect([
-                                        $exception->accepts_requests ? 'Requests' : null,
                                         $exception->allows_pickup ? 'Pickup / Release' : null,
                                         $exception->allows_return ? 'Returns' : null,
-                                    ])->filter()->join(', ') ?: 'Open day with no enabled transaction type');
+                                    ])->filter()->join(', ') ?: 'Open day with no enabled physical transaction');
 
                                 $hoursSummary = $exception->open_time && $exception->close_time
                                     ? substr((string) $exception->open_time, 0, 5).' – '.substr((string) $exception->close_time, 0, 5)

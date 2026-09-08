@@ -39,10 +39,8 @@
                         <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18l-7 8v8l-4-2v-6L3 4Z" /></svg>
                         <select data-completed-outcome>
                             <option value="">All Outcomes</option>
-                            <option value="available">Cleaned / Available</option>
-                            <option value="maintenance">Routed to Maintenance</option>
-                            <option value="not-needed">No Laundry Required</option>
-                            <option value="unrecorded">Outcome Not Recorded</option>
+                            <option value="available">Available</option>
+                            <option value="accountability">Accountability Required</option>
                         </select>
                     </label>
                 </div>

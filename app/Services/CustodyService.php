@@ -14,6 +14,7 @@ use App\Models\IncidentLine;
 use App\Models\LaundryJob;
 use App\Models\LaundryJobLine;
 use App\Models\LaundryRecord;
+use App\Models\NotificationEvent;
 use App\Models\OverdueCase;
 use App\Models\ReturnLine;
 use App\Models\ReturnTransaction;
@@ -41,16 +42,19 @@ class CustodyService
      * Create the current pickup/custody record immediately after SPMU
      * approval and inventory reservation.
      *
-     * This method intentionally does not assign a pickup time. The SPMU
-     * Action Officer schedules the pickup window later from the custody
-     * workspace. It is idempotent so replaying the approval-side call does
-     * not duplicate the custody transaction or its lines.
+     * When the Operational Calendar provides a valid Pickup / Issuance
+     * window, the schedule becomes active automatically. No Action Officer
+     * confirmation is required. The borrower is notified once when the
+     * automatic schedule is activated. If no valid window can be generated,
+     * the record remains for SPMU exception handling.
      */
     public function ensurePickupRecord(
         BorrowingRequest $request,
-        User $actor
+        User $actor,
+        ?CarbonImmutable $pickupStart = null,
+        ?CarbonImmutable $pickupEnd = null
     ): CustodyTransaction {
-        return DB::transaction(function () use ($request): CustodyTransaction {
+        return DB::transaction(function () use ($request, $actor, $pickupStart, $pickupEnd): CustodyTransaction {
             $request = BorrowingRequest::query()
                 ->with([
                     'currentVersion.items.allocation',
@@ -100,12 +104,13 @@ class CustodyService
                     'borrower_user_id' => $request->borrower_user_id,
                     'status' => 'PREPARING_RELEASE',
 
-                    // Pickup is scheduled later by the SPMU Action Officer.
-                    'scheduled_release_at' => null,
-                    'pickup_expires_at' => null,
+                    // System-generated Pickup / Issuance window. A valid
+                    // Operational Calendar window becomes active immediately.
+                    'scheduled_release_at' => $pickupStart,
+                    'pickup_expires_at' => $pickupEnd,
                     'pickup_expired_at' => null,
                     'pickup_scheduled_by_user_id' => null,
-                    'pickup_scheduled_at' => null,
+                    'pickup_scheduled_at' => ($pickupStart && $pickupEnd) ? now() : null,
 
                     'due_at' => $dueAt,
                     'original_due_at' => $dueAt,
@@ -119,6 +124,28 @@ class CustodyService
                     'closed_at' => null,
                 ]
             );
+
+            // firstOrCreate may already persist pickup_scheduled_at on a brand-new
+            // automatically scheduled custody record. Treat that first creation as an
+            // activation so the borrower notification is still generated exactly once.
+            $automaticScheduleActivated = (bool) (
+                $custody->wasRecentlyCreated
+                && $pickupStart
+                && $pickupEnd
+            );
+
+            if ($pickupStart && $pickupEnd && ! $custody->released_at) {
+                $automaticScheduleActivated = $automaticScheduleActivated
+                    || ! $custody->pickup_scheduled_at;
+
+                $custody->update([
+                    'scheduled_release_at' => $pickupStart,
+                    'pickup_expires_at' => $pickupEnd,
+                    'pickup_expired_at' => null,
+                    'pickup_scheduled_by_user_id' => null,
+                    'pickup_scheduled_at' => $custody->pickup_scheduled_at ?: now(),
+                ]);
+            }
 
             $custody = $this->operationalCalendar->synchronizeCustodyDueDate(
                 $custody,
@@ -159,11 +186,40 @@ class CustodyService
                 );
             }
 
-            return $custody->fresh([
+            $custody = $custody->fresh([
                 'lines.requestItem.inventoryItem',
+                'lines.requestItem',
                 'borrower',
                 'request.currentVersion',
             ]);
+
+            if ($automaticScheduleActivated && $custody->borrower) {
+                $this->audit->record(
+                    'PICKUP_SCHEDULE_AUTOMATICALLY_ACTIVATED',
+                    $custody,
+                    after: [
+                        'pickup_at' => $pickupStart->toIso8601String(),
+                        'pickup_expires_at' => $pickupEnd->toIso8601String(),
+                        'source' => 'SPMU_OPERATIONAL_CALENDAR',
+                        'approval_actor_user_id' => $actor->id,
+                    ]
+                );
+
+                $requiredDocuments = $custody->lines->contains(
+                    fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+                )
+                    ? 'the generated Borrower Slip and Gate Pass'
+                    : 'the generated Borrower Slip';
+
+                $this->notifications->send(
+                    'PICKUP_SCHEDULED',
+                    collect([$custody->borrower]),
+                    "Your approved pickup and issuance schedule for {$custody->custody_no} is {$pickupStart->format('F j, Y g:i A')} to {$pickupEnd->format('g:i A')}. This schedule was assigned automatically from the SPMU Operational Calendar. Please proceed to SPMU within the pickup window and bring {$requiredDocuments}. Items are considered issued only after physical handover is recorded.",
+                    $custody
+                );
+            }
+
+            return $custody;
         }, 3);
     }
 
@@ -185,6 +241,7 @@ class CustodyService
             ->where('status', 'PREPARING_RELEASE')
             ->whereNull('released_at')
             ->whereNotNull('pickup_expires_at')
+            ->whereNotNull('pickup_scheduled_at')
             ->whereNull('pickup_expired_at')
             ->where('pickup_expires_at', '<', now())
             ->orderBy('id')
@@ -226,10 +283,23 @@ class CustodyService
                     $locked->loadMissing('borrower');
 
                     if ($locked->borrower) {
+                        $dueAt = $locked->original_due_at ?: $locked->due_at;
+                        $nextPickup = $this->operationalCalendar->nextPickupWindow($expiredAt);
+                        $canStillReschedule = false;
+
+                        if ($dueAt && $nextPickup) {
+                            $dueDay = CarbonImmutable::parse($dueAt, $expiredAt->timezone)->startOfDay();
+                            $canStillReschedule = $nextPickup->startOfDay()->lt($dueDay);
+                        }
+
+                        $pickupPassedMessage = $canStillReschedule
+                            ? "The confirmed pickup schedule for {$locked->custody_no} has passed without physical issuance. Your approved request and reservation remain active. If you still need the items, coordinate with SPMU; the same request may be rescheduled to the next valid SPMU operating window before the approved Expected Return Date."
+                            : "The confirmed pickup schedule for {$locked->custody_no} has passed without physical issuance. No valid pickup window remains before the approved Expected Return Date, so SPMU cannot extend this approval through pickup rescheduling. Coordinate with SPMU regarding cancellation or an approved revision of the borrowing dates.";
+
                         $this->notifications->send(
-                            'PICKUP_WINDOW_EXPIRED',
+                            'PICKUP_EXPIRED',
                             collect([$locked->borrower]),
-                            "The pickup window for {$locked->custody_no} has expired. The approved reservation remains in place; wait for SPMU to schedule a new pickup window.",
+                            $pickupPassedMessage,
                             $locked
                         );
                     }
@@ -241,11 +311,9 @@ class CustodyService
         return $expired;
     }
 
-    public function schedulePickup(
+    public function confirmPickupSchedule(
         CustodyTransaction $custody,
-        User $spmu,
-        string $pickupAt,
-        string $pickupExpiresAt
+        User $spmu
     ): void {
         abort_unless(
             $spmu->access_classification === AccessClassification::SpmuOfficer
@@ -255,117 +323,75 @@ class CustodyService
             403
         );
 
-        $timezone = config('app.timezone') ?: 'Asia/Manila';
-        $pickup = CarbonImmutable::parse($pickupAt, $timezone);
-        $expires = CarbonImmutable::parse($pickupExpiresAt, $timezone);
-
-        $this->operationalCalendar->assertOpenFor(
-            OperationalCalendarService::PICKUP,
-            $pickup,
-            'pickup_at'
-        );
-
-        $custody->loadMissing('request.currentVersion', 'borrower', 'lines.requestItem');
-        $version = $custody->request?->currentVersion;
-
-        if (! $version) {
-            throw ValidationException::withMessages([
-                'pickup_at' => 'The approved request schedule could not be found.',
-            ]);
-        }
-
-        $approvedSchedule = $version->getAttribute('schedule_date')
-            ?: $version->getAttribute('needed_from');
-
-        if (! $approvedSchedule) {
-            throw ValidationException::withMessages([
-                'pickup_at' => 'The approved Schedule Date could not be found.',
-            ]);
-        }
-
-        $approvedDate = CarbonImmutable::parse($approvedSchedule, $timezone)->startOfDay();
-        $effectivePickupDate = $this->operationalCalendar->nextOpenDate(
-            OperationalCalendarService::PICKUP,
-            $approvedDate,
-            true
-        );
-
-        if ($pickup->toDateString() !== $effectivePickupDate->toDateString()) {
-            $message = $effectivePickupDate->isSameDay($approvedDate)
-                ? 'Pickup must be scheduled on the approved Schedule Date: '.$approvedDate->format('F j, Y').'.'
-                : 'The approved Schedule Date '.$approvedDate->format('F j, Y').' is closed for pickup/release. Schedule the pickup on the next open operational date: '.$effectivePickupDate->format('F j, Y').'.';
-
-            throw ValidationException::withMessages([
-                'pickup_at' => $message,
-            ]);
-        }
-
-        if ($expires->toDateString() !== $pickup->toDateString()) {
-            throw ValidationException::withMessages([
-                'pickup_expires_at' => 'Please set "Claim Until" on the same date as the Pickup Date & Time.',
-            ]);
-        }
-
-        if ($expires->lte($pickup)) {
-            throw ValidationException::withMessages([
-                'pickup_expires_at' => 'Please set "Claim Until" to a later time than the Pickup Date & Time.',
-            ]);
-        }
-
-        [, $pickupClose] = $this->operationalCalendar->operatingWindow(
-            OperationalCalendarService::PICKUP,
-            $pickup
-        );
-
-        if ($pickupClose && $expires->gt($pickupClose)) {
-            throw ValidationException::withMessages([
-                'pickup_expires_at' => 'Please set "Claim Until" no later than '
-                    .$pickupClose->format('g:i A').' for the selected date.',
-            ]);
-        }
-
-        DB::transaction(function () use ($custody, $spmu, $pickup, $expires): void {
+        DB::transaction(function () use ($custody, $spmu): void {
             $locked = CustodyTransaction::query()
+                ->with(['borrower', 'request.currentVersion', 'lines.requestItem'])
                 ->lockForUpdate()
                 ->findOrFail($custody->id);
 
             if ($locked->status !== 'PREPARING_RELEASE' || $locked->released_at) {
                 throw ValidationException::withMessages([
-                    'pickup_at' => 'This pickup transaction has already moved to another state.',
+                    'pickup' => 'This pickup transaction has already moved to another state.',
                 ]);
             }
+
+            if ($locked->pickup_scheduled_at && $locked->hasPickupSchedule()) {
+                return;
+            }
+
+            if ($locked->pickup_expired_at) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The confirmed pickup window has already expired. Use the missed-pickup handling process instead of creating a new normal pickup date.',
+                ]);
+            }
+
+            $pickup = $locked->scheduled_release_at;
+            $expires = $locked->pickup_expires_at;
+
+            if (! $pickup || ! $expires) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The system-generated Pickup / Issuance schedule is unavailable. Review the Operational Calendar and the approved Items Needed From date.',
+                ]);
+            }
+
+            if (now()->gte($expires)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The system-generated Pickup / Issuance window has already passed and can no longer be confirmed.',
+                ]);
+            }
+
+            $this->operationalCalendar->assertOpenFor(
+                OperationalCalendarService::PICKUP,
+                $pickup,
+                'pickup'
+            );
 
             $before = [
                 'scheduled_release_at' => $locked->scheduled_release_at,
                 'pickup_expires_at' => $locked->pickup_expires_at,
                 'pickup_scheduled_by_user_id' => $locked->pickup_scheduled_by_user_id,
-                'prepared_at' => $locked->prepared_at,
+                'pickup_scheduled_at' => $locked->pickup_scheduled_at,
             ];
 
             $locked->update([
-                'scheduled_release_at' => $pickup,
-                'pickup_expires_at' => $expires,
                 'pickup_scheduled_by_user_id' => $spmu->id,
                 'pickup_scheduled_at' => now(),
                 'pickup_expired_at' => null,
-                // Scheduling/rescheduling does not erase a preparation that was already confirmed.
             ]);
 
             $this->audit->record(
-                'PICKUP_SCHEDULED',
+                'PICKUP_SCHEDULE_CONFIRMED',
                 $locked,
                 before: $before,
                 after: [
                     'pickup_at' => $pickup->toIso8601String(),
                     'pickup_expires_at' => $expires->toIso8601String(),
-                    'scheduled_by_user_id' => $spmu->id,
+                    'confirmed_by_user_id' => $spmu->id,
+                    'source' => 'SYSTEM_GENERATED_PRE_BORROWING_WINDOW',
                 ]
             );
 
-            $locked->loadMissing('borrower');
-
             if ($locked->borrower) {
-                $locked->loadMissing('lines.requestItem');
                 $requiredDocuments = $locked->lines->contains(
                     fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
                 )
@@ -375,7 +401,252 @@ class CustodyService
                 $this->notifications->send(
                     'PICKUP_SCHEDULED',
                     collect([$locked->borrower]),
-                    "Pickup for {$locked->custody_no} is scheduled on {$pickup->format('F j, Y g:i A')} and may be claimed until {$expires->format('g:i A')}. Proceed to SPMU within this window and bring {$requiredDocuments}.",
+                    "Pickup and issuance for {$locked->custody_no} is confirmed for {$pickup->format('F j, Y g:i A')} until {$expires->format('g:i A')}. Proceed to SPMU within this window and bring {$requiredDocuments}.",
+                    $locked
+                );
+            }
+        }, 3);
+    }
+
+    /**
+     * Let the borrower ask SPMU to reschedule a confirmed pickup window that
+     * has already passed. This keeps the same approved request and reservation.
+     * The borrower does not choose the replacement date/time; SPMU confirms
+     * the next valid Operational Calendar window.
+     */
+    public function requestPickupReschedule(
+        CustodyTransaction $custody,
+        User $borrower
+    ): void {
+        abort_unless(
+            $custody->borrower_user_id === $borrower->id
+                && $custody->status === 'PREPARING_RELEASE'
+                && ! $custody->released_at,
+            403
+        );
+
+        DB::transaction(function () use ($custody, $borrower): void {
+            $locked = CustodyTransaction::query()
+                ->with(['borrower', 'request.currentVersion', 'lines.requestItem'])
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
+
+            $timezone = config('app.timezone') ?: 'Asia/Manila';
+            $now = CarbonImmutable::now($timezone);
+            $pickupPassed = (bool) $locked->pickup_scheduled_at
+                && (
+                    (bool) $locked->pickup_expired_at
+                    || ($locked->pickup_expires_at && $locked->pickup_expires_at->lte($now))
+                );
+
+            if (! $pickupPassed) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'A reschedule may be requested only after a confirmed pickup window has passed without physical issuance.',
+                ]);
+            }
+
+            $dueAt = $locked->original_due_at ?: $locked->due_at;
+            if (! $dueAt) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The approved Expected Return Date could not be found for this transaction.',
+                ]);
+            }
+
+            $nextStart = $this->operationalCalendar->nextPickupWindow($now);
+            $dueDay = CarbonImmutable::parse($dueAt, $timezone)->startOfDay();
+
+            if (! $nextStart || $nextStart->startOfDay()->gte($dueDay)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'No valid rescheduled pickup remains before the approved Expected Return Date. Cancel the unreleased request or coordinate a revision of the approved borrowing dates.',
+                ]);
+            }
+
+            $alreadyRequested = NotificationEvent::query()
+                ->where('source_type', $locked->getMorphClass())
+                ->where('source_id', $locked->id)
+                ->where('event_code', 'PICKUP_RESCHEDULE_REQUESTED')
+                ->when(
+                    $locked->pickup_scheduled_at,
+                    fn ($query) => $query->where('occurred_at', '>', $locked->pickup_scheduled_at)
+                )
+                ->exists();
+
+            if ($alreadyRequested) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'A pickup reschedule request is already waiting for SPMU action.',
+                ]);
+            }
+
+            $spmuOfficers = User::query()
+                ->where('access_classification', AccessClassification::SpmuOfficer->value)
+                ->where('account_status', 'ACTIVE')
+                ->get();
+
+            $event = $this->notifications->send(
+                'PICKUP_RESCHEDULE_REQUESTED',
+                $spmuOfficers,
+                "The borrower requested a new pickup schedule for {$locked->custody_no} after the confirmed pickup window passed. Keep the same approved request and reservation, and confirm the next valid SPMU operating window before the approved Expected Return Date.",
+                $locked,
+                ['SYSTEM', 'EMAIL']
+            );
+
+            $this->audit->record(
+                'PICKUP_RESCHEDULE_REQUESTED',
+                $locked,
+                after: [
+                    'requested_by_user_id' => $borrower->id,
+                    'notification_event_id' => $event->id,
+                    'same_request_retained' => true,
+                    'reservation_released' => false,
+                    'next_valid_window' => $nextStart->toIso8601String(),
+                ]
+            );
+        }, 3);
+    }
+
+    /**
+     * Handle a missed or unusable pickup window without forcing the borrower
+     * to submit a new borrowing request.
+     *
+     * The approved request and its reserved quantity remain active. When the
+     * borrower still needs the items, the Action Officer reschedules the same
+     * custody transaction to the next valid SPMU Pickup / Release operating
+     * window before the Expected Return Date. The reschedule action itself is
+     * the AO confirmation of the new window and the borrower is notified.
+     */
+    public function rescheduleMissedPickup(
+        CustodyTransaction $custody,
+        User $spmu
+    ): void {
+        abort_unless(
+            $spmu->access_classification === AccessClassification::SpmuOfficer
+                && $custody->borrower_user_id !== $spmu->id
+                && $custody->status === 'PREPARING_RELEASE'
+                && ! $custody->released_at,
+            403
+        );
+
+        DB::transaction(function () use ($custody, $spmu): void {
+            $locked = CustodyTransaction::query()
+                ->with(['borrower', 'request.currentVersion', 'lines.requestItem'])
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
+
+            if ($locked->status !== 'PREPARING_RELEASE' || $locked->released_at) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'This pickup transaction has already moved to another state.',
+                ]);
+            }
+
+            $now = CarbonImmutable::now(config('app.timezone') ?: 'Asia/Manila');
+            $windowPassed = (bool) $locked->pickup_expired_at
+                || ($locked->pickup_expires_at && $locked->pickup_expires_at->lte($now));
+            $scheduleMissing = ! $locked->scheduled_release_at || ! $locked->pickup_expires_at;
+
+            if (! $windowPassed && ! $scheduleMissing) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The current pickup window is still valid. Use the existing confirmed schedule instead of rescheduling it.',
+                ]);
+            }
+
+            /*
+             * When the borrower actually missed a CONFIRMED pickup, SPMU may
+             * reschedule only after the borrower explicitly asks to continue.
+             * A system/SPMU scheduling exception (no confirmed pickup) remains
+             * an internal SPMU follow-up and does not require borrower consent.
+             */
+            if ($windowPassed && $locked->pickup_scheduled_at) {
+                $borrowerRequestedReschedule = NotificationEvent::query()
+                    ->where('source_type', $locked->getMorphClass())
+                    ->where('source_id', $locked->id)
+                    ->where('event_code', 'PICKUP_RESCHEDULE_REQUESTED')
+                    ->where('occurred_at', '>', $locked->pickup_scheduled_at)
+                    ->exists();
+
+                if (! $borrowerRequestedReschedule) {
+                    throw ValidationException::withMessages([
+                        'pickup' => 'Wait for the borrower to request a pickup reschedule before assigning a new pickup window. The borrower may also cancel the unreleased request instead.',
+                    ]);
+                }
+            }
+
+            $nextStart = $this->operationalCalendar->nextPickupWindow($now);
+
+            if (! $nextStart) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'No future SPMU Pickup / Release operating window is currently configured. Review the Operational Calendar or cancel the unreleased request if it will no longer proceed.',
+                ]);
+            }
+
+            [, $nextEnd] = $this->operationalCalendar->operatingWindow(
+                OperationalCalendarService::PICKUP,
+                $nextStart
+            );
+
+            if (! $nextEnd || ! $nextStart->lt($nextEnd)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The next SPMU Pickup / Release day does not have a complete operating window configured.',
+                ]);
+            }
+
+            $dueAt = $locked->original_due_at ?: $locked->due_at;
+
+            if (! $dueAt) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The approved Expected Return Date could not be found for this transaction.',
+                ]);
+            }
+
+            $dueDay = CarbonImmutable::parse($dueAt, $now->timezone)->startOfDay();
+
+            if ($nextStart->startOfDay()->gte($dueDay)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'No valid rescheduled pickup remains before the approved Expected Return Date. Coordinate with the borrower, then cancel the request or revise the approved borrowing period as appropriate.',
+                ]);
+            }
+
+            $before = [
+                'scheduled_release_at' => $locked->scheduled_release_at?->toIso8601String(),
+                'pickup_expires_at' => $locked->pickup_expires_at?->toIso8601String(),
+                'pickup_expired_at' => $locked->pickup_expired_at?->toIso8601String(),
+                'pickup_scheduled_by_user_id' => $locked->pickup_scheduled_by_user_id,
+                'pickup_scheduled_at' => $locked->pickup_scheduled_at?->toIso8601String(),
+            ];
+
+            $locked->update([
+                'scheduled_release_at' => $nextStart,
+                'pickup_expires_at' => $nextEnd,
+                'pickup_expired_at' => null,
+                'pickup_scheduled_by_user_id' => $spmu->id,
+                'pickup_scheduled_at' => $now,
+            ]);
+
+            $this->audit->record(
+                'PICKUP_RESCHEDULED',
+                $locked,
+                before: $before,
+                after: [
+                    'pickup_at' => $nextStart->toIso8601String(),
+                    'pickup_expires_at' => $nextEnd->toIso8601String(),
+                    'confirmed_by_user_id' => $spmu->id,
+                    'same_request_retained' => true,
+                    'reservation_released' => false,
+                    'preparation_preserved' => (bool) $locked->prepared_at,
+                    'source' => 'MISSED_PICKUP_NEXT_VALID_OPERATIONAL_WINDOW',
+                ]
+            );
+
+            if ($locked->borrower) {
+                $requiredDocuments = $locked->lines->contains(
+                    fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
+                )
+                    ? 'the generated Borrower Slip and Gate Pass'
+                    : 'the generated Borrower Slip';
+
+                $this->notifications->send(
+                    'PICKUP_SCHEDULED',
+                    collect([$locked->borrower]),
+                    "Pickup and issuance for {$locked->custody_no} has been rescheduled to {$nextStart->format('F j, Y g:i A')} until {$nextEnd->format('g:i A')}. This uses your same approved request; you do not need to submit a new borrowing request. Proceed to SPMU within the new window and bring {$requiredDocuments}.",
                     $locked
                 );
             }
@@ -967,15 +1238,15 @@ class CustodyService
             /*
              * Linen return rule:
              * The borrower physically returns linen to the Laundry Area first.
-             * The Laundry Worker checks the actual quantity/condition, writes
-             * the findings on the same travelling Laundry Form, and wet-signs
-             * "Received by" with the actual receipt date. The Laundry Worker
-             * later delivers that accomplished physical form directly to SPMU.
-             * SPMU does not perform a second linen inspection; the Action Officer
-             * only uploads/verifies the form and encodes its findings. Fine linen
-             * moves to the LAUNDRY
-             * inventory state and stays unavailable until the internal washing
-             * cycle is later marked complete.
+             * Laundry Personnel record the actual RECEIVED BY date, process/wash
+             * the linen, fill DATE COMPLETED, and then deliver the fully
+             * accomplished physical Laundry Form to SPMU.
+             *
+             * SPMU does not perform a second linen inspection. The Action Officer
+             * uploads/verifies the completed form and encodes the returned
+             * quantity plus any issue reported on/with the form. Fine / Good
+             * linen is restored to Available automatically after that encoding
+             * because the form already certifies that Laundry processing ended.
              */
             $eligibleLines = $custody->lines->filter(function ($line): bool {
                 return max(
@@ -1285,73 +1556,130 @@ class CustodyService
                 if ($allLaundryReturned
                     && ! in_array($laundryJob->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
                     /*
-                     * Reaching this point means the accomplished Laundry Form
-                     * was already uploaded/verified (enforced above) and the
-                     * Action Officer has now encoded all linen findings from it.
-                     * There is therefore no second "Confirm Laundry Turnover"
-                     * step. The physical Laundry receipt already happened before
-                     * SPMU Return Inspection.
+                     * The current physical form is delivered to SPMU only after
+                     * Laundry Personnel have filled both RECEIVED BY and DATE
+                     * COMPLETED. Once the Action Officer encodes all linen
+                     * findings, the form-recording flow restores serviceable
+                     * linen to Available automatically.
+                     *
+                     * Fine / Good linen is first recorded as physically returned
+                     * to LAUNDRY, then immediately restored from LAUNDRY to
+                     * AVAILABLE in the same accountable database transaction.
+                     * Adverse quantities keep their existing incident/
+                     * accountability dispositions and are never restored here.
+                     *
+                     * A verified accomplished form is the authoritative signal
+                     * that offline Laundry processing is complete. Its DATE
+                     * COMPLETED field may be represented in a generated document,
+                     * but is not required as a separate portal input.
                      */
                     $laundryJob->loadMissing([
                         'lines.custodyLine.returnLines',
+                        'lines.custodyLine.requestItem.inventoryItem',
                     ]);
 
-                    $totalForInternalLaundry = 0;
+                    $totalServiceable = 0;
+                    $serviceableByLine = [];
 
                     foreach ($laundryJob->lines as $jobLine) {
                         $received = (float) $jobLine->custodyLine->returnLines
                             ->where('disposition_state', 'LAUNDRY')
                             ->sum('quantity_received');
 
+                        $received = (int) round($received);
+                        $serviceableByLine[$jobLine->id] = $received;
+
                         $jobLine->update([
-                            'received_quantity' => (int) round($received),
+                            'received_quantity' => $received,
                         ]);
 
-                        $totalForInternalLaundry += $received;
+                        $totalServiceable += $received;
                     }
 
-                    $nextLaundryStatus = $totalForInternalLaundry > 0
-                        ? 'TURNED_OVER_TO_LAUNDRY'
-                        : 'LAUNDRY_COMPLETED';
+                    $automaticAvailability = $laundryJob->hasVerifiedAccomplishedForm();
 
-                    /*
-                     * worker_received_at is the date Laundry Personnel took
-                     * the linen, and it is the borrower's physical return
-                     * date. It is deliberately NOT defaulted from
-                     * form_verified_at or now(): both are SPMU document dates
-                     * and would charge the borrower for internal forwarding
-                     * time. When Laundry never recorded it digitally, the
-                     * Action Officer attests it from the accomplished Laundry
-                     * Form through $laundryReceivedOn.
-                     */
+                    if ($automaticAvailability && $totalServiceable > 0) {
+                        $completionTransactionId = $this->transactionHeader(
+                            'LAUNDRY_COMPLETION',
+                            $laundryJob,
+                            $spmu,
+                            'Completed Laundry Form verified; serviceable linen restored automatically to Available after SPMU return encoding.'
+                        );
+
+                        foreach ($laundryJob->lines as $jobLine) {
+                            $serviceable = (float) ($serviceableByLine[$jobLine->id] ?? 0);
+
+                            if ($serviceable <= 0) {
+                                continue;
+                            }
+
+                            $this->transactionLine(
+                                $completionTransactionId,
+                                $jobLine->custodyLine->requestItem->inventory_item_id,
+                                'LAUNDRY',
+                                'AVAILABLE',
+                                $serviceable,
+                                $laundryJob->worker_completed_at ?: now()
+                            );
+                        }
+                    }
+
+                    $nextLaundryStatus = ($totalServiceable <= 0 || $automaticAvailability)
+                        ? 'LAUNDRY_COMPLETED'
+                        : 'TURNED_OVER_TO_LAUNDRY';
+
+                    foreach ($laundryJob->lines as $jobLine) {
+                        $serviceable = (int) ($serviceableByLine[$jobLine->id] ?? 0);
+                        $hasAdverseFinding = $jobLine->custodyLine->returnLines->contains(
+                            fn ($returnLine) => strtoupper((string) $returnLine->condition_code) !== 'FINE'
+                        );
+
+                        $jobLine->update([
+                            'completed_quantity' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                                ? $serviceable
+                                : null,
+                        ]);
+
+                        $jobLine->custodyLine->update([
+                            'item_status' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                                ? ($hasAdverseFinding ? 'INCIDENT_PENDING' : 'RETURNED')
+                                : 'IN_LAUNDRY',
+                            'compliance_status' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                                ? 'LAUNDRY_COMPLETED'
+                                : 'INTERNAL_LAUNDRY',
+                        ]);
+                    }
+
                     $laundryJob->update([
                         'status' => $nextLaundryStatus,
-                        // worker_received_at is the actual physical linen receipt
-                        // date transcribed from the signed Laundry Form. Do not
-                        // replace it with the Action Officer or form-upload time.
+                        // RECEIVED BY controls borrower return timeliness.
+                        // DATE COMPLETED controls when the offline laundry work
+                        // finished. SPMU encoding time is kept separately in the
+                        // audit trail and must not replace either physical date.
+                        'ready_at' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
+                            ? ($laundryJob->worker_completed_at ?: now())
+                            : null,
                         'completed_at' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
                             ? now()
                             : null,
                     ]);
 
+                    /*
+                     * Compatibility fallback for older/alternate return payloads:
+                     * if the actual Laundry RECEIVED BY date was supplied at Return
+                     * Inspection and the job does not already have the authoritative
+                     * physical receipt date, let LateReturnService record it. New
+                     * flows normally set worker_received_at when the accomplished
+                     * Laundry Form is uploaded.
+                     */
                     if ($laundryReceivedOn !== null) {
                         $this->lateReturns->recordLaundryReceipt(
                             $custody,
                             $laundryReceivedOn,
                             $spmu
                         );
+                        $laundryJob->refresh();
                     }
-
-                    $custody->lines()
-                        ->whereHas(
-                            'requestItem.inventoryItem',
-                            fn ($query) => $query->where('laundry_required', true)
-                        )
-                        ->update([
-                            'compliance_status' => $nextLaundryStatus === 'LAUNDRY_COMPLETED'
-                                ? 'LAUNDRY_COMPLETED'
-                                : 'INTERNAL_LAUNDRY',
-                        ]);
 
                     $this->audit->record(
                         'LAUNDRY_RETURN_RECORDED_FROM_FORM',
@@ -1361,16 +1689,17 @@ class CustodyService
                             'recorded_by_user_id' => $spmu->id,
                             'physical_condition_source' => 'LAUNDRY_PERSONNEL',
                             'accomplished_form_verified' => true,
-                            'internal_laundry_quantity' => (int) round($totalForInternalLaundry),
+                            'physical_laundry_received_on' => $laundryJob->worker_received_at?->toDateString(),
+                            'physical_laundry_completed_on' => $laundryJob->worker_completed_at?->toDateString(),
+                            'serviceable_quantity' => (int) round($totalServiceable),
+                            'availability_restored_automatically' => $automaticAvailability,
                         ]
                     );
 
                     $this->notifications->send(
                         'LAUNDRY_INTERNAL_QUEUE',
                         $this->spmuRecipients(),
-                        $nextLaundryStatus === 'TURNED_OVER_TO_LAUNDRY'
-                            ? "Returned linen for {$custody->custody_no} was encoded from the accomplished Laundry Form and is now in the internal laundry queue."
-                            : "The linen return for {$custody->custody_no} was encoded from the accomplished Laundry Form with no serviceable quantity remaining for internal washing.",
+                        "The completed Laundry Form for {$custody->custody_no} was encoded. Serviceable linen is Available; any adverse finding continues through Accountability Processing.",
                         $laundryJob,
                         ['SYSTEM']
                     );

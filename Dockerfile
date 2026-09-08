@@ -18,6 +18,7 @@ RUN apt-get update \
         libzip-dev \
         libpng-dev \
         libjpeg62-turbo-dev \
+        libwebp-dev \
         libfreetype6-dev \
         libreoffice-calc \
         libreoffice-writer \
@@ -30,6 +31,7 @@ RUN apt-get update \
     && docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
+        --with-webp \
     && docker-php-ext-install \
         gd \
         intl \

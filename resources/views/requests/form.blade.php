@@ -3,32 +3,6 @@
 @section('content')
 
 @php
-    $pickupAvailability = $pickupAvailability ?? null;
-@endphp
-
-@if($pickupAvailability && ! $pickupAvailability['available'])
-    {{--
-        Informational only: online request submission availability and physical
-        pickup/release availability are separate, so this never blocks the form.
-    --}}
-    <section class="content-area">
-        <div class="callout warning request-pickup-availability">
-            <x-icon name="information" size="21" />
-            <div>
-                <strong>Borrowing requests are currently being accepted.</strong>
-                <p>
-                    However, physical pickup and release are unavailable at this time.
-                    @if($pickupAvailability['next'])
-                        The next available pickup/release schedule is {{ $pickupAvailability['next']->format('d M Y, g:i A') }}.
-                    @endif
-                </p>
-            </div>
-        </div>
-    </section>
-@endif
-
-
-@php
     $editing = $borrowingRequest->exists;
     $hasCurrentESignature = auth()->user()->currentSignature()->whereHas('file')->exists();
 

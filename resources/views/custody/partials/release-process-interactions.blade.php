@@ -28,5 +28,13 @@
         setPanel('release-schedule-editor', false);
         workspace.querySelector('[data-release-schedule-edit]')?.focus();
     });
+
+    workspace.querySelector('[data-release-cancel-request-form]')?.addEventListener('submit', (event) => {
+        const confirmed = window.confirm(
+            'Cancel this unreleased borrowing request? Use this only after confirming that the borrower will no longer proceed. The reserved quantity will be restored to Available inventory and the record will remain in Request Records as Cancelled.'
+        );
+
+        if (!confirmed) event.preventDefault();
+    });
 })();
 </script>

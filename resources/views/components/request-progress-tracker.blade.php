@@ -131,6 +131,7 @@
 
     $hasActivePickupSchedule = (bool) (
         $custody?->scheduled_release_at
+        && $custody?->pickup_scheduled_at
         && ! $custody?->pickup_expired_at
     );
 
@@ -248,7 +249,7 @@
      */
     if ($isClosed) {
         $returnDescription = $laundry
-            ? 'SPMU completed the borrower return reconciliation after the linen was physically turned over to Laundry. Internal washing may continue separately.'
+            ? 'SPMU recorded the completed Laundry Form and finished the borrower return reconciliation. Serviceable linen is Available; any adverse finding follows Accountability Processing.'
             : 'SPMU completed the return inspection and final reconciliation.';
     }
 
@@ -265,14 +266,14 @@
 
                 'FOR_LAUNDRY'
                     => $laundry->hasVerifiedAccomplishedForm()
-                        ? 'Laundry Personnel received the linen and wet-signed Received by. SPMU is verifying the accomplished Laundry Form.'
-                        : 'Return the linen to the Laundry Area first with the same printed Laundry Form. Laundry Personnel records the quantity and condition and wet-signs Received by, then you bring the accomplished form to SPMU.',
+                        ? 'The completed Laundry Form is on file. SPMU is encoding the linen return result.'
+                        : 'Return the linen and same printed Laundry Form to the Laundry Area. Laundry Personnel record Received by, finish the laundry process, fill Date Completed, then deliver the completed form to SPMU.',
 
                 'TURNED_OVER_TO_LAUNDRY'
-                    => 'Laundry Personnel have physically received the linen. The borrower no longer waits for the washing cycle; processing continues internally in the Laundry Area.',
+                    => 'This is an older Laundry record awaiting compatibility availability reconciliation.',
 
                 'LAUNDRY_COMPLETED'
-                    => 'Internal laundry processing is complete and clean linen has been restored to stock.',
+                    => 'The completed Laundry Form was recorded and serviceable linen is Available.',
 
                 'IN_PROCESS', 'READY_FOR_SPMU_RETURN', 'AWAITING_FINAL_FORM_UPLOAD', 'FORM_REPLACEMENT_REQUIRED'
                     => 'This Laundry record is being aligned to the simplified turnover workflow.',

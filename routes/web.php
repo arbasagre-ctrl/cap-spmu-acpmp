@@ -341,6 +341,15 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('custody.schedule-pickup');
 
+    Route::post('/custody/{custody}/reschedule-pickup', [CustodyController::class, 'reschedulePickup'])
+        ->middleware('workspace:SPMU')
+        ->name('custody.reschedule-pickup');
+
+
+    Route::post('/custody/{custody}/request-pickup-reschedule', [CustodyController::class, 'requestPickupReschedule'])
+        ->middleware('workspace:BORROWER')
+        ->name('custody.request-pickup-reschedule');
+
     Route::post('/custody/{custody}/quantities', [CustodyController::class, 'quantities'])
         ->middleware('workspace:SPMU')
         ->name('custody.quantities');
@@ -410,10 +419,11 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     | Current workflow:
     | - the Laundry Worker is an offline actor with no system account
     | - borrower returns linen + the physical Laundry Form to the Laundry Area
-    | - Laundry Worker checks/signs it and later delivers the form to SPMU
+    | - Laundry Personnel complete/sign it and later deliver the form to SPMU
     | - Action Officer uploads the form, transcribes its actual receipt date,
     |   and encodes the linen findings without a second physical inspection
-    | - SPMU later finalizes serviceable linen availability after washing
+    | - the completed form and return encoding restore serviceable linen to
+    |   Available inventory automatically
     |
     */
 
@@ -426,9 +436,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/laundry/{laundryJob}', [LaundryController::class, 'show'])
             ->name('laundry.show');
-
-        Route::post('/laundry/{laundryJob}/complete-processing', [LaundryController::class, 'completeProcessing'])
-            ->name('laundry.complete-processing');
 
     });
 

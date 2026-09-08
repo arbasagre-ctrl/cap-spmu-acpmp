@@ -62,7 +62,7 @@
         'ICTU_MAINTAINER' => 'ICTU Maintainer',
         'FOR_LAUNDRY' => 'Awaiting Laundry Return',
         'IN_PROCESS' => 'Legacy Laundry Process',
-        'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending',
+        'TURNED_OVER_TO_LAUNDRY' => 'Availability Reconciliation Pending',
         'VERIFIED_BY_ACTION_OFFICER' => 'Verified by Action Officer',
         'READY_FOR_PICKUP' => 'Legacy Ready for Pickup',
         'READY_FOR_SPMU_RETURN' => 'Ready for SPMU Return',

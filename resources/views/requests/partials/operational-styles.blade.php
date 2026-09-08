@@ -190,6 +190,53 @@
 .request-operational-document-copy strong { font-size: 12px; font-weight: 700; }
 .request-operational-document-copy small { font-size: 12px; }
 .request-operational-page .request-operational-document-copy strong { color: var(--heading); }
+.request-operational-page .request-documents-heading {
+    justify-content: space-between;
+}
+.request-operational-page .request-documents-heading-copy {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.request-operational-page .request-documents-heading-copy > .ui-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+.request-operational-page .request-documents-heading-copy small {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+}
+.request-operational-page .request-document-group-label {
+    margin: 14px 6px 0;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: .045em;
+    text-transform: uppercase;
+}
+.request-operational-page .request-document-group-label + .request-operational-document {
+    margin-top: 2px;
+}
+.request-operational-page .request-document-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    flex: 0 0 auto;
+}
+.request-operational-page .request-document-empty {
+    margin: 12px 6px 2px;
+    padding: 10px 12px;
+    border: 1px dashed var(--row-border);
+    border-radius: 7px;
+    color: var(--text-muted);
+    background: var(--surface-subtle);
+    font-size: 11px;
+}
 .request-operational-page .button.request-document-link {
     flex: 0 0 auto;
     min-width: 64px;
@@ -255,6 +302,16 @@ html[data-theme="dark"] .request-operational-page .request-custody-link { backgr
     .request-operational-page .request-operational-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
+    .request-operational-page .request-operational-document {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .request-operational-page .request-document-actions {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
     .request-operational-page .request-operational-next-action {
         width: 100%;
         flex-wrap: wrap;

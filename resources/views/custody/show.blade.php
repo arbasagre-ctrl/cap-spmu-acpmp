@@ -61,8 +61,10 @@
         && (bool) $custody->due_at
         && now()->lt($custody->due_at);
     $preparationComplete = (bool) $custody->prepared_at;
-    $hasPickupSchedule = (bool) $custody->scheduled_release_at
-        && (bool) $custody->pickup_expires_at
+    $hasSystemPickupWindow = (bool) $custody->scheduled_release_at
+        && (bool) $custody->pickup_expires_at;
+    $hasPickupSchedule = $hasSystemPickupWindow
+        && (bool) $custody->pickup_scheduled_at
         && ! $custody->pickup_expired_at;
 
     $pickupWindowStartsAt = $custody->scheduled_release_at;
@@ -70,12 +72,19 @@
     $pickupWindowUpcoming = $hasPickupSchedule
         && now()->lt($pickupWindowStartsAt);
 
-    $pickupWindowPassed = $hasPickupSchedule
+    $pickupWindowPassed = $hasSystemPickupWindow
         && now()->gt($pickupWindowEndsAt);
 
     $pickupWindowOpen = $hasPickupSchedule
         && ! $pickupWindowUpcoming
         && ! $pickupWindowPassed;
+
+    $pickupRescheduleRequested = (bool) ($pickupRescheduleRequested ?? false);
+    $pickupRescheduleAvailable = (bool) ($pickupRescheduleAvailable ?? false);
+    $borrowerMissedPickup = $isBorrower
+        && ! $custody->released_at
+        && (bool) $custody->pickup_scheduled_at
+        && $pickupWindowPassed;
 
 
     $hasOffCampusItem = $custody->lines->contains(
@@ -140,9 +149,19 @@
             'Physical release becomes available when your pickup window starts.',
             'info',
         ],
+        $borrowerMissedPickup && $pickupRescheduleRequested => [
+            'Pickup reschedule requested',
+            'SPMU has your request and will confirm the next valid operating window before the approved Expected Return Date.',
+            'info',
+        ],
+        $borrowerMissedPickup => [
+            'Pickup schedule passed',
+            'Choose whether to request another valid pickup schedule or cancel the unreleased request.',
+            'warning',
+        ],
         $pickupWindowPassed => [
-            'Pickup window ended',
-            'Coordinate with SPMU for a new pickup schedule.',
+            'Pickup schedule needs SPMU follow-up',
+            'SPMU is handling a scheduling exception. This is not recorded as a missed pickup by you.',
             'warning',
         ],
         $hasPickupSchedule => [
@@ -355,6 +374,48 @@
                     <x-icon name="chevron-right" size="15" />
                 </a>
             </div>
+
+            @if($borrowerMissedPickup)
+                <div class="borrower-early-return-notice" id="pickup-reschedule">
+                    @if($pickupRescheduleRequested)
+                        <div>
+                            <strong>Pickup reschedule requested</strong>
+                            <small>
+                                Waiting for SPMU to confirm the next valid operating window. Your approved request and reserved quantity remain active.
+                            </small>
+                        </div>
+                        <span class="status-badge status-info">Awaiting SPMU</span>
+                    @elseif($pickupRescheduleAvailable)
+                        <div>
+                            <strong>Do you still need the approved items?</strong>
+                            <small>
+                                Request a reschedule to continue using this same approved request. You do not need to submit a new borrowing request.
+                            </small>
+                        </div>
+                        <div class="inline-actions">
+                            <form method="post" action="{{ route('custody.request-pickup-reschedule', $custody) }}">
+                                @csrf
+                                <button class="button primary small ui-pressable" type="submit">
+                                    Request Reschedule
+                                </button>
+                            </form>
+                            <a class="button secondary small ui-pressable" href="{{ route('requests.show', $custody->request) }}#request-actions">
+                                Cancel Request
+                            </a>
+                        </div>
+                    @else
+                        <div>
+                            <strong>Rescheduling is no longer available</strong>
+                            <small>
+                                No valid SPMU pickup window remains before the approved Expected Return Date. Cancel the unreleased request or coordinate a revision of the approved borrowing dates.
+                            </small>
+                        </div>
+                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $custody->request) }}#request-actions">
+                            Open Request Actions
+                        </a>
+                    @endif
+                </div>
+            @endif
 
             {{-- Coordination already sent: one line, not a card. --}}
             @if($activeEarlyReturn)

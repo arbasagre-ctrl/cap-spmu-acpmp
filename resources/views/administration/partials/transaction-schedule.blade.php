@@ -16,13 +16,16 @@
         @method('PUT')
 
         <article class="card txn-schedule-card">
+            <p class="meta txn-schedule-note">
+                Online borrowing request submission remains available at all times. This schedule governs physical Pickup / Release and Return transactions only.
+            </p>
             <div class="txn-schedule-grid">
                 <div class="txn-schedule-head">
                     <span>Day</span>
                     <span>Office State</span>
                     <span>Allowed Transactions</span>
-                    <span title="Optional. Leave both times blank for a date-based policy.">Open Time</span>
-                    <span title="Must be later than the opening time.">Close Time</span>
+                    <span title="Required when Pickup / Release or Returns are enabled.">Open Time</span>
+                    <span title="Required with Open Time for physical Pickup / Release or Return transactions.">Close Time</span>
                 </div>
 
                 @foreach($weekdayLabels as $weekday => $weekdayLabel)
@@ -30,7 +33,6 @@
                         $weekly = $weeklySchedules->get($weekday);
 
                         $isOpen = (bool) old("schedule.{$weekday}.is_open", $weekly?->is_open ?? ($weekday <= 5));
-                        $acceptsRequests = (bool) old("schedule.{$weekday}.accepts_requests", $weekly?->accepts_requests ?? ($weekday <= 5));
                         $allowsPickup = (bool) old("schedule.{$weekday}.allows_pickup", $weekly?->allows_pickup ?? ($weekday <= 5));
                         $allowsReturn = (bool) old("schedule.{$weekday}.allows_return", $weekly?->allows_return ?? ($weekday <= 5));
 
@@ -68,25 +70,13 @@
                             <span class="txn-availability-title">Allowed Transactions</span>
 
                             <label class="txn-check">
-                                <input type="hidden" name="schedule[{{ $weekday }}][accepts_requests]" value="0">
-                                <input
-                                    type="checkbox"
-                                    name="schedule[{{ $weekday }}][accepts_requests]"
-                                    value="1"
-                                    data-weekday-capability
-                                    @checked($isOpen && $acceptsRequests)
-                                    @disabled(!$isOpen)
-                                >
-                                <span>Requests</span>
-                            </label>
-
-                            <label class="txn-check">
                                 <input type="hidden" name="schedule[{{ $weekday }}][allows_pickup]" value="0">
                                 <input
                                     type="checkbox"
                                     name="schedule[{{ $weekday }}][allows_pickup]"
                                     value="1"
                                     data-weekday-capability
+                                    data-weekday-physical
                                     @checked($isOpen && $allowsPickup)
                                     @disabled(!$isOpen)
                                 >
@@ -100,6 +90,7 @@
                                     name="schedule[{{ $weekday }}][allows_return]"
                                     value="1"
                                     data-weekday-capability
+                                    data-weekday-physical
                                     @checked($isOpen && $allowsReturn)
                                     @disabled(!$isOpen)
                                 >
@@ -135,6 +126,9 @@
                             <x-icon name="clock" size="16" />
                         </span>
 
+                        @error("schedule.{$weekday}.open_time")
+                            <p class="txn-row-error">{{ $message }}</p>
+                        @enderror
                         @error("schedule.{$weekday}.close_time")
                             <p class="txn-row-error">{{ $message }}</p>
                         @enderror
@@ -187,9 +181,14 @@
     padding: 0;
 }
 
+.txn-schedule-note {
+    margin: 0;
+    padding: 18px 28px 0;
+}
+
 .txn-schedule-grid {
     display: grid;
-    padding: 24px 28px 26px;
+    padding: 18px 28px 26px;
 }
 
 /*
@@ -261,7 +260,7 @@
 
 .txn-availability {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
     min-width: 0;
 }
@@ -527,12 +526,19 @@ html[data-theme="dark"] .txn-schedule-card {
         }
 
         /*
-         * A closed day accepts no transaction and keeps no hours, so its
-         * controls are locked. The paired hidden inputs stay enabled, which is
-         * what posts the withdrawn permissions as 0.
+         * A closed day permits no physical Pickup / Release or Return and
+         * keeps no operating hours, so those controls are locked.
          */
         lockedFields(row).forEach((field) => {
             field.disabled = !open.checked;
+        });
+
+        const physicalEnabled = open.checked
+            && Array.from(row.querySelectorAll('[data-weekday-physical]'))
+                .some((input) => input.checked);
+
+        row.querySelectorAll('[data-weekday-time]').forEach((input) => {
+            input.required = physicalEnabled;
         });
     };
 
@@ -556,6 +562,10 @@ html[data-theme="dark"] .txn-schedule-card {
             }
 
             syncRow(row);
+        });
+
+        row.querySelectorAll('[data-weekday-physical]').forEach((input) => {
+            input.addEventListener('change', () => syncRow(row));
         });
     });
 

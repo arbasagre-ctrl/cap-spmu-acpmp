@@ -131,8 +131,14 @@
     </div>
 
     <div class="request-schedule-fields" aria-labelledby="borrowing-schedule-heading">
-        <h3 class="eyebrow" id="borrowing-schedule-heading">Borrowing schedule</h3>
-        <div class="field-grid">
+        <div class="request-schedule-heading">
+            <h3 class="eyebrow" id="borrowing-schedule-heading">Borrowing schedule</h3>
+            <p class="request-schedule-note">
+                Borrowers are encouraged to submit requests in advance to allow sufficient time for verification, approval, preparation, and release.
+            </p>
+        </div>
+
+        <div class="field-grid request-schedule-grid">
             <label>
                 Items Needed From
                 <input
@@ -161,9 +167,12 @@
                 @enderror
             </label>
         </div>
-    </div>
 
-    <div class="student-activity-panel">
+        <small class="field-help request-schedule-help">
+            Please indicate the date by which you need to already have the requested item(s) in your custody for the intended activity. SPMU will arrange the appropriate pickup and release schedule after approval.
+        </small>
+    </div>
+<div class="student-activity-panel">
         <input type="hidden" name="represents_student_activity" value="0">
         <label class="checkbox" for="student-activity-toggle">
             <input

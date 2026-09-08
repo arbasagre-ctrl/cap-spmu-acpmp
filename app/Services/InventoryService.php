@@ -375,9 +375,9 @@ class InventoryService
         |
         | Still-unavailable quantity = however much was returned with a
         | LAUNDRY disposition, minus whatever has actually been restored to
-        | AVAILABLE by internal Laundry completion so far (laundry_job_lines
-        | .completed_quantity is only ever set by completeProcessing(), to
-        | the cleaned portion — the damaged-during-wash portion is never
+        | AVAILABLE by the completed-form return encoding so far
+        | (laundry_job_lines.completed_quantity records the serviceable portion
+        | restored automatically — the damaged-during-wash portion is never
         | subtracted here, since it never moves to AVAILABLE either).
         |
         | Written with a portable CASE/COALESCE expression (no GREATEST()/
@@ -936,14 +936,17 @@ class InventoryService
      *
      * @return list<Allocation>
      */
-    public function allocate(RequestVersion $version): array
-    {
-        return DB::transaction(function () use ($version): array {
+    public function allocate(
+        RequestVersion $version,
+        ?CarbonInterface $reservationStartsAt = null
+    ): array {
+        return DB::transaction(function () use ($version, $reservationStartsAt): array {
             $version->loadMissing(
                 'items.inventoryItem'
             );
 
             $allocations = [];
+            $reservationStart = $reservationStartsAt ?: $version->needed_from;
 
             $transactionId = DB::table(
                 'inventory_transactions'
@@ -978,7 +981,7 @@ class InventoryService
                  */
                 $balance = $this->availability(
                     $item,
-                    $version->needed_from,
+                    $reservationStart,
                     $version->return_due_at
                 );
 
@@ -1025,7 +1028,7 @@ class InventoryService
                  */
                 $allocation = Allocation::query()->create([
                     'request_item_id' => $requestItem->id,
-                    'period_start' => $version->needed_from,
+                    'period_start' => $reservationStart,
                     'period_end' => $version->return_due_at,
                     'allocated_quantity' =>
                         $requestItem->requested_quantity,
@@ -1063,7 +1066,7 @@ class InventoryService
                         $requested,
 
                     'effective_from' =>
-                        $version->needed_from,
+                        $reservationStart,
 
                     'effective_to' =>
                         $version->return_due_at,

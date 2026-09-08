@@ -3,7 +3,11 @@
     $releaseSummaryTone = $pickupWindowPassed || $custody->pickup_expired_at
         ? 'warning'
         : ($preparationComplete && $pickupWindowOpen ? 'success' : 'info');
-    $releaseNextStep = $releaseNeedsSchedule ? 'Pickup Schedule' : (! $preparationComplete ? 'Item Preparation' : 'Physical Release');
+    $releaseNextStep = $pickupWindowPassed || $custody->pickup_expired_at
+        ? 'Missed Pickup Handling'
+        : (! $hasPickupSchedule
+            ? 'Resolve Pickup Schedule Exception'
+            : (! $preparationComplete ? 'Item Preparation' : 'Physical Release'));
 @endphp
 
 <section class="page-heading release-page-heading">
@@ -20,7 +24,7 @@
         <div class="release-status-dates">
             <div>
                 <x-icon name="calendar" size="20" />
-                <div><strong>Pickup</strong><span>{{ $custody->scheduled_release_at?->format('M j, Y') ?: 'Not scheduled' }}@if($custody->scheduled_release_at && $custody->pickup_expires_at) · {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}@endif</span></div>
+                <div><strong>Pickup &amp; Issuance</strong><span>{{ $custody->scheduled_release_at?->format('M j, Y') ?: 'Not scheduled' }}@if($custody->scheduled_release_at && $custody->pickup_expires_at) · {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}@endif</span></div>
             </div>
             <div>
                 <x-icon name="calendar" size="20" />

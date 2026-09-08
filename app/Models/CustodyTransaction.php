@@ -96,6 +96,7 @@ class CustodyTransaction extends Model
     {
         return $this->scheduled_release_at !== null
             && $this->pickup_expires_at !== null
+            && $this->pickup_scheduled_at !== null
             && $this->pickup_expired_at === null;
     }
 
@@ -205,7 +206,8 @@ class CustodyTransaction extends Model
         }
 
         if ((string) $this->status === 'PREPARING_RELEASE') {
-            $hasSchedule = (bool) $this->scheduled_release_at && (bool) $this->pickup_expires_at;
+            $hasGeneratedWindow = (bool) $this->scheduled_release_at && (bool) $this->pickup_expires_at;
+            $hasSchedule = $hasGeneratedWindow && (bool) $this->pickup_scheduled_at;
             $expired = (bool) $this->pickup_expired_at
                 || ($hasSchedule && now()->gt($this->pickup_expires_at));
             $upcoming = $hasSchedule && ! $expired && now()->lt($this->scheduled_release_at);
@@ -227,8 +229,12 @@ class CustodyTransaction extends Model
                 return ['key' => 'ITEM_PREPARATION', 'label' => 'For Item Preparation', 'group' => 'release'];
             }
 
-            if (! $hasSchedule) {
-                return ['key' => 'PICKUP_SCHEDULING', 'label' => 'For Pickup Scheduling', 'group' => 'release'];
+            if ($hasGeneratedWindow && ! $hasSchedule) {
+                return ['key' => 'PICKUP_CONFIRMATION', 'label' => 'For Pickup Confirmation', 'group' => 'release'];
+            }
+
+            if (! $hasGeneratedWindow) {
+                return ['key' => 'PICKUP_SCHEDULING', 'label' => 'Pickup Schedule Exception', 'group' => 'release'];
             }
 
             return ['key' => 'PREPARING_RELEASE', 'label' => 'Preparing for Release', 'group' => 'release'];

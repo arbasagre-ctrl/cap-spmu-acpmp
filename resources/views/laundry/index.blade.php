@@ -10,7 +10,7 @@
     $hasLaundryCases = $jobs->total() > 0;
     $laundryStatusLabels = [
         'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
-        'TURNED_OVER_TO_LAUNDRY' => 'Availability Finalization',
+        'TURNED_OVER_TO_LAUNDRY' => 'Availability Reconciliation Pending',
     ];
     $laundryStatuses = collect(array_keys($laundryStatusLabels))
         ->merge($jobs->pluck('status'))->unique();
@@ -23,12 +23,10 @@
         <div>
             <p class="eyebrow">SPMU Action Officer</p>
             <h1>Laundry Operations</h1>
-            <p>Monitor linen cases handled physically by Laundry Personnel and record the completed Laundry Form when it reaches SPMU.</p>
+            <p>Monitor linen cases handled physically by Laundry Personnel. The accomplished physical Laundry Form is later delivered to SPMU for recording and historical retention.</p>
         </div>
         <a class="button secondary ui-pressable laundry-completed-link" href="{{ route('laundry.completed') }}">Completed</a>
     </section>
-
-    @include('laundry.partials.flow-guide')
 
     @if($hasLaundryCases)
         <section class="card laundry-toolbar" aria-label="Laundry case filters">
@@ -59,7 +57,7 @@
 
         <section class="card laundry-cases-card" aria-labelledby="laundry-cases-title">
             <div class="laundry-cases-heading">
-                <h2 id="laundry-cases-title">Laundry Cases</h2>
+                <h2 id="laundry-cases-title">Active Laundry Cases</h2>
                 <p data-laundry-count data-total="{{ $jobs->total() }}" data-paginated="{{ $jobs->hasPages() ? 'true' : 'false' }}" role="status" aria-live="polite">Showing {{ $jobs->count() }} of {{ $jobs->total() }} cases</p>
             </div>
             <div class="laundry-table-wrap">
@@ -115,8 +113,8 @@
     @else
         <section class="card laundry-empty-card" aria-label="No active laundry cases">
             @include('laundry.partials.empty-illustration')
-            <h2>No laundry cases need action.</h2>
-            <p>New linen cases will appear here after physical release and remain visible while the completed Laundry Form is pending.</p>
+            <h2>No active laundry cases need action.</h2>
+            <p>Ongoing linen cases will appear here after physical release and remain visible until SPMU completes the Laundry Form return recording. Completed cases remain available from the Completed button above.</p>
         </section>
     @endif
 </div>
