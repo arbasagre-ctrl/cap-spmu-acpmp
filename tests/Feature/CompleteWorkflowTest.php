@@ -859,9 +859,18 @@ class CompleteWorkflowTest extends TestCase
             ->overdueCase()
             ->firstOrFail();
 
+        /*
+         * A late return is confirmed by the Action Officer before the SPMU
+         * Head approves the assessment; the Head cannot bill straight from a
+         * detected late return.
+         */
+        $this->actingAs($spmuOfficer)
+            ->post(route('overdue.confirm-late-return', $overdue))
+            ->assertSessionHasNoErrors();
+
         $this->actingAs($spmu)
             ->post(
-                route('overdue.bill', $overdue),
+                route('overdue.bill', $overdue->fresh()),
                 [
                     'basis' => 'Configured daily tariff for one late calendar day.',
                 ]
@@ -929,14 +938,26 @@ class CompleteWorkflowTest extends TestCase
             )
             ->assertSessionHasNoErrors();
 
+        /*
+         * Recording the Cashier receipt is a combined verify-and-settle action:
+         * AccountabilityController::recordPayment() requires the receipt, the
+         * OR number, the receipt date and the amount, stores the payment as
+         * VERIFIED with its verifier and timestamp, and settles the billing in
+         * the same transaction. payments.verify remains only for legacy rows
+         * still sitting at PENDING_VERIFICATION.
+         */
         $this->assertSame(
-            'RECEIPT_SUBMITTED',
+            'SETTLED',
             $billing->fresh()->status
         );
 
         $payment = $billing
             ->payments()
             ->firstOrFail();
+
+        $this->assertSame('VERIFIED', $payment->status);
+        $this->assertSame($spmuOfficer->id, $payment->verified_by_user_id);
+        $this->assertNotNull($payment->verified_at);
 
         $this->actingAs($borrower)
             ->get(
@@ -946,28 +967,6 @@ class CompleteWorkflowTest extends TestCase
                 )
             )
             ->assertOk();
-
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($spmuOfficer)
-            ->post(
-                route(
-                    'payments.verify',
-                    $payment
-                ),
-                [
-                    'decision' =>
-                        'VERIFIED',
-
-                    'remarks' =>
-                        'Original CSPC Cashier paid receipt inspected and verified by SPMU.',
-                ]
-            )
-            ->assertSessionHasNoErrors();
-
-        $this->assertSame(
-            'SETTLED',
-            $billing->fresh()->status
-        );
 
         $this->assertSame(
             'CLOSED',

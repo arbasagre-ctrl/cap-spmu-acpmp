@@ -1,90 +1,105 @@
 {
-    "$schema": "https://getcomposer.org/schema.json",
-    "name": "cspc/spmu-acpmp",
-    "type": "project",
-    "description": "SPMU Asset Custody and Performance Monitoring Program.",
-    "keywords": ["laravel", "inventory", "asset-custody", "borrowing", "cspc"],
-    "license": "MIT",
-    "require": {
-        "php": "^8.3",
-        "barryvdh/laravel-dompdf": "^3.1",
-        "laravel/framework": "^13.17",
-        "laravel/socialite": "^5.31",
-        "laravel/tinker": "^3.0",
-        "setasign/fpdf": "1.8.6",
-        "setasign/fpdi": "2.6.4"
-    },
-    "require-dev": {
-        "fakerphp/faker": "^1.23",
-        "laravel/pail": "^1.2.5",
-        "laravel/pao": "^1.0.6",
-        "laravel/pint": "^1.27",
-        "mockery/mockery": "^1.6",
-        "nunomaduro/collision": "^8.6",
-        "phpunit/phpunit": "^12.5.12"
-    },
-    "autoload": {
-        "psr-4": {
-            "App\\": "app/",
-            "Database\\Factories\\": "database/factories/",
-            "Database\\Seeders\\": "database/seeders/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Tests\\": "tests/"
-        }
-    },
-    "scripts": {
-        "setup": [
-            "composer install",
-            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
-            "@php artisan key:generate",
-            "@php artisan migrate --force",
-            "npm install --ignore-scripts",
-            "npm run build"
-        ],
-        "dev": [
-            "Composer\\Config::disableProcessTimeout",
-            "@php artisan dev"
-        ],
-        "test": [
-            "@php artisan config:clear --ansi @no_additional_args",
-            "@php artisan test"
-        ],
-        "post-autoload-dump": [
-            "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
-            "@php artisan package:discover --ansi"
-        ],
-        "post-update-cmd": [
-            "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
-        ],
-        "post-root-package-install": [
-            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
-        ],
-        "post-create-project-cmd": [
-            "@php artisan key:generate --ansi",
-            "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
-            "@php artisan migrate --graceful --ansi"
-        ],
-        "pre-package-uninstall": [
-            "Illuminate\\Foundation\\ComposerScripts::prePackageUninstall"
-        ]
-    },
-    "extra": {
-        "laravel": {
-            "dont-discover": []
-        }
-    },
-    "config": {
-        "optimize-autoloader": true,
-        "preferred-install": "dist",
-        "sort-packages": true,
-        "allow-plugins": {
-            "pestphp/pest-plugin": true,
-            "php-http/discovery": true
-        }
-    },
-    "minimum-stability": "stable",
-    "prefer-stable": true
+    "$schema":  "https://getcomposer.org/schema.json",
+    "name":  "cspc/spmu-acpmp",
+    "type":  "project",
+    "description":  "SPMU Asset Custody and Performance Monitoring Program.",
+    "keywords":  [
+                     "laravel",
+                     "inventory",
+                     "asset-custody",
+                     "borrowing",
+                     "cspc"
+                 ],
+    "license":  "MIT",
+    "require":  {
+                    "php":  "^8.3",
+                    "barryvdh/laravel-dompdf":  "^3.1",
+                    "laravel/framework":  "^13.17",
+                    "laravel/socialite":  "^5.31",
+                    "laravel/tinker":  "^3.0",
+                    "setasign/fpdf":  "1.8.6",
+                    "setasign/fpdi": "2.6.8",
+                    "phpoffice/phpspreadsheet":  "^5.9",
+                    "phpoffice/phpword":  "^1.4"
+                },
+    "require-dev":  {
+                        "fakerphp/faker":  "^1.23",
+                        "laravel/pail":  "^1.2.5",
+                        "laravel/pao":  "^1.0.6",
+                        "laravel/pint":  "^1.27",
+                        "mockery/mockery":  "^1.6",
+                        "nunomaduro/collision":  "^8.6",
+                        "phpunit/phpunit":  "^12.5.12"
+                    },
+    "autoload":  {
+                     "psr-4":  {
+                                   "App\\":  "app/",
+                                   "Database\\Factories\\":  "database/factories/",
+                                   "Database\\Seeders\\":  "database/seeders/"
+                               }
+                 },
+    "autoload-dev":  {
+                         "psr-4":  {
+                                       "Tests\\":  "tests/"
+                                   }
+                     },
+    "scripts":  {
+                    "setup":  [
+                                  "composer install",
+                                  "@php -r \"file_exists(\u0027.env\u0027) || copy(\u0027.env.example\u0027, \u0027.env\u0027);\"",
+                                  "@php artisan key:generate",
+                                  "@php artisan migrate --force",
+                                  "npm install --ignore-scripts",
+                                  "npm run build"
+                              ],
+                    "dev":  [
+                                "Composer\\Config::disableProcessTimeout",
+                                "@php artisan dev"
+                            ],
+                    "test":  [
+                                 "@php artisan config:clear --ansi @no_additional_args",
+                                 "@php artisan test"
+                             ],
+                    "post-autoload-dump":  [
+                                               "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+                                               "@php artisan package:discover --ansi"
+                                           ],
+                    "post-update-cmd":  [
+                                            "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
+                                        ],
+                    "post-root-package-install":  [
+                                                      "@php -r \"file_exists(\u0027.env\u0027) || copy(\u0027.env.example\u0027, \u0027.env\u0027);\""
+                                                  ],
+                    "post-create-project-cmd":  [
+                                                    "@php artisan key:generate --ansi",
+                                                    "@php -r \"file_exists(\u0027database/database.sqlite\u0027) || touch(\u0027database/database.sqlite\u0027);\"",
+                                                    "@php artisan migrate --graceful --ansi"
+                                                ],
+                    "pre-package-uninstall":  [
+                                                  "Illuminate\\Foundation\\ComposerScripts::prePackageUninstall"
+                                              ]
+                },
+    "extra":  {
+                  "laravel":  {
+                                  "dont-discover":  [
+
+                                                    ]
+                              }
+              },
+    "config":  {
+                   "optimize-autoloader":  true,
+                   "preferred-install":  "dist",
+                   "sort-packages":  true,
+                   "allow-plugins":  {
+                                         "pestphp/pest-plugin":  true,
+                                         "php-http/discovery":  true
+                                     },
+                   "platform":  {
+                                    "php":  "8.4.25",
+                                    "ext-gd":  "8.4.25",
+                                    "ext-zip":  "8.4.25"
+                                }
+               },
+    "minimum-stability":  "stable",
+    "prefer-stable":  true
 }

@@ -6,9 +6,6 @@
 .spmu-inventory-card input, .spmu-inventory-card select { width: 100%; min-height: 40px; border-radius: 7px; font-size: 12px; }
 
 /* Availability window */
-.spmu-inventory-availability { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 14px 18px; margin-bottom: 14px; }
-.spmu-inventory .button.spmu-inventory-check { min-height: 40px; padding: 11px 22px; border-radius: 7px; border-color: var(--inventory-blue); background: var(--inventory-blue); color: #fff; font-size: 12px; white-space: nowrap; }
-.spmu-inventory .button.spmu-inventory-check:hover, .spmu-inventory .button.spmu-inventory-check:focus-visible { border-color: #0a56b8; background: #0a56b8; color: #fff; }
 
 /* Search and category */
 .spmu-inventory-filters { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(200px, 1fr); align-items: end; gap: 14px 18px; margin-bottom: 16px; }
@@ -71,17 +68,12 @@
 .spmu-inventory-no-results p { margin: 0; font-size: 12px; }
 
 html[data-theme="dark"] .spmu-inventory { --inventory-blue: #72b7f4; }
-html[data-theme="dark"] .spmu-inventory .button.spmu-inventory-check { color: var(--navy-950); }
-html[data-theme="dark"] .spmu-inventory .button.spmu-inventory-check:hover, html[data-theme="dark"] .spmu-inventory .button.spmu-inventory-check:focus-visible { border-color: #9acdf8; background: #9acdf8; color: var(--navy-950); }
 html[data-theme="dark"] .spmu-inventory-page.is-active { color: var(--navy-950); }
 
 @media (max-width: 900px) {
-    .spmu-inventory-availability { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .spmu-inventory .button.spmu-inventory-check { grid-column: 1 / -1; justify-content: center; }
     .spmu-inventory-filters { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 620px) {
-    .spmu-inventory-availability { grid-template-columns: minmax(0, 1fr); }
     .spmu-inventory-card { padding: 14px; }
     .spmu-inventory-summary { align-items: flex-start; }
     .spmu-inventory-page-size select { width: 100%; min-width: 0; }

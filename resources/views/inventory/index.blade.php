@@ -197,8 +197,6 @@
     @endphp
 
     <div class="content-area spmu-inventory {{ $isInventoryAdmin ? 'is-inventory-head' : '' }}" data-spmu-inventory data-pagination-mode="{{ $isInventoryAdmin ? 'simple' : 'numbered' }}">
-        @include('inventory.partials.operations-availability')
-
         <div
             class="spmu-inventory-card spmu-inventory-filters"
             aria-label="Search and filter operational inventory"

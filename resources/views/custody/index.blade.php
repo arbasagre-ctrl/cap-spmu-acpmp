@@ -112,12 +112,17 @@
                 'emptyMessage' => 'Release and return transactions will appear here when available.',
             ])
         @else
-            <div class="custody-oversight-summary">
-                <span id="custody-oversight-result-summary" role="status" aria-live="polite">
-                    Showing all release and return transactions.
-                </span>
+            <div class="custody-oversight-section-head">
+                <h2>Transactions</h2>
 
-                <span>Search filters across <strong>All</strong> statuses. Select a status tab above to refine the results.</span>
+                <span
+                    class="custody-oversight-record-count"
+                    id="custody-oversight-result-summary"
+                    role="status"
+                    aria-live="polite"
+                >
+                    {{ $custodies->count() }} {{ $custodies->count() === 1 ? 'record' : 'records' }}
+                </span>
             </div>
 
             <div

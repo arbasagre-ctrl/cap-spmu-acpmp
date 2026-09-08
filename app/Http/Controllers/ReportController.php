@@ -17,6 +17,7 @@ use App\Models\OverdueCase;
 use App\Models\Penalty;
 use App\Models\Sanction;
 use App\Reports\ReportCatalogue;
+use App\Reports\ReportExportOptions;
 use App\Reports\ReportFilters;
 use App\Services\AuditService;
 use App\Services\InventoryService;
@@ -24,6 +25,7 @@ use App\Services\ReportService;
 use App\Services\ReportingPeriodService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -113,8 +115,12 @@ class ReportController extends Controller
 
         $scope = $this->resolveScope($request, $type);
 
+        $options = ReportExportOptions::fromRequest($request, $scope['report']);
+
         return view('reports.print', [
             'dataset' => app(ReportService::class)->generate($scope['filters'], $request->user()),
+            'options' => $options->contentToggles(),
+            'exportOptions' => $options,
         ]);
     }
 
@@ -200,7 +206,7 @@ class ReportController extends Controller
         Request $request,
         string $type,
         InventoryService $inventory
-    ): StreamedResponse {
+    ): Response|StreamedResponse {
         abort_unless(
             $request->user()?->access_classification === AccessClassification::SpmuHead,
             403
@@ -398,23 +404,27 @@ class ReportController extends Controller
      * resolved them, so "Export CSV" always returns the report on screen.
      */
     /**
-     * Stream a report as CSV from the shared dataset pipeline.
+     * Render a report in one of the supported export formats.
      *
      * The scope is resolved by resolveScope(), the same method the screen
-     * used, so "Export CSV" always returns the report on screen — same
-     * report type, period, filters, and status rules.
+     * used, so an export always carries the report on screen — same report
+     * type, period, filters and status rules. Only the rendering differs.
      */
-    private function exportDataset(Request $request, string $type): StreamedResponse
+    private function exportDataset(Request $request, string $type): Response|StreamedResponse
     {
         $scope = $this->resolveScope($request, $type);
+        $options = ReportExportOptions::fromRequest($request, $scope['report']);
 
         $service = app(ReportService::class);
         $dataset = $service->generate($scope['filters'], $request->user());
 
+        $extension = $options->format;
+        $filename = $service->filename($dataset, $extension);
+
         /*
-         * Exporting is a deliberate act that produces a file leaving the
-         * system, so it is recorded through the central AuditService rather
-         * than a log table of the module's own.
+         * Exporting produces a file that leaves the system, so it is recorded
+         * through the central AuditService rather than a log of this module's
+         * own making.
          */
         app(AuditService::class)->record(
             'report.exported',
@@ -424,17 +434,30 @@ class ReportController extends Controller
                 $dataset->label
                 .' · '.($dataset->meta['period_label'] ?? '')
                 .' · '.$dataset->count().' records'
+                .' · '.strtoupper($extension)
             )
         );
 
-        return response()->streamDownload(
-            function () use ($service, $dataset): void {
-                $output = fopen('php://output', 'w');
-                $service->writeCsv($dataset, $output);
-                fclose($output);
-            },
-            $service->filename($dataset),
-            ['Content-Type' => 'text/csv']
+        /* CSV streams; the binary formats are built in full before sending. */
+        if ($extension === 'csv') {
+            return response()->streamDownload(
+                function () use ($service, $dataset, $options): void {
+                    $handle = fopen('php://output', 'w');
+                    $service->writeCsv($dataset, $handle, $options);
+                    fclose($handle);
+                },
+                $filename,
+                ['Content-Type' => 'text/csv']
+            );
+        }
+
+        return response(
+            $service->renderExport($dataset, $options),
+            200,
+            [
+                'Content-Type' => $service->mimeType($extension),
+                'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+            ]
         );
     }
 

@@ -81,7 +81,16 @@ class ReportLaundryGatePassTest extends TestCase
 
         $row = $this->laundry()->rows->first();
 
-        $this->assertSame('Awaiting Laundry Return', $row['laundry_status']);
+        /*
+         * The wording belongs to the Laundry workflow, so the report is
+         * asserted against the model's own label rather than a copy of it:
+         * Reports reads laundry state, it does not name it.
+         */
+        $this->assertSame(
+            LaundryJob::query()->firstOrFail()->displayStatusLabel(),
+            $row['laundry_status']
+        );
+        $this->assertSame('FOR_LAUNDRY', LaundryJob::query()->firstOrFail()->status);
         $this->assertSame('40', $row['issued_quantity']);
         $this->assertSame('0', $row['completed_quantity']);
         $this->assertSame('Rectangular Table Cloth', $row['linen_items']);

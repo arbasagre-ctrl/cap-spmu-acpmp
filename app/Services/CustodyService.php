@@ -34,6 +34,7 @@ class CustodyService
         private AuditService $audit,
         private NotificationService $notifications,
         private OperationalCalendarService $operationalCalendar,
+        private LateReturnService $lateReturns,
     ) {}
 
     /**
@@ -857,11 +858,11 @@ class CustodyService
         }, 3);
     }
 
-    public function receiveReturn(CustodyTransaction $custody, User $spmu, array $quantities, array $conditions, ?string $remarks, array $policeBlotterReferences = [], array $evidenceFileIds = [], array $conditionBreakdowns = []): ReturnTransaction
+    public function receiveReturn(CustodyTransaction $custody, User $spmu, array $quantities, array $conditions, ?string $remarks, array $policeBlotterReferences = [], array $evidenceFileIds = [], array $conditionBreakdowns = [], ?\Carbon\Carbon $laundryReceivedOn = null): ReturnTransaction
     {
         abort_unless($spmu->access_classification === AccessClassification::SpmuOfficer && $custody->borrower_user_id !== $spmu->id, 403);
 
-        return DB::transaction(function () use ($custody, $spmu, $quantities, $conditions, $remarks, $policeBlotterReferences, $evidenceFileIds, $conditionBreakdowns): ReturnTransaction {
+        return DB::transaction(function () use ($custody, $spmu, $quantities, $conditions, $remarks, $policeBlotterReferences, $evidenceFileIds, $conditionBreakdowns, $laundryReceivedOn): ReturnTransaction {
             $custody = CustodyTransaction::query()->lockForUpdate()->findOrFail($custody->id);
             $custody = $this->operationalCalendar->synchronizeCustodyDueDate($custody, $this->audit);
             $this->operationalCalendar->assertOpenFor(
@@ -1313,6 +1314,16 @@ class CustodyService
                         ? 'TURNED_OVER_TO_LAUNDRY'
                         : 'LAUNDRY_COMPLETED';
 
+                    /*
+                     * worker_received_at is the date Laundry Personnel took
+                     * the linen, and it is the borrower's physical return
+                     * date. It is deliberately NOT defaulted from
+                     * form_verified_at or now(): both are SPMU document dates
+                     * and would charge the borrower for internal forwarding
+                     * time. When Laundry never recorded it digitally, the
+                     * Action Officer attests it from the accomplished Laundry
+                     * Form through $laundryReceivedOn.
+                     */
                     $laundryJob->update([
                         'status' => $nextLaundryStatus,
                         // worker_received_at is the actual physical linen receipt
@@ -1322,6 +1333,14 @@ class CustodyService
                             ? now()
                             : null,
                     ]);
+
+                    if ($laundryReceivedOn !== null) {
+                        $this->lateReturns->recordLaundryReceipt(
+                            $custody,
+                            $laundryReceivedOn,
+                            $spmu
+                        );
+                    }
 
                     $custody->lines()
                         ->whereHas(
@@ -1401,136 +1420,18 @@ class CustodyService
                             'lifted_by_user_id' => $spmu->id,
                         ]);
                 }
+            }
 
-                /*
-                 * ACCOUNTABILITY HANDOFF FOR LATE RETURNS
-                 * ----------------------------------------
-                 * Do not depend on the daily scheduler having already opened
-                 * an OverdueCase. A borrower can physically return linen after
-                 * the due date and the Action Officer can encode the completed
-                 * Laundry Form before the next scheduler run. Once the complete
-                 * physical return is recorded, compare the real physical return
-                 * timestamp with the effective due date and immediately create
-                 * or finalize the late-return case for Accountability Processing.
-                 *
-                 * For linen-only return transactions, received_at is already
-                 * the Laundry Worker's actual RECEIVED BY date transcribed from
-                 * the accomplished Laundry Form. It is never the later SPMU
-                 * upload/encoding date. Mixed/non-linen inspections retain the
-                 * Action Officer's actual physical inspection timestamp.
-                 */
-                $lastPhysicalReturnAt = ReturnTransaction::query()
-                    ->where('custody_transaction_id', $custody->id)
-                    ->max('received_at');
-
-                $physicalReturnDay = $lastPhysicalReturnAt
-                    ? CarbonImmutable::parse($lastPhysicalReturnAt)->startOfDay()
-                    : null;
-                $effectiveDueDay = $custody->due_at?->copy()->startOfDay();
-
-                if ($physicalReturnDay
-                    && $effectiveDueDay
-                    && $physicalReturnDay->gt($effectiveDueDay)) {
-                    $configuredRate = SystemSetting::value('daily_overdue_tariff');
-                    $days = max(
-                        1,
-                        (int) $effectiveDueDay->diffInDays($physicalReturnDay)
-                    );
-                    $overdueWasNew = ! $overdue;
-                    $accountabilityStatus = $overdue?->status === 'BILLED'
-                        ? 'BILLED'
-                        : 'RETURNED_PENDING_SETTLEMENT';
-
-                    $overdue ??= new OverdueCase([
-                        'custody_transaction_id' => $custody->id,
-                    ]);
-                    /* Preserve the tariff captured when this accountability
-                     * case first opened. A later policy change cannot rewrite
-                     * a past return's financial basis. */
-                    $rateSnapshot = $overdue->exists && is_numeric($overdue->rate_snapshot)
-                        ? (float) $overdue->rate_snapshot
-                        : (is_numeric($configuredRate) ? (float) $configuredRate : null);
-
-                    $overdue->fill([
-                        'borrower_user_id' => $custody->borrower_user_id,
-                        // Legacy field name retained: this is the effective
-                        // return deadline, not an extra grace period.
-                        'grace_expires_at' => $custody->due_at,
-                        'overdue_started_at' => $custody->due_at
-                            ->copy()
-                            ->addDay()
-                            ->startOfDay(),
-                        'offense_level' => $overdue->offense_level ?: 1,
-                        'rate_snapshot' => $rateSnapshot,
-                        'accrued_amount' => $rateSnapshot !== null
-                            ? round($days * $rateSnapshot, 2)
-                            : 0,
-                        'sanction_type' => null,
-                        'status' => $accountabilityStatus,
-                    ])->save();
-
-                    /*
-                     * The physical-return restriction is finished at this
-                     * point, but the late-return accountability remains open
-                     * until the assessed fee is settled or formally waived.
-                     */
-                    BorrowerRestriction::query()->firstOrCreate(
-                        [
-                            'borrower_user_id' => $custody->borrower_user_id,
-                            'restriction_type' => 'OVERDUE_RETURN',
-                            'status' => 'ACTIVE',
-                        ],
-                        [
-                            'reason' =>
-                                'Late return under '
-                                .$custody->custody_no
-                                .' is awaiting accountability settlement.',
-                            'effective_from' => now(),
-                            'imposed_by_user_id' => $spmu->id,
-                        ]
-                    );
-
-                    $this->audit->record(
-                        $overdueWasNew
-                            ? 'LATE_RETURN_ROUTED_TO_ACCOUNTABILITY'
-                            : 'LATE_RETURN_ACCOUNTABILITY_FINALIZED',
-                        $overdue,
-                        after: [
-                            'effective_return_date' => $effectiveDueDay->toDateString(),
-                            'actual_physical_return_date' => $physicalReturnDay->toDateString(),
-                            'days_late' => $days,
-                            'rate_snapshot' => $rateSnapshot,
-                            'accrued_amount' => $rateSnapshot !== null
-                                ? round($days * $rateSnapshot, 2)
-                                : 0,
-                            'accountability_status' => $accountabilityStatus,
-                        ]
-                    );
-                } elseif ($overdue
-                    && $overdue->status === 'OVERDUE'
-                    && ! $overdue->penalties()->where('status', '!=', 'VOID')->exists()) {
-                    /*
-                     * Safety reconciliation for a scheduler-created overdue
-                     * case when later documentary evidence proves the actual
-                     * physical return was on/before the due date (most notably
-                     * an offline Laundry Form delivered to SPMU days later).
-                     */
-                    $overdue->update([
-                        'status' => 'RESOLVED',
-                        'accrued_amount' => 0,
-                        'sanction_type' => null,
-                    ]);
-
-                    BorrowerRestriction::query()
-                        ->where('borrower_user_id', $custody->borrower_user_id)
-                        ->where('restriction_type', 'OVERDUE_RETURN')
-                        ->where('status', 'ACTIVE')
-                        ->update([
-                            'status' => 'LIFTED',
-                            'effective_to' => now(),
-                            'lifted_by_user_id' => $spmu->id,
-                        ]);
-                }
+            /*
+             * Classify the return against its expected date. LateReturnService
+             * reads the authoritative physical return date - the Laundry
+             * Personnel receipt for linen, the Return Inspection otherwise -
+             * and freezes the late days there. It is deliberately not now():
+             * the borrower must not be charged for the time SPMU takes to
+             * process the return, and an on-time return opens no case at all.
+             */
+            if ($allReturned) {
+                $this->lateReturns->assess($custody->fresh(['lines', 'returns', 'laundryJob']) ?? $custody, $spmu);
             }
             // Recalculate the custody status from the complete transaction,
             // not only from the Return action that happened in this request.

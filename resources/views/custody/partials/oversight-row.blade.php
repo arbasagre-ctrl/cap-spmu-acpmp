@@ -129,5 +129,6 @@
         </span>
     </div>
 
+    <span class="custody-oversight-view" aria-hidden="true">View</span>
 </a>
 

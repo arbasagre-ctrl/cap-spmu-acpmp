@@ -21,6 +21,7 @@ use App\Services\CustodyService;
 use App\Services\DocumentService;
 use App\Services\ProtectedFileService;
 use Database\Seeders\DatabaseSeeder;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -36,7 +37,25 @@ class BatchOneReliabilityTest extends TestCase
     {
         parent::setUp();
         $this->seed(DatabaseSeeder::class);
+
+        /*
+         * Pin the clock to a Tuesday.
+         *
+         * Pickup and return are only permitted on an operationally open day,
+         * and Monday-Friday is the configured default. Left on the real clock
+         * these tests pass or fail depending on which day the suite happens to
+         * run - a weekend run is rejected by the operational calendar. Tuesday
+         * keeps "today" and the next three days inside the open week.
+         */
+        Carbon::setTestNow(Carbon::create(2026, 9, 1, 9));
     }
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
+    }
+
 
     public function test_draft_request_survives_supporting_document_storage_failure(): void
     {

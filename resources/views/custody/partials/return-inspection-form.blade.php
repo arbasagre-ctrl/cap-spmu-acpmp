@@ -16,6 +16,16 @@
     );
 
     $laundryFormMissing = $linenReturnLines->isNotEmpty() && ! $laundryFormVerified;
+
+    /*
+     * The borrower's physical return date for linen is the date Laundry
+     * Personnel received it. When that was captured digitally it is shown
+     * read-only; when it was not, the Action Officer copies it from the
+     * RECEIVED BY portion of the accomplished form. It is never defaulted to
+     * today, and the SPMU verification date is never used.
+     */
+    $laundryReceivedAt = $returnLaundryJob?->worker_received_at;
+    $needsLaundryReceivedDate = $linenReturnLines->isNotEmpty() && $laundryReceivedAt === null;
 @endphp
 
 @if($eligibleReturnLines->isNotEmpty())
@@ -57,6 +67,27 @@
                     <div><strong>Linen ready for encoding</strong>
                     <p>Use the Laundry Form for linen.</p></div>
                 </div>
+            @endif
+
+            @if($needsLaundryReceivedDate)
+                <label class="return-laundry-received">
+                    Laundry Received Date
+                    <input
+                        type="date"
+                        name="laundry_received_date"
+                        max="{{ now()->toDateString() }}"
+                        @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
+                        required
+                    >
+                    <small>Confirm the date shown in the Laundry Form's RECEIVED BY section. This is the borrower's return date, not today and not the date the form reached SPMU.</small>
+                </label>
+            @else
+                <dl class="summary-grid compact return-laundry-received-known">
+                    <div>
+                        <dt>Laundry Received Date</dt>
+                        <dd>{{ $laundryReceivedAt->format('d M Y') }}</dd>
+                    </div>
+                </dl>
             @endif
         @endif
 

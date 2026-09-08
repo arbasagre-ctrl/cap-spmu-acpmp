@@ -95,24 +95,24 @@
     #my-requests-results .mr-sort-chevron { pointer-events: none; }
 
     /* One horizontal record: identity, dates, quantities, status and actions. */
-    #my-requests-results .mr-list { display: grid; gap: 18px; }
+    #my-requests-results .mr-list { display: grid; gap: 13px; }
     #my-requests-results .mr-row {
         display: grid;
-        grid-template-columns: clamp(52px, 5.2cqw, 64px) minmax(0, 1.45fr) minmax(0, 3.12fr) minmax(155px, 1.07fr) 24px;
+        grid-template-columns: clamp(48px, 4.6cqw, 52px) minmax(0, 1.45fr) minmax(0, 3.12fr) minmax(155px, 1.07fr) 24px;
         grid-template-areas: "tile identity facts actions menu";
         align-items: center;
         gap: 14px;
-        min-height: 136px;
-        padding: 22px 16px;
+        min-height: 108px;
+        padding: 16px;
         border: 1px solid var(--mr-line);
         border-radius: 11px;
         background: var(--surface-elevated);
         box-shadow: 0 4px 10px rgba(16, 42, 67, .07);
     }
     #my-requests-results .mr-row:hover { border-color: var(--border-strong); }
-    #my-requests-results .mr-row.is-action-required { border-left: 3px solid var(--warning-border); padding-left: 14px; }
+    #my-requests-results .mr-row.is-action-required { border-left: 3px solid var(--warning-border); padding-left: 13px; }
     #my-requests-results .mr-row-tile { grid-area: tile; display: grid; place-items: center; width: 100%; aspect-ratio: 1; border-radius: 14px; }
-    #my-requests-results .mr-row-tile > .ui-icon { width: 32px; height: 32px; }
+    #my-requests-results .mr-row-tile > .ui-icon { width: 26px; height: 26px; }
     #my-requests-results .mr-row-tile.is-blue { color: var(--mr-accent); background: #ebf3ff; }
     #my-requests-results .mr-row-tile.is-green { color: var(--success); background: var(--success-bg); }
     #my-requests-results .mr-row-tile.is-violet { color: #7352ce; background: #f0ebff; }
@@ -120,20 +120,20 @@
     #my-requests-results .mr-row-tile.is-red { color: var(--danger); background: var(--danger-bg); }
     #my-requests-results .mr-row-tile.is-neutral { color: var(--neutral); background: var(--neutral-bg); }
 
-    #my-requests-results .mr-row-identity { grid-area: identity; display: grid; gap: 8px; min-width: 0; }
+    #my-requests-results .mr-row-identity { grid-area: identity; display: grid; gap: 5px; min-width: 0; }
     #my-requests-results .mr-row-reference { color: var(--heading); font-size: clamp(14px, 1.45cqw, 18px); font-weight: 800; line-height: 1.4; text-decoration: none; overflow-wrap: anywhere; }
     #my-requests-results .mr-row-reference:hover { color: var(--mr-accent); text-decoration: underline; }
     #my-requests-results .mr-row-purpose { margin: 0; color: var(--heading); font-size: clamp(13px, 1.3cqw, 16px); font-weight: 700; line-height: 1.45; overflow-wrap: anywhere; }
     #my-requests-results .mr-row-context { margin: 0; color: var(--text-muted); font-size: clamp(12px, 1.16cqw, 14px); line-height: 1.5; overflow-wrap: anywhere; }
     #my-requests-results .mr-row-meta { grid-area: facts; display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(0, .9fr) minmax(0, 1.22fr); align-items: center; min-width: 0; }
-    #my-requests-results .mr-row-fact { display: grid; align-content: center; gap: 14px; min-width: 0; min-height: 62px; padding: 0 14px; border-left: 1px solid var(--mr-line); }
+    #my-requests-results .mr-row-fact { display: grid; align-content: center; gap: 5px; min-width: 0; min-height: 48px; padding: 0 14px; border-left: 1px solid var(--mr-line); }
     #my-requests-results .mr-row-fact-label { color: var(--text-secondary); font-size: clamp(12px, 1.15cqw, 14px); font-weight: 500; line-height: 1.4; }
     #my-requests-results .mr-row-fact-value { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--text); font-size: clamp(11px, 1.1cqw, 13px); font-weight: 400; line-height: 1.55; }
     #my-requests-results .mr-row-fact-value .ui-icon { flex: 0 0 16px; width: 16px; height: 16px; color: var(--mr-accent); }
     #my-requests-results .mr-row-dot { color: var(--text-secondary); }
 
-    #my-requests-results .mr-row-action { grid-area: actions; display: grid; justify-items: start; align-content: center; gap: 14px; min-width: 0; }
-    #my-requests-results .mr-badge { display: inline-flex; align-items: center; gap: 7px; min-height: 33px; max-width: 100%; padding: 6px 11px; border: 0; border-radius: 999px; font-size: clamp(11px, 1.04cqw, 13px); font-weight: 650; line-height: 1.4; white-space: nowrap; }
+    #my-requests-results .mr-row-action { grid-area: actions; display: grid; justify-items: start; align-content: center; gap: 9px; min-width: 0; }
+    #my-requests-results .mr-badge { display: inline-flex; align-items: center; gap: 7px; min-height: 27px; max-width: 100%; padding: 4px 10px; border: 0; border-radius: 999px; font-size: clamp(11px, 1.04cqw, 13px); font-weight: 650; line-height: 1.4; white-space: nowrap; }
     #my-requests-results .mr-badge::before { content: ""; flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
     #my-requests-results .mr-badge.is-blue { color: var(--mr-accent); background: #eaf3ff; }
     #my-requests-results .mr-badge.is-green { color: var(--success); background: var(--success-bg); }
@@ -209,13 +209,13 @@
     /* Reflow against the available content width, including an open sidebar. */
     @container my-requests (max-width: 1020px) {
         #my-requests-results .mr-row {
-            grid-template-columns: 54px minmax(0, 1fr) minmax(165px, auto) 24px;
+            grid-template-columns: 50px minmax(0, 1fr) minmax(165px, auto) 24px;
             grid-template-areas: "tile identity actions menu" "facts facts facts facts";
-            row-gap: 18px;
+            row-gap: 13px;
         }
-        #my-requests-results .mr-row-meta { padding-top: 16px; border-top: 1px solid var(--mr-line); }
+        #my-requests-results .mr-row-meta { padding-top: 12px; border-top: 1px solid var(--mr-line); }
         #my-requests-results .mr-row-fact:first-child { border-left: 0; padding-left: 0; }
-        #my-requests-results .mr-row-fact { min-height: 54px; gap: 9px; }
+        #my-requests-results .mr-row-fact { min-height: 44px; gap: 5px; }
         #my-requests-results .mr-row-fact-value { font-size: 12px; }
     }
     @container my-requests (max-width: 650px) {
@@ -224,8 +224,8 @@
         #my-requests-results .mr-row {
             grid-template-columns: 48px minmax(0, 1fr) 24px;
             grid-template-areas: "tile identity menu" "facts facts facts" "actions actions actions";
-            gap: 16px 12px;
-            padding: 18px 14px;
+            gap: 12px;
+            padding: 14px 12px;
         }
         #my-requests-results .mr-row-meta { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         #my-requests-results .mr-row-fact { padding: 0 9px; }

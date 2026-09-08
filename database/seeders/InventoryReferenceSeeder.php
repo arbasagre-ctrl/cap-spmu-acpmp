@@ -21,6 +21,7 @@ class InventoryReferenceSeeder extends Seeder
         $units = collect([
             'UNIT' => 'Unit',
             'PIECE' => 'Piece',
+            'LOT' => 'Lot',
         ])->mapWithKeys(fn (string $name, string $code) => [$code => UnitOfMeasure::query()->firstOrCreate(['unit_code' => $code], ['unit_name' => $name, 'decimal_scale' => 0, 'active' => true])]);
 
         foreach ($this->items() as [$category, $description, $unit, $quantity, $laundry, $offCampus, $provisional]) {
@@ -49,7 +50,7 @@ class InventoryReferenceSeeder extends Seeder
             ['EQUIPMENT', 'Podium - Wooden', 'UNIT', 3, false, false, false],
             ['EQUIPMENT', 'Podium - Stainless Glass', 'UNIT', 7, false, false, false],
             ['EQUIPMENT', 'Sound System', 'UNIT', 2, false, false, false],
-            ['EQUIPMENT', 'LED Wall', 'UNIT', 1, false, false, false],
+            ['EQUIPMENT', 'LED Wall', 'LOT', 1, false, false, false],
             ['EQUIPMENT', 'Microphones', 'UNIT', 12, false, false, false],
             ['FURNITURE', 'Round Table', 'PIECE', 48, false, false, false],
             ['FURNITURE', 'Rectangular Table', 'PIECE', 35, false, false, false],

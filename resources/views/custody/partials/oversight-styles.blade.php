@@ -4,7 +4,7 @@
 
 /* Status tab cards */
 .custody-oversight-tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
-.custody-oversight-tab { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 56px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
+.custody-oversight-tab { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 46px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-elevated); color: var(--text-secondary); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; transition: border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
 .custody-oversight-tab:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .custody-oversight-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .custody-oversight-tab.is-active { border-color: var(--oversight-blue); background: var(--info-bg); color: var(--heading); }
@@ -21,21 +21,21 @@
 .custody-oversight-tab[data-custody-tab="completed"] .custody-oversight-tab-icon { color: var(--oversight-blue); }
 
 /* Filter bar */
-.custody-oversight-filters { display: grid; grid-template-columns: minmax(240px, 2.1fr) minmax(140px, .8fr) minmax(140px, .8fr) minmax(170px, 1fr) auto; align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); }
+.custody-oversight-filters { display: grid; grid-template-columns: minmax(280px, 3.2fr) minmax(132px, .7fr) minmax(132px, .7fr) minmax(168px, .9fr); align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); }
 .custody-oversight-filters label { min-width: 0; margin: 0; display: grid; gap: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .custody-oversight-filters input, .custody-oversight-filters select { width: 100%; min-height: 40px; border-radius: 7px; font-size: 12px; }
 .custody-oversight-filters .search-input-shell input { padding-left: 36px; }
-.custody-oversight .button.custody-oversight-clear { min-height: 40px; padding: 10px 20px; border-radius: 7px; font-size: 12px; }
 .custody-oversight-date-error { grid-column: 1 / -1; margin: 0; padding: 9px 12px; border: 1px solid var(--danger-border); border-radius: 7px; background: var(--danger-bg); color: var(--danger); font-size: 11px; font-weight: 700; line-height: 1.5; }
 .custody-oversight-filters input.is-invalid { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger-bg); }
 
 /* Result summary */
-.custody-oversight-summary { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 0 3px; color: var(--text-muted); font-size: 12px; }
-.custody-oversight-summary strong { color: var(--heading); font-weight: 750; }
+.custody-oversight-section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 0 3px; }
+.custody-oversight .custody-oversight-section-head h2 { margin: 0; color: var(--heading); font-size: 16px; font-weight: 750; line-height: 1.3; }
+.custody-oversight-record-count { color: var(--text-muted); font-size: 12px; font-weight: 650; white-space: nowrap; }
 
 /* Transaction rows */
 .custody-oversight-list { display: grid; gap: 10px; }
-.custody-oversight-row { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(0, 2.2fr); align-items: center; gap: 14px 18px; padding: 14px 16px; border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: 9px; background: var(--surface-elevated); color: inherit; text-decoration: none; }
+.custody-oversight-row { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(0, 2.2fr) auto; align-items: center; gap: 14px 18px; padding: 14px 16px; border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: 9px; background: var(--surface-elevated); color: inherit; text-decoration: none; }
 .custody-oversight-row:hover, .custody-oversight-row:focus-visible { box-shadow: var(--shadow-sm); border-color: var(--border-strong); background: var(--row-hover); }
 .custody-oversight-row[data-custody-group="attention"] { border-left-color: var(--danger); }
 .custody-oversight-row[data-custody-group="release"] { border-left-color: #c1610a; }
@@ -64,6 +64,13 @@
 .custody-oversight-fact > small { color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
 .custody-oversight-fact > strong { color: var(--heading); font-size: 12px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
 .custody-oversight-fact .status-badge { justify-self: start; }
+
+/*
+ * The whole row is the link, so this is a styled span rather than a nested
+ * button. It gives the row a clear, aligned action on the far right.
+ */
+.custody-oversight-view { display: inline-flex; align-items: center; justify-content: center; gap: 6px; align-self: center; justify-self: end; min-width: 74px; min-height: 32px; padding: 6px 12px; border: 1px solid var(--oversight-blue); border-radius: 6px; color: var(--oversight-blue); font-size: 11px; font-weight: 700; white-space: nowrap; transition: color var(--motion) ease, background-color var(--motion) ease; }
+.custody-oversight-row:hover .custody-oversight-view, .custody-oversight-row:focus-visible .custody-oversight-view { color: #fff; background: var(--oversight-blue); }
 .custody-oversight-row[data-custody-group="release"] .custody-oversight-fact .status-badge { color: var(--warning); background: var(--warning-bg); border-color: var(--warning-border); }
 .custody-oversight-row[data-custody-group="return"] .custody-oversight-fact .status-badge { color: var(--info); background: var(--info-bg); border-color: var(--info-border); }
 
@@ -96,6 +103,7 @@ html[data-theme="dark"] .custody-oversight-page.is-active { color: var(--navy-95
 }
 @media (max-width: 900px) {
     .custody-oversight-filters { grid-template-columns: 1fr 1fr; }
+    .custody-oversight-row { grid-template-columns: minmax(0, 1fr) auto; }
     .custody-oversight-search { grid-column: 1 / -1; }
     .custody-oversight-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -103,7 +111,8 @@ html[data-theme="dark"] .custody-oversight-page.is-active { color: var(--navy-95
     .custody-oversight-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .custody-oversight-filters { grid-template-columns: 1fr; }
     .custody-oversight-row { grid-template-columns: minmax(0, 1fr); }
-    .custody-oversight .button.custody-oversight-clear { width: 100%; justify-content: center; }
+    .custody-oversight-view { justify-self: stretch; }
+    .custody-oversight-row { grid-template-columns: minmax(0, 1fr); }
     .custody-oversight-footer { align-items: flex-start; }
     .custody-oversight-pagination { margin-left: 0; }
 }

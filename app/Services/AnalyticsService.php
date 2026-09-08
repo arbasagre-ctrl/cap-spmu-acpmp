@@ -51,6 +51,64 @@ class AnalyticsService
     public const LOW_AVAILABILITY_RATIO = 0.25;
 
     /**
+     * Request states that are not substantive borrowing activity.
+     *
+     * A draft was never filed, a cancelled request was withdrawn before it
+     * proceeded, and an expired one lapsed without being acted on. None of
+     * the three represents activity the unit actually carried out, so
+     * counting them would overstate demand.
+     *
+     * REJECTED is deliberately kept. It was filed, reviewed and decided on:
+     * it is real demand that SPMU handled, and hiding it would understate
+     * both the demand signal and the review workload.
+     *
+     * @return list<RequestStatus>
+     */
+    public static function excludedFromActivity(): array
+    {
+        return [
+            RequestStatus::Draft,
+            RequestStatus::Cancelled,
+            RequestStatus::Expired,
+        ];
+    }
+
+    /**
+     * Estimated days of stock coverage below which an item is flagged.
+     *
+     * Centralised so the thresholds cannot drift between the service and a
+     * template. These are planning bands, not probabilities.
+     */
+    public const STOCKOUT_RISK_HIGH_DAYS = 30;
+
+    public const STOCKOUT_RISK_MEDIUM_DAYS = 60;
+
+    /**
+     * Requests needed before a weekday or hour peak is reported.
+     *
+     * Below this, the busiest bucket is an artefact of a handful of
+     * records rather than a pattern anyone should plan around.
+     */
+    public const PEAK_MINIMUM_OBSERVATIONS = 10;
+
+    /**
+     * The shortest observation window a usage rate may be drawn from.
+     *
+     * Dividing a few releases by a three-day window produces a daily rate
+     * that looks precise and means nothing. Two weeks is the floor.
+     */
+    public const STOCK_COVERAGE_MINIMUM_WINDOW_DAYS = 14;
+
+    /**
+     * Separate release events an item needs before its usage rate is used.
+     *
+     * One isolated release is an event, not a rate. Projecting days of
+     * coverage from it would dress a single data point up as a trend, so
+     * the item reports insufficient history instead.
+     */
+    public const STOCK_COVERAGE_MINIMUM_RELEASES = 3;
+
+    /**
      * Requests that reached the system's authoritative approved state.
      *
      * @return list<RequestStatus>
@@ -67,7 +125,9 @@ class AnalyticsService
      * Requests created in the period, narrowed by the borrower filters.
      *
      * The join pins each request to its current version so a revised request
-     * is counted under the unit it currently belongs to.
+     * is counted under the unit it currently belongs to. States listed in
+     * excludedFromActivity() are left out, so an abandoned draft never
+     * inflates a demand figure.
      */
     public function requestScope(
         CarbonInterface $from,
@@ -80,7 +140,9 @@ class AnalyticsService
                 $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
                     ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
             })
-            ->whereBetween('borrowing_requests.created_at', [$from, $to]);
+            ->whereBetween('borrowing_requests.created_at', [$from, $to])
+            /* Drafts, withdrawals and lapsed requests are not activity. */
+            ->whereNotIn('borrowing_requests.status', self::excludedFromActivity());
 
         if ($division !== null && $division !== '' && $division !== 'all') {
             $query->where('request_versions.division_code', $division);
@@ -94,10 +156,10 @@ class AnalyticsService
     }
 
     /**
-     * Custody transactions belonging to the filtered requests.
+     * Custody transactions belonging to requests filed inside the period.
      *
-     * Custody is not restricted to the reporting period: "currently on
-     * custody" is a present-tense question about items that are out now.
+     * Use this for questions about what the period produced - how many of
+     * this period's borrowings were returned late, for example.
      */
     private function custodyScope(
         CarbonInterface $from,
@@ -109,6 +171,73 @@ class AnalyticsService
             'request_id',
             $this->requestScope($from, $to, $division, $unit)->select('borrowing_requests.id')
         );
+    }
+
+    /**
+     * Custody transactions as they stand right now, whatever period the
+     * originating request was filed in.
+     *
+     * "Currently out" and "needs follow-up" are present-tense questions. An
+     * item released in August and still held in September is still out in
+     * September, so tying these figures to the reporting period would make
+     * them vanish from view precisely when they most need attention.
+     *
+     * The borrower filters still apply, because the SPMU Head narrowing to
+     * one division expects every figure on the page to follow.
+     */
+    private function currentCustodyScope(?string $division, ?string $unit): Builder
+    {
+        $query = CustodyTransaction::query();
+
+        if (($division === null || $division === '' || $division === 'all')
+            && ($unit === null || $unit === '' || $unit === 'all')) {
+            return $query;
+        }
+
+        return $query->whereIn(
+            'request_id',
+            BorrowingRequest::query()
+                ->join('request_versions', function ($join): void {
+                    $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
+                        ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
+                })
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($inner) => $inner->where('request_versions.division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($inner) => $inner->where('request_versions.office_unit', $unit)
+                )
+                ->select('borrowing_requests.id')
+        );
+    }
+
+    /** Released, not yet closed - the assets physically out right now. */
+    private function currentlyOutQuery(?string $division, ?string $unit): Builder
+    {
+        return $this->currentCustodyScope($division, $unit)
+            ->whereNotNull('released_at')
+            ->whereNull('closed_at')
+            ->whereNotIn('status', ['CLOSED', 'CANCELLED']);
+    }
+
+    /**
+     * Out now and past the effective due date.
+     *
+     * This is OVERDUE - still not returned. It is deliberately not the same
+     * measure as a late return, which is an item that did come back, only
+     * after its due date. The two are never added together.
+     */
+    private function currentlyOverdueQuery(?string $division, ?string $unit): Builder
+    {
+        return $this->currentlyOutQuery($division, $unit)
+            ->where(function ($query): void {
+                $query->where('status', 'OVERDUE')
+                    ->orWhere(function ($inner): void {
+                        $inner->whereNotNull('due_at')->where('due_at', '<', now());
+                    });
+            });
     }
 
     /* ------------------------------------------------------------------ */
@@ -129,25 +258,12 @@ class AnalyticsService
             ->whereIn('borrowing_requests.status', $this->approvedStatuses())
             ->count('borrowing_requests.id');
 
-        /* Out now: released, not yet closed. */
-        $onCustody = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNull('closed_at')
-            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
-            ->count();
-
-        /* Past the expected return date and still not closed. */
-        $needsFollowUp = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNull('closed_at')
-            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
-            ->where(function ($query): void {
-                $query->where('status', 'OVERDUE')
-                    ->orWhere(function ($inner): void {
-                        $inner->whereNotNull('due_at')->where('due_at', '<', now());
-                    });
-            })
-            ->count();
+        /*
+         * Both of the next two are present-tense: they describe what is out
+         * and what is late right now, not what the selected period produced.
+         */
+        $onCustody = $this->currentlyOutQuery($division, $unit)->count();
+        $needsFollowUp = $this->currentlyOverdueQuery($division, $unit)->count();
 
         return [
             'total' => $total,
@@ -323,6 +439,8 @@ class AnalyticsService
             ->groupBy('request_items.description_snapshot', 'request_items.unit_snapshot')
             ->select('request_items.description_snapshot AS name', 'request_items.unit_snapshot AS unit')
             ->selectRaw('SUM(custody_lines.actual_released_quantity) AS released')
+            /* A representative id so the row can link to its own records. */
+            ->selectRaw('MIN(request_items.inventory_item_id) AS item_id')
             ->orderByDesc('released')
             ->limit($limit)
             ->get();
@@ -334,6 +452,7 @@ class AnalyticsService
             'items' => $rows->map(fn ($row): array => [
                 'name' => $row->name,
                 'unit' => $row->unit,
+                'item_id' => $row->item_id,
                 'released' => (float) $row->released + 0,
                 'share' => $highest > 0 ? round((float) $row->released / $highest * 100) : 0,
             ])->all(),
@@ -372,6 +491,7 @@ class AnalyticsService
             )
             ->selectRaw('COUNT(*) AS requests')
             ->selectRaw('SUM(request_items.requested_quantity) AS quantity')
+            ->selectRaw('MIN(request_items.inventory_item_id) AS item_id')
             ->orderByDesc('requests')
             ->orderByDesc('quantity')
             ->limit($limit)
@@ -384,6 +504,7 @@ class AnalyticsService
             'items' => $rows->map(fn ($row): array => [
                 'name' => $row->name,
                 'unit' => $row->unit,
+                'item_id' => $row->item_id,
                 'requests' => (int) $row->requests,
                 'quantity' => (float) $row->quantity + 0,
                 'share' => $highest > 0 ? (int) round((int) $row->requests / $highest * 100) : 0,
@@ -599,17 +720,8 @@ class AnalyticsService
 
         $late = $closed->count() - $onTime;
 
-        $overdue = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNull('closed_at')
-            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
-            ->where(function ($query): void {
-                $query->where('status', 'OVERDUE')
-                    ->orWhere(function ($inner): void {
-                        $inner->whereNotNull('due_at')->where('due_at', '<', now());
-                    });
-            })
-            ->count();
+        /* Still out and past due, regardless of when it was requested. */
+        $overdue = $this->currentlyOverdueQuery($division, $unit)->count();
 
         $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
 
@@ -632,13 +744,26 @@ class AnalyticsService
                 })
                 ->count();
 
+        $completed = $closed->count();
+
         return [
             'on_time' => $onTime,
             'late' => $late,
             'overdue' => $overdue,
             'open_cases' => $openCases,
+            'completed' => $completed,
+
+            /*
+             * Rates are null rather than zero when nothing has been returned:
+             * "0% on time" and "no returns yet" are different readings, and
+             * only one of them is true here.
+             */
+            'on_time_rate' => $completed > 0 ? round($onTime / $completed * 100, 1) : null,
+            'late_rate' => $completed > 0 ? round($late / $completed * 100, 1) : null,
+
+            'average_duration' => $this->averageCustodyDuration($from, $to, $division, $unit),
             'has_data' => $closed->isNotEmpty() || $overdue > 0 || $openCases > 0,
-            'summary' => $this->returnsSentence($closed->count(), $onTime, $late, $overdue, $openCases),
+            'summary' => $this->returnsSentence($completed, $onTime, $late, $overdue, $openCases),
         ];
     }
 
@@ -872,6 +997,507 @@ class AnalyticsService
         ));
 
         return array_slice($insights, 0, 5);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Section H - Movement                                                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Equipment that moved least, including equipment that never moved.
+     *
+     * The fast-moving ranking can be answered from custody lines alone, but
+     * the slow-moving one cannot: an item borrowed zero times has no custody
+     * line to find. This starts from the catalogue and joins activity onto
+     * it, so items with no movement are the ones that surface first - which
+     * is the whole point of the question.
+     *
+     * @return array<string, mixed>
+     */
+    public function slowMovingItems(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        int $limit = 10
+    ): array {
+        $released = DB::table('custody_lines')
+            ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->whereNotNull('custody_transactions.released_at')
+            ->whereBetween('custody_transactions.released_at', [$from, $to])
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw('SUM(custody_lines.actual_released_quantity) AS quantity')
+            ->selectRaw('COUNT(DISTINCT custody_transactions.id) AS transactions')
+            ->selectRaw('MAX(custody_transactions.released_at) AS last_activity')
+            ->get()
+            ->keyBy('item_id');
+
+        $items = InventoryItem::query()
+            ->where('active', true)
+            ->where('borrowable', true)
+            ->orderBy('unique_description')
+            ->get();
+
+        $rows = $items->map(function (InventoryItem $item) use ($released): array {
+            $activity = $released->get($item->id);
+
+            return [
+                'item_id' => $item->id,
+                'name' => $item->unique_description,
+                'released' => (float) ($activity->quantity ?? 0) + 0,
+                'transactions' => (int) ($activity->transactions ?? 0),
+                'last_activity' => $activity->last_activity ?? null,
+            ];
+        });
+
+        $sorted = $rows
+            ->sortBy([
+                fn (array $a, array $b): int => $a['released'] <=> $b['released'],
+                fn (array $a, array $b): int => $a['transactions'] <=> $b['transactions'],
+            ])
+            ->take($limit)
+            ->values();
+
+        $neverMoved = $rows->filter(fn (array $row): bool => $row['released'] <= 0)->count();
+
+        return [
+            'items' => $sorted->all(),
+            'never_moved' => $neverMoved,
+            'catalogue' => $items->count(),
+            'summary' => $items->isEmpty()
+                ? 'No borrowable equipment is recorded yet.'
+                : ($neverMoved > 0
+                    ? $neverMoved.' of '.$items->count().' borrowable '
+                        .($neverMoved === 1 ? 'item was' : 'items were')
+                        .' not released at all during this period.'
+                    : 'Every borrowable item was released at least once during this period.'),
+        ];
+    }
+
+    /**
+     * When borrowing requests are actually filed.
+     *
+     * Both readings come from the same timestamps the rest of the module
+     * uses. A peak is only reported once there are enough requests for one
+     * bucket to mean anything; below that the honest answer is that the
+     * pattern is not yet visible.
+     *
+     * @return array<string, mixed>
+     */
+    public function peakBorrowing(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $timestamps = $this->requestScope($from, $to, $division, $unit)
+            ->select('borrowing_requests.created_at')
+            ->get()
+            ->pluck('created_at');
+
+        $total = $timestamps->count();
+
+        /* One or two requests cannot establish a weekday or hour pattern. */
+        $reliable = $total >= self::PEAK_MINIMUM_OBSERVATIONS;
+
+        $days = array_fill(0, 7, 0);
+        $hours = array_fill(0, 24, 0);
+
+        foreach ($timestamps as $moment) {
+            $days[(int) $moment->dayOfWeek]++;
+            $hours[(int) $moment->hour]++;
+        }
+
+        $dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        $peakDay = array_search(max($days), $days, true);
+        $peakHour = array_search(max($hours), $hours, true);
+
+        return [
+            'available' => $reliable,
+            'total' => $total,
+            'requirement' => self::PEAK_MINIMUM_OBSERVATIONS,
+            'days' => collect($dayNames)
+                ->map(fn (string $name, int $index): array => [
+                    'label' => $name,
+                    'count' => $days[$index],
+                    'share' => max($days) > 0 ? (int) round($days[$index] / max($days) * 100) : 0,
+                ])
+                ->all(),
+            'peak_day' => $reliable && max($days) > 0 ? $dayNames[$peakDay] : null,
+            'peak_hour' => $reliable && max($hours) > 0
+                ? Carbon::createFromTime((int) $peakHour)->format('g A')
+                : null,
+            'summary' => $reliable
+                ? 'Most borrowing requests were filed on '.$dayNames[$peakDay]
+                    .', around '.Carbon::createFromTime((int) $peakHour)->format('g A').'.'
+                : 'Not enough activity to determine a reliable peak.',
+        ];
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Section I - Borrower behaviour                                      */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The borrowers who filed the most requests in the period.
+     *
+     * Grouped on the borrower account, with the unit taken from the request
+     * version snapshot so the affiliation matches the rest of the module.
+     *
+     * @return array<string, mixed>
+     */
+    public function frequentBorrowers(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        int $limit = 10
+    ): array {
+        $rows = $this->requestScope($from, $to, $division, $unit)
+            ->join('users', 'users.id', '=', 'borrowing_requests.borrower_user_id')
+            ->groupBy('users.id', 'users.full_name', 'request_versions.office_unit')
+            ->select('users.id AS borrower_id', 'users.full_name AS name', 'request_versions.office_unit AS unit')
+            ->selectRaw('COUNT(borrowing_requests.id) AS requests')
+            ->orderByDesc('requests')
+            ->limit($limit)
+            ->get();
+
+        $highest = (int) ($rows->max('requests') ?: 0);
+
+        return [
+            'borrowers' => $rows->map(fn ($row): array => [
+                'name' => (string) $row->name,
+                'unit' => (string) ($row->unit ?? ''),
+                'requests' => (int) $row->requests,
+                'share' => $highest > 0 ? (int) round((int) $row->requests / $highest * 100) : 0,
+            ])->all(),
+            'summary' => $rows->isEmpty()
+                ? 'No borrowing requests were filed during this period.'
+                : $rows->first()->name.' filed the most borrowing requests ('
+                    .(int) $rows->first()->requests.').',
+        ];
+    }
+
+    /**
+     * Borrowers whose completed returns came back after the due date.
+     *
+     * A LATE RETURN is a finished borrowing: the item is back, only later
+     * than it was due. Nothing here counts an item that is still out - that
+     * is overdue, and it is reported separately.
+     *
+     * @return array<string, mixed>
+     */
+    public function lateReturnBorrowers(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        int $limit = 10
+    ): array {
+        $rows = $this->custodyScope($from, $to, $division, $unit)
+            ->join('users', 'users.id', '=', 'custody_transactions.borrower_user_id')
+            ->whereNotNull('custody_transactions.released_at')
+            ->whereNotNull('custody_transactions.closed_at')
+            ->whereNotNull('custody_transactions.due_at')
+            ->whereColumn('custody_transactions.closed_at', '>', 'custody_transactions.due_at')
+            ->groupBy('users.id', 'users.full_name')
+            ->select('users.full_name AS name')
+            ->selectRaw('COUNT(custody_transactions.id) AS late_returns')
+            ->orderByDesc('late_returns')
+            ->limit($limit)
+            ->get();
+
+        $highest = (int) ($rows->max('late_returns') ?: 0);
+
+        return [
+            'borrowers' => $rows->map(fn ($row): array => [
+                'name' => (string) $row->name,
+                'late_returns' => (int) $row->late_returns,
+                'share' => $highest > 0 ? (int) round((int) $row->late_returns / $highest * 100) : 0,
+            ])->all(),
+            'summary' => $rows->isEmpty()
+                ? 'No borrowing was returned after its due date during this period.'
+                : $rows->first()->name.' recorded the most late returns ('
+                    .(int) $rows->first()->late_returns.').',
+        ];
+    }
+
+    /**
+     * How long a completed borrowing typically lasts.
+     *
+     * Measured from physical release to closure over custody that has both,
+     * so an unreturned borrowing cannot pull the average down.
+     *
+     * @return array<string, mixed>
+     */
+    public function averageCustodyDuration(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $rows = $this->custodyScope($from, $to, $division, $unit)
+            ->whereNotNull('released_at')
+            ->whereNotNull('closed_at')
+            ->get(['released_at', 'closed_at']);
+
+        if ($rows->isEmpty()) {
+            return ['available' => false, 'summary' => 'No completed borrowings to measure yet.'];
+        }
+
+        $hours = $rows
+            ->map(fn ($row): float => (float) $row->released_at->diffInMinutes($row->closed_at) / 60)
+            ->filter(fn (float $value): bool => $value >= 0);
+
+        if ($hours->isEmpty()) {
+            return ['available' => false, 'summary' => 'No completed borrowings to measure yet.'];
+        }
+
+        $averageHours = $hours->avg();
+        $days = $averageHours / 24;
+
+        return [
+            'available' => true,
+            'count' => $rows->count(),
+            'hours' => round($averageHours, 1),
+            'days' => round($days, 1),
+            'label' => $days >= 1
+                ? round($days, 1).' '.(round($days, 1) === 1.0 ? 'day' : 'days')
+                : round($averageHours).' '.(round($averageHours) === 1.0 ? 'hour' : 'hours'),
+            'summary' => 'A completed borrowing lasted about '
+                .($days >= 1 ? round($days, 1).' days' : round($averageHours).' hours')
+                .' on average across '.$rows->count().' '
+                .($rows->count() === 1 ? 'record' : 'records').'.',
+        ];
+    }
+
+    /**
+     * Incidents and their affected quantity for the period.
+     *
+     * Nothing is inferred: with no incident records the section reports a
+     * clean zero rather than an invented history.
+     *
+     * @return array<string, mixed>
+     */
+    public function incidentSummary(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
+
+        $incidents = Incident::query()
+            ->whereIn('custody_transaction_id', $custodyIds)
+            ->with('lines')
+            ->get();
+
+        $released = (float) DB::table('custody_lines')
+            ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
+            ->whereIn('custody_lines.custody_transaction_id', $custodyIds)
+            ->whereNotNull('custody_transactions.released_at')
+            ->sum('custody_lines.actual_released_quantity');
+
+        $byType = $incidents
+            ->groupBy('incident_type')
+            ->map(fn (Collection $group): array => [
+                'count' => $group->count(),
+                'quantity' => (float) $group->sum(
+                    fn ($incident): float => (float) $incident->lines->sum('quantity')
+                ) + 0,
+            ]);
+
+        $affected = (float) $byType->sum('quantity');
+
+        return [
+            'total' => $incidents->count(),
+            'open' => $incidents->filter(
+                fn ($incident): bool => ! in_array($incident->status, ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'], true)
+            )->count(),
+            'types' => $byType->map(fn (array $row, string $type): array => [
+                'type' => str($type)->replace('_', ' ')->title()->toString(),
+                'count' => $row['count'],
+                'quantity' => $row['quantity'],
+            ])->values()->all(),
+            'affected_quantity' => $affected + 0,
+            'released_quantity' => $released + 0,
+            /* A rate needs a denominator; without releases there is none. */
+            'rate' => $released > 0 ? round($affected / $released * 100, 2) : null,
+            'summary' => $incidents->isEmpty()
+                ? 'No property incidents were recorded for this period.'
+                : $incidents->count().' '.($incidents->count() === 1 ? 'incident was' : 'incidents were')
+                    .' recorded, affecting '.($affected + 0).' units.',
+        ];
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Section J - Stock coverage                                          */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * An approximate reading of how long current stock would last.
+     *
+     *     average daily usage    = quantity released in the period / days in the period
+     *     estimated days cover   = usable availability now / average daily usage
+     *
+     * MINIMUM HISTORY
+     * ---------------
+     * The arithmetic will produce a number from any input, which is exactly
+     * why it is guarded. A rate drawn from a window shorter than
+     * STOCK_COVERAGE_MINIMUM_WINDOW_DAYS, or from fewer than
+     * STOCK_COVERAGE_MINIMUM_RELEASES separate releases, describes a couple
+     * of events rather than a pattern. In that case the item reports
+     * insufficient history and no daily rate, coverage or risk band is
+     * produced at all - a wrong-looking "High Risk" is worse than an honest
+     * blank. The rule lives here so no template can reimplement it.
+     *
+     * This remains an estimate wherever it does appear. It assumes usage
+     * continues at the observed rate, which no borrowing pattern guarantees,
+     * and it carries no probability because the data does not support one.
+     *
+     * Usable availability is InventoryService's current_available, the same
+     * authoritative figure the Inventory module uses.
+     *
+     * @return array<string, mixed>
+     */
+    public function stockCoverage(
+        InventoryService $inventoryService,
+        CarbonInterface $from,
+        CarbonInterface $to,
+        int $limit = 10
+    ): array {
+        $days = max(1, (int) Carbon::parse($from)->startOfDay()->diffInDays(Carbon::parse($to)->startOfDay()) + 1);
+
+        /* A window this short cannot support a daily rate for any item. */
+        $windowSufficient = $days >= self::STOCK_COVERAGE_MINIMUM_WINDOW_DAYS;
+
+        $usage = DB::table('custody_lines')
+            ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->whereNotNull('custody_transactions.released_at')
+            ->whereBetween('custody_transactions.released_at', [$from, $to])
+            ->groupBy('request_items.inventory_item_id')
+            ->select('request_items.inventory_item_id AS item_id')
+            ->selectRaw('SUM(custody_lines.actual_released_quantity) AS quantity')
+            ->selectRaw('COUNT(DISTINCT custody_transactions.id) AS releases')
+            ->get()
+            ->keyBy('item_id');
+
+        $items = InventoryItem::query()
+            ->where('active', true)
+            ->where('borrowable', true)
+            ->get();
+
+        $balances = $inventoryService->portfolio($items, now()->startOfDay(), now()->endOfDay());
+
+        $rows = [];
+
+        foreach ($items as $item) {
+            $activity = $usage->get($item->id);
+            $released = (float) ($activity->quantity ?? 0);
+            $releases = (int) ($activity->releases ?? 0);
+
+            /* No consumption at all offers nothing to project from. */
+            if ($released <= 0) {
+                continue;
+            }
+
+            $balance = $balances[$item->id] ?? [];
+            $available = (float) ($balance['current_available'] ?? 0);
+
+            $sufficient = $windowSufficient && $releases >= self::STOCK_COVERAGE_MINIMUM_RELEASES;
+
+            $perDay = $sufficient ? $released / $days : null;
+            $cover = ($perDay !== null && $perDay > 0) ? $available / $perDay : null;
+
+            $rows[] = [
+                'item_id' => $item->id,
+                'name' => $item->unique_description,
+                'available' => $available + 0,
+                'released' => $released + 0,
+                'releases' => $releases,
+                'sufficient' => $sufficient,
+                'per_day' => $perDay === null ? null : round($perDay, 2),
+                'days_cover' => $cover === null ? null : (int) floor($cover),
+                'risk' => $sufficient ? $this->stockoutRisk($cover) : null,
+            ];
+        }
+
+        /* Shortest cover first; rows without a reading sink to the bottom. */
+        usort($rows, fn (array $a, array $b): int => ($a['days_cover'] ?? PHP_INT_MAX) <=> ($b['days_cover'] ?? PHP_INT_MAX));
+
+        $measured = array_values(array_filter($rows, fn (array $row): bool => $row['sufficient']));
+        $atRisk = array_values(array_filter($measured, fn (array $row): bool => $row['risk'] === 'High'));
+        $insufficient = count($rows) - count($measured);
+
+        return [
+            /* True only when at least one item could actually be measured. */
+            'available' => $measured !== [],
+            'window_days' => $days,
+            'window_sufficient' => $windowSufficient,
+            'items' => array_slice($rows, 0, $limit),
+            'measured' => count($measured),
+            'insufficient' => $insufficient,
+            'high_risk' => count($atRisk),
+            'thresholds' => [
+                'high' => self::STOCKOUT_RISK_HIGH_DAYS,
+                'medium' => self::STOCKOUT_RISK_MEDIUM_DAYS,
+            ],
+            'requirement' => [
+                'window_days' => self::STOCK_COVERAGE_MINIMUM_WINDOW_DAYS,
+                'releases' => self::STOCK_COVERAGE_MINIMUM_RELEASES,
+            ],
+            'summary' => $this->coverageSentence($rows, $measured, $atRisk, $windowSufficient),
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @param  list<array<string, mixed>>  $measured
+     * @param  list<array<string, mixed>>  $atRisk
+     */
+    private function coverageSentence(
+        array $rows,
+        array $measured,
+        array $atRisk,
+        bool $windowSufficient
+    ): string {
+        if ($rows === []) {
+            return 'No equipment was released during this period, so stock coverage cannot be estimated yet.';
+        }
+
+        if (! $windowSufficient) {
+            return 'The selected period is shorter than '
+                .self::STOCK_COVERAGE_MINIMUM_WINDOW_DAYS
+                .' days, which is too short to draw a usage rate from. Choose a longer reporting period.';
+        }
+
+        if ($measured === []) {
+            return 'No equipment has been released often enough to estimate stock coverage yet. '
+                .'An item needs at least '.self::STOCK_COVERAGE_MINIMUM_RELEASES
+                .' separate releases in the period before a usage rate is projected from it.';
+        }
+
+        return $atRisk === []
+            ? 'No equipment is estimated to run short within '
+                .self::STOCKOUT_RISK_HIGH_DAYS.' days at the observed usage rate.'
+            : count($atRisk).' '.(count($atRisk) === 1 ? 'item is' : 'items are')
+                .' estimated to last under '.self::STOCKOUT_RISK_HIGH_DAYS
+                .' days at the observed usage rate.';
+    }
+
+    /** High | Medium | Low, or null when usage gives no reading. */
+    private function stockoutRisk(?float $daysCover): ?string
+    {
+        if ($daysCover === null) {
+            return null;
+        }
+
+        return match (true) {
+            $daysCover < self::STOCKOUT_RISK_HIGH_DAYS => 'High',
+            $daysCover <= self::STOCKOUT_RISK_MEDIUM_DAYS => 'Medium',
+            default => 'Low',
+        };
     }
 
     /* ------------------------------------------------------------------ */

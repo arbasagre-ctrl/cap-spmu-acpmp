@@ -17,6 +17,7 @@ use App\Models\Penalty;
 use App\Models\Sanction;
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\LateReturnService;
 use App\Services\CustodyService;
 use App\Services\DocumentService;
 use App\Services\NotificationService;
@@ -34,14 +35,16 @@ class AccountabilityController extends Controller
     public function index(Request $request, PolicyService $policy): View
     {
         $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines'])->latest('reported_at');
-        $billingQuery = BillingStatement::with(['borrower', 'lines', 'payments', 'documents'])->latest('issued_at');
+        $billingQuery = BillingStatement::with(['borrower', 'lines.penalty', 'payments.verifiedBy', 'documents'])->latest('issued_at');
         $restrictionQuery = BorrowerRestriction::latest('effective_from');
         $overdueQuery = OverdueCase::with([
             'borrower',
             'custody.lines',
+            'custody.request',
             'custody.returns',
             'custody.laundryJob',
             'penalties',
+            'confirmedBy',
         ])->latest('overdue_started_at');
         $violationQuery = BorrowerViolation::with(['borrower', 'custody.request', 'academicPeriod', 'sanction'])
             ->latest('detected_at');
@@ -86,12 +89,155 @@ class AccountabilityController extends Controller
             'sanctions' => $sanctions,
             'incidentOffensePreviews' => $incidentOffensePreviews,
             'violationOffensePreviews' => $violationOffensePreviews,
+            'resolvedHistory' => $this->resolvedHistory($billings, $overdueCases),
         ]);
+    }
+
+    /**
+     * Accountability cases that have reached a final outcome.
+     *
+     * Read-only history assembled from the records that already exist: the
+     * billing and its verified payment, the penalty that links the billing back
+     * to its overdue case, and the frozen late-return assessment on that case.
+     * Nothing is recalculated and nothing is duplicated into new storage.
+     *
+     * Outcomes are kept distinct. A settled billing is Paid; a waived or voided
+     * one is not, and is never relabelled as such.
+     *
+     * @param  \Illuminate\Support\Collection<int, BillingStatement>  $billings
+     * @param  \Illuminate\Support\Collection<int, OverdueCase>  $overdueCases
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function resolvedHistory(Collection $billings, Collection $overdueCases): Collection
+    {
+        $casesById = $overdueCases->keyBy('id');
+        $billedCaseIds = [];
+
+        $rows = $billings
+            ->whereIn('status', ['SETTLED', 'WAIVED', 'VOID'])
+            ->map(function (BillingStatement $billing) use ($casesById, &$billedCaseIds): array {
+                /* Only a verified payment proves a case was paid. A stored
+                   receipt file on its own never counts as settlement. */
+                $payment = $billing->payments
+                    ->where('status', 'VERIFIED')
+                    ->sortByDesc('verified_at')
+                    ->first();
+
+                $caseId = $billing->lines
+                    ->pluck('penalty.overdue_case_id')
+                    ->filter()
+                    ->first();
+
+                $case = $caseId ? $casesById->get($caseId) : null;
+
+                if ($case) {
+                    $billedCaseIds[] = $case->id;
+                }
+
+                return [
+                    'key' => 'billing-'.$billing->id,
+                    'outcome' => match ($billing->status) {
+                        'SETTLED' => 'Resolved - Paid',
+                        'WAIVED' => 'Waived',
+                        default => 'Void',
+                    },
+                    'tone' => $billing->status === 'SETTLED' ? 'success' : 'neutral',
+                    'borrower' => $billing->borrower,
+                    'reference' => $case?->custody?->custody_no
+                        ?? $case?->custody?->request?->request_no
+                        ?? $billing->billing_no,
+                    'billing' => $billing,
+                    'case' => $case,
+                    'payment' => $billing->status === 'SETTLED' ? $payment : null,
+                    'resolved_at' => $billing->status === 'SETTLED'
+                        ? $payment?->verified_at
+                        : $billing->updated_at,
+                ];
+            })
+            ->values();
+
+        /*
+         * A case can resolve without ever being billed - an on-time return
+         * closing an overdue case, for example - and still belongs in history.
+         */
+        $unbilled = $overdueCases
+            ->where('status', LateReturnService::STATUS_RESOLVED)
+            ->reject(fn (OverdueCase $case): bool => in_array($case->id, $billedCaseIds, true))
+            ->map(fn (OverdueCase $case): array => [
+                'key' => 'case-'.$case->id,
+                'outcome' => 'Resolved - No Charge',
+                'tone' => 'success',
+                'borrower' => $case->borrower,
+                'reference' => $case->custody?->custody_no ?? $case->custody?->request?->request_no ?? '-',
+                'billing' => null,
+                'case' => $case,
+                'payment' => null,
+                'resolved_at' => $case->updated_at,
+            ])
+            ->values();
+
+        return $rows
+            ->concat($unbilled)
+            ->sortByDesc(fn (array $row) => $row['resolved_at'])
+            ->values();
     }
 
     /**
      * Financial late-return assessment. This is separate from sanctions.
      */
+    /**
+     * The Action Officer confirms a detected late return.
+     *
+     * The officer is confirming that the recorded physical return date is
+     * correct and that the system's late classification follows from it. They
+     * are not choosing the number of late days.
+     */
+    public function confirmLateReturn(
+        Request $request,
+        OverdueCase $overdue,
+        LateReturnService $lateReturns
+    ): RedirectResponse {
+        $this->authorizeSpmu($request);
+
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
+            403
+        );
+
+        $lateReturns->confirm($overdue, $request->user());
+
+        return back()->with(
+            'status',
+            'Late-return assessment confirmed and forwarded to the SPMU Head for approval.'
+        );
+    }
+
+    /**
+     * The SPMU Head sends an assessment back to the Action Officer.
+     *
+     * The case is preserved with its history; only the stage moves back.
+     */
+    public function returnLateReturnForCorrection(
+        Request $request,
+        OverdueCase $overdue,
+        LateReturnService $lateReturns
+    ): RedirectResponse {
+        $this->authorizeSpmu($request);
+
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403
+        );
+
+        $data = $request->validate([
+            'remarks' => ['required', 'string', 'max:1000'],
+        ]);
+
+        $lateReturns->returnForCorrection($overdue, $request->user(), $data['remarks']);
+
+        return back()->with('status', 'The late-return assessment was returned to the Action Officer for correction.');
+    }
+
     public function billOverdue(
         Request $request,
         OverdueCase $overdue,
@@ -100,6 +246,12 @@ class AccountabilityController extends Controller
     ): RedirectResponse {
         $this->authorizeSpmu($request);
 
+        /* Approving the assessment is the SPMU Head's decision. */
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403
+        );
+
         $data = $request->validate([
             'basis' => ['required', 'string', 'max:2000'],
             'due_at' => ['nullable', 'date', 'after_or_equal:today'],
@@ -107,15 +259,31 @@ class AccountabilityController extends Controller
 
         $overdue->loadMissing('custody.lines');
 
-        if ($overdue->status === 'OVERDUE') {
+        if ($overdue->status === LateReturnService::STATUS_OVERDUE) {
             return back()->withErrors([
                 'overdue' => 'The item is still overdue. Record the physical return first so the final late-return fee can be determined.',
             ]);
         }
 
-        if ($overdue->status !== 'RETURNED_PENDING_SETTLEMENT') {
+        /*
+         * A Late Return Fee Form is only ever produced from an assessment the
+         * Action Officer has already confirmed.
+         */
+        if ($overdue->status === LateReturnService::STATUS_FOR_AO_CONFIRMATION) {
+            return back()->withErrors([
+                'overdue' => 'The Action Officer has not confirmed this late-return assessment yet.',
+            ]);
+        }
+
+        if ($overdue->status !== LateReturnService::STATUS_FOR_HEAD_APPROVAL) {
             return back()->withErrors([
                 'overdue' => 'This late-return case is not ready for a new Billing Statement.',
+            ]);
+        }
+
+        if ($overdue->actual_return_date === null || $overdue->ao_confirmed_at === null) {
+            return back()->withErrors([
+                'overdue' => 'A confirmed physical return date is required before the Late Return Fee Form can be generated.',
             ]);
         }
 
@@ -183,7 +351,7 @@ class AccountabilityController extends Controller
                     'reason' => 'Outstanding late-return billing '.$billing->billing_no.'.',
                 ]);
 
-            $overdue->update(['status' => 'BILLED']);
+            $overdue->update(['status' => LateReturnService::STATUS_AWAITING_PAYMENT]);
             $documents->billingStatement($billing);
 
             $audit->record(

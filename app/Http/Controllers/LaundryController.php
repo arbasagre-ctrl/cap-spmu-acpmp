@@ -174,9 +174,13 @@ class LaundryController extends Controller
                     ]);
                 }
 
-                $job->update([
-                    'status' => 'TURNED_OVER_TO_LAUNDRY',
-                ]);
+                /*
+                 * Only the queue status moves here. worker_received_at is the
+                 * borrower's physical return date and is set from the Laundry
+                 * Personnel record or from the Action Officer's attestation of
+                 * the accomplished form - never from a document timestamp.
+                 */
+                $job->update(['status' => 'TURNED_OVER_TO_LAUNDRY']);
             }
 
             if ($job->status !== 'TURNED_OVER_TO_LAUNDRY') {

@@ -185,7 +185,9 @@
             @endif
         </p>
     </div>
-    <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
+    @if($isBorrower)
+        <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
+    @endif
 </section>
 @endif
 
@@ -656,6 +658,9 @@
 @else
     <x-request-progress-tracker :request="$custody->request" />
 
+@include('custody.partials.head-detail-styles')
+
+<div class="custody-head-detail">
 <section class="content-grid two">
     <article class="card">
         <div class="card-header">
@@ -741,6 +746,7 @@
         </div>
     </article>
 </section>
+</div>
 
 @endif {{-- useReleaseProcessLayout --}}
 @endif {{-- showReleaseWorkflow --}}

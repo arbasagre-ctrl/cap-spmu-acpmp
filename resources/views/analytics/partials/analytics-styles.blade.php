@@ -211,6 +211,45 @@
     border-radius: 999px;
 }
 
+/*
+ * A bar row that drills down. It keeps the same shape as a static row and
+ * only gains a hit area, a hover surface, and a focus ring.
+ */
+.analytics-bar-link {
+    display: grid;
+    gap: 6px;
+    padding: 9px 11px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--motion) ease, border-color var(--motion) ease;
+}
+
+.analytics-bar-link:hover {
+    background: var(--surface-subtle);
+    border-color: var(--border);
+}
+
+.analytics-bar-link:focus-visible {
+    outline: none;
+    border-color: var(--interactive);
+    box-shadow: var(--focus-ring);
+}
+
+/* The row the current filters resolve to. */
+.analytics-bar-link.is-selected {
+    background: var(--blue-50);
+    border-color: var(--info-border);
+}
+
+.analytics-bar-link.is-selected .analytics-bar-name { font-weight: 750; }
+
+@media (prefers-reduced-motion: reduce) {
+    .analytics-bar-link { transition: none; }
+}
+
 .analytics-bar-row.is-academic .analytics-bar-fill { background: #1769e0; }
 .analytics-bar-row.is-administration .analytics-bar-fill { background: #0e7c66; }
 .analytics-bar-row.is-research .analytics-bar-fill { background: #7a4bc4; }
@@ -684,3 +723,315 @@ html[data-theme="dark"] .analytics-kpi-link.tone-stock {
 }
 </style>
 
+<style>
+/*
+| Analytics restructure additions.
+|
+| Kept to the existing SPMU-ACPMP language: white cards, navy headings, blue
+| accent, thin borders, restrained shadows. Nothing here introduces a new
+| colour system - semantic tones reuse the application tokens.
+*/
+
+/* The limitation notice above the tabs. */
+.analytics-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0 0 14px;
+    padding: 13px 15px;
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius);
+    color: var(--warning);
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+.analytics-notice .ui-icon { flex: 0 0 auto; margin-top: 1px; }
+
+/* Short provenance line under a KPI figure. */
+.analytics-kpi-basis {
+    display: block;
+    margin-top: 6px;
+    padding-top: 7px;
+    border-top: 1px solid var(--row-border);
+    color: var(--text-soft);
+    font-size: 10.5px;
+    line-height: 1.4;
+}
+
+/* Vertical trend chart. */
+.analytics-trend {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    min-height: 190px;
+    padding: 12px 2px 0;
+    overflow-x: auto;
+}
+.analytics-trend-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 7px; min-width: 54px; flex: 1 1 0; height: 170px; }
+.analytics-trend-bar { position: relative; display: block; width: 100%; max-width: 46px; min-height: 3px; background: var(--interactive); border-radius: 4px 4px 0 0; }
+.analytics-trend-count { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); color: var(--heading); font-size: 11px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.analytics-trend-label { color: var(--text-muted); font-size: 10.5px; text-align: center; line-height: 1.3; }
+
+/* Compact figure grid used by the health and returns tabs. */
+.analytics-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.analytics-stat {
+    display: grid;
+    gap: 5px;
+    padding: 13px 15px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: inherit;
+    text-decoration: none;
+}
+.analytics-stat > span { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.analytics-stat > strong { color: var(--heading); font-size: 21px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.analytics-stat > strong.is-text { font-size: 14px; }
+a.analytics-stat:hover { border-color: var(--interactive); background: var(--surface-hover); }
+a.analytics-stat:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+.analytics-stat.is-static { background: var(--surface-elevated); }
+
+/* Tables inside analytics sections. */
+.analytics-table-scroll { width: 100%; overflow-x: auto; }
+.analytics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.analytics-table th {
+    padding: 8px 10px;
+    text-align: left;
+    color: var(--text-secondary);
+    background: var(--table-heading-bg);
+    border-bottom: 1px solid var(--border-strong);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.analytics-table td { padding: 8px 10px; border-top: 1px solid var(--row-border); color: var(--text); vertical-align: top; }
+.analytics-table td.numeric, .analytics-table th.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.analytics-table a { color: var(--interactive); text-decoration: none; }
+.analytics-table a:hover { text-decoration: underline; }
+
+/* Status tag - readable as words first, tone second. */
+.analytics-tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 2px 8px;
+    border: 1px solid var(--neutral-border);
+    border-radius: 999px;
+    background: var(--neutral-bg);
+    color: var(--neutral);
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.analytics-tag.is-positive { color: var(--success); background: var(--success-bg); border-color: var(--success-border); }
+.analytics-tag.is-attention { color: var(--warning); background: var(--warning-bg); border-color: var(--warning-border); }
+.analytics-tag.is-critical { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-border); }
+
+/* "How this was calculated". */
+.analytics-explain { margin: 14px 0 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-subtle); }
+.analytics-explain > summary { padding: 10px 13px; cursor: pointer; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.analytics-explain > div { display: grid; gap: 7px; padding: 0 13px 13px; }
+.analytics-explain p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.analytics-formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--heading) !important; font-size: 12.5px !important; }
+
+.analytics-metric-note-spaced { margin-top: 18px; }
+.analytics-bar-name small { display: block; margin-top: 2px; color: var(--text-muted); font-size: 10.5px; font-weight: 400; }
+
+/* Tabs stay usable on a narrow screen. */
+.analytics-tabs { overflow-x: auto; scrollbar-width: thin; }
+.analytics-tab { white-space: nowrap; }
+
+@media (max-width: 700px) {
+    .analytics-trend-col { min-width: 44px; }
+    .analytics-stat-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}
+</style>
+
+<style>
+/*
+| Analytics detail panel.
+|
+| A detail is part of Analytics, not a jump to another module, so it opens
+| over the section that produced the figure and closes back onto it. White
+| surface, compact heading, one ranking or table, and the single handoff to
+| Reports at the foot. It is deliberately not another dashboard.
+*/
+.analytics-detail-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.analytics-detail-scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(7, 27, 53, .42);
+    display: block;
+}
+
+.analytics-detail {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(660px, 100%);
+    max-height: 100%;
+    background: var(--surface-elevated);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow);
+}
+
+.analytics-detail:focus { outline: 0; }
+
+.analytics-detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.analytics-detail-context { margin: 0; color: var(--text-muted); font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.analytics-detail-head h2 { margin: 4px 0 0; color: var(--heading); font-size: 17px; font-weight: 750; line-height: 1.3; }
+.analytics-detail-head h2:focus { outline: 0; }
+.analytics-detail-scope { margin: 5px 0 0; color: var(--text-muted); font-size: 11.5px; }
+.analytics-detail-close { flex: 0 0 auto; }
+
+.analytics-detail-body { display: grid; gap: 14px; padding: 18px 20px; overflow-y: auto; }
+
+.analytics-detail-figure { display: flex; align-items: baseline; gap: 9px; margin: 0; }
+.analytics-detail-figure strong { color: var(--heading); font-size: 30px; font-weight: 750; line-height: 1; font-variant-numeric: tabular-nums; }
+.analytics-detail-figure span { color: var(--text-muted); font-size: 12.5px; }
+
+.analytics-detail-note {
+    margin: 0;
+    padding: 11px 13px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.analytics-detail-subhead { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+
+.analytics-detail-body .analytics-stat-grid { margin-bottom: 0; }
+.analytics-detail-body .analytics-empty { margin: 0; }
+
+.analytics-detail-foot {
+    display: flex;
+    justify-content: flex-end;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface-subtle);
+}
+.analytics-detail-foot .button { gap: 7px; }
+
+/* Section-level handoff, used where a group of figures shares one source. */
+.analytics-section-action { margin: 12px 0 0; }
+.analytics-section-action a { display: inline-flex; align-items: center; gap: 5px; color: var(--interactive); font-size: 12px; font-weight: 700; text-decoration: none; }
+.analytics-section-action a:hover { text-decoration: underline; }
+
+/* Trend bars became links, so they need their own affordance. */
+a.analytics-trend-col { text-decoration: none; border-radius: 6px; transition: background-color var(--motion) ease; }
+a.analytics-trend-col:hover { background: var(--surface-hover); }
+a.analytics-trend-col:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+a.analytics-trend-col:hover .analytics-trend-bar { background: var(--interactive-hover); }
+
+@media (max-width: 720px) {
+    .analytics-detail { width: 100%; border-left: 0; }
+    .analytics-detail-figure strong { font-size: 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    a.analytics-trend-col { transition: none; }
+}
+</style>
+
+<style>
+/*
+| Browser QA fixes.
+|
+| Each rule below answers something measured in the rendered page rather than
+| guessed at from the markup.
+*/
+
+/*
+| F3 - a period with one bucket stretched its column to the full row width,
+| leaving a single bar adrift in 1099px of empty space. Columns now take their
+| natural width and the row starts at the left.
+*/
+.analytics-trend { justify-content: flex-start; }
+.analytics-trend-col { flex: 0 1 96px; max-width: 96px; }
+
+/*
+| F5 - the detail footer sat directly under the content, leaving a tall blank
+| area beneath it in a full-height panel. The body now takes the slack so the
+| action stays at the foot of the surface.
+*/
+.analytics-detail-body { flex: 1 1 auto; min-height: 0; }
+
+/* F6 - measured 660px; the analytical drawer reads better nearer 800. */
+.analytics-detail { width: min(820px, 100%); }
+
+@media (max-width: 720px) {
+    .analytics-detail { width: 100%; }
+}
+</style>
+
+<style>
+/*
+| Tab QA fixes.
+|
+| Measured in the rendered page, not inferred from the markup.
+*/
+
+/*
+| T1 - every ranking bar was invisible.
+|
+| Measured: .analytics-bar-fill computed to 0x0 with display:inline on all five
+| tabs, so its width:100% and background were never painted. The track escapes
+| the same fate only because it is a grid item of .analytics-bar-row and is
+| blockified; the fill sits one level deeper, inside the track, where nothing
+| blockifies it. Making it a block is the whole fix.
+*/
+.analytics-bar-fill { display: block; min-width: 2px; }
+
+/*
+| T2 - a bar carrying a real value should never render as a bare track. A
+| hairline keeps a very small share visible against the rounded track.
+*/
+.analytics-bar-track { position: relative; }
+
+/*
+| T3 - Predictive mixes available and withheld projections in one view,
+| because each is guarded on its own history. The note says so, quietly.
+*/
+.analytics-guard-note {
+    margin: -4px 0 14px;
+    padding: 10px 14px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.55;
+}
+
+/*
+| T4 - every block in the detail drawer rendered far taller than its text.
+|
+| Measured on Equipment Detail: body 733px holding roughly 430px of content,
+| with a 2-line note occupying 166px and a 1-line empty state 149px. The body
+| is a grid, and the earlier flex:1 1 auto that pins the footer to the foot of
+| the panel also handed the grid surplus height, which its default
+| align-content:normal then shared out among the auto rows. Packing the rows to
+| the start keeps the pinned footer without inflating what sits above it.
+*/
+.analytics-detail-body { align-content: start; }
+</style>

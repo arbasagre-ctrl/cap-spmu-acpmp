@@ -18,6 +18,7 @@ use App\Models\StoredFile;
 use App\Models\User;
 use App\Services\InventoryService;
 use Database\Seeders\DatabaseSeeder;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Route;
@@ -47,7 +48,25 @@ class SimpleLaundryWorkflowTest extends TestCase
 
         $this->seed(DatabaseSeeder::class);
         Storage::fake('local');
+
+        /*
+         * Pin the clock to a Tuesday.
+         *
+         * Pickup and return are only permitted on an operationally open day,
+         * and Monday-Friday is the configured default. Left on the real clock
+         * these tests pass or fail depending on which day the suite happens to
+         * run - a weekend run is rejected by the operational calendar. Tuesday
+         * keeps "today" and the next three days inside the open week.
+         */
+        Carbon::setTestNow(Carbon::create(2026, 9, 1, 9));
     }
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
+    }
+
 
     public function test_spmu_return_encoding_automatically_creates_the_internal_laundry_queue(): void
     {
@@ -229,11 +248,22 @@ class SimpleLaundryWorkflowTest extends TestCase
         array $accounting,
         array $extra = []
     ) {
+        /*
+         * Linen carries the Laundry RECEIVED BY date from the accomplished
+         * form. It is no longer defaulted from the SPMU encoding time, so the
+         * Action Officer supplies it here as they would in the UI.
+         */
         return $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
             ->post(
                 route('custody.return', $custody),
-                array_merge(['accounting' => $accounting], $extra)
+                array_merge(
+                    [
+                        'accounting' => $accounting,
+                        'laundry_received_date' => now()->toDateString(),
+                    ],
+                    $extra
+                )
             );
     }
 

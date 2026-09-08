@@ -38,6 +38,14 @@
         box-shadow: 0 1px 2px rgba(0, 0, 0, .22);
     }
     .dashboard-balanced-grid.borrower-actions-only { grid-template-columns: minmax(0, 1fr); }
+
+    /*
+     * The role-instruction panel that used to sit beside the queue is gone,
+     * so the queue takes the full width and its height follows its content
+     * instead of the old equal-column minimum.
+     */
+    .dashboard-balanced-grid.dashboard-single-panel { grid-template-columns: minmax(0, 1fr); }
+    .dashboard-single-panel > .dashboard-panel-equal { min-height: 0; height: auto; }
 </style>
 
 @php
@@ -256,7 +264,7 @@
     </article>
 @endif
 
-<section id="{{ $dashboardMode === 'BORROWER' ? 'borrower-actions' : 'dashboard-actions' }}" class="dashboard-grid dashboard-balanced-grid {{ $dashboardMode === 'BORROWER' ? 'borrower-actions-only' : '' }}">
+<section id="{{ $dashboardMode === 'BORROWER' ? 'borrower-actions' : 'dashboard-actions' }}" class="dashboard-grid dashboard-balanced-grid dashboard-single-panel {{ $dashboardMode === 'BORROWER' ? 'borrower-actions-only' : '' }}">
     <article class="card queue-card dashboard-panel-equal {{ $dashboardMode === 'BORROWER' ? 'borrower-dash-card' : '' }}">
         <div class="card-header">
             <div>
@@ -387,39 +395,6 @@
         </div>
     </article>
 
-    @if($dashboardMode !== 'BORROWER')
-    <article class="card dashboard-panel-equal">
-        @if($dashboardMode === 'SPMU_OFFICER')
-            <div class="card-header"><div><p class="eyebrow">Action Officer workflow</p><h2>Verification through release</h2></div></div>
-            <div class="workflow-mini-list">
-                <span><strong>1</strong> Verify the submitted request and required documents</span>
-                <span><strong>2</strong> Route VERIFIED requests to the SPMU Head for decision</span>
-                <span><strong>3</strong> After approval, schedule pickup and validate the generated documents</span>
-                <span><strong>4</strong> Prepare and physically release the approved items</span>
-                <span><strong>5</strong> Monitor custody and receive returns</span>
-                <span><strong>6</strong> Keep Laundry and final reconciliation in their separate existing paths</span>
-            </div>
-        @elseif($dashboardMode === 'SPMU_HEAD')
-            <div class="card-header"><div><p class="eyebrow">Approval authority</p><h2>Head responsibility</h2></div></div>
-            <div class="workflow-mini-list">
-                <span><strong>1</strong> Review the submitted request and signed documents</span>
-                <span><strong>2</strong> Check requested quantities, dates, and current availability</span>
-                <span><strong>3</strong> Approve & reserve, return for revision, or reject</span>
-                <span><strong>4</strong> Monitor custody, issues, and inventory oversight</span>
-            </div>
-            <p class="meta top-gap">After approval, pickup scheduling, Gate Pass preparation, physical release, return inspection, and applicable Laundry final acceptance move to the Action Officer.</p>
-        @elseif($dashboardMode === 'ICTU')
-            <div class="card-header"><div><p class="eyebrow">Technical scope</p><h2>ICTU responsibility</h2></div></div>
-            <div class="workflow-mini-list">
-                <span><strong>1</strong> Manage active user accounts</span>
-                <span><strong>2</strong> Maintain system settings</span>
-                <span><strong>3</strong> Review audit trail</span>
-                <span><strong>4</strong> Monitor email/SMS delivery records</span>
-            </div>
-            <p class="meta top-gap">ICTU does not approve borrowing, release items, inspect returns, or process laundry.</p>
-        @endif
-    </article>
-    @endif
 </section>
 
 </div>

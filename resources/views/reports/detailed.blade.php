@@ -4,6 +4,7 @@
 
 @include('reports.partials.workspace-styles')
 @include('reports.partials.detail-styles')
+@include('reports.document.styles')
 
 <div class="reporting-workspace reporting-detail">
 
@@ -20,82 +21,69 @@
         @include('reports.partials.report-builder')
 
         <section class="content-area">
-            <article class="card report-output-card">
+            {{--
+                The preview is the document itself, on a sheet of paper, so
+                what is reviewed on screen is what prints and what exports.
+                Actions sit above it because they act on a report that
+                already exists.
+            --}}
+            <div class="report-preview-bar">
+                <p class="report-preview-label">Report preview</p>
 
-                <div class="report-output-header">
-                    <div>
-                        <p class="eyebrow">Generated report</p>
-                        <h2>{{ $dataset->label }}</h2>
-                        <p>{{ $dataset->meta['period_label'] ?? '' }}</p>
-                    </div>
+                <button
+                    class="button primary ui-pressable"
+                    type="button"
+                    data-open-export-options
+                >
+                    <x-icon name="upload" size="16" />
+                    Export / Print
+                </button>
+            </div>
 
-                    {{--
-                        Export and Print are actions on a report that already
-                        exists, so they live here rather than in the page
-                        header: generate, review, then export or print.
-                    --}}
-                    <div class="report-output-actions">
-                        <a
-                            class="button secondary ui-pressable"
-                            href="{{ route('reports.export', array_merge(
-                                ['type' => $exportType],
-                                $reportFilters->toQuery()
-                            )) }}"
-                        >
-                            <x-icon name="upload" size="16" class="report-download-icon" />
-                            Export CSV
-                        </a>
+            {{--
+                Filter feedback belongs to the page, not to the document: a
+                rejected filter is something the operator must know about
+                while working, and never part of the official record.
+            --}}
+            @if(! empty($dataset->meta['rejected_filters']))
+                <p class="report-filter-warning" role="status">
+                    <x-icon name="warning" size="16" />
+                    <span>
+                        These filters were not recognised and were ignored:
+                        {{ implode(', ', array_keys($dataset->meta['rejected_filters'])) }}.
+                    </span>
+                </p>
+            @endif
 
-                        <button
-    class="button secondary ui-pressable"
-    type="button"
-    onclick="window.print()"
->
-    <x-icon name="printer" size="16" />
-    Print
-</button>
-                    </div>
+            <div class="report-preview-sheet">
+                @include('reports.document.sheet', ['rows' => $records])
+            </div>
+
+            @if($records->hasPages())
+                <div class="report-records-footer">
+                    @php
+                        $recordSummary = 'Showing '.$records->firstItem().'–'.$records->lastItem()
+                            .' of '.number_format($dataset->count())
+                            .' '.($dataset->count() === 1 ? 'record' : 'records');
+                    @endphp
+
+                    <p role="status" aria-live="polite">{{ $recordSummary }}</p>
+
+                    {{ $records->onEachSide(1)->links('reports.partials.report-pagination') }}
                 </div>
+            @endif
 
-                <div class="report-output-body">
-
-                    @include('reports.partials.report-metadata')
-
-                    @if($dataset->isEmpty())
-                        <p class="report-empty-state">
-                            {{ App\Reports\ReportCatalogue::emptyMessage($selectedReport) }}
-                        </p>
-                    @else
-                        @include('reports.partials.report-dataset-table')
-
-                        <div class="report-records-footer">
-                            @php
-                                $recordSummary = 'Showing '.$records->firstItem().'–'.$records->lastItem()
-                                    .' of '.number_format($dataset->count())
-                                    .' '.($dataset->count() === 1 ? 'record' : 'records');
-                            @endphp
-
-                            <p role="status" aria-live="polite">{{ $recordSummary }}</p>
-
-                            @if($records->hasPages())
-                                {{ $records->onEachSide(1)->links('reports.partials.report-pagination') }}
-                            @endif
-                        </div>
-                    @endif
-
-                    {{--
-                        A contextual pointer, not a second Audit Trail: the
-                        dedicated module remains the authoritative place for
-                        who performed which system action and when.
-                    --}}
-                    <p class="report-audit-link">
-                        <a href="{{ route('reports.audit') }}">
-                            View related audit history
-                            <x-icon name="chevron-right" size="15" />
-                        </a>
-                    </p>
-                </div>
-            </article>
+            {{--
+                A contextual pointer, not a second Audit Trail: the dedicated
+                module remains the authoritative place for who performed which
+                system action and when.
+            --}}
+            <p class="report-audit-link">
+                <a href="{{ route('reports.audit') }}">
+                    View related audit history
+                    <x-icon name="chevron-right" size="15" />
+                </a>
+            </p>
         </section>
 
         <section class="content-area">
@@ -110,4 +98,7 @@
 
     </div>
 </div>
+
+@include('reports.partials.export-options')
+@include('reports.partials.export-options-script')
 @endsection

@@ -51,20 +51,12 @@
         </select>
     </label>
 
-    <button
-        id="custody-oversight-clear"
-        class="button secondary ui-pressable custody-oversight-clear"
-        type="button"
-    >
-        Clear
-    </button>
-
     <p
         id="custody-oversight-date-error"
         class="custody-oversight-date-error"
         role="alert"
         hidden
     >
-        Date From cannot be later than Date To. Adjust the dates or use Clear.
+        Date From cannot be later than Date To. Adjust either date to continue.
     </p>
 </div>

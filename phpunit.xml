@@ -18,6 +18,14 @@
         </include>
     </source>
     <php>
+        <!--
+            Rendering PDF, Word and spreadsheet exports is memory-hungry,
+            and the whole suite runs in one process. The application
+            itself runs with 256M; the suite needs headroom above that to
+            reach the export tests with several hundred tests already
+            behind it.
+        -->
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>
         <env name="SEED_DEMO_USERS" value="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>

@@ -24,6 +24,16 @@
 <section class="content-area">
     <div class="analytics-page">
 
+        <nav class="analytics-tabs" aria-label="Analytics sections">
+            @foreach($sections as $key => $label)
+                <a
+                    class="analytics-tab{{ $section === $key ? ' is-active' : '' }}"
+                    href="{{ route('analytics.index', $carry + ['section' => $key]) }}"
+                    @if($section === $key) aria-current="page" @endif
+                >{{ $label }}</a>
+            @endforeach
+        </nav>
+
         {{--
             Filters. Every control below re-runs the calculations on the
             server; nothing here is cosmetic.
@@ -69,17 +79,29 @@
             </p>
         </form>
 
-        <nav class="analytics-tabs" aria-label="Analytics sections">
-            @foreach($sections as $key => $label)
-                <a
-                    class="analytics-tab{{ $section === $key ? ' is-active' : '' }}"
-                    href="{{ route('analytics.index', $carry + ['section' => $key]) }}"
-                    @if($section === $key) aria-current="page" @endif
-                >{{ $label }}</a>
-            @endforeach
-        </nav>
+        {{--
+            A month of data labelled as a semester would be a false reading,
+            not a small one, so the fallback is stated rather than hidden.
+        --}}
+        @if($academicPeriodMissing)
+            <p class="analytics-notice" role="status">
+                <x-icon name="warning" size="17" />
+                <span>
+                    No academic period is configured, so semester and academic-year analytics cannot be
+                    calculated yet. The figures below cover
+                    {{ $from->format('d M Y') }} to {{ $to->format('d M Y') }} instead.
+                    Configure academic periods in Operational Configuration to enable them.
+                </span>
+            </p>
+        @endif
 
-        @include('analytics.partials.'.$section)
+
+        @include('analytics.partials.'.$sectionPartial)
+
+        {{-- The detail opens over the section that produced the figure. --}}
+        @if($detail)
+            @include('analytics.partials.detail-panel')
+        @endif
     </div>
 </section>
 @endsection

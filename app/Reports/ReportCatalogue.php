@@ -251,6 +251,14 @@ final class ReportCatalogue
                 'builder' => Builders\BorrowingActivityReport::class,
                 'export' => 'borrowing',
                 'empty' => 'No borrowing records matched the selected reporting criteria.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'approval' => [
@@ -261,6 +269,14 @@ final class ReportCatalogue
                 'builder' => Builders\ApprovalDecisionReport::class,
                 'export' => 'approval',
                 'empty' => 'No approval or decision records matched the selected reporting criteria.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'custody' => [
@@ -271,6 +287,14 @@ final class ReportCatalogue
                 'builder' => Builders\ReleaseCustodyReport::class,
                 'export' => 'custody',
                 'empty' => 'No released/custody records were found for this period.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'returns' => [
@@ -281,6 +305,14 @@ final class ReportCatalogue
                 'builder' => Builders\ReturnAccountabilityReport::class,
                 'export' => 'returns',
                 'empty' => 'No return/accountability records matched the selected filters.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'inventory' => [
@@ -291,6 +323,14 @@ final class ReportCatalogue
                 'builder' => Builders\InventoryStatusReport::class,
                 'export' => 'inventory',
                 'empty' => 'No inventory records matched the selected filters.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'as_of',
+                'orientation' => 'landscape',
             ],
 
             'utilization' => [
@@ -301,6 +341,14 @@ final class ReportCatalogue
                 'builder' => Builders\EquipmentUtilizationReport::class,
                 'export' => 'utilization',
                 'empty' => 'No equipment utilization was recorded for this period.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'laundry' => [
@@ -311,6 +359,14 @@ final class ReportCatalogue
                 'builder' => Builders\LaundryOperationsReport::class,
                 'export' => 'laundry',
                 'empty' => 'No laundry operations matched the selected period.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
 
             'gate-pass' => [
@@ -321,6 +377,14 @@ final class ReportCatalogue
                 'builder' => Builders\OffCampusGatePassReport::class,
                 'export' => 'gate-pass',
                 'empty' => 'No Gate Pass records matched the selected criteria.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
             ],
         ];
     }
@@ -428,6 +492,24 @@ final class ReportCatalogue
     public static function isMigrated(string $key): bool
     {
         return (self::definition($key)['builder'] ?? null) !== null;
+    }
+
+    /**
+     * How this report's reporting period should read on the document.
+     *
+     * A range report covers activity between two dates; an as-of report is a
+     * snapshot of the present position, so quoting a range would misdescribe
+     * it.
+     */
+    public static function periodMode(string $key): string
+    {
+        return self::definition($key)['period_mode'] ?? 'range';
+    }
+
+    /** The page orientation that fits this report's columns without clipping. */
+    public static function orientation(string $key): string
+    {
+        return self::definition($key)['orientation'] ?? 'portrait';
     }
 
     /** The empty-state sentence shown when a report returns no records. */

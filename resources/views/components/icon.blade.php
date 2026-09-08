@@ -170,6 +170,9 @@
         @case('more')
             <circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none" />
             @break
+        @case('filter')
+            <path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" />
+            @break
         @case('sort')
             <path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3" />
             @break

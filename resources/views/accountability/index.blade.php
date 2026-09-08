@@ -10,8 +10,19 @@
 
     $activeRestrictions = $restrictions->where('status', 'ACTIVE');
     $openOverdueCases = $overdueCases->whereNotIn('status', ['RESOLVED']);
+
+    /* Only a confirmed assessment is waiting on the SPMU Head. */
+    $headReviewOverdueCases = $overdueCases->where(
+        'status',
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL
+    );
     $currentlyOverdueCases = $openOverdueCases->where('status', 'OVERDUE');
-    $returnedLateCases = $openOverdueCases->whereIn('status', ['RETURNED_PENDING_SETTLEMENT', 'BILLED']);
+    /* Every stage after the physical return counts as returned late. */
+    $returnedLateCases = $openOverdueCases->whereIn('status', [
+        App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION,
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL,
+        App\Services\LateReturnService::STATUS_AWAITING_PAYMENT,
+    ]);
     $openIncidents = $incidents->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
     $openBillings = $billings->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
     $propertyCustodyIds = $openIncidents
@@ -27,14 +38,16 @@
     $headReviewIncidents = $isHead
         ? $openIncidents->whereNotIn('status', ['BILLING_PENDING', 'FOR_BILLING', 'COMPLIANCE_REQUIRED'])
         : collect();
-    $headReviewCount = $pendingViolations->count() + $headReviewIncidents->count();
+    $headReviewCount = $pendingViolations->count()
+        + $headReviewIncidents->count()
+        + $headReviewOverdueCases->count();
     $headView = $isHead ? request('view', $headReviewCount > 0 ? 'head_review' : 'cases') : null;
-    if ($isHead && ! in_array($headView, ['head_review', 'cases', 'billings', 'restrictions'], true)) {
+    if ($isHead && ! in_array($headView, ['head_review', 'cases', 'billings', 'restrictions', 'resolved'], true)) {
         $headView = 'cases';
     }
 
     $officerView = $isOfficer ? request('view', 'all') : null;
-    if ($isOfficer && ! in_array($officerView, ['all', 'overdue', 'property', 'billings', 'restrictions'], true)) {
+    if ($isOfficer && ! in_array($officerView, ['all', 'overdue', 'property', 'billings', 'restrictions', 'resolved'], true)) {
         $officerView = 'all';
     }
 
@@ -48,11 +61,19 @@
         }
         : 0;
 
+    /*
+     * Resolved history is a separate destination. The active queues stay
+     * untouched, and none of the four counters above ever include it.
+     */
+    $showResolvedHistory = ($isHead && $headView === 'resolved')
+        || ($isOfficer && $officerView === 'resolved');
+
     $officerViewLabel = match ($officerView) {
         'overdue' => 'Overdue / Late Returns',
         'property' => 'Property Cases',
         'billings' => 'Open Billings',
         'restrictions' => 'Active Restrictions',
+        'resolved' => 'Resolved History',
         default => 'All Matters',
     };
 
@@ -104,48 +125,6 @@
 .borrower-next-action--warning { border-left-color: #d08a16; background: #fffaf0; }
 .borrower-next-action--danger { border-left-color: #c4493d; background: #fff7f6; }
 
-.head-accountability-card {
-    position: relative;
-    display: grid;
-    gap: 6px;
-    min-height: 150px;
-    padding: 18px 20px;
-    color: inherit;
-    text-decoration: none;
-    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
-}
-.head-accountability-card:hover {
-    transform: translateY(-1px);
-    border-color: #8abbe8;
-    box-shadow: 0 8px 20px rgba(15, 74, 125, .08);
-}
-.head-accountability-card.is-active {
-    border-color: #1d6fb8;
-    background: #f4f9fe;
-    box-shadow: inset 0 3px 0 #1d6fb8;
-}
-.head-accountability-card .kpi-icon { margin-bottom: 4px; }
-.officer-accountability-card {
-    position: relative;
-    display: grid;
-    gap: 6px;
-    min-height: 150px;
-    padding: 18px 20px;
-    color: inherit;
-    text-decoration: none;
-    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
-}
-.officer-accountability-card:hover {
-    transform: translateY(-1px);
-    border-color: #8abbe8;
-    box-shadow: 0 8px 20px rgba(15, 74, 125, .08);
-}
-.officer-accountability-card.is-active {
-    border-color: #1d6fb8;
-    background: #f4f9fe;
-    box-shadow: inset 0 3px 0 #1d6fb8;
-}
-.officer-accountability-card .kpi-icon { margin-bottom: 4px; }
 .officer-accountability-note {
     display: grid;
     gap: 3px;
@@ -157,7 +136,6 @@
     color: var(--text-secondary);
 }
 .officer-accountability-note strong { color: var(--text-primary); }
-.officer-view-actions { margin-top: 12px; }
 .head-control-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .head-control-heading > div { min-width:0; }
 .head-control-heading h2 { margin:2px 0 4px; }
@@ -216,158 +194,227 @@
 @media (max-width: 900px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr 1fr; } }
 @media (max-width: 560px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr; } }
 </style>
+@include('accountability.partials.oversight-styles')
 @endonce
 
-<section class="page-heading">
+@if($isHead && ! $isBorrower)
+    @include('accountability.partials.option-b-styles')
+    <div class="accountability-option-b">
+@endif
+
+<section class="page-heading accountability-page-heading">
     <div>
-        <p class="eyebrow">Financial and property accountability</p>
+        <p class="eyebrow">{{ $isBorrower ? 'My accountability' : 'Accountability' }}</p>
         <h1>{{ $pageTitle }}</h1>
         <p>
             {{ $workspace === 'BORROWER'
                 ? 'See unresolved obligations that affect your borrowing eligibility and what you need to resolve next.'
-                : ($isHead
-                    ? 'Focus on matters that need Head-level oversight or a formal administrative decision.'
-                    : 'Process unresolved returns, property cases, billings, and confirmed Cashier payments.') }}
+                : 'Monitor overdue returns, late-return assessments, billings, and restrictions.' }}
         </p>
-        @if($isOfficer && $officerView !== 'all')
-            <div class="actions officer-view-actions">
-                <a class="button secondary small" href="{{ route('accountability.index') }}">View All Accountability Matters</a>
-            </div>
-        @endif
     </div>
+    @unless($isBorrower)
+        {{-- The figures on this page are read live, so the page says when. --}}
+        <p class="accountability-asof">
+            <x-icon name="calendar" size="14" />
+            <span>As of {{ now()->format('d M Y, h:i A') }}</span>
+        </p>
+    @endunless
 </section>
 
 @unless($isBorrower)
+@php
+    /*
+     * Open Cases counts overdue, returned-late and property matters. Property
+     * is named only when there is one, so the caption stays short.
+     */
+    $openCaseCaption = $currentlyOverdueCases->count().' overdue &middot; '
+        .$returnedLateCases->count().' late return'
+        .($openIncidents->count() ? ' &middot; '.$openIncidents->count().' property' : '');
+
+    /*
+     * The KPI row and the tab row are two ways into the same ?view= values.
+     * Nothing here changes which records a view returns.
+     */
+    $accountabilityView = $isHead ? $headView : $officerView;
+    $accountabilityTabs = $isHead
+        ? [
+            ['view' => 'cases', 'label' => 'Active Cases', 'count' => $openCaseCount],
+            ['view' => 'head_review', 'label' => 'Head Review', 'count' => $headReviewCount],
+            ['view' => 'billings', 'label' => 'Billing', 'count' => $openBillings->count()],
+            ['view' => 'restrictions', 'label' => 'Restrictions', 'count' => $activeRestrictions->count()],
+            ['view' => 'resolved', 'label' => 'Resolved History', 'count' => $resolvedHistory->count()],
+        ]
+        : [
+            ['view' => 'all', 'label' => 'All Matters', 'count' => $borrowerRecordCount],
+            ['view' => 'overdue', 'label' => 'Overdue / Late Returns', 'count' => $openOverdueCases->count()],
+            ['view' => 'property', 'label' => 'Property Cases', 'count' => $openIncidents->count()],
+            ['view' => 'billings', 'label' => 'Billing', 'count' => $openBillings->count()],
+            ['view' => 'restrictions', 'label' => 'Restrictions', 'count' => $activeRestrictions->count()],
+            ['view' => 'resolved', 'label' => 'Resolved History', 'count' => $resolvedHistory->count()],
+        ];
+@endphp
+
 <section
-    class="stat-grid dashboard-stat-grid"
+    class="stat-grid dashboard-stat-grid accountability-kpi-grid"
     aria-label="Accountability overview"
 >
     @if($isHead)
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning head-accountability-card {{ $headView === 'head_review' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $headView === 'head_review' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'head_review']) }}"
             aria-current="{{ $headView === 'head_review' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
             <strong class="kpi-value">{{ $headReviewCount }}</strong>
             <span class="kpi-label">Needs Head Review</span>
-            <small>{{ $headReviewCount ? 'Late-return or property decision pending' : 'No pending administrative decision' }}</small>
+            <small>Awaiting decision</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger head-accountability-card {{ $headView === 'cases' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-kpi-card {{ $headView === 'cases' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'cases']) }}"
             aria-current="{{ $headView === 'cases' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="custody" size="18" /></span>
             <strong class="kpi-value">{{ $openCaseCount }}</strong>
             <span class="kpi-label">Open Cases</span>
-            <small>{{ $currentlyOverdueCases->count() }} overdue · {{ $returnedLateCases->count() }} returned late · {{ $openIncidents->count() }} property</small>
+            <small>{!! $openCaseCaption !!}</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info head-accountability-card {{ $headView === 'billings' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-success accountability-kpi-card {{ $headView === 'billings' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'billings']) }}"
             aria-current="{{ $headView === 'billings' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
-            <small>Final charges awaiting settlement or disposition</small>
+            <small>Awaiting payment</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning head-accountability-card {{ $headView === 'restrictions' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-restriction accountability-kpi-card {{ $headView === 'restrictions' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'restrictions']) }}"
             aria-current="{{ $headView === 'restrictions' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
-            <small>Current borrowing restrictions from unresolved obligations or sanctions</small>
+            <small>Borrowing restricted</small>
         </a>
     @else
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger officer-accountability-card {{ $officerView === 'overdue' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-kpi-card {{ $officerView === 'overdue' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'overdue']) }}"
             aria-current="{{ $officerView === 'overdue' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
             <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
             <span class="kpi-label">Overdue / Late Returns</span>
-            <small>{{ $currentlyOverdueCases->count() }} outstanding · {{ $returnedLateCases->count() }} returned late</small>
+            <small>{{ $currentlyOverdueCases->count() }} outstanding &middot; {{ $returnedLateCases->count() }} returned late</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning officer-accountability-card {{ $officerView === 'property' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $officerView === 'property' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'property']) }}"
             aria-current="{{ $officerView === 'property' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
             <strong class="kpi-value">{{ $openIncidents->count() }}</strong>
             <span class="kpi-label">Property Cases</span>
-            <small>Recorded findings and Head-directed follow-up</small>
+            <small>Findings and Head follow-up</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info officer-accountability-card {{ $officerView === 'billings' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-kpi-card {{ $officerView === 'billings' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'billings']) }}"
             aria-current="{{ $officerView === 'billings' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
             <strong class="kpi-value">{{ $openBillings->count() }}</strong>
             <span class="kpi-label">Open Billings</span>
-            <small>Final late-return or property charges awaiting payment</small>
+            <small>Awaiting Cashier payment</small>
         </a>
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning officer-accountability-card {{ $officerView === 'restrictions' ? 'is-active' : '' }}"
+            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $officerView === 'restrictions' ? 'is-active' : '' }}"
             href="{{ route('accountability.index', ['view' => 'restrictions']) }}"
             aria-current="{{ $officerView === 'restrictions' ? 'page' : 'false' }}"
         >
             <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
             <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
             <span class="kpi-label">Active Restrictions</span>
-            <small>Borrowers currently blocked by an unresolved obligation or sanction</small>
+            <small>Borrowers currently blocked</small>
         </a>
     @endif
 </section>
+
+@php
+    /*
+     * One icon per destination. The counts these tabs used to carry are the
+     * same four figures the KPI row above already states, so the tab keeps
+     * only what the KPI row does not say: where it goes.
+     */
+    $accountabilityTabIcons = [
+        'all' => 'clipboard-check',
+        'cases' => 'plus-circle',
+        'overdue' => 'calendar-clock',
+        'property' => 'accountability',
+        'head_review' => 'warning',
+        'billings' => 'requests',
+        'restrictions' => 'lock',
+        'resolved' => 'clipboard-check',
+    ];
+@endphp
+
+<nav class="accountability-tabs" aria-label="Accountability views">
+    @foreach($accountabilityTabs as $tab)
+        <a
+            class="accountability-tab {{ $accountabilityView === $tab['view'] ? 'is-active' : '' }}"
+            href="{{ route('accountability.index', ['view' => $tab['view']]) }}"
+            aria-current="{{ $accountabilityView === $tab['view'] ? 'page' : 'false' }}"
+        >
+            <x-icon :name="$accountabilityTabIcons[$tab['view']] ?? 'clipboard-check'" size="15" />
+            <span>{{ $tab['label'] }}</span>
+        </a>
+    @endforeach
+</nav>
 @endunless
+
+@if(! $isBorrower && $showResolvedHistory)
+    @include('accountability.partials.resolved-history')
+@endif
 
 @if($isBorrower)
 @include('accountability.partials.obligations-workspace')
 @endif
 
-@if(! $isBorrower && ! $hasOpenMatters)
+@if(! $isBorrower && ! $hasOpenMatters && ! $showResolvedHistory)
 <section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>No accountability matters need {{ $isOfficer ? 'processing' : 'attention' }}.</strong>
-                <p>{{ $isOfficer
-                    ? 'There are no overdue returns, property cases requiring action, open billings, or active restrictions to reference.'
-                    : 'There are no pending Head decisions, open property cases, unpaid billings, or active restrictions.' }}</p>
-            </div>
-        </div>
+    <article class="card accountability-empty">
+        <strong>No accountability matters need {{ $isOfficer ? 'processing' : 'attention' }}.</strong>
+        <span>{{ $isOfficer
+            ? 'No overdue returns, property cases, open billings, or active restrictions.'
+            : 'No pending Head decisions, property cases, unpaid billings, or active restrictions.' }}</span>
     </article>
 </section>
 @endif
 
 @if($isOfficer && $hasOpenMatters && $officerView !== 'all' && $officerSelectedCount === 0)
 <section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>No {{ $officerViewLabel }} need processing.</strong>
-                <p>This filtered view is clear. Select another accountability card above or view all matters.</p>
-            </div>
-        </div>
+    <article class="card accountability-empty">
+        <strong>No {{ $officerViewLabel }} need processing.</strong>
+        <span>This view is clear. Select another tab above.</span>
     </article>
 </section>
 @endif
 
 @if($isHead && $headView === 'head_review' && $pendingViolations->isNotEmpty())
 <section class="content-area">
-    <div class="section-heading">
+    <div class="section-heading accountability-section-heading">
         <div>
             <p class="eyebrow">Administrative accountability</p>
             <h2>Administrative Review</h2>
-            <p>Review only violations that require an SPMU Head decision. Property return findings and financial follow-up stay in their own sections below.</p>
+            <p>Violations that require an SPMU Head decision. Property findings and financial follow-up stay in their own sections.</p>
         </div>
+        <span class="status-badge status-neutral">
+            {{ $pendingViolations->count() }}
+            {{ $pendingViolations->count() === 1 ? 'violation' : 'violations' }}
+        </span>
     </div>
 
     @foreach($pendingViolations as $violation)
@@ -467,107 +514,253 @@
 </section>
 @endif
 
-@if(! $isBorrower && $openOverdueCases->isNotEmpty() && (! $isHead || $headView === 'cases') && (! $isOfficer || in_array($officerView, ['all', 'overdue'], true)))
+@php
+    /*
+     * The Head Review view shows only what needs a Head decision, so it lists
+     * the confirmed assessments rather than every open case.
+     */
+    $visibleOverdueCases = $isHead && $headView === 'head_review'
+        ? $headReviewOverdueCases
+        : $openOverdueCases;
+@endphp
+@php
+    /* Column-width labels for the Status cell. Presentation only. */
+    $caseShortLabels = [
+        App\Services\LateReturnService::STATUS_OVERDUE => 'Overdue',
+        App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION => 'Late Return',
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL => 'For Head Approval',
+        App\Services\LateReturnService::STATUS_AWAITING_PAYMENT => 'Awaiting Payment',
+    ];
+@endphp
+@if(! $isBorrower && $visibleOverdueCases->isNotEmpty() && (! $isHead || in_array($headView, ['cases', 'head_review'], true)) && (! $isOfficer || in_array($officerView, ['all', 'overdue'], true)))
 <section class="content-area">
-    <div class="section-heading">
-        <div>
-            <p class="eyebrow">Date-based lateness</p>
-            <h2>Overdue / Late Return Cases</h2>
-            <p><strong>Overdue</strong> means the item has not yet been returned after its Expected Return Date. <strong>Returned Late</strong> means the physical return is already complete and the final late-return fee may now be processed. Administrative 1st / 2nd / 3rd offense review remains a separate SPMU Head decision.</p>
-        </div>
-    </div>
+    <article class="card accountability-cases-card">
+        <div class="accountability-cases-head">
+            <h2>
+                Active Accountability Cases
+                <span class="accountability-count-chip">{{ $visibleOverdueCases->count() }}</span>
+            </h2>
 
-    @foreach($openOverdueCases as $overdue)
-        @php
-            $isStillOverdue = $overdue->status === 'OVERDUE';
-            $isReturnedLate = in_array($overdue->status, ['RETURNED_PENDING_SETTLEMENT', 'BILLED'], true);
-            $hasBilling = $overdue->status === 'BILLED';
-            $actualReturnAt = $isReturnedLate
-                ? $overdue->custody->returns->pluck('received_at')->filter()->sort()->last()
-                : null;
-            $lateThrough = $isStillOverdue
-                ? now()->startOfDay()
-                : ($actualReturnAt?->copy()->startOfDay());
-            $effectiveDueDay = $overdue->custody->due_at?->copy()->startOfDay();
-            $lateDays = $effectiveDueDay && $lateThrough && $lateThrough->gt($effectiveDueDay)
-                ? (int) $effectiveDueDay->diffInDays($lateThrough)
-                : 0;
-        @endphp
-
-        <article class="card top-gap">
-            <div class="card-header">
-                <div>
-                    <strong>{{ $overdue->custody->custody_no }}</strong>
-                    <h3>{{ $overdue->borrower->full_name }}</h3>
+            {{--
+                Both controls narrow the rows already on this page. Neither
+                queries the server, so nothing here can change which cases the
+                view returned.
+            --}}
+            <div class="accountability-cases-tools">
+                <div class="accountability-search">
+                    <x-icon name="search" size="15" />
+                    <label class="visually-hidden" for="accountability-case-search">Search borrower or custody no.</label>
+                    <input
+                        id="accountability-case-search"
+                        type="search"
+                        autocomplete="off"
+                        placeholder="Search borrower or custody no..."
+                    >
                 </div>
-                <x-status-badge
-                    :status="$overdue->status"
-                    :label="$isStillOverdue
-                        ? 'Overdue · Item Not Returned'
-                        : ($overdue->status === 'RETURNED_PENDING_SETTLEMENT'
-                            ? 'Returned Late · Fee Pending'
-                            : ($hasBilling ? 'Returned Late · Billing Issued' : null))"
-                />
+
+                <div class="accountability-filter">
+                    <button
+                        type="button"
+                        id="accountability-filter-toggle"
+                        class="icon-button accountability-filter-button"
+                        aria-expanded="false"
+                        aria-controls="accountability-filter-menu"
+                        title="Filter cases by status"
+                    >
+                        <x-icon name="filter" size="15" />
+                        <span class="visually-hidden">Filter cases by status</span>
+                    </button>
+
+                    <div id="accountability-filter-menu" class="accountability-filter-menu" hidden>
+                        <p class="accountability-filter-menu__heading">Status</p>
+                        @foreach($visibleOverdueCases->pluck('status')->unique()->values() as $caseStatus)
+                            <label>
+                                <input type="checkbox" value="{{ $caseStatus }}" checked>
+                                <span>{{ App\Services\LateReturnService::label($caseStatus) }}</span>
+                            </label>
+                        @endforeach
+                    </div>
+                </div>
             </div>
+        </div>
 
-            <dl class="summary-grid compact">
-                <div>
-                    <dt>Expected Return Date</dt>
-                    <dd>{{ $overdue->custody->due_at->format('d M Y') }}</dd>
-                </div>
-                <div>
-                    <dt>Actual Physical Return</dt>
-                    <dd>{{ $actualReturnAt ? $actualReturnAt->format('d M Y') : 'Not yet completed' }}</dd>
-                </div>
-                <div>
-                    <dt>{{ $isStillOverdue ? 'Late Days So Far' : 'Final Late Days' }}</dt>
-                    <dd>{{ $lateDays }} {{ $lateDays === 1 ? 'day' : 'days' }}</dd>
-                </div>
-                <div>
-                    <dt>Late Fee Rate</dt>
-                    <dd>{{ $overdue->rate_snapshot === null ? 'Not configured' : 'PHP '.number_format((float) $overdue->rate_snapshot, 2).' per late day' }}</dd>
-                </div>
-                <div>
-                    <dt>{{ $isStillOverdue ? 'Estimated Fee So Far' : 'Final Late Return Fee' }}</dt>
-                    <dd>{{ $overdue->rate_snapshot === null ? 'Not determined' : 'PHP '.number_format((float) $overdue->accrued_amount, 2) }}</dd>
-                </div>
-            </dl>
+        <div class="table-wrap accountability-cases-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Reference / Borrower</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Expected Return</th>
+                        <th scope="col">Est. Fee</th>
+                        <th scope="col">Rate</th>
+                        <th scope="col" class="is-numeric">Days</th>
+                        <th scope="col">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="accountability-cases-body">
+                    @foreach($visibleOverdueCases as $overdue)
+                        @php
+                            /*
+                             * Overdue and Returned Late are different states. Only a case with
+                             * a recorded physical return date carries a final assessment; an
+                             * overdue one shows a growing estimate and no approval control.
+                             */
+                            $lateReturns = app(App\Services\LateReturnService::class);
+                            $assessment = $lateReturns->assessment($overdue);
 
-            @if($isStillOverdue)
-                <div class="callout warning top-gap">
-                    <strong>The item is still overdue.</strong>
-                    <p>The borrower must return the outstanding item first. The amount shown is only the current estimate and may increase for each additional late day. Do not issue a Billing Statement until the physical return has been recorded.</p>
-                </div>
-            @elseif($overdue->status === 'RETURNED_PENDING_SETTLEMENT')
-                <div class="callout info top-gap">
-                    <strong>The item was returned late.</strong>
-                    <p>The physical return is complete and the fee shown above is the final date-based late-return amount. The Action Officer may now issue the Billing Statement. Any 1st / 2nd / 3rd offense decision is reviewed separately by the SPMU Head.</p>
-                </div>
-            @elseif($hasBilling)
-                <div class="callout info top-gap">
-                    <strong>Late-return billing has already been issued.</strong>
-                    <p>Continue payment or waiver processing under Open Billings. The item is no longer physically overdue.</p>
-                </div>
-            @endif
+                            $isStillOverdue = $overdue->status === App\Services\LateReturnService::STATUS_OVERDUE;
+                            $forOfficerConfirmation = $overdue->status === App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION;
+                            $forHeadApproval = $overdue->status === App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL;
+                            $hasBilling = $overdue->status === App\Services\LateReturnService::STATUS_AWAITING_PAYMENT;
+                            $fromLaundry = $assessment['return_date_source'] === 'LAUNDRY_RECEIPT';
 
-            <p class="meta">Late days are counted by calendar date after the effective Expected Return Date. The fee rate comes from Operational Configuration.</p>
+                            /* The Head's two forms are too large for a cell, so they sit in the detail row. */
+                            $headCanDecide = $isHead && $forHeadApproval;
+                        @endphp
 
-            @if($isOfficer && $overdue->status === 'RETURNED_PENDING_SETTLEMENT')
-                <form method="post" action="{{ route('overdue.bill', $overdue) }}" class="form-grid top-gap">
-                    @csrf
-                    <label>
-                        Billing Basis
-                        <textarea name="basis" required placeholder="State the applicable late-return fee basis."></textarea>
-                    </label>
-                    <label>
-                        Payment Due Date
-                        <input type="date" name="due_at">
-                    </label>
-                    <button class="button primary">Generate Billing Statement</button>
-                </form>
-            @endif
-        </article>
-    @endforeach
+                        <tr
+                            class="accountability-case-row"
+                            data-case
+                            data-status="{{ $overdue->status }}"
+                            data-search="{{ Str::lower($overdue->custody->custody_no.' '.$overdue->borrower->full_name) }}"
+                        >
+                            <td>
+                                <span class="accountability-case-ref">{{ $overdue->custody->custody_no }}</span>
+                                <span class="accountability-case-borrower">{{ $overdue->borrower->full_name }}</span>
+                            </td>
+                            <td>
+                                {{--
+                                    A cell needs the stage, not the sentence. The full
+                                    label stays on the badge as its title, and the row
+                                    detail below spells the stage out either way.
+                                --}}
+                                <x-status-badge
+                                    :status="$overdue->status"
+                                    :label="$caseShortLabels[$overdue->status] ?? App\Services\LateReturnService::label($overdue->status)"
+                                    :title="App\Services\LateReturnService::label($overdue->status)"
+                                    class="accountability-status-pill"
+                                />
+                            </td>
+                            <td>{{ $overdue->custody->due_at->format('d M Y') }}</td>
+                            <td>{{ $assessment['rate'] === null ? 'Not determined' : 'PHP '.number_format($assessment['amount'], 2) }}</td>
+                            <td>{{ $assessment['rate'] === null ? 'Not set' : 'PHP '.number_format($assessment['rate'], 2).'/day' }}</td>
+                            <td class="is-numeric">{{ $assessment['late_days'] }}</td>
+                            <td>
+                                @if($isOfficer && $forOfficerConfirmation)
+                                    <form method="post" action="{{ route('overdue.confirm-late-return', $overdue) }}">
+                                        @csrf
+                                        <button class="button primary ui-pressable accountability-row-action">Confirm</button>
+                                    </form>
+                                @elseif($headCanDecide)
+                                    <span class="accountability-row-note">Decide below</span>
+                                @else
+                                    <span class="accountability-row-none">&mdash;</span>
+                                @endif
+                            </td>
+                        </tr>
+
+                        {{-- Key detail for the row above: what the figures mean and what happens next. --}}
+                        <tr class="accountability-case-detail-row">
+                            <td colspan="7">
+                                @if($isStillOverdue)
+                                    <div class="accountability-detail-panel is-warning">
+                                        <x-icon name="warning" size="17" />
+                                        <div>
+                                            <strong>Awaiting borrower return.</strong>
+                                            <p>The fee shown is only an estimate and may increase for each additional late day.</p>
+                                            <small>A final Late Return Fee Form cannot be issued yet.</small>
+                                        </div>
+                                    </div>
+                                @elseif($forOfficerConfirmation)
+                                    <div class="accountability-detail-panel is-info">
+                                        <x-icon name="information" size="17" />
+                                        <div>
+                                            <strong>Late return recorded &mdash; figures are final for this return date.</strong>
+                                            <p>
+                                                {{ $fromLaundry ? 'The return date is the date Laundry Operations received the linen, not the date the accomplished Laundry Form reached SPMU.' : '' }}
+                                                Confirm the assessment so the SPMU Head can approve it.
+                                            </p>
+                                            @if($overdue->correction_remarks)
+                                                <small>Returned for correction: {{ $overdue->correction_remarks }}</small>
+                                            @else
+                                                <small>{{ $fromLaundry ? 'Laundry received' : 'Returned' }} {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}.</small>
+                                            @endif
+                                        </div>
+                                    </div>
+                                @elseif($forHeadApproval)
+                                    <div class="accountability-detail-panel is-info">
+                                        <x-icon name="information" size="17" />
+                                        <div>
+                                            <strong>Awaiting Head approval.</strong>
+                                            <p>
+                                                Confirmed by {{ $overdue->confirmedBy?->full_name ?? 'the Action Officer' }}
+                                                on {{ $overdue->ao_confirmed_at?->format('d M Y, h:i A') }}.
+                                                Approving generates the Late Return Fee Form for the recorded amount.
+                                            </p>
+                                            <small>Returned {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}.</small>
+                                        </div>
+                                    </div>
+                                @elseif($hasBilling)
+                                    <div class="accountability-detail-panel is-info">
+                                        <x-icon name="information" size="17" />
+                                        <div>
+                                            <strong>Approved &mdash; awaiting payment.</strong>
+                                            <p>The Late Return Fee Form has been issued. Continue payment processing under Billing.</p>
+                                            <small>Awaiting Cashier payment.</small>
+                                        </div>
+                                    </div>
+                                @endif
+
+                                {{-- The Head decides here; the Action cell above only points to it. --}}
+                                @if($headCanDecide)
+                                    <div class="accountability-detail-forms">
+                                        <form method="post" action="{{ route('overdue.bill', $overdue) }}" class="form-grid">
+                                            @csrf
+                                            <label>
+                                                Approval Basis
+                                                <textarea name="basis" required placeholder="State the applicable late-return fee basis."></textarea>
+                                            </label>
+                                            <label>
+                                                Payment Due Date
+                                                <input type="date" name="due_at">
+                                            </label>
+                                            <button class="button primary ui-pressable accountability-primary-action">Approve Late Return Assessment</button>
+                                        </form>
+
+                                        <form method="post" action="{{ route('overdue.return-for-correction', $overdue) }}" class="form-grid">
+                                            @csrf
+                                            <label>
+                                                Reason for Correction
+                                                <textarea name="remarks" required placeholder="State what the Action Officer must recheck."></textarea>
+                                            </label>
+                                            <button class="button secondary ui-pressable">Return for Correction</button>
+                                        </form>
+                                    </div>
+                                @endif
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+
+        <p id="accountability-cases-none" class="accountability-cases-none" hidden>
+            No case matches the current search or status filter.
+        </p>
+    </article>
+
+    @include('accountability.partials.cases-interactions')
+
+    @unless($isHead)
+    <article class="card accountability-scope-note">
+        <x-icon name="information" size="17" />
+        <div>
+            <strong>Only active cases are shown here.</strong>
+            <p>View completed cases in Resolved History.</p>
+            <small>Overdue means the item is not yet returned. Returned Late means the return is recorded and the final fee can be processed.</small>
+        </div>
+    </article>
+    @endunless
 </section>
 @endif
 
@@ -578,16 +771,20 @@
 @endphp
 @if(! $isBorrower && $displayIncidents->isNotEmpty() && (! $isHead || in_array($headView, ['head_review', 'cases'], true)) && (! $isOfficer || in_array($officerView, ['all', 'property'], true)))
 <section class="content-area">
-    <div class="section-heading head-control-heading">
+    <div class="section-heading head-control-heading accountability-section-heading">
         <div>
             <p class="eyebrow">Property accountability</p>
             <h2>{{ $isHead && $headView === 'head_review' ? 'Cases Awaiting Head Decision' : 'Property Accountability Cases' }}</h2>
             <p>{{ $isHead && $headView === 'head_review'
-                ? 'Review the recorded physical findings and enter the formal SPMU Head decision. Cases already routed to billing or compliance are shown under Open Cases.'
+                ? 'Enter the formal SPMU Head decision. Cases already routed to billing or compliance stay under Active Cases.'
                 : ($isOfficer
-                    ? 'Review the physical findings and evidence you recorded. Open cases wait for the SPMU Head decision; after a Head decision, complete only the operational follow-up assigned to the Action Officer.'
-                    : 'Open property cases remain visible until the required decision, compliance, billing settlement, or formal clearance is completed.') }}</p>
+                    ? 'Recorded findings and evidence. Open cases wait for the SPMU Head decision; after it, complete only the assigned follow-up.'
+                    : 'Open until the required decision, compliance, billing settlement, or formal clearance is completed.') }}</p>
         </div>
+        <span class="status-badge status-neutral">
+            {{ $displayIncidents->count() }}
+            {{ $displayIncidents->count() === 1 ? 'case' : 'cases' }}
+        </span>
     </div>
 
     @foreach($displayIncidents as $incident)
@@ -601,7 +798,7 @@
             $isComplianceRequired = $incident->status === 'COMPLIANCE_REQUIRED';
             $offensePreview = $incidentOffensePreviews[$incident->id] ?? null;
         @endphp
-        <article class="card top-gap head-case-card" id="incident-{{ $incident->id }}">
+        <article class="card top-gap head-case-card accountability-list-card" id="incident-{{ $incident->id }}">
             <div class="card-header">
                 <div>
                     <p class="eyebrow">Property Case</p>
@@ -833,37 +1030,41 @@
         </article>
     @endforeach
 </section>
-@elseif($isHead && in_array($headView, ['head_review', 'cases'], true))
+{{--
+    An empty property queue is only worth stating when the view would otherwise
+    be blank. With active cases on screen the page already says what it holds.
+--}}
+@elseif($isHead && in_array($headView, ['head_review', 'cases'], true) && $visibleOverdueCases->isEmpty())
 <section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>{{ $headView === 'head_review' ? 'No property cases are waiting for a Head decision.' : 'No open property accountability cases.' }}</strong>
-                <p>{{ $headView === 'head_review' ? 'Cases already routed to billing or compliance remain under Open Cases.' : 'There are no unresolved property cases in this view.' }}</p>
-            </div>
-        </div>
+    <article class="card accountability-empty">
+        <strong>{{ $headView === 'head_review' ? 'No property cases await a Head decision.' : 'No open property accountability cases.' }}</strong>
+        <span>{{ $headView === 'head_review' ? 'Cases routed to billing or compliance stay under Active Cases.' : 'Nothing unresolved in this view.' }}</span>
     </article>
 </section>
 @endif
 
 @if(! $isBorrower && $openBillings->isNotEmpty() && (! $isHead || $headView === 'billings') && (! $isOfficer || in_array($officerView, ['all', 'billings'], true)))
 <section class="content-area">
-    <div class="section-heading">
+    <div class="section-heading accountability-section-heading">
         <div>
             <p class="eyebrow">Cashier payment evidence</p>
             <h2>Open Billing Statements</h2>
             @if($isOfficer)
-                <p>Check the official CSPC Cashier receipt, record its details, and confirm the payment in one step. Administrative offense decisions remain Head-level actions.</p>
+                <p>Check the official CSPC Cashier receipt, record its details, and confirm the payment in one step.</p>
             @endif
         </div>
+        <span class="status-badge status-neutral">
+            {{ $openBillings->count() }}
+            {{ $openBillings->count() === 1 ? 'billing' : 'billings' }}
+        </span>
     </div>
     @foreach($openBillings as $billing)
-<article class="card top-gap"><div class="card-header"><div><strong>{{ $billing->billing_no }}</strong><h3>PHP {{ number_format((float)$billing->total_amount,2) }}</h3><small>{{ $billing->borrower->full_name }}</small></div><x-status-badge :status="$billing->status" /></div>
+<article class="card top-gap accountability-list-card"><div class="card-header"><div><strong>{{ $billing->billing_no }}</strong><h3>PHP {{ number_format((float)$billing->total_amount,2) }}</h3><small>{{ $billing->borrower->full_name }}</small></div><x-status-badge :status="$billing->status" /></div>
 <div class="billing-lines">@foreach($billing->lines as $line)<p><strong>{{ str($line->line_type)->replace('_',' ')->title() }}</strong><span>{{ $line->description }}</span><small>PHP {{ number_format((float)$line->amount,2) }}</small></p>@endforeach</div>
 <div class="actions">@foreach($billing->documents->whereNotIn('status',['SUPERSEDED','INVALIDATED','EXPIRED']) as $document)<a class="button secondary small" href="{{ route('documents.download',$document) }}">Download Billing Statement / Assessment</a>@endforeach</div>
 <p class="meta">The borrower pays at the CSPC Cashier and presents the official receipt to the Action Officer. Confirm the payment only after checking the receipt.</p>
 @if($isOfficer && !in_array($billing->status,['SETTLED','WAIVED','VOID'],true))
-<form method="post" action="{{ route('payments.store',$billing) }}" enctype="multipart/form-data" class="form-grid top-gap">@csrf<div class="card-header"><div><h4>Record Cashier Payment</h4><small>Check the official receipt before confirming.</small></div></div><div class="form-columns"><label>Cashier Receipt No.<input name="official_receipt_no" required></label><label>Receipt Date<input type="date" name="receipt_date" required></label><label>Amount Paid<input type="number" step="0.01" min="0.01" name="amount" required></label><label>Scanned Paid Receipt<input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required></label></div><label>Remarks <small>(Optional)</small><textarea name="remarks"></textarea></label><button class="button primary">Confirm Payment</button></form>
+<form method="post" action="{{ route('payments.store',$billing) }}" enctype="multipart/form-data" class="form-grid top-gap">@csrf<div class="card-header"><div><h4>Record Cashier Payment</h4><small>Check the official receipt against the billing before verifying. Verifying settles this billing and resolves the accountability case.</small></div></div><div class="form-columns"><label>Cashier Receipt No.<input name="official_receipt_no" required></label><label>Receipt Date<input type="date" name="receipt_date" required></label><label>Amount Paid<input type="number" step="0.01" min="0.01" name="amount" required></label><label>Scanned Paid Receipt<input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required></label></div><label>Remarks <small>(Optional)</small><textarea name="remarks"></textarea></label><button class="button primary ui-pressable accountability-primary-action">Verify and Mark as Paid</button></form>
 @endif
 <div class="top-gap">
 @forelse($billing->payments as $payment)
@@ -879,28 +1080,28 @@
 
 @if($isHead && $headView === 'billings' && $openBillings->isEmpty())
 <section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>No open Billing Statements.</strong>
-                <p>Property cases routed for payment will appear here after the Action Officer records the approved charge and generates the Billing Statement.</p>
-            </div>
-        </div>
+    <article class="card accountability-empty">
+        <strong>No open Billing Statements.</strong>
+        <span>Charges appear here once the approved amount is recorded and the statement is generated.</span>
     </article>
 </section>
 @endif
 
 @if(! $isBorrower && $activeRestrictions->isNotEmpty() && (! $isHead || $headView === 'restrictions') && (! $isOfficer || in_array($officerView, ['all', 'restrictions'], true)))
 <section class="content-area">
-    <article class="card">
+    <article class="card accountability-table-card">
         <div class="card-header">
             <div>
                 <p class="eyebrow">Borrowing eligibility</p>
                 <h2>Active Restrictions</h2>
                 @if($isOfficer)
-                    <p class="meta">Reference only. Action Officers can see active restrictions but cannot create, extend, lift, or override them.</p>
+                    <p class="accountability-case-meta">Reference only. Action Officers cannot create, extend, lift, or override a restriction.</p>
                 @endif
             </div>
+            <span class="status-badge status-neutral">
+                {{ $activeRestrictions->count() }}
+                {{ $activeRestrictions->count() === 1 ? 'restriction' : 'restrictions' }}
+            </span>
         </div>
         <div class="table-wrap">
             <table>
@@ -937,25 +1138,21 @@
 
 @if($isHead && $headView === 'restrictions' && $activeRestrictions->isEmpty())
 <section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>No active borrowing restrictions.</strong>
-                <p>Restrictions linked to resolved, settled, waived, or cleared obligations no longer appear in this active list.</p>
-            </div>
-        </div>
+    <article class="card accountability-empty">
+        <strong>No active borrowing restrictions.</strong>
+        <span>Restrictions linked to resolved, settled, waived, or cleared obligations drop off this list.</span>
     </article>
 </section>
 @endif
 
 @if((($isHead && $headView === 'head_review') || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
 <section class="content-area">
-    <article class="card">
+    <article class="card accountability-table-card">
         <div class="card-header">
             <div>
                 <p class="eyebrow">Administrative history</p>
                 <h2>{{ $workspace === 'BORROWER' ? 'My Sanctions' : 'Sanction History' }}</h2>
-                <p class="meta">Sanctions shown here are case decisions recorded by the SPMU Head. Financial charges remain separate under Billing Statements.</p>
+                <p class="accountability-case-meta">Case decisions recorded by the SPMU Head. Financial charges stay separate under Billing.</p>
             </div>
         </div>
         <div class="table-wrap">
@@ -995,6 +1192,19 @@
 @endif
 
 {{-- BORROWER_ACCOUNTABILITY_CLEAN_FILTER_LAYOUT --}}
+@if($isHead && ! $isBorrower)
+    @if($headView === 'cases')
+        <aside class="accountability-scope-note">
+            <x-icon name="information" size="20" />
+            <div>
+                <strong>Only active cases are shown here.</strong>
+                <p>View completed cases in <a href="{{ route('accountability.index', ['view' => 'resolved']) }}">Resolved History</a>.</p>
+            </div>
+        </aside>
+    @endif
+    </div>
+@endif
+
 <style>
 @media (min-width: 901px) {
     .borrower-accountability-toolbar {

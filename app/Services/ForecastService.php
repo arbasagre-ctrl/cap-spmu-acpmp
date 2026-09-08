@@ -261,15 +261,26 @@ class ForecastService
         };
     }
 
+    /**
+     * "1 request" / "2 requests".
+     *
+     * Wording only. The count is passed straight through; nothing here
+     * rounds, adjusts or reinterprets a forecast value.
+     */
+    private function requestCount(int $count): string
+    {
+        return $count.' '.($count === 1 ? 'request' : 'requests');
+    }
+
     private function demandSentence(int $forecast, int $current): string
     {
         return match ($this->direction($forecast, $current)) {
             'higher' => 'Borrowing activity is expected to increase next period, from '
-                .$current.' to about '.$forecast.' requests.',
+                .$current.' to about '.$this->requestCount($forecast).'.',
             'lower' => 'Borrowing activity is expected to ease next period, from '
-                .$current.' to about '.$forecast.' requests.',
+                .$current.' to about '.$this->requestCount($forecast).'.',
             default => 'Borrowing activity is expected to stay close to the current '
-                .$current.' requests.',
+                .$this->requestCount($current).'.',
         };
     }
 
@@ -322,7 +333,7 @@ class ForecastService
             'leader' => $hasSignal ? $leader : null,
             'summary' => $hasSignal
                 ? $leader['label'].' units are expected to remain the primary borrowing group, with about '
-                    .$leader['forecast'].' requests.'
+                    .$this->requestCount($leader['forecast']).'.'
                 : 'No division is expected to record borrowing activity next period.',
         ];
     }
@@ -374,7 +385,7 @@ class ForecastService
             'units' => $units,
             'leader' => $units[0],
             'summary' => $units[0]['unit'].' is expected to borrow most next period, with about '
-                .$units[0]['forecast'].' requests.',
+                .$this->requestCount($units[0]['forecast']).'.',
         ];
     }
 

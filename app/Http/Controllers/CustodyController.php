@@ -337,6 +337,13 @@ class CustodyController extends Controller
             'evidence_files' => ['nullable', 'array'],
             'evidence_files.*' => ['nullable', 'file', 'mimes:pdf,png,jpg,jpeg,webp', 'max:5120'],
             'remarks' => ['nullable', 'string', 'max:2000'],
+
+            /*
+             * Linen only, and only when Laundry Personnel never captured their
+             * receipt digitally. This is the RECEIVED BY date wet-signed on the
+             * accomplished Laundry Form, so it can never be in the future.
+             */
+            'laundry_received_date' => ['nullable', 'date', 'before_or_equal:today'],
         ]);
 
         /*
@@ -394,6 +401,9 @@ class CustodyController extends Controller
             $data['police_blotter_references'] ?? [],
             $evidenceFileIds,
             conditionBreakdowns: $data['accounting'] ?? [],
+            laundryReceivedOn: filled($data['laundry_received_date'] ?? null)
+                ? \Carbon\Carbon::parse($data['laundry_received_date'])->startOfDay()
+                : null,
         );
 
         /*

@@ -14,6 +14,16 @@ class Payment extends Model
         return ['receipt_date' => 'date', 'amount' => 'decimal:2', 'submitted_at' => 'datetime', 'verified_at' => 'datetime'];
     }
 
+    public function verifiedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'verified_by_user_id');
+    }
+
+    public function recordedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recorded_by_user_id');
+    }
+
     public function billingStatement(): BelongsTo
     {
         return $this->belongsTo(BillingStatement::class);

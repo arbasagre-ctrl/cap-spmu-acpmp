@@ -14,7 +14,6 @@
         const from = document.getElementById('custody-oversight-from');
         const to = document.getElementById('custody-oversight-to');
         const sort = document.getElementById('custody-oversight-sort');
-        const clear = document.getElementById('custody-oversight-clear');
         const noResults = document.getElementById('custody-oversight-no-results');
         const summary = document.getElementById('custody-oversight-result-summary');
         const dateError = document.getElementById('custody-oversight-date-error');
@@ -271,12 +270,11 @@
 
             renderPagination(totalPages);
 
+            /* The section header reports the current filtered result count. */
             if (summary) {
-                const searchSuffix = query ? ` matching "${search.value.trim()}"` : '';
-
-                summary.textContent = matched.length === 0
-                    ? `No transactions to display${searchSuffix}.`
-                    : `Showing ${firstIndex + 1} to ${lastIndex} of ${matched.length} transaction${matched.length === 1 ? '' : 's'}${searchSuffix}.`;
+                summary.textContent = matched.length === 1
+                    ? '1 record'
+                    : `${matched.length} records`;
             }
         };
 
@@ -302,17 +300,6 @@
         });
 
         pageSize?.addEventListener('change', () => {
-            currentPage = 1;
-            render();
-        });
-
-        clear?.addEventListener('click', () => {
-            if (search) search.value = '';
-            if (from) from.value = '';
-            if (to) to.value = '';
-            if (sort) sort.value = 'return-soonest';
-
-            activeTab = 'all';
             currentPage = 1;
             render();
         });

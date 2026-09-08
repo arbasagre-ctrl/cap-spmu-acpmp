@@ -870,6 +870,14 @@ html[data-theme="dark"] select {
 select:disabled { background-image: var(--select-chevron); opacity: .75; }
 select[multiple], select[size]:not([size="1"]) { padding-right: 11px; background-image: none; }
 
+/* The decision that advances an accountability case reads as the primary one. */
+.button.accountability-primary-action {
+    min-height: 44px;
+    padding: 12px 22px;
+    font-size: 13.5px;
+    font-weight: 750;
+}
+
 /* Detail pages that drill down out of a configuration hub share one back control. */
 .button.config-back-button {
     display: inline-flex;
@@ -3779,8 +3787,8 @@ html[data-theme="dark"] .login-page .login-alt-divider::after {
 
 .request-tracker__rail {
     display: grid;
-    min-width: 1110px;
-    grid-template-columns: repeat(8, minmax(125px, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(125px, 1fr);
     gap: 0;
     margin: 0;
     padding: 0;
@@ -3864,6 +3872,9 @@ html[data-theme="dark"] .login-page .login-alt-divider::after {
 }
 
 .request-tracker__copy strong {
+    display: flex;
+    align-items: center;
+    min-height: 2.6em;
     color: var(--heading);
     font-size: 12px;
     line-height: 1.3;
@@ -3937,8 +3948,7 @@ html[data-theme="dark"] .login-page .login-alt-divider::after {
     }
 
     .request-tracker__rail {
-        min-width: 1020px;
-        grid-template-columns: repeat(8, minmax(118px, 1fr));
+        grid-auto-columns: minmax(118px, 1fr);
     }
 }
 

@@ -667,6 +667,69 @@ class ForecastServiceTest extends TestCase
     }
 
     /* ------------------------------------------------------------------ */
+    /* Wording                                                             */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * A forecast of one must read "1 request", not "1 requests". These pin the
+     * sentence only; the figures they quote are asserted elsewhere.
+     */
+    public function test_a_forecast_of_one_reads_as_a_single_request(): void
+    {
+        /* 1, 1, 1 -> (3 + 2 + 1) / 6 = 1 */
+        foreach ([
+            Carbon::create(2026, 3, 10, 10),
+            Carbon::create(2026, 2, 10, 10),
+            Carbon::create(2026, 1, 10, 10),
+        ] as $when) {
+            $this->request('ACADEMIC', $this->ccs(), $when);
+        }
+
+        $demand = $this->forecast->demand($this->analytics, $this->from, $this->to);
+        $divisions = $this->forecast->divisionDemand($this->analytics, $this->from, $this->to);
+
+        $this->assertSame(1, $demand['forecast']);
+
+        foreach ([$demand['summary'], $divisions['summary']] as $sentence) {
+            $this->assertStringContainsString('1 request.', $sentence);
+            $this->assertStringNotContainsString('1 requests', $sentence);
+        }
+    }
+
+    public function test_a_forecast_above_one_stays_plural(): void
+    {
+        $this->seedThreePeriodHistory();
+
+        $demand = $this->forecast->demand($this->analytics, $this->from, $this->to);
+        $divisions = $this->forecast->divisionDemand($this->analytics, $this->from, $this->to);
+        $units = $this->forecast->unitDemand($this->analytics, $this->from, $this->to);
+
+        $this->assertSame(5, $demand['forecast']);
+
+        foreach ([$demand['summary'], $divisions['summary'], $units['summary']] as $sentence) {
+            $this->assertStringContainsString('5 requests.', $sentence);
+        }
+    }
+
+    public function test_a_unit_expected_to_borrow_once_reads_as_a_single_request(): void
+    {
+        /* Three periods, one qualifying unit, one request each -> forecast 1. */
+        foreach ([
+            Carbon::create(2026, 3, 10, 10),
+            Carbon::create(2026, 2, 10, 10),
+            Carbon::create(2026, 1, 10, 10),
+        ] as $when) {
+            $this->request('ACADEMIC', $this->ccs(), $when);
+        }
+
+        $units = $this->forecast->unitDemand($this->analytics, $this->from, $this->to);
+
+        $this->assertSame(1, $units['leader']['forecast']);
+        $this->assertStringContainsString('1 request.', $units['summary']);
+        $this->assertStringNotContainsString('1 requests', $units['summary']);
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Transparency                                                        */
     /* ------------------------------------------------------------------ */
 

@@ -474,6 +474,14 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('incidents.resolve');
 
+    Route::post('/overdue/{overdue}/confirm-late-return', [AccountabilityController::class, 'confirmLateReturn'])
+        ->middleware('workspace:SPMU')
+        ->name('overdue.confirm-late-return');
+
+    Route::post('/overdue/{overdue}/return-for-correction', [AccountabilityController::class, 'returnLateReturnForCorrection'])
+        ->middleware('workspace:SPMU')
+        ->name('overdue.return-for-correction');
+
     Route::post('/overdue/{overdue}/bill', [AccountabilityController::class, 'billOverdue'])
         ->middleware('workspace:SPMU')
         ->name('overdue.bill');

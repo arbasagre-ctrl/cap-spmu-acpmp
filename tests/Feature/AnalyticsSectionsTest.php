@@ -114,8 +114,8 @@ class AnalyticsSectionsTest extends TestCase
             ->assertSee('Currently Out')
             ->assertSee('Need Follow-up')
             ->assertSee('Low Availability')
-            ->assertSee('Borrower Activity')
-            ->assertSee('Most Active Units');
+            ->assertSee('Borrowing Activity Trend')
+            ->assertSee('Top Borrowing Units');
     }
 
     public function test_borrowers_reports_the_three_canonical_divisions(): void
@@ -144,7 +144,7 @@ class AnalyticsSectionsTest extends TestCase
         $this->actingAs($this->spmuHead())
             ->get(route('analytics.index', ['section' => 'equipment', 'academic_period' => 'month']))
             ->assertOk()
-            ->assertSee('Most Requested Equipment')
+            ->assertSee('Most Requested Items')
             ->assertSee('Actually Released')
             ->assertSee('No equipment was requested during this period.')
             ->assertSee('No equipment was physically released during this period.');
@@ -192,8 +192,8 @@ class AnalyticsSectionsTest extends TestCase
         $this->actingAs($this->spmuHead())
             ->get(route('analytics.index', ['section' => 'forecast', 'academic_period' => 'month']))
             ->assertOk()
-            ->assertSee('Expected Requests')
-            ->assertSee('Forecast period')
+            ->assertSee('Forecasted Demand')
+            ->assertSee('Projected next period')
             ->assertSee('Borrowing Demand Forecast')
             ->assertSee('Forecast Basis')
             ->assertDontSee('Not enough historical data to generate a reliable forecast.');
