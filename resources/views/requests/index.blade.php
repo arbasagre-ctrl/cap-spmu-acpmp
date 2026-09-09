@@ -109,7 +109,9 @@
                                 $workflowStatus = $custody->workflowStatus();
                                 $tableDisplayStatus = $workflowStatus['key'];
                                 $tableDisplayLabel = $workflowStatus['label'];
+                                $tableAccountability = $custody->activeAccountabilityIndicator();
                             } else {
+                                $tableAccountability = null;
                                 $tableDisplayStatus = $request->status;
                                 $tableDisplayLabel = null;
                             }
@@ -119,6 +121,9 @@
                             :status="$tableDisplayStatus"
                             :label="$tableDisplayLabel"
                         />
+                        @if($tableAccountability)
+                            <small class="record-accountability-note">{{ $tableAccountability['label'] }}</small>
+                        @endif
                     </td>
 
                     <td>
@@ -145,8 +150,9 @@
 @unless($isBorrower)
 <style>
 .record-browser-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(170px,220px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
-.record-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+.record-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--text-muted)}
 .record-browser-toolbar input,.record-browser-toolbar select{width:100%;min-height:42px}
+.record-accountability-note{display:block;margin-top:5px;color:var(--warning);font-size:11px;font-weight:700;line-height:1.3}
 @media(max-width:760px){.record-browser-toolbar{grid-template-columns:1fr}}
 </style>
 <script>

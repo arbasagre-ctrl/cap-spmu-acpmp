@@ -2,16 +2,17 @@
 .custody-oversight { --oversight-blue: #0865df; width: 100%; min-width: 0; display: grid; gap: 16px; }
 .custody-oversight [hidden] { display: none !important; }
 
-/* Status tab cards */
-.custody-oversight-tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
-.custody-oversight-tab { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 46px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-elevated); color: var(--text-secondary); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; transition: border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
-.custody-oversight-tab:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+/* Status tabs: one tinted strip, same family as the other status-filter
+   bars in the app (calendar, borrowings, accountability views). */
+.custody-oversight-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-subtle); }
+.custody-oversight-tab { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 150px; min-height: 38px; padding: 7px 11px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; transition: border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
+.custody-oversight-tab:hover:not(.is-active) { border-color: var(--border); background: var(--surface-elevated); box-shadow: var(--shadow-sm); }
 .custody-oversight-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.custody-oversight-tab.is-active { border-color: var(--oversight-blue); background: var(--info-bg); color: var(--heading); }
+.custody-oversight-tab.is-active { border-color: var(--info-border); background: var(--info-bg); box-shadow: inset 0 -2px 0 var(--oversight-blue); color: var(--heading); }
 .custody-oversight-tab-icon { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; color: var(--text-muted); }
 .custody-oversight-tab-label { flex: 1 1 auto; min-width: 0; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
-.custody-oversight-tab-count { flex-shrink: 0; color: var(--heading); font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.custody-oversight-tab.is-active .custody-oversight-tab-count { color: var(--oversight-blue); }
+.custody-oversight-tab-count { flex-shrink: 0; display: inline-grid; place-items: center; min-width: 24px; height: 22px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-elevated); color: var(--text-secondary); font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.custody-oversight-tab.is-active .custody-oversight-tab-count { border-color: var(--info-border); background: var(--surface-elevated); color: var(--oversight-blue); }
 .custody-oversight-tab[data-custody-tab="all"] .custody-oversight-tab-icon { color: var(--text-secondary); }
 .custody-oversight-tab[data-custody-tab="active"] .custody-oversight-tab-icon { color: var(--success); }
 .custody-oversight-tab[data-custody-tab="attention"] .custody-oversight-tab-icon { color: #c1610a; }
@@ -19,6 +20,11 @@
 .custody-oversight-tab[data-custody-tab="custody"] .custody-oversight-tab-icon,
 .custody-oversight-tab[data-custody-tab="return"] .custody-oversight-tab-icon,
 .custody-oversight-tab[data-custody-tab="completed"] .custody-oversight-tab-icon { color: var(--oversight-blue); }
+/* Needs Attention carries a restrained warning tint, on the chip and the
+   active state, the same way calendar/borrowings tint their own outliers. */
+.custody-oversight-tab[data-custody-tab="attention"] .custody-oversight-tab-count { border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning); }
+.custody-oversight-tab.is-active[data-custody-tab="attention"] { border-color: var(--warning-border); background: var(--warning-bg); box-shadow: inset 0 -2px 0 var(--warning); }
+.custody-oversight-tab.is-active[data-custody-tab="attention"] .custody-oversight-tab-count { border-color: var(--warning-border); background: var(--surface-elevated); color: var(--warning); }
 
 /* Filter bar */
 .custody-oversight-filters { display: grid; grid-template-columns: minmax(280px, 3.2fr) minmax(132px, .7fr) minmax(132px, .7fr) minmax(168px, .9fr); align-items: end; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); }
@@ -98,9 +104,6 @@ html[data-theme="dark"] .custody-oversight-tab[data-custody-tab="attention"] .cu
 html[data-theme="dark"] .custody-oversight-row[data-custody-group="release"] { border-left-color: var(--warning); }
 html[data-theme="dark"] .custody-oversight-page.is-active { color: var(--navy-950); }
 
-@media (max-width: 1180px) {
-    .custody-oversight-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
 @media (max-width: 900px) {
     .custody-oversight-filters { grid-template-columns: 1fr 1fr; }
     .custody-oversight-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -108,7 +111,7 @@ html[data-theme="dark"] .custody-oversight-page.is-active { color: var(--navy-95
     .custody-oversight-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-    .custody-oversight-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .custody-oversight-tab { min-width: 0; flex: 1 1 42%; justify-content: center; }
     .custody-oversight-filters { grid-template-columns: 1fr; }
     .custody-oversight-row { grid-template-columns: minmax(0, 1fr); }
     .custody-oversight-view { justify-self: stretch; }
@@ -119,4 +122,5 @@ html[data-theme="dark"] .custody-oversight-page.is-active { color: var(--navy-95
 @media (prefers-reduced-motion: reduce) {
     .custody-oversight-tab { transition: none; }
 }
+.custody-oversight-accountability { display: block; margin-top: 4px; color: var(--warning); font-size: 10.5px; font-weight: 700; line-height: 1.25; }
 </style>

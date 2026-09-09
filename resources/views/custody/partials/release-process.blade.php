@@ -1,4 +1,28 @@
 @php
+    /*
+     * Defensive release-schedule state.
+     *
+     * Some release routes already provide $hasPickupSchedule and
+     * $pickupWindowPassed, while older/current view paths may not provide the
+     * newer $hasSystemPickupWindow variable. Derive the missing values here so
+     * this partial can render safely without changing the pickup workflow.
+     */
+    $hasSystemPickupWindow = isset($hasSystemPickupWindow)
+        ? (bool) $hasSystemPickupWindow
+        : ((bool) $custody->scheduled_release_at && (bool) $custody->pickup_expires_at);
+
+    $hasPickupSchedule = isset($hasPickupSchedule)
+        ? (bool) $hasPickupSchedule
+        : ($hasSystemPickupWindow
+            && (bool) $custody->pickup_scheduled_at
+            && ! $custody->pickup_expired_at);
+
+    $pickupWindowPassed = isset($pickupWindowPassed)
+        ? (bool) $pickupWindowPassed
+        : ($hasSystemPickupWindow
+            && $custody->pickup_expires_at
+            && now()->gt($custody->pickup_expires_at));
+
     $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed;
     $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup');
     $releaseCurrentDocuments = $documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']);

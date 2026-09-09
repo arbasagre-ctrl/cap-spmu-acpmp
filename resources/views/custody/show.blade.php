@@ -61,10 +61,8 @@
         && (bool) $custody->due_at
         && now()->lt($custody->due_at);
     $preparationComplete = (bool) $custody->prepared_at;
-    $hasSystemPickupWindow = (bool) $custody->scheduled_release_at
-        && (bool) $custody->pickup_expires_at;
-    $hasPickupSchedule = $hasSystemPickupWindow
-        && (bool) $custody->pickup_scheduled_at
+    $hasPickupSchedule = (bool) $custody->scheduled_release_at
+        && (bool) $custody->pickup_expires_at
         && ! $custody->pickup_expired_at;
 
     $pickupWindowStartsAt = $custody->scheduled_release_at;
@@ -72,19 +70,12 @@
     $pickupWindowUpcoming = $hasPickupSchedule
         && now()->lt($pickupWindowStartsAt);
 
-    $pickupWindowPassed = $hasSystemPickupWindow
+    $pickupWindowPassed = $hasPickupSchedule
         && now()->gt($pickupWindowEndsAt);
 
     $pickupWindowOpen = $hasPickupSchedule
         && ! $pickupWindowUpcoming
         && ! $pickupWindowPassed;
-
-    $pickupRescheduleRequested = (bool) ($pickupRescheduleRequested ?? false);
-    $pickupRescheduleAvailable = (bool) ($pickupRescheduleAvailable ?? false);
-    $borrowerMissedPickup = $isBorrower
-        && ! $custody->released_at
-        && (bool) $custody->pickup_scheduled_at
-        && $pickupWindowPassed;
 
 
     $hasOffCampusItem = $custody->lines->contains(
@@ -99,6 +90,8 @@
 
     $workflowStatus = $custody->workflowStatus();
     $operationalStatusKey = $workflowStatus['key'];
+    $obligationSummary = $custody->openObligationSummary();
+    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $transactionFullyComplete = $operationalStatusKey === 'COMPLETED';
     $transactionCancelled = $operationalStatusKey === 'CANCELLED';
@@ -119,9 +112,16 @@
             'Your return has been accepted and your obligation is cleared. Any remaining internal processing is handled by SPMU.',
             'success',
         ],
+        $accountabilityIndicator !== null => [
+            $custody->hasOutstandingProperty() ? 'Return + accountability in progress' : 'Accountability processing',
+            ($obligationSummary['copy'] ?? null) ?: $accountabilityIndicator['label'].' requires resolution. See My Obligations for the current action.',
+            'warning',
+        ],
         $custody->status === 'OBLIGATION_OPEN' => [
-            'Return completed with an open obligation',
-            'An accountability or billing obligation still needs resolution. See My Obligations for the required action.',
+            $obligationSummary ? 'Return completed — '.$obligationSummary['title'] : 'Return completed with an open obligation',
+            $obligationSummary
+                ? $obligationSummary['copy'].' See My Obligations for the required action.'
+                : 'An accountability or billing obligation still needs resolution. See My Obligations for the required action.',
             'warning',
         ],
         $custody->status === 'RETURN_PROCESSING' => [
@@ -149,19 +149,9 @@
             'Physical release becomes available when your pickup window starts.',
             'info',
         ],
-        $borrowerMissedPickup && $pickupRescheduleRequested => [
-            'Pickup reschedule requested',
-            'SPMU has your request and will confirm the next valid operating window before the approved Expected Return Date.',
-            'info',
-        ],
-        $borrowerMissedPickup => [
-            'Pickup schedule passed',
-            'Choose whether to request another valid pickup schedule or cancel the unreleased request.',
-            'warning',
-        ],
         $pickupWindowPassed => [
-            'Pickup schedule needs SPMU follow-up',
-            'SPMU is handling a scheduling exception. This is not recorded as a missed pickup by you.',
+            'Pickup window ended',
+            'Coordinate with SPMU for a new pickup schedule.',
             'warning',
         ],
         $hasPickupSchedule => [
@@ -204,9 +194,7 @@
             @endif
         </p>
     </div>
-    @if($isBorrower)
-        <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
-    @endif
+    <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
 </section>
 @endif
 
@@ -368,54 +356,12 @@
 
                 <a
                     class="button secondary small ui-pressable borrower-custody-status-action"
-                    href="{{ route('requests.show', $custody->request) }}"
+                    href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
                 >
-                    View request
+                    {{ $accountabilityIndicator ? 'View obligation' : 'View request' }}
                     <x-icon name="chevron-right" size="15" />
                 </a>
             </div>
-
-            @if($borrowerMissedPickup)
-                <div class="borrower-early-return-notice" id="pickup-reschedule">
-                    @if($pickupRescheduleRequested)
-                        <div>
-                            <strong>Pickup reschedule requested</strong>
-                            <small>
-                                Waiting for SPMU to confirm the next valid operating window. Your approved request and reserved quantity remain active.
-                            </small>
-                        </div>
-                        <span class="status-badge status-info">Awaiting SPMU</span>
-                    @elseif($pickupRescheduleAvailable)
-                        <div>
-                            <strong>Do you still need the approved items?</strong>
-                            <small>
-                                Request a reschedule to continue using this same approved request. You do not need to submit a new borrowing request.
-                            </small>
-                        </div>
-                        <div class="inline-actions">
-                            <form method="post" action="{{ route('custody.request-pickup-reschedule', $custody) }}">
-                                @csrf
-                                <button class="button primary small ui-pressable" type="submit">
-                                    Request Reschedule
-                                </button>
-                            </form>
-                            <a class="button secondary small ui-pressable" href="{{ route('requests.show', $custody->request) }}#request-actions">
-                                Cancel Request
-                            </a>
-                        </div>
-                    @else
-                        <div>
-                            <strong>Rescheduling is no longer available</strong>
-                            <small>
-                                No valid SPMU pickup window remains before the approved Expected Return Date. Cancel the unreleased request or coordinate a revision of the approved borrowing dates.
-                            </small>
-                        </div>
-                        <a class="button secondary small ui-pressable" href="{{ route('requests.show', $custody->request) }}#request-actions">
-                            Open Request Actions
-                        </a>
-                    @endif
-                </div>
-            @endif
 
             {{-- Coordination already sent: one line, not a card. --}}
             @if($activeEarlyReturn)
@@ -719,9 +665,6 @@
 @else
     <x-request-progress-tracker :request="$custody->request" />
 
-@include('custody.partials.head-detail-styles')
-
-<div class="custody-head-detail">
 <section class="content-grid two">
     <article class="card">
         <div class="card-header">
@@ -807,7 +750,6 @@
         </div>
     </article>
 </section>
-</div>
 
 @endif {{-- useReleaseProcessLayout --}}
 @endif {{-- showReleaseWorkflow --}}

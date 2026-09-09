@@ -28,8 +28,8 @@
     .profile-photo-actions input[type="file"] { width: 100%; }
     .profile-photo-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .profile-photo-remove-form { margin: 0; }
-    .profile-photo-remove { color: #b42318; border-color: #f2b8b5; background: #fff7f6; }
-    .profile-photo-remove:hover { color: #8f1d14; border-color: #e49a96; background: #fff1ef; }
+    .profile-photo-remove { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
+    .profile-photo-remove:hover { color: var(--danger-action); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--surface-elevated)); }
     .profile-layout {
         align-items: start !important;
     }
@@ -66,7 +66,6 @@
     .signature-upload-form label { display: grid; gap: 7px; }
     .signature-upload-form input[type="file"] { width: 100%; }
     html[data-theme="dark"] .profile-photo-preview { border-color: rgba(255,255,255,.10); }
-    html[data-theme="dark"] .profile-photo-remove { color: #ffb4ad; border-color: #6f3a38; background: #321d1c; }
     @media (max-width: 640px) { .profile-photo-layout { grid-template-columns: 1fr; } }
 </style>
 

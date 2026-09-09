@@ -73,6 +73,8 @@ class SettingController extends Controller
                 'LAUNDRY_FORM' => 'Laundry Form Template',
                 'GATE_PASS' => 'Gate Pass Template',
                 'BILLING_STATEMENT' => 'Billing Statement Template',
+                'ACCOUNTABILITY_COMPLIANCE_NOTICE' => 'Accountability / Compliance Notice Template',
+                'ADMINISTRATIVE_SANCTION_NOTICE' => 'Administrative Sanction Notice Template',
                 'RSLDDP' => 'RSLDDP Template',
             ];
 

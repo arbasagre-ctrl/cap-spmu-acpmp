@@ -4,18 +4,20 @@
 
 .my-borrowings-card { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); overflow: hidden; }
 
-/* Tabs */
-.borrowings-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 6px; padding: 0 22px; border-bottom: 1px solid var(--border); }
-.borrowings-tab { display: inline-flex; align-items: center; gap: 10px; padding: 18px 12px 15px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--text-muted); font: inherit; font-size: 14.5px; font-weight: 650; line-height: 1; cursor: pointer; transition: color var(--motion) ease, border-color var(--motion) ease; }
-.borrowings-tab:hover { color: var(--text-secondary); }
-.borrowings-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 6px 6px 0 0; }
-.borrowings-tab.is-active { color: var(--borrowings-blue); border-bottom-color: var(--borrowings-blue); font-weight: 750; }
-.borrowings-tab-count { display: inline-grid; place-items: center; min-width: 25px; height: 25px; padding: 0 8px; border-radius: 999px; background: var(--surface-muted); color: var(--text-muted); font-size: 12px; font-weight: 700; }
-.borrowings-tab.is-active .borrowings-tab-count { background: var(--borrowings-count); color: #fff; }
+/* Tabs use the same low-contrast navigation surface as status filters. */
+.borrowings-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 6px; margin: 10px 12px 0; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.borrowings-tab { display: inline-flex; align-items: center; gap: 9px; min-height: 38px; padding: 8px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer; transition: color var(--motion) ease, border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
+.borrowings-tab:hover { color: var(--heading); border-color: var(--border); background: var(--surface-elevated); box-shadow: 0 1px 2px rgba(21, 45, 73, .05); }
+.borrowings-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.borrowings-tab.is-active { color: var(--borrowings-blue); border-color: color-mix(in srgb, var(--borrowings-blue) 35%, var(--border)); background: var(--info-bg); box-shadow: inset 0 -2px 0 var(--borrowings-blue); font-weight: 800; }
+.borrowings-tab-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); color: var(--text-muted); font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.borrowings-tab.is-active .borrowings-tab-count { border-color: transparent; background: var(--borrowings-count); color: #fff; }
 
 /* Panels */
 .borrowings-panel { padding: 20px; }
 .borrowings-list { display: grid; gap: 10px; }
+
+.borrowings-accountability-note { display: block; margin-top: 4px; color: var(--warning); font-size: 11px; font-weight: 700; line-height: 1.3; }
 
 /* Empty state */
 .borrowings-empty { display: flex; min-height: clamp(320px, 44vh, 440px); align-items: center; justify-content: center; padding: 44px 20px 48px; text-align: center; }
@@ -46,8 +48,8 @@ html[data-theme="dark"] .my-borrowings .button.borrowings-empty-action:hover,
 html[data-theme="dark"] .my-borrowings .button.borrowings-empty-action:focus-visible { color: var(--navy-950); }
 
 @media (max-width: 620px) {
-    .borrowings-tabs { padding: 0 12px; }
-    .borrowings-tab { padding: 14px 8px 11px; font-size: 13px; }
+    .borrowings-tabs { margin: 8px 8px 0; padding: 5px; }
+    .borrowings-tab { flex: 1 1 auto; justify-content: center; padding: 8px; font-size: 12px; }
     .borrowings-tab-count { min-width: 22px; height: 22px; font-size: 11px; }
     .borrowings-panel { padding: 14px; }
     .borrowings-empty { min-height: 290px; padding: 30px 12px; }

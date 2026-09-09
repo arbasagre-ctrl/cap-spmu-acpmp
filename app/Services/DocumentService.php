@@ -12,6 +12,7 @@ use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
 use App\Models\RequestVersion;
+use App\Models\Sanction;
 use App\Models\SignatureSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -2790,20 +2791,21 @@ HTML;
         return $this->saveHtml('OFFICIAL_FORM_PACKET', '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.implode('<div class="page-break"></div>', $htmlPages).'</body></html>', $custody->request->currentVersion, $custody::class, $custody->id, 'FINAL', $custody->custody_no.'-OFFICIAL-PACKET.pdf');
     }
 
-    public function billingStatement(BillingStatement $billing): GeneratedDocument
+    public function billingStatement(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): GeneratedDocument
     {
         $billing->loadMissing([
-            'borrower',
+            'borrower.organizationalUnit',
             'responsibleSpmuUser',
-            'lines.incident.custody.request',
-            'lines.penalty.incident.custody.request',
-            'lines.penalty.custody.request',
+            'lines.incident.custody.request.currentVersion',
+            'lines.penalty.incident.custody.request.currentVersion',
+            'lines.penalty.custody.request.currentVersion',
         ]);
+
         if ($customTemplate = $this->activeUploadedTemplate('BILLING_STATEMENT')) {
             return $this->saveRenderedTemplate(
                 $customTemplate,
                 'BILLING_STATEMENT',
-                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing)),
+                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing, $authorizationSignature)),
                 null,
                 $billing::class,
                 $billing->id,
@@ -2811,36 +2813,299 @@ HTML;
                 $billing->billing_no.'.pdf',
             );
         }
-        $lines = [
-            'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
-            'BILLING STATEMENT - PENALTIES AND PROPERTY CHARGES ONLY',
-            'Billing No.: '.$billing->billing_no,
-            'Borrower: '.$billing->borrower->full_name,
-            'Issued: '.$billing->issued_at->format('F j, Y'),
-            '',
-        ];
-        foreach ($billing->lines as $line) {
-            $lines[] = sprintf('%s | %s | PHP %s', $line->line_type, $line->description, number_format((float) $line->amount, 2));
+
+        return $this->saveHtml(
+            'BILLING_STATEMENT',
+            $this->billingStatementHtml($billing, $authorizationSignature),
+            null,
+            $billing::class,
+            $billing->id,
+            'FINAL',
+            $billing->billing_no.'.pdf',
+        );
+    }
+
+    public function accountabilityComplianceNotice(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): GeneratedDocument {
+        $incident->loadMissing([
+            'borrower.organizationalUnit',
+            'custody.request.currentVersion',
+            'lines.custodyLine.requestItem',
+        ]);
+
+        GeneratedDocument::query()
+            ->where('subject_type', $incident::class)
+            ->where('subject_id', $incident->id)
+            ->where('document_type', 'ACCOUNTABILITY_COMPLIANCE_NOTICE')
+            ->where('status', 'FINAL')
+            ->update([
+                'status' => 'SUPERSEDED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Replaced by the latest SPMU Head compliance decision notice.',
+            ]);
+
+        if ($customTemplate = $this->activeUploadedTemplate('ACCOUNTABILITY_COMPLIANCE_NOTICE')) {
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'ACCOUNTABILITY_COMPLIANCE_NOTICE',
+                $this->templateRenderer->render(
+                    $customTemplate,
+                    $this->accountabilityComplianceNoticeRenderData($incident, $spmuHead, $decisionRemarks, $headSignature)
+                ),
+                $incident->custody?->request?->currentVersion,
+                $incident::class,
+                $incident->id,
+                'FINAL',
+                $incident->incident_no.'-COMPLIANCE-NOTICE.pdf',
+            );
         }
-        $lines[] = '';
-        $lines[] = 'TOTAL: PHP '.number_format((float) $billing->total_amount, 2);
-        $lines[] = 'Payment is processed externally through Accounting/Cashier. Submit Official Receipt evidence to SPMU for verification.';
 
-        /*
-         * A Billing Statement is a printed, handwritten-signed instrument that
-         * the borrower carries to the CSPC Cashier, so this is a named wet
-         * signature block rather than an embedded E-signature. Previously the
-         * statement carried no signature area at all.
-         */
-        $lines[] = '';
-        $lines[] = 'ISSUED BY (Supply and Property Management Unit):';
-        $lines[] = '';
-        $lines[] = '_________________________________________';
-        $lines[] = strtoupper((string) ($billing->responsibleSpmuUser?->full_name ?: 'Authorized SPMU Signatory'));
-        $lines[] = (string) ($billing->responsibleSpmuUser?->designation ?: 'Supply and Property Management Unit');
-        $lines[] = 'Signature over Printed Name / Date';
+        return $this->saveHtml(
+            'ACCOUNTABILITY_COMPLIANCE_NOTICE',
+            $this->accountabilityComplianceNoticeHtml($incident, $spmuHead, $decisionRemarks, $headSignature),
+            $incident->custody?->request?->currentVersion,
+            $incident::class,
+            $incident->id,
+            'FINAL',
+            $incident->incident_no.'-COMPLIANCE-NOTICE.pdf',
+        );
+    }
 
-        return $this->save('BILLING_STATEMENT', $lines, null, $billing::class, $billing->id, 'FINAL', $billing->billing_no.'.pdf');
+    public function administrativeSanctionNotice(Sanction $sanction, ?SignatureSnapshot $headSignature = null): GeneratedDocument
+    {
+        $sanction->loadMissing([
+            'borrower.organizationalUnit',
+            'academicPeriod',
+            'confirmedBy',
+            'violation.custody.request.currentVersion',
+        ]);
+
+        GeneratedDocument::query()
+            ->where('subject_type', $sanction::class)
+            ->where('subject_id', $sanction->id)
+            ->where('document_type', 'ADMINISTRATIVE_SANCTION_NOTICE')
+            ->where('status', 'FINAL')
+            ->update([
+                'status' => 'SUPERSEDED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Replaced by the latest controlled administrative sanction notice.',
+            ]);
+
+        $headSignature ??= $sanction->signatureSnapshot;
+
+        if ($customTemplate = $this->activeUploadedTemplate('ADMINISTRATIVE_SANCTION_NOTICE')) {
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'ADMINISTRATIVE_SANCTION_NOTICE',
+                $this->templateRenderer->render(
+                    $customTemplate,
+                    $this->administrativeSanctionNoticeRenderData($sanction, $headSignature)
+                ),
+                $sanction->violation?->custody?->request?->currentVersion,
+                $sanction::class,
+                $sanction->id,
+                'FINAL',
+                'SANCTION-'.$sanction->id.'-'.$sanction->offense_no.'-OFFENSE.pdf',
+            );
+        }
+
+        return $this->saveHtml(
+            'ADMINISTRATIVE_SANCTION_NOTICE',
+            $this->administrativeSanctionNoticeHtml($sanction, $headSignature),
+            $sanction->violation?->custody?->request?->currentVersion,
+            $sanction::class,
+            $sanction->id,
+            'FINAL',
+            'SANCTION-'.$sanction->id.'-'.$sanction->offense_no.'-OFFENSE.pdf',
+        );
+    }
+
+    private function billingStatementHtml(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): string
+    {
+        $sourceLine = $billing->lines->first();
+        $incident = $sourceLine?->incident ?: $sourceLine?->penalty?->incident;
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $authorizationSignature ??= $incident?->headDecisionSignature;
+        $custody = $incident?->custody ?: $sourceLine?->penalty?->custody;
+        $request = $custody?->request;
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $logoDataUri = $this->institutionalLogoDataUri();
+
+        return view('documents.accountability.billing-statement', [
+            'billing' => $billing,
+            'logoDataUri' => $logoDataUri,
+            'issuedDate' => $billing->issued_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'dueDate' => $billing->due_at?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'officeUnit' => (string) ($billing->borrower?->organizationalUnit?->unit_name
+                ?? $billing->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($custody?->custody_no ?? ''),
+            'incidentNo' => (string) ($incident?->incident_no ?? ''),
+            'issuerName' => (string) ($billing->responsibleSpmuUser?->full_name ?: 'Authorized SPMU Signatory'),
+            'issuerDesignation' => $this->templatePrintedDesignation($billing->responsibleSpmuUser),
+            'headName' => (string) ($billing->responsibleSpmuUser?->full_name
+                ?: $incident?->headDecidedBy?->full_name
+                ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation(
+                $billing->responsibleSpmuUser ?: $incident?->headDecidedBy
+            ),
+            'headDecisionDate' => ($billing->issued_at ?: $incident?->head_decided_at)
+                ?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'headSignatureHtml' => $this->signatureImage($authorizationSignature, 150, 42),
+        ])->render();
+    }
+
+    private function accountabilityComplianceNoticeHtml(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): string {
+        $request = $incident->custody?->request;
+
+        return view('documents.accountability.compliance-notice', [
+            'incident' => $incident,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'decisionDate' => now()->timezone('Asia/Manila')->format('d F Y'),
+            'decisionRemarks' => trim($decisionRemarks),
+            'officeUnit' => (string) ($incident->borrower?->organizationalUnit?->unit_name
+                ?? $incident->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($incident->custody?->custody_no ?? ''),
+            'headName' => (string) ($spmuHead->full_name ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation($spmuHead),
+            'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
+        ])->render();
+    }
+
+    private function administrativeSanctionNoticeHtml(Sanction $sanction, ?SignatureSnapshot $headSignature = null): string
+    {
+        $violation = $sanction->violation;
+        $request = $violation?->custody?->request;
+        $reasons = collect($violation?->details_json['reasons'] ?? [])
+            ->map(fn ($reason) => str((string) $reason)->replace('_', ' ')->title()->toString())
+            ->filter()
+            ->values();
+
+        $offenseLabel = match ((int) $sanction->offense_no) {
+            1 => '1st Offense',
+            2 => '2nd Offense',
+            3 => '3rd Offense',
+            default => $sanction->offense_no.'th Offense',
+        };
+
+        $hasBorrowingSuspension = strtoupper((string) $sanction->sanction_code) === 'BORROWING_SUSPENSION'
+            || str_contains(strtolower((string) $sanction->sanction_label), 'suspension');
+
+        return view('documents.accountability.sanction-notice', [
+            'sanction' => $sanction,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'offenseLabel' => $offenseLabel,
+            'confirmedDate' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'effectiveFrom' => $sanction->effective_from?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'effectiveTo' => $sanction->effective_to?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'academicPeriod' => trim((string) (($sanction->academicPeriod?->academic_year ?? '').' '.($sanction->academicPeriod?->term_name ?? ''))) ?: '—',
+            'officeUnit' => (string) ($sanction->borrower?->organizationalUnit?->unit_name
+                ?? $sanction->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($violation?->custody?->custody_no ?? ''),
+            'reasonText' => $reasons->isNotEmpty() ? $reasons->implode(', ') : 'Confirmed borrowing accountability offense',
+            'hasBorrowingSuspension' => $hasBorrowingSuspension,
+            'headName' => (string) ($sanction->confirmedBy?->full_name ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation($sanction->confirmedBy),
+            'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
+        ])->render();
+    }
+
+    /** @return array<string,mixed> */
+    private function accountabilityComplianceNoticeRenderData(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): array {
+        $request = $incident->custody?->request;
+
+        return [
+            'incident_no' => $incident->incident_no,
+            'decision_date' => ($incident->head_decided_at ?: now())->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'borrower_name' => (string) ($incident->borrower?->full_name ?? ''),
+            'office_unit' => (string) ($incident->borrower?->organizationalUnit?->unit_name
+                ?? $incident->borrower?->organizationalUnit?->name ?? ''),
+            'request_no' => (string) ($request?->request_no ?? ''),
+            'custody_no' => (string) ($incident->custody?->custody_no ?? ''),
+            'incident_type' => str((string) $incident->incident_type)->replace('_', ' ')->title()->toString(),
+            'decision_remarks' => trim($decisionRemarks),
+            'head_signature' => $this->templateSignatureAsset($headSignature),
+            'head_printed_name' => (string) ($spmuHead->full_name ?? ''),
+            'head_designation' => $this->templatePrintedDesignation($spmuHead),
+            'head_date' => ($incident->head_decided_at ?: now())->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'items' => $incident->lines->map(fn ($line): array => [
+                'description' => (string) ($line->custodyLine?->requestItem?->description_snapshot ?? 'Inventory item'),
+                'qty' => (string) ($line->quantity + 0),
+                'finding' => str((string) $line->observed_condition)->replace('_', ' ')->title()->toString(),
+                'disposition' => str((string) $line->disposition_state)->replace('_', ' ')->title()->toString(),
+            ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function administrativeSanctionNoticeRenderData(
+        Sanction $sanction,
+        ?SignatureSnapshot $headSignature = null
+    ): array {
+        $violation = $sanction->violation;
+        $request = $violation?->custody?->request;
+        $reasons = collect($violation?->details_json['reasons'] ?? [])
+            ->map(fn ($reason) => str((string) $reason)->replace('_', ' ')->title()->toString())
+            ->filter()->values();
+
+        $offenseLabel = match ((int) $sanction->offense_no) {
+            1 => '1st Offense',
+            2 => '2nd Offense',
+            3 => '3rd Offense',
+            default => $sanction->offense_no.'th Offense',
+        };
+
+        return [
+            'borrower_name' => (string) ($sanction->borrower?->full_name ?? ''),
+            'office_unit' => (string) ($sanction->borrower?->organizationalUnit?->unit_name
+                ?? $sanction->borrower?->organizationalUnit?->name ?? ''),
+            'request_no' => (string) ($request?->request_no ?? ''),
+            'custody_no' => (string) ($violation?->custody?->custody_no ?? ''),
+            'academic_period' => trim((string) (($sanction->academicPeriod?->academic_year ?? '').' · '.($sanction->academicPeriod?->term_name ?? ''))),
+            'offense_level' => $offenseLabel,
+            'confirmed_date' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'reason_text' => $reasons->isNotEmpty() ? $reasons->implode(', ') : 'Confirmed borrowing accountability offense',
+            'sanction_label' => (string) $sanction->sanction_label,
+            'effective_from' => $sanction->effective_from?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'effective_to' => $sanction->effective_to?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'head_remarks' => (string) ($sanction->remarks ?? ''),
+            'head_signature' => $this->templateSignatureAsset($headSignature),
+            'head_printed_name' => (string) ($sanction->confirmedBy?->full_name ?? ''),
+            'head_designation' => $this->templatePrintedDesignation($sanction->confirmedBy),
+            'head_date' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+        ];
+    }
+
+    private function institutionalLogoDataUri(): string
+    {
+        $logoPath = resource_path('images/cspc-logo-print.jpg');
+
+        if (! is_file($logoPath)) {
+            throw ValidationException::withMessages([
+                'document' => 'The institutional logo asset is unavailable.',
+            ]);
+        }
+
+        return 'data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath));
     }
 
     public function rslddp(Incident $incident): GeneratedDocument
@@ -3205,11 +3470,15 @@ HTML;
     }
 
     /** @return array<string,mixed> */
-    private function billingStatementRenderData(BillingStatement $billing): array
+    private function billingStatementRenderData(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): array
     {
         $incidents = $billing->lines
             ->map(fn ($line) => $line->incident ?: $line->penalty?->incident)
             ->filter();
+
+        $incident = $incidents->first();
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $authorizationSignature ??= $incident?->headDecisionSignature;
         $custodies = $billing->lines
             ->map(fn ($line) => $line->incident?->custody ?: $line->penalty?->custody ?: $line->penalty?->incident?->custody)
             ->filter()
@@ -3226,10 +3495,10 @@ HTML;
             'due_date' => $billing->due_at?->format('F j, Y') ?: '',
             'statement_remarks' => (string) ($billing->remarks ?? ''),
             'total_amount' => 'PHP '.number_format((float) $billing->total_amount, 2),
-            // A responsible issuer is stored; a billing-signature snapshot is
-            // not. Signature therefore remains blank in production.
-            'issuer_signature' => null,
-            'issuer_printed_name' => (string) ($billing->responsibleSpmuUser?->full_name ?? ''),
+            'issuer_signature' => $this->templateSignatureAsset($authorizationSignature),
+            'issuer_printed_name' => (string) ($billing->responsibleSpmuUser?->full_name
+                ?: $incident?->headDecidedBy?->full_name
+                ?: ''),
             'issuer_designation' => $this->templatePrintedDesignation($billing->responsibleSpmuUser),
             'issuer_date' => $billing->issued_at?->format('F j, Y') ?: '',
             'items' => $billing->lines->map(fn ($line): array => [
@@ -3452,7 +3721,7 @@ HTML;
 
     private function activeTemplate(string $type): ?DocumentTemplate
     {
-        if (! in_array($type, ['BORROWER_SLIP', 'LAUNDRY_FORM', 'GATE_PASS', 'BILLING_STATEMENT', 'RSLDDP'], true)) {
+        if (! in_array($type, ['BORROWER_SLIP', 'LAUNDRY_FORM', 'GATE_PASS', 'BILLING_STATEMENT', 'ACCOUNTABILITY_COMPLIANCE_NOTICE', 'ADMINISTRATIVE_SANCTION_NOTICE', 'RSLDDP'], true)) {
             return null;
         }
 

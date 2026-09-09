@@ -3,10 +3,13 @@
      * Return workflow:
      * non-linen is physically inspected by the Action Officer. Linen goes to
      * the Laundry Area first. Laundry Personnel are an offline actor: they
-     * record the physical RECEIVED BY date, process/wash the linen, fill DATE
-     * COMPLETED, and then deliver the fully accomplished Laundry Form to SPMU.
-     * The Action Officer uploads the form and encodes the returned quantity plus
-     * any issue reported on/with the form; there is no Laundry portal login.
+     * count/check the linen at handover, record the quantity/condition and
+     * wet-sign Received by (including the Date row) on the physical Laundry
+     * Form and keep it for documentation. The Laundry Worker later delivers
+     * that accomplished form directly to SPMU while the linen remains in the
+     * Laundry Area for the internal washing cycle. The Action Officer uploads
+     * the form and encodes its
+     * findings here; there is no Laundry portal login.
      */
     $eligibleReturnLines = $custody->lines->filter(function ($line) {
         return max(
@@ -47,13 +50,13 @@
             'info',
         ],
         $linenOutstanding > 0 && $laundryJob?->hasVerifiedAccomplishedForm() => [
-            'Encode the completed Laundry Form',
-            'Record the received quantity and any reported issue. If no issue was reported, encode the full received quantity as Fine / Good.',
+            'Encode the final Laundry Form',
+            'Laundry Personnel have completed the physical form. Record the returned quantity and condition exactly as written on it.',
             'warning',
         ],
         $linenOutstanding > 0 => [
-            'Completed Laundry Form pending',
-            'The borrower returns the linen and form to the Laundry Area. Laundry Personnel record RECEIVED BY, finish the laundry process, fill DATE COMPLETED, then deliver the completed form to SPMU. RECEIVED BY—not DATE COMPLETED or the SPMU upload date—controls borrower lateness.',
+            'Accomplished Laundry Form pending',
+            'The borrower returns the linen and physical Laundry Form to the Laundry Area. The Laundry Worker checks the quantity/condition, wet-signs RECEIVED BY and the Date row, then later delivers the accomplished form directly to SPMU. The recorded Laundry receipt date—not the SPMU upload date—controls lateness.',
             'warning',
         ],
         $laundryJob?->status === 'FOR_LAUNDRY' => [
@@ -62,9 +65,9 @@
             'info',
         ],
         $laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY' => [
-            'Availability reconciliation pending',
-            'This older record is waiting for automatic inventory reconciliation; no separate Action Officer step is required.',
-            'info',
+            'Return encoded',
+            'Linen return has been encoded.',
+            'success',
         ],
         $laundryJob?->status === 'LAUNDRY_COMPLETED' => [
             'Linen available',
@@ -107,6 +110,9 @@
         && ! $hasNonGoodReturnFinding
         && ! $hasLateReturnFinding
         && $relatedBillings->isEmpty();
+
+    $returnWorkflowStatus = $custody->workflowStatus();
+    $returnAccountability = $custody->activeAccountabilityIndicator();
 @endphp
 
 @include('custody.partials.return-process-styles')
@@ -154,58 +160,94 @@
                 <div class="card-header">
                     <div>
                         <p class="eyebrow">Operational documents</p>
-                        <h2>Accomplished return documents</h2>
+                        <h2>Required documents</h2>
                     </div>
                 </div>
 
                 <div class="return-document-list">
-                    <div class="return-document-row">
+                    <div class="return-document-row return-document-row-laundry">
                         <div class="return-document-copy">
                             <x-icon name="linen" size="22" />
-                            <div><strong>Laundry Form</strong>
-                            <small>{{ $hasLaundryItem ? 'Required for linen.' : 'Not applicable — no linen items.' }}</small></div>
+                            <div>
+                                <strong>Laundry Form</strong>
+                                <small>
+                                    @if(!$hasLaundryItem)
+                                        Not applicable — no linen items.
+                                    @elseif($laundryJob?->latestEvidence?->file)
+                                        Accomplished form recorded.
+                                    @else
+                                        Accomplished form pending.
+                                    @endif
+                                </small>
+                            </div>
                         </div>
+
                         @if(!$hasLaundryItem)
                             <span class="status-badge status-neutral">Locked</span>
                         @elseif($laundryJob?->latestEvidence?->file)
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}" target="_blank" rel="noopener">View uploaded form</a>
+                            <a
+                                class="button secondary small ui-pressable"
+                                href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
+                                target="_blank"
+                                rel="noopener"
+                            >View Form</a>
                         @elseif($laundryJob)
-                            <form
-                                method="post"
-                                action="{{ route('laundry.spmu.upload-form', $laundryJob) }}"
-                                enctype="multipart/form-data"
-                                class="return-laundry-form-upload"
+                            <details
+                                class="return-laundry-disclosure"
+                                @if($errors->has('evidence') || $errors->has('laundry_received_on')) open @endif
                             >
-                                @csrf
-                                <label class="visually-hidden" for="return-laundry-form-evidence">Accomplished Laundry Form</label>
-                                <input
-                                    id="return-laundry-form-evidence"
-                                    type="file"
-                                    name="evidence"
-                                    required
-                                    accept="application/pdf,image/png,image/jpeg,image/webp"
+                                <summary class="button secondary small ui-pressable">
+                                    Record Accomplished Form
+                                </summary>
+
+                                <form
+                                    method="post"
+                                    action="{{ route('laundry.spmu.upload-form', $laundryJob) }}"
+                                    enctype="multipart/form-data"
+                                    class="return-laundry-form-upload"
                                 >
-                                <label>
-                                    Actual linen return date
-                                    <input
-                                        id="laundry-actual-return-date"
-                                        type="date"
-                                        name="laundry_received_on"
-                                        value="{{ old('laundry_received_on') }}"
-                                        @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
-                                        data-laundry-return-date
-                                        data-due-date="{{ optional($custody->due_at)->toDateString() }}"
-                                        required
-                                        autocomplete="off"
-                                        aria-describedby="laundry-return-date-help laundry-return-date-status"
-                                    >
-                                    <small id="laundry-return-date-help">Use the RECEIVED BY date on the completed form. This controls borrower return timeliness.</small>
-                                    <small id="laundry-return-date-status" data-laundry-return-date-status aria-live="polite"></small>
-                                </label>
-                                <button class="button secondary small ui-pressable" type="submit">Upload Completed Form</button>
-                            </form>
+                                    @csrf
+
+                                    <label>
+                                        Signed Laundry Form
+                                        <input
+                                            id="return-laundry-form-evidence"
+                                            type="file"
+                                            name="evidence"
+                                            required
+                                            accept="application/pdf,image/png,image/jpeg,image/webp"
+                                        >
+                                    </label>
+
+                                    <label>
+                                        Laundry Received Date
+                                        <input
+                                            id="laundry-actual-return-date"
+                                            type="date"
+                                            name="laundry_received_on"
+                                            value="{{ old('laundry_received_on') }}"
+                                            @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
+                                            data-laundry-return-date
+                                            data-due-date="{{ optional($custody->due_at)->toDateString() }}"
+                                            required
+                                            autocomplete="off"
+                                            aria-describedby="laundry-return-date-help laundry-return-date-status"
+                                        >
+                                        <small id="laundry-return-date-help">Use the RECEIVED BY date on the form.</small>
+                                        <small
+                                            id="laundry-return-date-status"
+                                            data-laundry-return-date-status
+                                            aria-live="polite"
+                                        ></small>
+                                    </label>
+
+                                    <button class="button secondary small ui-pressable" type="submit">
+                                        Upload Form
+                                    </button>
+                                </form>
+                            </details>
                         @else
-                            <span class="status-badge status-warning">Pending scan</span>
+                            <span class="status-badge status-warning">Pending Form</span>
                         @endif
                     </div>
 
@@ -214,10 +256,12 @@
                             <x-icon name="shield-lock" size="22" />
                             <div><strong>Gate Pass</strong>
                             <small>
-                                @if($hasOffCampusItem)
-                                    Required for an off-campus barricade return.
-                                @else
+                                @if(!$hasOffCampusItem)
                                     Not applicable — on-campus only.
+                                @elseif($custody->gatePass?->accomplishedFile)
+                                    Accomplished copy recorded.
+                                @else
+                                    Accomplished copy pending.
                                 @endif
                             </small></div>
                         </div>
@@ -226,7 +270,7 @@
                         @elseif($custody->gatePass?->accomplishedFile)
                             <a class="button secondary small ui-pressable" href="{{ route('files.show', $custody->gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Gate Pass</a>
                         @elseif($custody->gatePass)
-                            <a class="button secondary small ui-pressable" href="{{ route('gate-passes.show', $custody->gatePass) }}">Record Accomplished Gate Pass</a>
+                            <a class="button secondary small ui-pressable" href="{{ route('gate-passes.show', $custody->gatePass) }}">Record Gate Pass</a>
                         @else
                             <span class="status-badge status-warning">Gate Pass record unavailable</span>
                         @endif
@@ -260,10 +304,12 @@
             <p class="eyebrow">Return status</p>
             <div class="return-status-title">
                 <h2>Status</h2>
-                @if($gatePassDocumentationPending)
+                @if($gatePassDocumentationPending && !$returnAccountability)
                     <span class="status-badge status-warning">Gate Pass Pending</span>
-                @elseif($custody->status !== 'CLOSED')
-                    <x-status-badge :status="$custody->status" />
+                @elseif($returnWorkflowStatus['key'] !== 'COMPLETED')
+                    <x-status-badge :status="$returnWorkflowStatus['key']" :label="$returnWorkflowStatus['label']" />
+                @else
+                    <x-status-badge status="CLOSED" label="Completed" />
                 @endif
             </div>
         </div>
@@ -273,20 +319,21 @@
                 <div class="callout warning return-next-callout">
                     <x-icon name="information" size="24" />
                     <div>
-                        <strong>Record the accomplished Gate Pass</strong>
-                        <p>
-                            All borrowed property has been returned. Upload and record the
-                            accomplished Gate Pass completed by the Guard on Duty to finish
-                            the remaining documentation.
-                        </p>
+                        <strong>Next: Record Gate Pass</strong>
+                        <p>All items are already returned. Record the accomplished Gate Pass to complete the remaining documentation.</p>
                         @if($custody->gatePass)
-                            <a class="button primary small ui-pressable top-gap" href="{{ route('gate-passes.show', $custody->gatePass) }}">Continue to Gate Pass</a>
+                            <a class="button primary small ui-pressable top-gap" href="{{ route('gate-passes.show', $custody->gatePass) }}">Open Gate Pass</a>
                         @endif
                     </div>
                 </div>
             @endif
 
             <dl class="detail-list compact-detail-list">
+                @if($returnAccountability)
+                    <dt><x-icon name="warning" size="20" />Accountability</dt>
+                    <dd><strong>{{ $returnAccountability['label'] }}</strong></dd>
+                @endif
+
                 <dt><x-icon name="calendar" size="20" />Issued</dt>
                 <dd>
                     {{ optional($custody->released_at)->format('d M Y, g:i A') ?: '—' }}
@@ -373,3 +420,73 @@
 @endif
 
 @include('custody.partials.return-process-interactions')
+
+
+@once
+<style>
+.return-flow-page .return-document-row-laundry {
+    align-items: flex-start;
+}
+
+.return-flow-page .return-laundry-disclosure {
+    width: min(100%, 390px);
+}
+
+.return-flow-page .return-laundry-disclosure > summary {
+    width: max-content;
+    max-width: 100%;
+    margin-left: auto;
+    list-style: none;
+    cursor: pointer;
+}
+
+.return-flow-page .return-laundry-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.return-flow-page .return-laundry-disclosure[open] > summary {
+    margin-bottom: 10px;
+}
+
+.return-flow-page .return-laundry-form-upload {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-subtle);
+}
+
+.return-flow-page .return-laundry-form-upload label {
+    display: grid;
+    gap: 6px;
+    color: var(--heading);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.return-flow-page .return-laundry-form-upload label small {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.return-flow-page .return-laundry-form-upload input {
+    width: 100%;
+}
+
+.return-flow-page .return-laundry-form-upload .button {
+    justify-self: start;
+}
+
+@media (max-width: 760px) {
+    .return-flow-page .return-laundry-disclosure {
+        width: 100%;
+    }
+
+    .return-flow-page .return-laundry-disclosure > summary {
+        margin-left: 0;
+    }
+}
+</style>
+@endonce

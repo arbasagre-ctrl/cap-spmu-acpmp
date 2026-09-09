@@ -432,7 +432,6 @@
     const resultCount = browser.querySelector('[data-accountability-result-count]');
     const empty = browser.querySelector('[data-accountability-empty]');
     const table = browser.querySelector('[data-accountability-table]');
-    const emptyFooter = browser.querySelector('[data-accountability-empty-footer]');
     let selectedCategory = '';
 
     /*
@@ -505,10 +504,6 @@
             table.hidden = visibleCount === 0;
         }
 
-        if (emptyFooter) {
-            emptyFooter.hidden = visibleCount > 0;
-        }
-
         if (empty) {
             empty.hidden = visibleCount > 0;
             const heading = empty.querySelector('strong');
@@ -523,7 +518,7 @@
             if (copy) {
                 copy.textContent = hasRecords
                     ? 'No record matches the current search or filters. Adjust them to see other records.'
-                    : "You're all clear! You have no overdue returns, property cases, open billings, or restrictions.";
+                    : "You're all clear. You currently have no overdue returns, property cases, open billings, or active restrictions.";
             }
         }
     };

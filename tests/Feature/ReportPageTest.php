@@ -72,6 +72,20 @@ class ReportPageTest extends TestCase
         $response->assertSee('More Filters', false);
     }
 
+    public function test_reports_page_starts_with_configuration_and_no_generated_document(): void
+    {
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.index'));
+
+        $response->assertOk();
+        $response->assertSee('Select your report options and click Generate Report to preview the report.', false);
+        $response->assertDontSee('CAMARINES SUR POLYTECHNIC COLLEGES', false);
+        $response->assertDontSee('Export / Print', false);
+        $response->assertDontSee('Web record navigation', false);
+        $response->assertDontSee('For analysis, insights, and forecasting, use the Analytics module.', false);
+    }
+
     public function test_builder_groups_the_report_types(): void
     {
         $response = $this->actingAs($this->head)
@@ -94,11 +108,11 @@ class ReportPageTest extends TestCase
         $response->assertSee(now()->startOfMonth()->format('d M Y').' – '.now()->endOfMonth()->format('d M Y'), false);
     }
 
-    public function test_reports_page_shows_the_analytics_boundary_note(): void
+    public function test_generated_reports_page_shows_the_analytics_boundary_note(): void
     {
         $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index'))
+            ->get(route('reports.index', ['generated' => 1]))
             ->assertSee('For analysis, insights, and forecasting, use the Analytics module.', false);
     }
 
@@ -148,20 +162,47 @@ class ReportPageTest extends TestCase
         $response->assertDontSee('<span>Delivery Records</span>', false);
     }
 
-    public function test_reports_links_to_the_existing_audit_trail_rather_than_repeating_it(): void
+    public function test_spmu_head_cannot_see_or_open_the_ictu_audit_trail(): void
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index'));
 
-        $response->assertSee('View related audit history', false);
+        $response->assertDontSee('View related audit history', false);
+        $response->assertDontSee(route('reports.audit'), false);
 
-        /* The link points at the dedicated module, which still renders. */
         $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.audit'))
+            ->assertForbidden();
+    }
+
+    public function test_ictu_maintainer_can_open_the_audit_trail(): void
+    {
+        $ictu = User::factory()->create([
+            'access_classification' => AccessClassification::IctuMaintainer,
+            'full_name' => 'ICTU Maintainer',
+        ]);
+
+        $this->actingAs($ictu)
+            ->withSession(['active_workspace' => 'ICTU'])
+            ->get(route('reports.audit'))
             ->assertOk()
-            ->assertSee('Audit trail', false);
+            ->assertSee('Audit Trail', false)
+            ->assertSee('System administration', false)
+            ->assertDontSee('ICTU system administration', false);
+    }
+
+    public function test_spmu_administration_page_does_not_link_to_the_ictu_audit_trail(): void
+    {
+        $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('administration.index'))
+            ->assertOk()
+            ->assertDontSee('Open audit trail', false)
+            ->assertDontSee('Full audit', false)
+            ->assertDontSee('Recent attributable actions', false)
+            ->assertDontSee(route('reports.audit'), false);
     }
 
     public function test_delivery_is_not_offered_as_a_report_action(): void
@@ -203,7 +244,7 @@ class ReportPageTest extends TestCase
 
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index', ['report' => 'borrowing', 'academic_period' => 'month']));
+            ->get(route('reports.index', ['report' => 'borrowing', 'academic_period' => 'month', 'generated' => 1]));
 
         $response->assertOk();
 
@@ -223,7 +264,7 @@ class ReportPageTest extends TestCase
 
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index', ['report' => 'borrowing', 'academic_period' => 'month']));
+            ->get(route('reports.index', ['report' => 'borrowing', 'academic_period' => 'month', 'generated' => 1]));
 
         $response->assertSee('Republic of the Philippines', false);
         $response->assertSee('CAMARINES SUR POLYTECHNIC COLLEGES', false);
@@ -240,7 +281,7 @@ class ReportPageTest extends TestCase
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index', ['report' => 'inventory', 'academic_period' => 'month']));
+            ->get(route('reports.index', ['report' => 'inventory', 'academic_period' => 'month', 'generated' => 1]));
 
         $response->assertSee('INVENTORY STATUS REPORT', false);
         $response->assertSee('As of '.now()->endOfMonth()->format('d F Y'), false);
@@ -251,7 +292,7 @@ class ReportPageTest extends TestCase
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index', ['report' => 'borrowing']));
+            ->get(route('reports.index', ['report' => 'borrowing', 'generated' => 1]));
 
         $response->assertSee('Report Options', false);
         $response->assertSee('Export / Print', false);
@@ -262,7 +303,10 @@ class ReportPageTest extends TestCase
 
         /* Page setup and content toggles, not report-engine internals. */
         $response->assertSee('Include report summary', false);
-        $response->assertSee('Repeat table headers on each page', false);
+        $response->assertSee('Repeat table headers on each PDF/printed page', false);
+        $response->assertSee('Export XLSX', false);
+        $response->assertSee('Export CSV', false);
+        $response->assertSee('Print Report', false);
         $response->assertDontSee('Max Title Height', false);
         $response->assertDontSee('Max Row Height', false);
     }
@@ -271,7 +315,7 @@ class ReportPageTest extends TestCase
     {
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('reports.index', ['report' => 'custody']));
+            ->get(route('reports.index', ['report' => 'custody', 'generated' => 1]));
 
         $response->assertOk();
         $response->assertSee('No released/custody records were found for this period.', false);
@@ -299,6 +343,7 @@ class ReportPageTest extends TestCase
                 'report' => 'borrowing',
                 'division' => 'NOT_A_DIVISION',
                 'unit' => 'Nowhere Office',
+                'generated' => 1,
             ]))
             ->assertOk()
             ->assertSee('were not recognised and were ignored', false);
@@ -317,15 +362,20 @@ class ReportPageTest extends TestCase
                 'report' => 'borrowing',
                 'academic_period' => 'month',
                 'division' => 'ACADEMIC',
+                'generated' => 1,
             ]));
 
         $response->assertOk();
+        $response->assertSee('Web record navigation', false);
         $response->assertSee('Showing 1–10 of 12 records', false);
+        $response->assertSee('<dt>Total requests</dt>', false);
+        $response->assertSee('<dd>12</dd>', false);
 
         /* Every page link carries the report, the period and the filter. */
         $response->assertSee('report=borrowing', false);
         $response->assertSee('academic_period=month', false);
         $response->assertSee('division=ACADEMIC', false);
+        $response->assertSee('generated=1', false);
     }
 
     /* ------------------------------------------------------------------ */
@@ -355,6 +405,10 @@ class ReportPageTest extends TestCase
         $response->assertSee('CAMARINES SUR POLYTECHNIC COLLEGES', false);
         $response->assertSee('Nabua, Camarines Sur', false);
         $response->assertDontSee('CSPC-F-SPMU', false);
+        $response->assertDontSee('Report builder', false);
+        $response->assertDontSee('Export / Print', false);
+        $response->assertDontSee('Web record navigation', false);
+        $response->assertDontSee('<aside', false);
 
         /* Print is not paginated: every record is on the page. */
         $this->assertSame(

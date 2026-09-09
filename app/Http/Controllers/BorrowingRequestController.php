@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\InventoryService;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
+use App\Services\TransactionAccountabilityHistoryService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -76,7 +77,7 @@ class BorrowingRequestController extends Controller
     public function index(Request $request): View
     {
         $query = BorrowingRequest::query()
-            ->with(['borrower', 'currentVersion.items', 'custody'])
+            ->with(['borrower', 'currentVersion.items', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
             ->latest();
 
         $workspace = strtoupper(
@@ -404,7 +405,8 @@ class BorrowingRequestController extends Controller
 
     public function show(
         Request $request,
-        BorrowingRequest $borrowingRequest
+        BorrowingRequest $borrowingRequest,
+        TransactionAccountabilityHistoryService $transactionHistory
     ): View {
         $canVerify = $this->canVerifyRequest($request, $borrowingRequest);
         $canDecide = $this->canDecideApproval($request, $borrowingRequest);
@@ -445,10 +447,14 @@ class BorrowingRequestController extends Controller
             'statusHistory.actor',
 
             'custody.lines.requestItem.inventoryItem',
-            'custody.returns',
+            'custody.incidents',
+            'custody.overdueCase',
+            'custody.returns.lines.custodyLine.requestItem.inventoryItem',
             'custody.laundryJob.latestEvidence.file',
             'custody.gatePass.accomplishedFile',
         ]);
+
+        $accountabilityHistory = $transactionHistory->forCustody($borrowingRequest->custody);
 
         return view(
             'requests.show',
@@ -457,7 +463,8 @@ class BorrowingRequestController extends Controller
                 'canDecide',
                 'canVerify',
                 'reviewMode',
-                'approvalStage'
+                'approvalStage',
+                'accountabilityHistory'
             )
         );
     }

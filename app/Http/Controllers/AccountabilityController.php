@@ -23,6 +23,7 @@ use App\Services\DocumentService;
 use App\Services\NotificationService;
 use App\Services\ProtectedFileService;
 use App\Services\PolicyService;
+use App\Services\SignatureService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -34,7 +35,7 @@ class AccountabilityController extends Controller
 {
     public function index(Request $request, PolicyService $policy): View
     {
-        $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines'])->latest('reported_at');
+        $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines', 'documents'])->latest('reported_at');
         $billingQuery = BillingStatement::with(['borrower', 'lines.penalty', 'payments.verifiedBy', 'documents'])->latest('issued_at');
         $restrictionQuery = BorrowerRestriction::latest('effective_from');
         $overdueQuery = OverdueCase::with([
@@ -48,7 +49,7 @@ class AccountabilityController extends Controller
         ])->latest('overdue_started_at');
         $violationQuery = BorrowerViolation::with(['borrower', 'custody.request', 'academicPeriod', 'sanction'])
             ->latest('detected_at');
-        $sanctionQuery = Sanction::with(['borrower', 'academicPeriod', 'violation', 'confirmedBy'])
+        $sanctionQuery = Sanction::with(['borrower', 'academicPeriod', 'violation', 'confirmedBy', 'documents'])
             ->latest('confirmed_at');
 
         if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
@@ -242,7 +243,9 @@ class AccountabilityController extends Controller
         Request $request,
         OverdueCase $overdue,
         DocumentService $documents,
-        AuditService $audit
+        AuditService $audit,
+        NotificationService $notifications,
+        SignatureService $signatures
     ): RedirectResponse {
         $this->authorizeSpmu($request);
 
@@ -307,7 +310,7 @@ class AccountabilityController extends Controller
             ]);
         }
 
-        $billing = DB::transaction(function () use ($overdue, $request, $data, $documents, $audit): BillingStatement {
+        $billing = DB::transaction(function () use ($overdue, $request, $data, $documents, $audit, $notifications, $signatures): BillingStatement {
             $penalty = Penalty::query()->create([
                 'borrower_user_id' => $overdue->borrower_user_id,
                 'custody_transaction_id' => $overdue->custody_transaction_id,
@@ -352,7 +355,20 @@ class AccountabilityController extends Controller
                 ]);
 
             $overdue->update(['status' => LateReturnService::STATUS_AWAITING_PAYMENT]);
-            $documents->billingStatement($billing);
+
+            $billingSignature = $signatures->snapshot(
+                $request->user(),
+                'LATE_RETURN_BILLING_STATEMENT',
+                'SPMU Head',
+                $billing,
+                [
+                    'custody_no' => $overdue->custody?->custody_no,
+                    'late_days' => (int) $overdue->late_days,
+                    'amount' => (float) $penalty->amount,
+                ]
+            );
+
+            $billingDocument = $documents->billingStatement($billing, $billingSignature);
 
             $audit->record(
                 'LATE_RETURN_FEE_BILLED',
@@ -362,22 +378,41 @@ class AccountabilityController extends Controller
                     'amount' => $penalty->amount,
                     'rate' => $penalty->rate_snapshot,
                     'sanction_created' => false,
+                    'head_signature_snapshot_id' => $billingSignature->id,
+                    'generated_document_id' => $billingDocument->id,
                 ]
             );
+
+            $billing->loadMissing('borrower');
+            if ($billing->borrower) {
+                $notifications->send(
+                    'LATE_RETURN_BILLING_STATEMENT_ISSUED',
+                    collect([$billing->borrower]),
+                    "Billing Statement {$billing->billing_no} has been issued for the late return under {$overdue->custody?->custody_no}. Review/download it in My Obligations and present it to the CSPC Cashier for payment.",
+                    $billing,
+                    ['SYSTEM', 'EMAIL']
+                );
+            }
 
             return $billing;
         }, 3);
 
-        return back()->with('status', "Billing Statement {$billing->billing_no} generated. Print and wet-sign it before the borrower proceeds to the CSPC Cashier.");
+        return back()->with('status', "Billing Statement {$billing->billing_no} issued by the SPMU Head/Admin. The borrower was notified and can present it to the CSPC Cashier.");
     }
 
     public function billIncident(
         Request $request,
         Incident $incident,
         DocumentService $documents,
-        AuditService $audit
+        AuditService $audit,
+        NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeSpmu($request);
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403,
+            'Billing Statement issuance is an SPMU Head/Admin responsibility.'
+        );
 
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
@@ -437,7 +472,7 @@ class AccountabilityController extends Controller
                 ]
             );
 
-            $documents->billingStatement($billing);
+            $billingDocument = $documents->billingStatement($billing);
             $audit->record(
                 'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED',
                 $billing,
@@ -445,13 +480,25 @@ class AccountabilityController extends Controller
                 after: [
                     'amount' => $data['amount'],
                     'source' => $incident->incident_no,
+                    'generated_document_id' => $billingDocument->id,
                 ]
             );
 
             return $billing;
         }, 3);
 
-        return back()->with('status', "Billing Statement {$billing->billing_no} generated. Print and wet-sign it before cashier payment.");
+        $incident->loadMissing('borrower');
+        if ($incident->borrower) {
+            $notifications->send(
+                'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED',
+                collect([$incident->borrower]),
+                "Billing Statement {$billing->billing_no} has been issued for accountability case {$incident->incident_no}. Review/download it in My Obligations and present it to the CSPC Cashier for payment.",
+                $billing,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
+
+        return back()->with('status', "Billing Statement {$billing->billing_no} issued by the SPMU Head/Admin. The borrower was notified and can present it to the CSPC Cashier.");
     }
 
     /**
@@ -738,7 +785,9 @@ class AccountabilityController extends Controller
         Incident $incident,
         AuditService $audit,
         NotificationService $notifications,
-        PolicyService $policy
+        PolicyService $policy,
+        DocumentService $documents,
+        SignatureService $signatures
     ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
@@ -754,6 +803,9 @@ class AccountabilityController extends Controller
 
         $countAsOffense = $request->boolean('count_as_offense');
         $recordedSanction = null;
+        $headSignature = null;
+        $issuedComplianceDocument = null;
+        $issuedSanctionDocument = null;
 
         if (DB::table('billing_lines')->where('incident_id', $incident->id)->exists()) {
             return back()->withErrors([
@@ -771,7 +823,7 @@ class AccountabilityController extends Controller
 
         $isInterimDecision = in_array($data['resolution_outcome'], ['COMPLIANCE_REQUIRED', 'BILLING_REQUIRED'], true);
 
-        DB::transaction(function () use ($incident, $request, $data, $outcomeLabel, $isInterimDecision, $audit, $notifications, $policy, $countAsOffense, &$recordedSanction): void {
+        DB::transaction(function () use ($incident, $request, $data, $outcomeLabel, $isInterimDecision, $audit, $notifications, $policy, $documents, $signatures, $countAsOffense, &$recordedSanction, &$headSignature, &$issuedComplianceDocument, &$issuedSanctionDocument): void {
             $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
 
             if (in_array($incident->status, ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'], true)) {
@@ -780,6 +832,24 @@ class AccountabilityController extends Controller
 
             $previousStatus = $incident->status;
             $existingRemarks = trim((string) $incident->remarks);
+
+            $headSignature = $signatures->snapshot(
+                $request->user(),
+                'ACCOUNTABILITY_HEAD_DECISION',
+                'SPMU Head',
+                $incident,
+                [
+                    'incident_no' => $incident->incident_no,
+                    'resolution_outcome' => $data['resolution_outcome'],
+                ]
+            );
+
+            $incident->update([
+                'head_decision_signature_snapshot_id' => $headSignature->id,
+                'head_decided_by_user_id' => $request->user()->id,
+                'head_decided_at' => now(),
+            ]);
+
             $decisionNote = 'SPMU Head decision: '.$outcomeLabel.'. '.$data['resolution_remarks'];
 
             if ($countAsOffense) {
@@ -787,6 +857,14 @@ class AccountabilityController extends Controller
                     $incident,
                     $request->user(),
                     $data['resolution_remarks']
+                );
+            }
+
+            if ($recordedSanction) {
+                $recordedSanction->update(['signature_snapshot_id' => $headSignature->id]);
+                $issuedSanctionDocument = $documents->administrativeSanctionNotice(
+                    $recordedSanction->fresh(),
+                    $headSignature
                 );
             }
 
@@ -800,6 +878,15 @@ class AccountabilityController extends Controller
                     'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$decisionNote),
                 ]);
 
+                if ($nextStatus === 'COMPLIANCE_REQUIRED') {
+                    $issuedComplianceDocument = $documents->accountabilityComplianceNotice(
+                        $incident->fresh(),
+                        $request->user(),
+                        $data['resolution_remarks'],
+                        $headSignature
+                    );
+                }
+
                 $audit->record(
                     'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
                     $incident,
@@ -810,14 +897,17 @@ class AccountabilityController extends Controller
                         'resolution_outcome' => $data['resolution_outcome'],
                         'administrative_offense_confirmed' => (bool) $recordedSanction,
                         'sanction_id' => $recordedSanction?->id,
+                        'head_signature_snapshot_id' => $headSignature?->id,
+                        'compliance_notice_document_id' => $issuedComplianceDocument?->id,
+                        'sanction_notice_document_id' => $issuedSanctionDocument?->id,
                     ]
                 );
 
                 $incident->loadMissing('borrower');
                 if ($incident->borrower) {
                     $borrowerMessage = $nextStatus === 'FOR_BILLING'
-                        ? "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires billing/payment processing. Your linked borrowing restriction remains active until the obligation is settled or formally waived."
-                        : "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires repair, replacement, or other compliance. Coordinate with SPMU. Your linked borrowing restriction remains active until compliance is verified.";
+                        ? "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires billing/payment processing. The Billing Statement will appear in My Obligations after the Action Officer records the approved assessment. Your linked borrowing restriction remains active until settlement or formal waiver."
+                        : "Property accountability case {$incident->incident_no} requires repair, replacement, or other compliance. Your Accountability / Compliance Notice is available in My Obligations. The linked borrowing restriction remains active until SPMU verifies completion.";
 
                     $notifications->send(
                         'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
@@ -859,6 +949,8 @@ class AccountabilityController extends Controller
                     'resolution_outcome' => $data['resolution_outcome'],
                     'administrative_offense_confirmed' => (bool) $recordedSanction,
                     'sanction_id' => $recordedSanction?->id,
+                    'head_signature_snapshot_id' => $headSignature?->id,
+                    'sanction_notice_document_id' => $issuedSanctionDocument?->id,
                 ]
             );
 
@@ -890,7 +982,9 @@ class AccountabilityController extends Controller
     public function reviewViolation(
         Request $request,
         BorrowerViolation $violation,
-        PolicyService $policy
+        PolicyService $policy,
+        DocumentService $documents,
+        SignatureService $signatures
     ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
@@ -918,6 +1012,10 @@ class AccountabilityController extends Controller
 
         if ($data['decision'] === 'DISMISSED') {
             return back()->with('status', 'Violation dismissed. No sanction was recorded.');
+        }
+
+        if ($sanction) {
+            $documents->administrativeSanctionNotice($sanction);
         }
 
         return back()->with(

@@ -1,6 +1,3 @@
-@extends('layouts.app', ['title' => $dataset->label])
-
-@section('content')
 @php
     /*
     | The printable copy.
@@ -17,7 +14,12 @@
         default => 'A4',
     };
 @endphp
-
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ $dataset->label }}</title>
 @include('reports.document.styles')
 
 <style>
@@ -26,27 +28,26 @@
     margin: {{ $margins['top'] }}mm {{ $margins['right'] }}mm {{ $margins['bottom'] }}mm {{ $margins['left'] }}mm;
 }
 
-/* On paper the application does not exist - only the document does. */
+html, body { margin: 0; padding: 0; background: #fff; }
+.report-print-page { padding: 24px; }
+
 @media print {
-    .app-sidebar, .app-topbar, .sidebar-brand-row, .report-print-actions { display: none !important; }
-    .app-shell, .app-main, .app-content { display: block !important; margin: 0 !important; padding: 0 !important; }
-    body { background: #fff !important; }
-    .report-print-page .doc-sheet { border: 0 !important; }
+    .report-print-page { padding: 0; }
+    .doc-sheet { border: 0 !important; }
+    @if(! ($options['repeat_headers'] ?? true))
+    .doc-table thead { display: table-row-group; }
+    @endif
 }
-
-.report-print-actions { display: flex; justify-content: flex-end; gap: 10px; max-width: 1180px; margin: 0 auto 12px; }
-.report-print-page { padding: 0 0 24px; }
-.report-print-page .doc-sheet { border: 1px solid var(--border); }
 </style>
-
-<div class="report-print-actions">
-    <button class="button primary ui-pressable" type="button" onclick="window.print()">
-        <x-icon name="printer" size="16" />
-        Print
-    </button>
-</div>
+</head>
+<body>
 
 <div class="report-print-page">
     @include('reports.document.sheet')
 </div>
-@endsection
+
+<script>
+window.addEventListener('load', () => window.print());
+</script>
+</body>
+</html>

@@ -53,11 +53,12 @@ html:not([data-theme="dark"]) .app-main:has(.accountability-option-b) {
 .accountability-option-b .kpi-accent-restriction { --kpi-accent: #8445ff; --kpi-icon-bg: #f0e8ff; background: #fcfaff; border-color: #e1d1ff; border-top-color: #8445ff; }
 .accountability-option-b .kpi-accent-restriction .kpi-icon { color: #792cff; }
 .accountability-option-b .accountability-kpi-card.is-active { background: #e8f5ff; border-color: #99ceff; border-top-color: #087cff; }
-.accountability-option-b .accountability-tabs { flex-shrink: 0; gap: 3px; margin: 0 -5px 9px; padding: 0; border: 0; border-radius: 0; background: transparent; }
-.accountability-option-b .accountability-tab { flex: 1 0 auto; justify-content: center; gap: 8px; min-height: 35px; padding: 0 10px; border-radius: 5px; font-size: 11px; }
+.accountability-option-b .accountability-tabs { flex-shrink: 0; gap: 4px; margin: 0 -5px 11px; padding: 5px; border: 1px solid #d9e5f0; border-radius: 9px; background: #eef4f8; }
+.accountability-option-b .accountability-tab { flex: 1 0 auto; justify-content: center; gap: 8px; min-height: 36px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px; font-size: 11px; }
 .accountability-option-b .accountability-tab .ui-icon { color: #356291; }
-.accountability-option-b .accountability-tab.is-active { background: linear-gradient(120deg, #0087ff, #0674f9); border-color: #087cff; box-shadow: 0 3px 8px #087cff22; color: white; }
-.accountability-option-b .accountability-tab.is-active .ui-icon { color: white; }
+.accountability-option-b .accountability-tab:hover:not(.is-active) { border-color: #c7d7e6; background: #fff; }
+.accountability-option-b .accountability-tab.is-active { background: #e5f3ff; border-color: #a5cdea; box-shadow: inset 0 -2px 0 #087cff,0 1px 2px rgba(8,124,255,.08); color: #075d9e; }
+.accountability-option-b .accountability-tab.is-active .ui-icon { color: #087cff; }
 .accountability-option-b > .content-area { margin-top: 0; margin-bottom: 16px; }
 .accountability-option-b .accountability-cases-card { border: 1px solid var(--border); border-radius: 9px; padding: 0 8px 8px; background: #fff; box-shadow: none; overflow: visible; }
 .accountability-option-b .accountability-cases-head { min-height: 64px; gap: 10px; padding: 14px 0 16px; border-bottom: 0; }

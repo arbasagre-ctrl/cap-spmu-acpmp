@@ -308,6 +308,7 @@
                         : null;
 
                     $workflowStatus = $custody->workflowStatus();
+                    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
                     $operationalLabel = $workflowStatus['label'];
                     $operationalStatusKey = $workflowStatus['key'];
                     $isCompleted = $workflowStatus['group'] === 'completed';
@@ -373,6 +374,9 @@
                             :status="$operationalStatusKey"
                             :label="$operationalLabel"
                         />
+                        @if($accountabilityIndicator)
+                            <small class="operational-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
+                        @endif
                         <strong>View<x-icon name="chevron-right" size="16" /></strong>
                     </span>
                 </a>
@@ -398,10 +402,11 @@
     @if(in_array($mode, ['release','return'], true))
     <style>
     .operational-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,230px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
-    .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+    .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--text-muted)}
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
     .early-return-fact small,.early-return-fact strong{color:#0b6f8c}
     .operational-record-action{align-content:center}
+    .operational-accountability-note{display:block;color:var(--warning);font-size:10.5px;font-weight:700;line-height:1.25}
     @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
     </style>
     <script>

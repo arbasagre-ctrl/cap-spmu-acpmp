@@ -1,12 +1,20 @@
 @php
     /*
-     * Linen condition is verified from the accomplished Laundry Form signed by
-     * Laundry Personnel; non-linen stays a direct Action Officer inspection.
-     * The same rule is enforced server-side in CustodyService::receiveReturn.
+     * Mixed return rule:
+     * - Non-linen is physically received and inspected directly by the Action Officer.
+     * - Linen is encoded only from the accomplished Laundry Form.
+     * - A pending Laundry Form must NEVER block a valid non-linen return inspection.
+     * - Any item type not physically returned yet stays at zero and remains outstanding.
      */
     $linenReturnLines = $eligibleReturnLines->filter(
         fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
     );
+
+    $nonLinenReturnLines = $eligibleReturnLines->reject(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+
+    $orderedReturnLines = $nonLinenReturnLines->concat($linenReturnLines);
 
     $returnLaundryJob = $laundryJob ?? $custody->laundryJob;
 
@@ -16,16 +24,12 @@
     );
 
     $laundryFormMissing = $linenReturnLines->isNotEmpty() && ! $laundryFormVerified;
+    $mixedReturn = $nonLinenReturnLines->isNotEmpty() && $linenReturnLines->isNotEmpty();
+    $nonLinenOnly = $nonLinenReturnLines->isNotEmpty() && $linenReturnLines->isEmpty();
+    $linenOnly = $linenReturnLines->isNotEmpty() && $nonLinenReturnLines->isEmpty();
 
-    /*
-     * The borrower's physical return date for linen is the date Laundry
-     * Personnel received it. When that was captured digitally it is shown
-     * read-only; when it was not, the Action Officer copies it from the
-     * RECEIVED BY portion of the accomplished form. It is never defaulted to
-     * today, and the SPMU verification date is never used.
-     */
-    $laundryReceivedAt = $returnLaundryJob?->worker_received_at;
-    $needsLaundryReceivedDate = $linenReturnLines->isNotEmpty() && $laundryReceivedAt === null;
+    $shownNonLinenHeading = false;
+    $shownLinenHeading = false;
 @endphp
 
 @if($eligibleReturnLines->isNotEmpty())
@@ -36,61 +40,24 @@
         class="card form-grid return-inspection-card"
         id="full-return-accounting-form"
         @if($laundryFormMissing) data-laundry-form-missing="1" @endif
+        @if($mixedReturn) data-mixed-return="1" @endif
+        @if($nonLinenOnly) data-non-linen-only="1" @endif
+        @if($linenOnly) data-linen-only="1" @endif
     >
         @csrf
 
         <div class="card-header return-inspection-header">
             <div>
                 <p class="eyebrow">Physical return inspection</p>
-                <h2>Account returned quantities</h2>
+                <h2>Record returned quantities</h2>
             </div>
 
             <span class="status-badge status-info return-outstanding-badge">
-                {{ $eligibleReturnLines->count() }} {{ $eligibleReturnLines->count() === 1 ? 'item type' : 'item types' }} outstanding
+                {{ $eligibleReturnLines->count() }}
+                {{ $eligibleReturnLines->count() === 1 ? 'item type' : 'item types' }}
+                outstanding
             </span>
         </div>
-
-        @if($linenReturnLines->isNotEmpty())
-            @if($laundryFormMissing)
-                <div class="callout warning return-linen-note">
-                    <x-icon name="warning" size="22" />
-                    <div>
-                        <strong>Linen pending</strong>
-                        <p>
-                            Upload the Laundry Form first before encoding linen.
-                        </p>
-                    </div>
-                </div>
-            @else
-                <div class="callout info return-linen-note">
-                    <x-icon name="information" size="22" />
-                    <div><strong>Linen ready for encoding</strong>
-                    <p>Use the Laundry Form for linen.</p></div>
-                </div>
-            @endif
-
-            @if($needsLaundryReceivedDate)
-                <label class="return-laundry-received">
-                    Laundry Received Date
-                    <input
-                        type="date"
-                        name="laundry_received_date"
-                        max="{{ now()->toDateString() }}"
-                        @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
-                        required
-                    >
-                    <small>Confirm the date shown in the Laundry Form's RECEIVED BY section. This is the borrower's return date, not today and not the date the form reached SPMU.</small>
-                </label>
-            @else
-                <dl class="summary-grid compact return-laundry-received-known">
-                    <div>
-                        <dt>Laundry Received Date</dt>
-                        <dd>{{ $laundryReceivedAt->format('d M Y') }}</dd>
-                    </div>
-                </dl>
-            @endif
-        @endif
-
         <div class="table-wrap return-inspection-scroll">
             <table class="return-inspection-table">
                 <colgroup>
@@ -111,7 +78,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach($eligibleReturnLines as $line)
+                    @foreach($orderedReturnLines as $line)
                         @php
                             $isLinenLine = (bool) $line->requestItem?->inventoryItem?->laundry_required;
                             $linenLinePending = $isLinenLine && $laundryFormMissing;
@@ -122,10 +89,7 @@
                                     - (float) $line->returned_quantity
                             );
 
-                            $oldBreakdown = old(
-                                'accounting.'.$line->id,
-                                []
-                            );
+                            $oldBreakdown = old('accounting.'.$line->id, []);
 
                             $oldNonFine = collect([
                                 'DAMAGED',
@@ -134,33 +98,70 @@
                                 'LOST',
                                 'STOLEN',
                             ])->sum(
-                                fn ($code) =>
-                                    (float) ($oldBreakdown[$code] ?? 0)
+                                fn ($code) => (float) ($oldBreakdown[$code] ?? 0)
                             );
 
-                            $oldStolen =
-                                (float) ($oldBreakdown['STOLEN'] ?? 0);
+                            $oldStolen = (float) ($oldBreakdown['STOLEN'] ?? 0);
                         @endphp
 
+                        @if(!$isLinenLine && !$shownNonLinenHeading)
+                            @php($shownNonLinenHeading = true)
+                            <tr class="return-inspection-section-row return-inspection-section-row--non-linen">
+                                <td colspan="8">
+                                    <div class="return-inspection-section-heading">
+                                        <div>
+                                            <strong>Non-linen return inspection</strong>
+                                            <small>
+                                                Record only items physically returned. Items left at 0 remain outstanding.
+                                            </small>
+                                        </div>
+                                        <span class="status-badge status-info">AO inspection</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endif
+
+                        @if($isLinenLine && !$shownLinenHeading)
+                            @php($shownLinenHeading = true)
+                            <tr class="return-inspection-section-row return-inspection-section-row--linen">
+                                <td colspan="8">
+                                    <div class="return-inspection-section-heading">
+                                        <div>
+                                            <strong>Linen return</strong>
+                                            <small>
+                                                @if($laundryFormMissing)
+                                                    Pending accomplished Laundry Form. Linen remains outstanding.
+                                                @else
+                                                    Use the accomplished Laundry Form. RECEIVED BY determines linen timeliness.
+                                                @endif
+                                            </small>
+                                        </div>
+                                        <span class="status-badge {{ $laundryFormMissing ? 'status-warning' : 'status-info' }}">
+                                            {{ $laundryFormMissing ? 'Form pending' : 'Form ready' }}
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endif
+
                         <tr
-                            class="return-accounting-row"
+                            class="return-accounting-row {{ $linenLinePending ? 'is-locked' : '' }}"
                             data-outstanding="{{ $outstanding }}"
+                            data-return-kind="{{ $isLinenLine ? 'linen' : 'non-linen' }}"
                             @if($linenLinePending) data-linen-pending="1" @endif
                         >
                             <td class="return-item-cell">
-                                <strong>
-                                    {{ $line->requestItem->description_snapshot }}
-                                </strong>
+                                <strong>{{ $line->requestItem->description_snapshot }}</strong>
                                 <small>
-                                    {{ $isLinenLine
-                                        ? 'Linen'
-                                        : 'Non-linen' }}
+                                    {{ $isLinenLine ? 'Linen' : 'Non-linen' }}
                                     · {{ $line->requestItem->unit_snapshot }}
                                 </small>
+                                <small>Outstanding: {{ $outstanding + 0 }}</small>
+
                                 @if($linenLinePending)
-                                    
-                                @else
-                                    <small>Outstanding: {{ $outstanding + 0 }}</small>
+                                    <small class="return-linen-locked-copy">
+                                        Waiting for accomplished Laundry Form
+                                    </small>
                                 @endif
                             </td>
 
@@ -197,7 +198,7 @@
                                         0 / {{ $outstanding + 0 }}
                                     </strong>
                                     <small class="return-accounted-state">
-                                        0% accounted
+                                        Not returned in this inspection
                                     </small>
                                 @endif
                             </td>
@@ -219,9 +220,8 @@
                                             accept="application/pdf,image/png,image/jpeg,image/webp"
                                         >
                                         <small>
-                                            Required only when Damaged,
-                                            Destroyed, Missing, Lost, or
-                                            Stolen is greater than zero.
+                                            Required only when Damaged, Destroyed, Missing,
+                                            Lost, or Stolen is greater than zero.
                                         </small>
                                     </label>
 
@@ -236,8 +236,7 @@
                                             value="{{ old('police_blotter_references.'.$line->id) }}"
                                         >
                                         <small>
-                                            Required only when Stolen is
-                                            greater than zero.
+                                            Required only when Stolen is greater than zero.
                                         </small>
                                     </label>
                                 </div>
@@ -248,57 +247,67 @@
             </table>
         </div>
 
-        <div class="return-action-area">
-            <div
-                class="callout warning return-accounting-message"
-                id="return-accounting-message"
-                role="status"
-                @if($eligibleReturnLines->every(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required) && $laundryFormMissing) hidden @endif
-            >
-                <x-icon name="warning" size="21" data-return-accounting-warning />
-                <x-icon name="success" size="21" data-return-accounting-success hidden />
-                <span data-return-accounting-copy>
-                    Accounted quantities must match the outstanding total.
-                </span>
-            </div>
-
-            <div class="return-action-footer">
-                <label>
-                    Inspection Remarks
-                    <span class="return-remarks-input">
-                        <textarea
-                            name="remarks"
-                            rows="5"
-                            maxlength="2000"
-                            aria-describedby="return-remarks-counter"
-                            placeholder="Optional inspection note (e.g., 2 table cloths stained, minor marks observed)"
-                        >{{ old('remarks') }}</textarea>
-                        <span class="return-remarks-counter" id="return-remarks-counter"><span data-return-remarks-count>{{ mb_strlen((string) old('remarks', '')) }}</span> / 2000</span>
-                    </span>
-                </label>
-
-                <button
-                    class="button primary ui-pressable link-button"
-                    id="record-return-button"
-                    type="submit"
-                    disabled
+        @if(!($linenOnly && $laundryFormMissing))
+            <div class="return-action-area" id="return-action-area">
+                <div
+                    class="callout warning return-accounting-message"
+                    id="return-accounting-message"
+                    role="status"
+                    hidden
                 >
-                    Record Return Inspection
-                </button>
+                    <x-icon name="warning" size="21" data-return-accounting-warning />
+                    <x-icon name="success" size="21" data-return-accounting-success hidden />
+                    <span data-return-accounting-copy>
+                        Enter returned quantities.
+                    </span>
+                </div>
+
+                <div class="return-action-footer">
+                    <label>
+                        Inspection Remarks
+                        <span class="return-remarks-input">
+                            <textarea
+                                name="remarks"
+                                rows="4"
+                                maxlength="2000"
+                                aria-describedby="return-remarks-counter"
+                                placeholder="Optional inspection note"
+                            >{{ old('remarks') }}</textarea>
+                            <span class="return-remarks-counter" id="return-remarks-counter">
+                                <span data-return-remarks-count>{{ mb_strlen((string) old('remarks', '')) }}</span> / 2000
+                            </span>
+                        </span>
+                    </label>
+
+                    <button
+                        class="button primary ui-pressable link-button"
+                        id="record-return-button"
+                        type="submit"
+                        disabled
+                    >
+                        @if($linenOnly)
+                            Record Linen Return Findings
+                        @elseif($mixedReturn && $laundryFormMissing)
+                            Record Non-Linen Return Inspection
+                        @else
+                            Record Return Inspection
+                        @endif
+                    </button>
+                </div>
             </div>
-        </div>
+        @else
+            <p class="helper return-linen-waiting-note">
+                No AO inspection action is required yet. Record the accomplished Laundry Form first.
+            </p>
+        @endif
     </form>
 @endif
 
 @if($eligibleReturnLines->isEmpty())
     <article class="card return-empty-state">
         <div class="empty-state">
-            <strong>
-                No return item requires encoding.
-            </strong>
-            <span>
-                Review the Return Status panel for the next action.
-            </span>
+            <strong>No return item requires encoding.</strong>
+            <span>Review the Return Status panel for the next action.</span>
         </div>
     </article>
 @endif

@@ -376,11 +376,10 @@
 .analytics-tab:hover { color: var(--interactive); background: var(--surface-hover); }
 
 .analytics-tab.is-active {
-    color: #fff;
-    background: var(--primary-action);
+    color: var(--heading);
+    background: var(--info-bg);
+    box-shadow: inset 0 -2px 0 var(--primary-action);
 }
-
-html[data-theme="dark"] .analytics-tab.is-active { color: #fff; }
 
 /* ---------------------------------------------------------------- */
 /* Headline figures                                                  */

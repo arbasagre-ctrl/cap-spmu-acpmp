@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\AccessClassification;
 use App\Enums\UserRole;
+use App\Models\BillingStatement;
 use App\Models\BorrowerRestriction;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
@@ -16,6 +17,7 @@ use App\Models\LaundryJobLine;
 use App\Models\LaundryRecord;
 use App\Models\NotificationEvent;
 use App\Models\OverdueCase;
+use App\Models\Penalty;
 use App\Models\ReturnLine;
 use App\Models\ReturnTransaction;
 use App\Models\SystemSetting;
@@ -2076,6 +2078,27 @@ class CustodyService
             return $custody->status;
         }
 
+        /*
+         * Property accountability must surface as soon as an adverse finding
+         * is recorded for ANY completed item line. A mixed custody must not
+         * hide an already-open damage/loss/etc. case behind RETURN_PROCESSING
+         * while another item (for example linen awaiting its accomplished
+         * Laundry Form) is still outstanding.
+         *
+         * This does not create accountability by itself. Incidents are created
+         * only by an actual recorded adverse finding (DAMAGED, DESTROYED,
+         * MISSING, LOST, or STOLEN). Fine / Good quantities never open a
+         * property case.
+         */
+        $incidentIds = Incident::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->pluck('id');
+
+        $hasOpenIncident = Incident::query()
+            ->whereIn('id', $incidentIds)
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->exists();
+
         $allReturned = $custody->lines->every(
             fn ($line) =>
                 (float) $line->returned_quantity
@@ -2088,6 +2111,9 @@ class CustodyService
 
         if (! $allReturned) {
             $nextStatus = match (true) {
+                // Keep the remaining return branches open, but expose the
+                // accountability case immediately to AO/Admin/borrower views.
+                $hasOpenIncident => 'INCIDENT_OPEN',
                 $custody->status === 'OVERDUE' => 'OVERDUE',
                 $hasAnyReturn => 'RETURN_PROCESSING',
                 default => $custody->status,
@@ -2103,10 +2129,68 @@ class CustodyService
             return $nextStatus;
         }
 
-        $hasOpenIncident = Incident::query()
+        $penaltyIds = Penalty::query()
             ->where('custody_transaction_id', $custody->id)
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->exists();
+            ->pluck('id');
+
+        $billingIds = collect();
+        if ($incidentIds->isNotEmpty() || $penaltyIds->isNotEmpty()) {
+            $billingIds = DB::table('billing_lines')
+                ->where(function ($query) use ($incidentIds, $penaltyIds): void {
+                    if ($incidentIds->isNotEmpty()) {
+                        $query->whereIn('incident_id', $incidentIds);
+                    }
+
+                    if ($penaltyIds->isNotEmpty()) {
+                        $method = $incidentIds->isNotEmpty() ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('penalty_id', $penaltyIds);
+                    }
+                })
+                ->distinct()
+                ->pluck('billing_statement_id')
+                ->filter();
+        }
+
+        /*
+         * A property/late-return case must not disappear from the transaction
+         * just because its source incident/case was moved forward. Keep the
+         * custody open while a linked Billing Statement or linked restriction
+         * is still unresolved. Sanction-only restrictions are intentionally not
+         * included here because they are account-level consequences, not a
+         * remaining custody settlement step.
+         */
+        $hasOpenBilling = $billingIds->isNotEmpty()
+            && BillingStatement::query()
+                ->whereIn('id', $billingIds)
+                ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
+                ->exists();
+
+        $hasOpenLinkedRestriction = false;
+        if ($incidentIds->isNotEmpty() || $penaltyIds->isNotEmpty() || $billingIds->isNotEmpty()) {
+            $hasOpenLinkedRestriction = BorrowerRestriction::query()
+                ->where('borrower_user_id', $custody->borrower_user_id)
+                ->where('status', 'ACTIVE')
+                ->where(function ($query) use ($incidentIds, $penaltyIds, $billingIds): void {
+                    $hasClause = false;
+
+                    if ($incidentIds->isNotEmpty()) {
+                        $query->whereIn('incident_id', $incidentIds);
+                        $hasClause = true;
+                    }
+
+                    if ($penaltyIds->isNotEmpty()) {
+                        $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('penalty_id', $penaltyIds);
+                        $hasClause = true;
+                    }
+
+                    if ($billingIds->isNotEmpty()) {
+                        $method = $hasClause ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('billing_statement_id', $billingIds);
+                    }
+                })
+                ->exists();
+        }
 
         $hasOpenLegacyLaundry = LaundryRecord::query()
             ->whereHas(
@@ -2137,6 +2221,8 @@ class CustodyService
             ->exists();
 
         $hasOpenObligation = $hasOpenIncident
+            || $hasOpenBilling
+            || $hasOpenLinkedRestriction
             || $hasOpenLegacyLaundry
             || $hasOpenCurrentLaundry
             || $hasOpenOverdue

@@ -4,209 +4,358 @@
     | Borrower - My Obligations
     |--------------------------------------------------------------------------
     |
-    | Overdue returns, property cases, billings and restrictions are four
-    | different models. They are normalised into one row shape here so the
-    | borrower reads a single register instead of four stacks of cards, while
-    | every row keeps its own record's guidance behind View.
+    | Borrower-facing presentation groups related technical records into one
+    | obligation. Example:
     |
-    | Filtering, sorting and the result count are driven by public/js/app.js
-    | through the data-accountability-* hooks, so the data attributes below
-    | must keep their existing names and raw status values.
+    | Property Incident + Billing Statement + Borrowing Restriction
+    | = ONE borrower obligation.
+    |
+    | The underlying records remain separate in the database and continue to
+    | be available to SPMU/Admin for audit, enforcement, billing, and reports.
     |
     */
-    $obligationRows = [];
 
-    /* ---------------------------------------------------------- Overdue --- */
+    $obligationRows = [];
+    $claimedBillingIds = collect();
+    $claimedRestrictionIds = collect();
+
+    $activeDocument = static function ($documents, string $type) {
+        return $documents
+            ?->where('document_type', $type)
+            ->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'])
+            ->sortByDesc('generated_at')
+            ->first();
+    };
+
+    $billingDocument = static function ($billing) {
+        return $billing?->documents
+            ?->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'])
+            ->sortByDesc('generated_at')
+            ->first();
+    };
+
+    /*
+    |--------------------------------------------------------------------------
+    | Property accountability
+    |--------------------------------------------------------------------------
+    */
+    foreach ($openIncidents as $incident) {
+        $custody = $incident->custody;
+        $recordDate = $incident->reported_at ?: $incident->created_at;
+        $incidentType = (string) str($incident->incident_type)->replace('_', ' ')->title();
+        $itemName = $custody?->lines?->first()?->requestItem?->description_snapshot
+            ?: $incidentType.' property';
+
+        $linkedBilling = $openBillings->first(
+            fn ($billing) => $billing->lines->contains(
+                fn ($line) => (int) $line->incident_id === (int) $incident->id
+            )
+        );
+
+        if ($linkedBilling) {
+            $claimedBillingIds->push((int) $linkedBilling->id);
+        }
+
+        $linkedRestriction = $activeRestrictions->first(function ($restriction) use ($incident, $linkedBilling) {
+            return (int) ($restriction->incident_id ?? 0) === (int) $incident->id
+                || ($linkedBilling
+                    && (int) ($restriction->billing_statement_id ?? 0) === (int) $linkedBilling->id);
+        });
+
+        if ($linkedRestriction) {
+            $claimedRestrictionIds->push((int) $linkedRestriction->id);
+        }
+
+        $document = $billingDocument($linkedBilling);
+        $complianceDocument = $activeDocument($incident->documents, 'ACCOUNTABILITY_COMPLIANCE_NOTICE');
+
+        $statusLabel = 'Under Review';
+        $statusTone = 'neutral';
+        $statusMeta = null;
+        $nextAction = 'Wait for the SPMU decision.';
+        $nextTone = 'info';
+
+        if ($incident->status === 'COMPLIANCE_REQUIRED') {
+            $statusLabel = 'Compliance Required';
+            $statusTone = 'warning';
+            $nextAction = 'Complete the required repair, replacement, or compliance with SPMU.';
+            $nextTone = 'warning';
+        } elseif ($linkedBilling) {
+            if ($linkedBilling->status === 'RECEIPT_SUBMITTED') {
+                $statusLabel = 'Payment Verification';
+                $statusTone = 'info';
+                $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
+                $nextAction = 'SPMU is verifying the CSPC Cashier receipt.';
+            } else {
+                $statusLabel = 'Payment Required';
+                $statusTone = 'warning';
+                $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
+                $nextAction = 'Pay the Billing Statement through the CSPC Cashier.';
+                $nextTone = 'warning';
+            }
+        } elseif (in_array($incident->status, ['FOR_BILLING', 'BILLING_PENDING'], true)) {
+            $statusLabel = 'Billing Statement Pending';
+            $statusTone = 'warning';
+            $nextAction = 'Wait for the SPMU Head/Admin to issue the Billing Statement.';
+            $nextTone = 'warning';
+        }
+
+        $actions = [];
+
+        if ($document) {
+            $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
+            $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+        }
+
+        if ($complianceDocument) {
+            $actions[] = ['View Compliance Notice', route('documents.view', $complianceDocument), true, 'primary'];
+        }
+
+        if ($custody) {
+            $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary'];
+        }
+
+        $facts = [
+            ['Finding', $incidentType],
+            ['Case reference', $incident->incident_no],
+            ['Custody', $custody?->custody_no ?: '—'],
+        ];
+
+        if ($linkedBilling) {
+            $facts[] = ['Billing Statement', $linkedBilling->billing_no];
+            $facts[] = ['Amount', '₱'.number_format((float) $linkedBilling->total_amount, 2)];
+            $facts[] = ['Payment due', optional($linkedBilling->due_at)->format('d M Y') ?: 'Not specified'];
+        }
+
+        if ($linkedRestriction) {
+            $facts[] = ['Borrowing status', 'Restricted until this obligation is resolved'];
+        }
+
+        $obligationRows[] = [
+            'category' => 'property',
+            'status' => $linkedBilling?->status ?: $incident->status,
+            'date' => $linkedBilling?->issued_at ?: $recordDate,
+            'tone' => 'warning',
+            'icon' => 'accountability',
+            'type' => 'Property Accountability',
+            'title' => $itemName.' — '.$incidentType,
+            'reference' => $incident->incident_no,
+            'summary' => $linkedBilling
+                ? 'The property case and its Billing Statement are shown together here.'
+                : ($incident->status === 'COMPLIANCE_REQUIRED'
+                    ? 'SPMU requires property compliance before this obligation can be cleared.'
+                    : 'This property finding is still being processed by SPMU.'),
+            'badge' => $statusLabel,
+            'badge_tone' => $statusTone,
+            'status_meta' => $statusMeta,
+            'restricted' => (bool) $linkedRestriction,
+            'next_action' => $nextAction,
+            'next_tone' => $nextTone,
+            'facts' => $facts,
+            'actions' => $actions,
+            'search' => strtolower(implode(' ', [
+                'property accountability',
+                $itemName,
+                $incidentType,
+                $incident->incident_no,
+                $incident->status,
+                $custody?->custody_no,
+                $linkedBilling?->billing_no,
+                $linkedBilling?->status,
+            ])),
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Late return / overdue
+    |--------------------------------------------------------------------------
+    */
     foreach ($openOverdueCases as $overdue) {
         $custody = $overdue->custody;
         $recordDate = $overdue->overdue_started_at ?: $overdue->created_at;
         $dueAt = $custody?->due_at;
 
-        $lines = $custody?->lines ?? collect();
-        $firstLine = $lines->first();
-        $firstName = $firstLine?->requestItem?->description_snapshot;
-        $firstQuantity = (float) ($firstLine?->actual_released_quantity ?? 0);
+        $penaltyIds = $overdue->penalties
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values();
 
-        $description = $firstName
-            ? $firstName.' ('.($firstQuantity + 0).' pcs)'
-            : 'Outstanding issued items';
+        $linkedBilling = $openBillings->first(
+            fn ($billing) => $billing->lines->contains(
+                fn ($line) => $line->penalty
+                    && (int) ($line->penalty->overdue_case_id ?? 0) === (int) $overdue->id
+            )
+        );
 
-        if ($lines->count() > 1) {
-            $description .= ' +'.($lines->count() - 1).' more';
+        if ($linkedBilling) {
+            $claimedBillingIds->push((int) $linkedBilling->id);
         }
 
-        $isStillOverdue = $overdue->status === 'OVERDUE';
-        $isReturnedLate = in_array($overdue->status, ['RETURNED_PENDING_SETTLEMENT', 'BILLED'], true);
-        $actualReturnAt = $isReturnedLate
-            ? ($custody?->returns?->pluck('received_at')->filter()->sort()->last())
-            : null;
-        $lateThrough = $isStillOverdue
-            ? now()->startOfDay()
-            : ($actualReturnAt?->copy()->startOfDay());
+        $linkedRestriction = $activeRestrictions->first(function ($restriction) use ($penaltyIds, $linkedBilling) {
+            return ($restriction->penalty_id && $penaltyIds->contains((int) $restriction->penalty_id))
+                || ($linkedBilling
+                    && (int) ($restriction->billing_statement_id ?? 0) === (int) $linkedBilling->id);
+        });
+
+        if ($linkedRestriction) {
+            $claimedRestrictionIds->push((int) $linkedRestriction->id);
+        }
+
+        $lines = $custody?->lines ?? collect();
+        $firstLine = $lines->first();
+        $itemName = $firstLine?->requestItem?->description_snapshot ?: 'Borrowed items';
+
+        $actualReturnAt = $custody?->returns
+            ?->pluck('received_at')
+            ->filter()
+            ->sort()
+            ->last();
+
         $dueDay = $dueAt?->copy()->startOfDay();
-        $daysLate = $dueDay && $lateThrough && $lateThrough->gt($dueDay)
+        $lateThrough = $actualReturnAt
+            ? $actualReturnAt->copy()->startOfDay()
+            : now()->startOfDay();
+
+        $daysLate = $dueDay && $lateThrough->gt($dueDay)
             ? (int) $dueDay->diffInDays($lateThrough)
+            : 0;
+
+        $document = $billingDocument($linkedBilling);
+
+        $isPhysicallyOutstanding = $overdue->status === 'OVERDUE';
+        $statusLabel = $isPhysicallyOutstanding ? 'Return Required' : 'Late Return Processing';
+        $statusTone = $isPhysicallyOutstanding ? 'danger' : 'warning';
+        $statusMeta = $daysLate > 0
+            ? $daysLate.' '.($daysLate === 1 ? 'day' : 'days').' late'
             : null;
+        $nextAction = $isPhysicallyOutstanding
+            ? 'Return the outstanding items to SPMU.'
+            : 'Wait for the final late-return assessment.';
+        $nextTone = $isPhysicallyOutstanding ? 'danger' : 'info';
+
+        if ($linkedBilling) {
+            if ($linkedBilling->status === 'RECEIPT_SUBMITTED') {
+                $statusLabel = 'Payment Verification';
+                $statusTone = 'info';
+                $nextAction = 'SPMU is verifying the CSPC Cashier receipt.';
+            } else {
+                $statusLabel = 'Payment Required';
+                $statusTone = 'warning';
+                $nextAction = 'Pay the late-return Billing Statement through the CSPC Cashier.';
+                $nextTone = 'warning';
+            }
+
+            $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
+        }
+
+        $actions = [];
+
+        if ($document) {
+            $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
+            $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+        }
+
+        if ($custody) {
+            $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary'];
+        }
+
+        $facts = [
+            ['Expected return', optional($dueAt)->format('d M Y') ?: '—'],
+            ['Actual return', $actualReturnAt?->format('d M Y') ?: 'Not yet returned'],
+            ['Late days', (string) $daysLate],
+            ['Custody', $custody?->custody_no ?: '—'],
+        ];
+
+        if ($linkedBilling) {
+            $facts[] = ['Billing Statement', $linkedBilling->billing_no];
+            $facts[] = ['Amount', '₱'.number_format((float) $linkedBilling->total_amount, 2)];
+        }
+
+        if ($linkedRestriction) {
+            $facts[] = ['Borrowing status', 'Restricted until this obligation is resolved'];
+        }
 
         $obligationRows[] = [
             'category' => 'overdue',
-            'status' => $overdue->status,
-            'date' => $recordDate,
-            'tone' => 'danger',
+            'status' => $linkedBilling?->status ?: $overdue->status,
+            'date' => $linkedBilling?->issued_at ?: $recordDate,
+            'tone' => $isPhysicallyOutstanding ? 'danger' : 'warning',
             'icon' => 'calendar',
-            'type' => $isReturnedLate ? 'Returned Late' : 'Overdue Return',
-            'reference' => $custody?->custody_no ?: 'No custody reference',
-            'reference_sub' => $custody?->request?->request_no,
-            'description' => $description,
-            'description_sub' => $dueAt ? 'Due date: '.$dueAt->format('d M Y') : null,
-            'badge' => $isReturnedLate ? 'Returned Late' : 'Overdue',
-            'badge_tone' => $isReturnedLate ? 'warning' : 'danger',
-            'status_sub' => $daysLate !== null
-                ? $daysLate.' '.($daysLate === 1 ? 'day' : 'days').' late'
-                : null,
-            'facts' => [
-                ['Expected return', optional($dueAt)->format('d M Y') ?: '—'],
-                ['Actual physical return', $actualReturnAt?->format('d M Y') ?: ($isStillOverdue ? 'Not yet completed' : '—')],
-                ['Late fee rate', $overdue->rate_snapshot === null
-                    ? 'Not configured'
-                    : '₱'.number_format((float) $overdue->rate_snapshot, 2)],
-                ['Accrued amount', $overdue->rate_snapshot === null
-                    ? 'Not determined'
-                    : '₱'.number_format((float) $overdue->accrued_amount, 2)],
-            ],
-            'action_tone' => 'warning',
-            'action_title' => $isReturnedLate
-                ? 'Late return is under Accountability Processing'
-                : 'Return the outstanding items to SPMU',
-            'action_text' => $isReturnedLate
-                ? 'The physical return is already complete. SPMU is processing the date-based late-return obligation; follow the Billing Statement or settlement instructions when issued.'
-                : 'Bring the issued items to SPMU for physical return inspection. Do not record the return yourself; the Action Officer confirms the actual quantities and condition during handover.',
-            'links' => $custody
-                ? [['Open borrowing record', route('custody.show', $custody)]]
-                : [],
+            'type' => $isPhysicallyOutstanding ? 'Overdue Return' : 'Late Return',
+            'title' => $itemName,
+            'reference' => $custody?->custody_no ?: ($custody?->request?->request_no ?: 'Late return record'),
+            'summary' => $linkedBilling
+                ? 'The late-return case and its Billing Statement are shown together here.'
+                : ($isPhysicallyOutstanding
+                    ? 'The item is still physically outstanding.'
+                    : 'The physical return is complete and the late-return assessment is being processed.'),
+            'badge' => $statusLabel,
+            'badge_tone' => $statusTone,
+            'status_meta' => $statusMeta,
+            'restricted' => (bool) $linkedRestriction,
+            'next_action' => $nextAction,
+            'next_tone' => $nextTone,
+            'facts' => $facts,
+            'actions' => $actions,
             'search' => strtolower(implode(' ', [
-                'overdue return',
+                'overdue late return',
+                $itemName,
                 $custody?->custody_no,
                 $custody?->request?->request_no,
                 $overdue->status,
-                $description,
+                $linkedBilling?->billing_no,
+                $linkedBilling?->status,
             ])),
         ];
     }
 
-    /* --------------------------------------------------------- Property --- */
-    foreach ($openIncidents as $incident) {
-        $recordDate = $incident->reported_at ?: $incident->created_at;
-        $incidentType = (string) str($incident->incident_type)->replace('_', ' ')->title();
-        $custody = $incident->custody;
-
-        $incidentBilling = $openBillings->first(fn ($billing) => $billing->lines->contains(
-            fn ($line) => (int) $line->incident_id === (int) $incident->id
-        ));
-
-        $itemName = $custody?->lines?->first()?->requestItem?->description_snapshot;
-
-        $actionTone = 'info';
-        $actionTitle = 'No action required yet';
-        $actionText = 'SPMU is processing this property case. Wait for a formal billing, waiver, compliance, or case-resolution instruction before taking any payment action.';
-
-        if ($incident->status === 'COMPLIANCE_REQUIRED') {
-            $actionTone = 'warning';
-            $actionTitle = 'Coordinate the required compliance with SPMU';
-            $actionText = 'The SPMU Head requires repair, replacement, or another compliance action. Coordinate directly with SPMU; your linked borrowing restriction stays active until SPMU verifies completion.';
-        } elseif ($incident->status === 'FOR_BILLING') {
-            $actionTone = 'warning';
-            $actionTitle = 'Wait for the Billing Statement';
-            $actionText = 'The SPMU Head determined that this case requires billing. No payment is due until SPMU issues the Billing Statement with the approved amount and basis.';
-        }
-
-        if ($incidentBilling) {
-            if ($incidentBilling->status === 'RECEIPT_SUBMITTED') {
-                $actionTone = 'info';
-                $actionTitle = 'Wait for SPMU receipt verification';
-                $actionText = 'The paid CSPC Cashier receipt has been recorded by SPMU and is awaiting verification. No borrower upload is required.';
-            } else {
-                $actionTone = 'warning';
-                $actionTitle = 'Settle the issued Billing Statement';
-                $actionText = 'Download the Billing Statement, pay through the CSPC Cashier, then present the paid official receipt to SPMU for recording and verification.';
-            }
-        }
-
-        $badge = match ($incident->status) {
-            'OPEN' => 'Under Review',
-            'FOR_BILLING' => 'For Billing',
-            'BILLING_PENDING' => 'Billing Pending',
-            'COMPLIANCE_REQUIRED' => 'Compliance Required',
-            default => (string) str($incident->status)->replace('_', ' ')->title(),
-        };
-
-        $obligationRows[] = [
-            'category' => 'property',
-            'status' => $incident->status,
-            'date' => $recordDate,
-            'tone' => 'warning',
-            'icon' => 'accountability',
-            'type' => 'Property Case',
-            'reference' => $incident->incident_no,
-            'reference_sub' => 'Case for '.strtolower($incidentType),
-            'description' => $itemName ?: $incidentType.' case',
-            'description_sub' => $incident->remarks ?: $custody?->custody_no,
-            'badge' => $badge,
-            'badge_tone' => 'warning',
-            'status_sub' => null,
-            'facts' => [
-                ['Finding', $incidentType],
-                ['Custody', $custody?->custody_no ?: '—'],
-                ['Affected lines', (string) $incident->lines->count()],
-            ],
-            'action_tone' => $actionTone,
-            'action_title' => $actionTitle,
-            'action_text' => $actionText,
-            'links' => $custody
-                ? [['Open borrowing record', route('custody.show', $custody)]]
-                : [],
-            'search' => strtolower(implode(' ', [
-                'property case',
-                $incident->incident_no,
-                $incidentType,
-                $incident->status,
-                $incident->remarks,
-                $custody?->custody_no,
-            ])),
-        ];
-    }
-
-    /* ---------------------------------------------------------- Billing --- */
+    /*
+    |--------------------------------------------------------------------------
+    | Standalone billings
+    |--------------------------------------------------------------------------
+    |
+    | A billing already grouped under a Property/Late Return case is suppressed
+    | here. Only a billing with no visible parent obligation gets its own row.
+    |
+    */
     foreach ($openBillings as $billing) {
+        if ($claimedBillingIds->contains((int) $billing->id)) {
+            continue;
+        }
+
         $recordDate = $billing->issued_at ?: $billing->created_at;
         $latestPayment = $billing->payments
             ->sortByDesc(fn ($payment) => $payment->submitted_at ?: $payment->created_at)
             ->first();
+        $document = $billingDocument($billing);
 
-        $actionTone = 'warning';
-        $actionTitle = 'Settle this Billing Statement';
-        $actionText = 'Download the Billing Statement, pay the amount through the CSPC Cashier, then present the paid official receipt to SPMU. SPMU records and verifies the receipt.';
+        $linkedRestriction = $activeRestrictions->first(
+            fn ($restriction) => (int) ($restriction->billing_statement_id ?? 0) === (int) $billing->id
+        );
 
-        if ($billing->status === 'RECEIPT_SUBMITTED') {
-            $actionTone = 'info';
-            $actionTitle = 'Receipt submitted — wait for verification';
-            $actionText = 'SPMU has recorded the paid CSPC Cashier receipt. No borrower upload is required while the payment evidence is being verified.';
-        } elseif ($latestPayment?->status === 'REJECTED') {
-            $actionTone = 'danger';
-            $actionTitle = 'Present the corrected paid receipt to SPMU';
-            $actionText = 'The previous receipt record requires correction. Bring the correct CSPC Cashier official receipt to SPMU so the payment evidence can be recorded again.';
+        if ($linkedRestriction) {
+            $claimedRestrictionIds->push((int) $linkedRestriction->id);
         }
 
-        $billingLinks = [];
-        foreach ($billing->documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']) as $document) {
-            $billingLinks[] = ['Download Billing Statement', route('documents.download', $document)];
+        $statusLabel = $billing->status === 'RECEIPT_SUBMITTED'
+            ? 'Payment Verification'
+            : 'Payment Required';
+
+        $nextAction = $billing->status === 'RECEIPT_SUBMITTED'
+            ? 'SPMU is verifying the CSPC Cashier receipt.'
+            : 'Pay the Billing Statement through the CSPC Cashier.';
+
+        if ($latestPayment?->status === 'REJECTED') {
+            $statusLabel = 'Receipt Correction Required';
+            $nextAction = 'Present the correct CSPC Cashier Official Receipt to SPMU.';
         }
 
-        $badge = match ($billing->status) {
-            'ISSUED' => 'Unpaid',
-            'RECEIPT_SUBMITTED' => 'For Verification',
-            default => (string) str($billing->status)->replace('_', ' ')->title(),
-        };
+        $actions = [];
+        if ($document) {
+            $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
+            $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+        }
 
         $obligationRows[] = [
             'category' => 'billing',
@@ -214,48 +363,50 @@
             'date' => $recordDate,
             'tone' => 'info',
             'icon' => 'requests',
-            'type' => 'Open Billing',
+            'type' => 'Financial Obligation',
+            'title' => $billing->lines->first()?->description ?: 'Billing Statement',
             'reference' => $billing->billing_no,
-            'reference_sub' => 'Billing Statement',
-            'description' => $billing->lines->first()?->description ?: 'Assessed charge',
-            'description_sub' => $billing->due_at
-                ? 'Payment due: '.$billing->due_at->format('d M Y')
-                : $billing->remarks,
-            'badge' => $badge,
-            'badge_tone' => $billing->status === 'RECEIPT_SUBMITTED' ? 'info' : 'info',
-            'status_sub' => '₱'.number_format((float) $billing->total_amount, 2),
+            'summary' => 'An open SPMU Billing Statement requires settlement or verification.',
+            'badge' => $statusLabel,
+            'badge_tone' => $latestPayment?->status === 'REJECTED' ? 'danger' : 'info',
+            'status_meta' => '₱'.number_format((float) $billing->total_amount, 2),
+            'restricted' => (bool) $linkedRestriction,
+            'next_action' => $nextAction,
+            'next_tone' => $latestPayment?->status === 'REJECTED' ? 'danger' : 'warning',
             'facts' => [
-                ['Total amount', '₱'.number_format((float) $billing->total_amount, 2)],
+                ['Billing Statement', $billing->billing_no],
+                ['Amount', '₱'.number_format((float) $billing->total_amount, 2)],
                 ['Payment due', optional($billing->due_at)->format('d M Y') ?: 'Not specified'],
-                ['Payments recorded', (string) $billing->payments->count()],
+                ['Borrowing status', $linkedRestriction ? 'Restricted until resolved' : 'No linked restriction'],
             ],
-            'action_tone' => $actionTone,
-            'action_title' => $actionTitle,
-            'action_text' => $actionText,
-            'links' => $billingLinks,
+            'actions' => $actions,
             'search' => strtolower(implode(' ', [
-                'billing statement open billing',
+                'financial obligation billing',
                 $billing->billing_no,
                 $billing->status,
                 $billing->total_amount,
-                $billing->remarks,
                 $billing->lines->pluck('description')->join(' '),
             ])),
         ];
     }
 
-    /* ------------------------------------------------------ Restriction --- */
+    /*
+    |--------------------------------------------------------------------------
+    | Standalone restrictions
+    |--------------------------------------------------------------------------
+    |
+    | Restrictions linked to a case/billing above are intentionally NOT counted
+    | as another obligation. A standalone restriction (for example, a borrowing
+    | suspension sanction) remains visible on its own.
+    |
+    */
     foreach ($activeRestrictions as $restriction) {
+        if ($claimedRestrictionIds->contains((int) $restriction->id)) {
+            continue;
+        }
+
         $recordDate = $restriction->effective_from ?: $restriction->created_at;
         $restrictionType = (string) str($restriction->restriction_type)->replace('_', ' ')->title();
-
-        /*
-         * Restrictions carry no reference column of their own, so the register
-         * shows a derived one built from the record's own date and id.
-         */
-        $reference = 'RES-'
-            .optional($recordDate)->format('Ymd')
-            .'-'.str_pad((string) $restriction->id, 5, '0', STR_PAD_LEFT);
 
         $obligationRows[] = [
             'category' => 'restriction',
@@ -263,30 +414,32 @@
             'date' => $recordDate,
             'tone' => 'orange',
             'icon' => 'lock',
-            'type' => 'Restriction',
-            'reference' => $reference,
-            'reference_sub' => 'Restriction record',
-            'description' => 'Borrowing temporarily restricted',
-            'description_sub' => $restriction->reason,
-            'badge' => 'Active',
+            'type' => 'Borrowing Restriction',
+            'title' => $restriction->sanction_id
+                ? 'Administrative borrowing restriction'
+                : 'Borrowing temporarily restricted',
+            'reference' => $restriction->sanction_id
+                ? 'Administrative sanction'
+                : 'Restriction record',
+            'summary' => $restriction->reason ?: $restrictionType,
+            'badge' => $restriction->effective_to ? 'In Effect' : 'Restricted',
             'badge_tone' => 'warning',
-            'status_sub' => $restriction->effective_to
+            'status_meta' => $restriction->effective_to
                 ? 'Until '.$restriction->effective_to->format('d M Y')
                 : 'Until resolved',
+            'restricted' => true,
+            'next_action' => $restriction->effective_to
+                ? 'Wait until the configured restriction period ends.'
+                : 'Resolve the linked requirement with SPMU.',
+            'next_tone' => 'warning',
             'facts' => [
                 ['Restriction type', $restrictionType],
                 ['Effective from', optional($restriction->effective_from)->format('d M Y') ?: '—'],
-                ['Lifted when', $restriction->effective_to
-                    ? $restriction->effective_to->format('d M Y')
-                    : 'The linked case is resolved'],
+                ['Effective until', optional($restriction->effective_to)->format('d M Y') ?: 'Until resolved'],
             ],
-            'action_tone' => 'info',
-            'action_title' => 'Temporary until the related obligation is cleared',
-            'action_text' => 'You cannot submit a new borrowing request while this restriction is active. Eligibility returns when SPMU resolves the linked case, or when a related Billing Statement is verified as settled or formally waived.',
-            'links' => [],
+            'actions' => [],
             'search' => strtolower(implode(' ', [
-                'active restriction borrowing restricted',
-                $reference,
+                'borrowing restriction',
                 $restrictionType,
                 $restriction->status,
                 $restriction->reason,
@@ -294,369 +447,178 @@
         ];
     }
 
+    $obligationRows = collect($obligationRows)
+        ->sortByDesc(fn ($row) => optional($row['date'])->timestamp ?? 0)
+        ->values()
+        ->all();
+
     $obligationCount = count($obligationRows);
 
-    $overdueNote = $openOverdueCases->count() === 0
-        ? 'No open records'
-        : $openOverdueCases->count().' '.($openOverdueCases->count() === 1 ? 'item' : 'items').' needing return';
-
-    $propertyNote = $openIncidents->count() === 0
-        ? 'No open records'
-        : $openIncidents->count().' open '.($openIncidents->count() === 1 ? 'case' : 'cases');
-
+    /*
+     * These four cards are record-type summaries, not four separate borrower
+     * tasks. They remain useful because they explain what records currently
+     * exist behind the grouped obligation(s).
+     */
     $billingTotal = (float) $openBillings->sum('total_amount');
-    $billingNote = $openBillings->count() === 0
-        ? 'No open records'
-        : '₱'.number_format($billingTotal, 2).' outstanding';
-
-    $restrictionNote = $activeRestrictions->count() === 0
-        ? 'No restrictions'
-        : $activeRestrictions->count().' '.($activeRestrictions->count() === 1 ? 'restriction' : 'restrictions').' in effect';
 
     $summaryCards = [
-        ['overdue', 'danger', 'calendar', $openOverdueCases->count(), 'Overdue Returns', $overdueNote],
-        ['property', 'warning', 'accountability', $openIncidents->count(), 'Property Cases', $propertyNote],
-        ['billing', 'info', 'requests', $openBillings->count(), 'Open Billings', $billingNote],
-        ['restriction', 'orange', 'lock', $activeRestrictions->count(), 'Active Restrictions', $restrictionNote],
+        ['danger', 'calendar', $openOverdueCases->count(), 'Overdue Returns', $openOverdueCases->count() ? 'Return-related records' : 'No open records'],
+        ['warning', 'accountability', $openIncidents->count(), 'Property Cases', $openIncidents->count() ? 'Property accountability' : 'No open records'],
+        ['info', 'requests', $openBillings->count(), 'Open Billings', $openBillings->count() ? '₱'.number_format($billingTotal, 2).' outstanding' : 'No open records'],
+        ['orange', 'lock', $activeRestrictions->count(), 'Active Restrictions', $activeRestrictions->count() ? 'Borrowing access affected' : 'No restrictions'],
     ];
 @endphp
 
 @include('accountability.partials.obligations-styles')
 
-<section class="content-area ob-workspace" data-borrower-accountability>
+<section class="content-area ob-workspace" data-borrower-accountability-clean>
+    <div class="ob-section-heading">
+        <div>
+            <span>Record summary</span>
+            <p>Related records can belong to the same obligation.</p>
+        </div>
+    </div>
 
-    {{-- Summary: each card also filters the register below it. --}}
-    <div class="ob-summary" aria-label="Obligation overview" data-accountability-card-filters>
-        @foreach($summaryCards as [$cardKey, $cardTone, $cardIcon, $cardValue, $cardLabel, $cardNote])
-            <button
-                type="button"
-                class="ob-summary-card is-{{ $cardTone }} {{ $cardValue === 0 ? 'is-empty' : '' }}"
-                data-accountability-card-filter="{{ $cardKey }}"
-                aria-pressed="false"
-            >
+    <div class="ob-summary" aria-label="Accountability record summary">
+        @foreach($summaryCards as [$tone, $icon, $value, $label, $note])
+            <article class="ob-summary-card is-{{ $tone }} {{ $value === 0 ? 'is-empty' : '' }}">
                 <span class="ob-summary-icon" aria-hidden="true">
-                    <x-icon :name="$cardIcon" size="22" />
+                    <x-icon :name="$icon" size="20" />
                 </span>
-
                 <span class="ob-summary-copy">
-                    <strong class="ob-summary-value">{{ $cardValue }}</strong>
-                    <span class="ob-summary-label">{{ $cardLabel }}</span>
-                    <span class="ob-summary-note">{{ $cardNote }}</span>
+                    <strong class="ob-summary-value">{{ $value }}</strong>
+                    <span class="ob-summary-label">{{ $label }}</span>
+                    <span class="ob-summary-note">{{ $note }}</span>
                 </span>
-            </button>
+            </article>
         @endforeach
     </div>
 
-    {{-- Search and filters --}}
-    <div class="ob-toolbar" aria-label="Search and filter obligations">
-        <label class="ob-field">
-            <span>Search</span>
-            <span class="ob-field-shell">
-                <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="17" /></span>
+    <div class="ob-current-header">
+        <div>
+            <span>Current obligations</span>
+            <h2>{{ $obligationCount }} {{ $obligationCount === 1 ? 'unresolved obligation' : 'unresolved obligations' }}</h2>
+        </div>
+
+        @if($obligationCount > 1)
+            <label class="ob-search">
+                <x-icon name="search" size="17" />
                 <input
                     type="search"
-                    placeholder="Search reference, type, status, or details..."
+                    placeholder="Search obligations"
                     autocomplete="off"
-                    data-accountability-search
+                    data-obligation-clean-search
                 >
-            </span>
-        </label>
-
-        <label class="ob-field">
-            <span>Status</span>
-            <select data-accountability-status>
-                <option value="">All Statuses</option>
-                @foreach($borrowerStatuses as $status)
-                    <option value="{{ $status }}">{{ str($status)->replace('_', ' ')->title() }}</option>
-                @endforeach
-            </select>
-        </label>
-
-        <label class="ob-field">
-            <span>Sort</span>
-            <select data-accountability-sort>
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-            </select>
-        </label>
+            </label>
+        @endif
     </div>
 
-    {{-- Register --}}
-    <div class="ob-table-card" data-accountability-table @if($obligationCount === 0) hidden @endif>
-        <p class="ob-table-heading">Obligations ({{ $obligationCount }})</p>
+    @if($obligationCount > 0)
+        <div class="ob-case-list" data-obligation-clean-list>
+            @foreach($obligationRows as $index => $row)
+                <article
+                    class="ob-case-card"
+                    data-obligation-clean-row
+                    data-search="{{ $row['search'] }}"
+                >
+                    <div class="ob-case-top">
+                        <div class="ob-case-identity">
+                            <span class="ob-case-icon is-{{ $row['tone'] }}" aria-hidden="true">
+                                <x-icon :name="$row['icon']" size="20" />
+                            </span>
 
-        <div class="ob-table-scroll">
-            <table class="ob-table">
-                <thead>
-                    <tr>
-                        <th scope="col">Type</th>
-                        <th scope="col">Reference</th>
-                        <th scope="col">Description</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Date Created</th>
-                        <th scope="col">Action</th>
-                    </tr>
-                </thead>
+                            <div>
+                                <span class="ob-case-type">{{ $row['type'] }}</span>
+                                <h3>{{ $row['title'] }}</h3>
+                                <small>{{ $row['reference'] }}</small>
+                            </div>
+                        </div>
 
-                <tbody data-accountability-records>
-                    @foreach($obligationRows as $index => $row)
-                        @php $detailId = 'obligation-detail-'.$index; @endphp
+                        <div class="ob-case-state">
+                            <span class="ob-badge is-{{ $row['badge_tone'] }}">{{ $row['badge'] }}</span>
+                            @if($row['status_meta'])
+                                <strong>{{ $row['status_meta'] }}</strong>
+                            @endif
+                        </div>
+                    </div>
 
-                        <tr
-                            data-accountability-record
-                            data-category="{{ $row['category'] }}"
-                            data-status="{{ $row['status'] }}"
-                            data-date="{{ optional($row['date'])->timestamp ?? 0 }}"
-                            data-search="{{ $row['search'] }}"
-                        >
-                            <td>
-                                <span class="ob-type is-{{ $row['tone'] }}">
-                                    <span class="ob-type-icon" aria-hidden="true">
-                                        <x-icon :name="$row['icon']" size="17" />
-                                    </span>
-                                    <span class="ob-type-label">{{ $row['type'] }}</span>
-                                </span>
-                            </td>
+                    <p class="ob-case-summary">{{ $row['summary'] }}</p>
 
-                            <td class="ob-col-reference">
-                                <span class="ob-primary">{{ $row['reference'] }}</span>
-                                @if($row['reference_sub'])
-                                    <span class="ob-secondary">{{ $row['reference_sub'] }}</span>
-                                @endif
-                            </td>
+                    @if($row['restricted'])
+                        <div class="ob-linked-restriction">
+                            <x-icon name="lock" size="15" />
+                            <span>Borrowing is temporarily restricted until this obligation is resolved.</span>
+                        </div>
+                    @endif
 
-                            <td class="ob-col-description">
-                                <span class="ob-primary">{{ $row['description'] }}</span>
-                                @if($row['description_sub'])
-                                    <span class="ob-secondary">{{ $row['description_sub'] }}</span>
-                                @endif
-                            </td>
+                    <div class="ob-next-action is-{{ $row['next_tone'] }}">
+                        <span>Next action</span>
+                        <strong>{{ $row['next_action'] }}</strong>
+                    </div>
 
-                            <td>
-                                <span class="ob-badge is-{{ $row['badge_tone'] }}">{{ $row['badge'] }}</span>
-                                @if($row['status_sub'])
-                                    <span class="ob-secondary">{{ $row['status_sub'] }}</span>
-                                @endif
-                            </td>
+                    <div class="ob-case-actions">
+                        @foreach($row['actions'] as [$label, $url, $newTab, $buttonTone])
+                            <a
+                                class="button {{ $buttonTone === 'primary' ? 'primary' : 'secondary' }} small ui-pressable"
+                                href="{{ $url }}"
+                                @if($newTab) target="_blank" rel="noopener" @endif
+                            >
+                                {{ $label }}
+                            </a>
+                        @endforeach
 
-                            <td>
-                                <span class="ob-primary">{{ optional($row['date'])->format('d M Y') ?: '—' }}</span>
-                                <span class="ob-secondary">{{ optional($row['date'])->format('h:i A') }}</span>
-                            </td>
-
-                            <td>
-                                <span class="ob-actions">
-                                    <button
-                                        type="button"
-                                        class="ob-view"
-                                        data-obligation-toggle="{{ $detailId }}"
-                                        aria-expanded="false"
-                                        aria-controls="{{ $detailId }}"
-                                    >
-                                        View
-                                    </button>
-
-                                    <span class="ob-menu" data-obligation-menu>
-                                        <button
-                                            type="button"
-                                            class="ob-menu-trigger"
-                                            aria-haspopup="true"
-                                            aria-expanded="false"
-                                            aria-label="More actions for {{ $row['reference'] }}"
-                                            data-obligation-menu-trigger
-                                        >
-                                            <x-icon name="more" size="18" />
-                                        </button>
-
-                                        <span class="ob-menu-panel" data-obligation-menu-panel hidden>
-                                            <button type="button" data-obligation-toggle="{{ $detailId }}">
-                                                View details
-                                            </button>
-
-                                            @foreach($row['links'] as [$linkLabel, $linkUrl])
-                                                <a href="{{ $linkUrl }}">{{ $linkLabel }}</a>
-                                            @endforeach
-
-                                            <button type="button" data-obligation-copy="{{ $row['reference'] }}">
-                                                Copy reference
-                                            </button>
-                                        </span>
-                                    </span>
-                                </span>
-                            </td>
-                        </tr>
-
-                        <tr class="ob-detail-row" id="{{ $detailId }}" data-obligation-detail hidden>
-                            <td colspan="6">
-                                <div class="ob-detail">
-                                    <div class="ob-detail-facts">
-                                        @foreach($row['facts'] as [$factLabel, $factValue])
-                                            <div>
-                                                <small>{{ $factLabel }}</small>
-                                                <strong>{{ $factValue }}</strong>
-                                            </div>
-                                        @endforeach
+                        <details class="ob-details">
+                            <summary>Details</summary>
+                            <div class="ob-detail-grid">
+                                @foreach($row['facts'] as [$factLabel, $factValue])
+                                    <div>
+                                        <small>{{ $factLabel }}</small>
+                                        <strong>{{ $factValue }}</strong>
                                     </div>
-
-                                    <div class="ob-detail-action is-{{ $row['action_tone'] }}">
-                                        <span>What you need to do</span>
-                                        <strong>{{ $row['action_title'] }}</strong>
-                                        <p>{{ $row['action_text'] }}</p>
-                                    </div>
-
-                                    @if($row['links'])
-                                        <div class="ob-detail-links">
-                                            @foreach($row['links'] as [$linkLabel, $linkUrl])
-                                                <a class="button secondary small ui-pressable" href="{{ $linkUrl }}">
-                                                    {{ $linkLabel }}
-                                                </a>
-                                            @endforeach
-                                        </div>
-                                    @endif
-                                </div>
-                            </td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
+                                @endforeach
+                            </div>
+                        </details>
+                    </div>
+                </article>
+            @endforeach
         </div>
 
-        <div class="ob-footer">
-            <p data-accountability-result-count role="status" aria-live="polite">
-                Showing 1 to {{ $obligationCount }} of {{ $obligationCount }} records
-            </p>
-
-            <div class="ob-pagination">
-                <span class="ob-page ob-page-previous" aria-disabled="true" aria-label="Previous page">
-                    <x-icon name="chevron-right" size="15" />
-                </span>
-                <span class="ob-page is-active" aria-current="page">1</span>
-                <span class="ob-page" aria-disabled="true" aria-label="Next page">
-                    <x-icon name="chevron-right" size="15" />
-                </span>
+        <div class="ob-no-match" data-obligation-clean-empty hidden>
+            No obligations match your search.
+        </div>
+    @else
+        <article class="ob-clear-card">
+            <span aria-hidden="true"><x-icon name="check-circle" size="34" /></span>
+            <div>
+                <strong>No unresolved obligations</strong>
+                <p>You have no outstanding return, property, billing, or borrowing restriction requiring action.</p>
             </div>
-        </div>
-    </div>
-
-    {{-- Empty state --}}
-    <div class="ob-empty-card" data-accountability-empty @if($obligationCount > 0) hidden @endif>
-        <span class="ob-empty-mark" aria-hidden="true">
-            <x-icon name="check-circle" size="46" />
-        </span>
-
-        <div class="ob-empty-copy">
-            <strong>No unresolved obligations</strong>
-            <span>You're all clear! You have no overdue returns, property cases, open billings, or restrictions.</span>
-        </div>
-    </div>
-
-    <div class="ob-footer-outside" data-accountability-empty-footer @if($obligationCount > 0) hidden @endif>
-        <p>Showing 0 of 0 records</p>
-
-        <div class="ob-pagination">
-            <span class="ob-page ob-page-previous" aria-disabled="true" aria-label="Previous page">
-                <x-icon name="chevron-right" size="15" />
-            </span>
-            <span class="ob-page is-active" aria-current="page">1</span>
-            <span class="ob-page" aria-disabled="true" aria-label="Next page">
-                <x-icon name="chevron-right" size="15" />
-            </span>
-        </div>
-    </div>
+        </article>
+    @endif
 </section>
 
 <script>
 (() => {
-    const workspace = document.querySelector('[data-borrower-accountability]');
+    const workspace = document.querySelector('[data-borrower-accountability-clean]');
+    if (!workspace) return;
 
-    if (!workspace) {
-        return;
-    }
+    const input = workspace.querySelector('[data-obligation-clean-search]');
+    const rows = Array.from(workspace.querySelectorAll('[data-obligation-clean-row]'));
+    const empty = workspace.querySelector('[data-obligation-clean-empty]');
 
-    /* View opens the record's own detail row. */
-    const setDetail = (detail, open) => {
-        detail.hidden = !open;
+    if (!input || rows.length === 0) return;
 
-        workspace
-            .querySelectorAll(`[data-obligation-toggle="${detail.id}"]`)
-            .forEach((trigger) => {
-                trigger.setAttribute('aria-expanded', String(open));
-                if (trigger.classList.contains('ob-view')) {
-                    trigger.textContent = open ? 'Hide' : 'View';
-                }
-            });
-    };
+    input.addEventListener('input', () => {
+        const query = input.value.trim().toLowerCase();
+        let visible = 0;
 
-    const closeMenus = () => {
-        workspace.querySelectorAll('[data-obligation-menu-panel]').forEach((panel) => {
-            panel.hidden = true;
-            panel.parentElement
-                ?.querySelector('[data-obligation-menu-trigger]')
-                ?.setAttribute('aria-expanded', 'false');
+        rows.forEach((row) => {
+            const matches = !query || (row.dataset.search || '').includes(query);
+            row.hidden = !matches;
+            if (matches) visible += 1;
         });
-    };
 
-    workspace.addEventListener('click', (event) => {
-        const toggle = event.target.closest('[data-obligation-toggle]');
-
-        if (toggle) {
-            const detail = document.getElementById(toggle.dataset.obligationToggle);
-
-            if (detail) {
-                setDetail(detail, detail.hidden);
-            }
-
-            closeMenus();
-            return;
-        }
-
-        const menuTrigger = event.target.closest('[data-obligation-menu-trigger]');
-
-        if (menuTrigger) {
-            const panel = menuTrigger.parentElement.querySelector('[data-obligation-menu-panel]');
-            const willOpen = panel.hidden;
-
-            closeMenus();
-            panel.hidden = !willOpen;
-            menuTrigger.setAttribute('aria-expanded', String(willOpen));
-            return;
-        }
-
-        const copy = event.target.closest('[data-obligation-copy]');
-
-        if (copy) {
-            navigator.clipboard?.writeText(copy.dataset.obligationCopy);
-            copy.textContent = 'Copied';
-            window.setTimeout(() => { copy.textContent = 'Copy reference'; }, 1400);
-            return;
-        }
-
-        closeMenus();
-    });
-
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-            closeMenus();
-        }
-    });
-
-    /*
-     * A hidden row must not leave its detail row open behind it, so the
-     * detail follows whatever the shared filter script decides about the row.
-     */
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            const row = mutation.target;
-            const detail = row.nextElementSibling;
-
-            if (detail?.matches('[data-obligation-detail]') && row.hidden) {
-                setDetail(detail, false);
-            }
-        });
-    });
-
-    workspace.querySelectorAll('[data-accountability-record]').forEach((row) => {
-        observer.observe(row, { attributes: true, attributeFilter: ['hidden'] });
+        if (empty) empty.hidden = visible !== 0;
     });
 })();
 </script>

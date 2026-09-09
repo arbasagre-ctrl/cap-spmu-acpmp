@@ -363,7 +363,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 0.65rem 0.85rem;
-    border: 1px solid var(--border-color, #cbd5e1);
+    border: 1px solid var(--border);
     border-radius: 9px;
     background: var(--surface, #ffffff);
     color: inherit;
@@ -400,7 +400,7 @@
     right: 0;
     z-index: 1000;
     padding: 8px;
-    border: 1px solid var(--border-color, #d7e0ea);
+    border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface, #ffffff);
     box-shadow: 0 14px 32px rgba(15, 42, 74, 0.16);
@@ -556,25 +556,25 @@
 
 .admin-form-grid button[type="submit"]:hover,
 .admin-form-grid input[type="submit"]:hover {
-    background: #1769E0 !important;
-    border-color: #1769E0 !important;
+    background: var(--primary-action-hover) !important;
+    border-color: var(--primary-action-hover) !important;
     color: #ffffff !important;
-    box-shadow: 0 4px 12px rgba(23, 105, 224, .20);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-action) 20%, transparent);
 }
 
 .admin-form-grid button[type="submit"]:focus-visible,
 .admin-form-grid input[type="submit"]:focus-visible {
     outline: none;
-    background: #1769E0 !important;
-    border-color: #1769E0 !important;
+    background: var(--primary-action-hover) !important;
+    border-color: var(--primary-action-hover) !important;
     color: #ffffff !important;
-    box-shadow: 0 0 0 3px rgba(23, 105, 224, .20);
+    box-shadow: var(--focus-ring);
 }
 
 .admin-form-grid button[type="submit"]:active,
 .admin-form-grid input[type="submit"]:active {
-    background: #1257BD !important;
-    border-color: #1257BD !important;
+    background: var(--primary-action-hover) !important;
+    border-color: var(--primary-action-hover) !important;
     color: #ffffff !important;
 }
 </style>
@@ -591,7 +591,7 @@
 .admin-additional-assignment {
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid var(--border-color, #d7e0ea);
+    border-top: 1px solid var(--border);
 }
 
 .admin-additional-assignment-summary {
@@ -645,7 +645,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 10px 12px;
-    border: 1px solid var(--border-color, #d7e0ea);
+    border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface-subtle, #f7f9fc);
 }

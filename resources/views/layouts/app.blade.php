@@ -145,7 +145,9 @@
         /* Additional sidebar module icon colors */
         .sidebar-nav .nav-icon-users { color: #7A5AF8; }
         .sidebar-nav .nav-icon-settings { color: #0F9488; }
-        .sidebar-nav .nav-icon-reports { color: #2F80ED; }
+        .sidebar-nav .nav-icon-analytics { color: #7A5AF8; }
+        .sidebar-nav .nav-icon-reports,
+        .sidebar-nav .nav-icon-report-document { color: #2F80ED; }
         .sidebar-nav .nav-icon-notifications { color: #E9870C; }
 
         .sidebar-nav a.active .nav-icon,
@@ -456,8 +458,8 @@
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
-                    ['analytics.index', 'analytics.*', 'Analytics', 'reports'],
-                    ['reports.index', 'reports.index', 'Reports', 'reports'],
+                    ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
+                    ['reports.index', 'reports.index', 'Reports', 'report-document'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [

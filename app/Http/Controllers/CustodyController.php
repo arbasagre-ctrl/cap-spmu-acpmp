@@ -23,7 +23,7 @@ class CustodyController extends Controller
 {
     public function index(Request $request): View
     {
-        $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'])->latest();
+        $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'])->latest();
         if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
             $query->where('borrower_user_id', $request->user()->id);
         }
@@ -35,7 +35,7 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
-        $custodies = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem'])
+        $custodies = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'incidents', 'overdueCase'])
             ->whereNull('released_at')
             ->where('status', 'PREPARING_RELEASE')
             ->latest()
@@ -51,7 +51,7 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
-        $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'];
+        $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'];
         $hasEarlyReturnTable = Schema::hasTable('early_return_requests');
 
         if ($hasEarlyReturnTable) {
@@ -144,6 +144,8 @@ class CustodyController extends Controller
             'lines.allocation',
             'lines.requestItem.inventoryItem.unit',
             'returns.lines.laundryRecord',
+            'incidents',
+            'overdueCase',
             'gatePass.accomplishedFile',
         ];
 

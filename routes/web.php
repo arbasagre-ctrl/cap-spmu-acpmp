@@ -583,10 +583,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::get('/reports/export/{type}', [ReportController::class, 'export'])
             ->name('reports.export');
+
+        Route::get('/reports/print/{type}', [ReportController::class, 'print'])
+            ->name('reports.print');
     });
 
     Route::get('/reports/audit', [ReportController::class, 'audit'])
-        ->middleware('workspace:SPMU,ICTU')
+        ->middleware('workspace:ICTU')
         ->name('reports.audit');
 
     Route::get('/reports/notifications', [ReportController::class, 'notifications'])

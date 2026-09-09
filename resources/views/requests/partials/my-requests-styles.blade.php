@@ -140,6 +140,7 @@
     #my-requests-results .mr-badge.is-amber { color: var(--warning); background: var(--warning-bg); }
     #my-requests-results .mr-badge.is-red { color: var(--danger); background: var(--danger-bg); }
     #my-requests-results .mr-badge.is-neutral { color: var(--neutral); background: var(--neutral-bg); }
+    #my-requests-results .mr-accountability-note { display: block; margin-top: -3px; color: var(--warning); font-size: clamp(10.5px, .98cqw, 12px); font-weight: 700; line-height: 1.35; }
     #my-requests-results .mr-row-view { display: inline-flex; align-items: center; gap: 10px; min-height: 28px; padding: 0 2px; border: 0; border-radius: 4px; color: var(--mr-accent); background: transparent; font-size: clamp(13px, 1.26cqw, 16px); font-weight: 750; text-decoration: none; white-space: nowrap; }
     #my-requests-results .mr-row-view .ui-icon { flex-shrink: 0; }
     #my-requests-results .mr-row-view:hover { color: var(--mr-accent); text-decoration: underline; }

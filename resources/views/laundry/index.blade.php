@@ -107,7 +107,7 @@
                 <button class="button secondary small ui-pressable" type="button" data-laundry-reset>Clear filters</button>
             </div>
             @if($jobs->hasPages())
-                <div class="laundry-pagination">{{ $jobs->links() }}</div>
+                <div class="laundry-pagination">{{ $jobs->links('partials.pagination') }}</div>
             @endif
         </section>
     @else

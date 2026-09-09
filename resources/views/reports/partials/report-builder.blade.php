@@ -120,7 +120,7 @@
                 <span class="report-no-filters">This report has no additional filters.</span>
             @endif
 
-            <button class="button primary report-generate-button" type="submit">
+            <button class="button primary report-generate-button" type="submit" name="generated" value="1">
                 <x-icon name="report-document" size="17" />
                 Generate Report
             </button>

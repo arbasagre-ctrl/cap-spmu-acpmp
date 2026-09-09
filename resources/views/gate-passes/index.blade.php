@@ -63,7 +63,7 @@
                         <tr>
                             <th scope="col">Request No.</th>
                             <th scope="col">Borrower</th>
-                            <th scope="col">Destination</th>
+                            <th scope="col">Event / Use Location</th>
                             <th scope="col">Release Date</th>
                             <th scope="col">Status</th>
                             <th scope="col">Actions</th>

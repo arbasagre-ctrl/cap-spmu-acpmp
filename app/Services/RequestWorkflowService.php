@@ -12,6 +12,8 @@ use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
 use App\Models\DownloadEvent;
 use App\Models\GatePass;
+use App\Models\Incident;
+use App\Models\OverdueCase;
 use App\Models\GeneratedDocument;
 use App\Models\RequestCancellation;
 use App\Models\RequestStatusHistory;
@@ -70,22 +72,90 @@ class RequestWorkflowService
             ]);
         }
 
-        $outstandingCustody = CustodyTransaction::query()
+        /*
+         * A normal active custody is NOT, by itself, a borrowing restriction.
+         * Borrowers may submit another request while previously issued property
+         * is still on custody, provided it is still within the effective return
+         * period and there is no unresolved accountability case or restriction.
+         *
+         * Block only when the borrower actually has a compliance problem:
+         *   - property is currently overdue and still physically outstanding;
+         *   - a late-return accountability case is still unresolved;
+         *   - a property accountability incident is still unresolved; or
+         *   - an active BorrowerRestriction exists (billing, sanction, etc.).
+         *
+         * RETURN_PROCESSING/PARTIALLY_RETURNED records that are still on time
+         * are deliberately allowed. This also avoids treating an internal
+         * Gate Pass/Laundry document follow-up as a new-borrowing prohibition
+         * unless an actual accountability restriction has been imposed.
+         */
+        $overdueCustody = CustodyTransaction::query()
             ->where('borrower_user_id', $borrower->id)
-            ->whereIn('status', [
-                'ACTIVE',
-                'RETURN_PROCESSING',
-                'OVERDUE',
-                'INCIDENT_OPEN',
-                'OBLIGATION_OPEN',
-            ])
+            ->whereNull('closed_at')
+            ->whereNotNull('released_at')
+            ->where(function ($query): void {
+                $query->where('status', 'OVERDUE')
+                    ->orWhere(function ($query): void {
+                        /*
+                         * Do not depend only on the scheduler having already
+                         * changed ACTIVE/RETURN_PROCESSING to OVERDUE. If the
+                         * effective due time has passed and released quantity is
+                         * still outstanding, submission must already be blocked.
+                         */
+                        $query->whereNotNull('due_at')
+                            ->where('due_at', '<', now())
+                            ->whereHas('lines', function ($lineQuery): void {
+                                $lineQuery->whereColumn(
+                                    'returned_quantity',
+                                    '<',
+                                    'actual_released_quantity'
+                                );
+                            });
+                    });
+            })
             ->latest('id')
             ->first();
 
-        if ($outstandingCustody) {
+        if ($overdueCustody) {
             throw ValidationException::withMessages([
                 'restriction' =>
-                    "You cannot submit a new borrowing request while {$outstandingCustody->custody_no} has an outstanding return or unresolved obligation.",
+                    "You cannot submit a new borrowing request while {$overdueCustody->custody_no} has property that is already overdue for return.",
+            ]);
+        }
+
+        $openLateReturnCase = OverdueCase::query()
+            ->where('borrower_user_id', $borrower->id)
+            ->where('status', '!=', 'RESOLVED')
+            ->latest('id')
+            ->first();
+
+        if ($openLateReturnCase) {
+            $custodyNo = CustodyTransaction::query()
+                ->whereKey($openLateReturnCase->custody_transaction_id)
+                ->value('custody_no');
+
+            throw ValidationException::withMessages([
+                'restriction' => $custodyNo
+                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved late-return accountability case."
+                    : 'You cannot submit a new borrowing request while you have an unresolved late-return accountability case.',
+            ]);
+        }
+
+        $openIncident = Incident::query()
+            ->where('borrower_user_id', $borrower->id)
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->latest('id')
+            ->first();
+
+        if ($openIncident) {
+            $custodyNo = CustodyTransaction::query()
+                ->whereKey($openIncident->custody_transaction_id)
+                ->value('custody_no');
+
+            throw ValidationException::withMessages([
+                'restriction' => $custodyNo
+                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved property accountability case."
+                    : 'You cannot submit a new borrowing request while you have an unresolved property accountability case.',
             ]);
         }
 

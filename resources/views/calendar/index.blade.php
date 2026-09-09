@@ -217,13 +217,21 @@
 </aside>
 
 <style>
-.calendar-status-tabs{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 14px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface,#fff)}
-.calendar-status-tab{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:7px 11px;border:1px solid var(--border);border-radius:999px;background:var(--surface,#fff);color:var(--text-muted);font:inherit;font-size:12px;font-weight:800;line-height:1;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease,box-shadow .16s ease}
-.calendar-status-tab:hover{border-color:#b8c9dc;color:var(--heading);background:var(--surface-hover,#f4f8fc)}
+/* Status filtering is a single navigation component, not a row of buttons. */
+.calendar-status-tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 14px;padding:7px;border:1px solid #d9e5f0;border-radius:13px;background:#f3f7fb;box-shadow:inset 0 1px 0 rgba(255,255,255,.7)}
+.calendar-status-tab{position:relative;display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:8px 11px;border:1px solid transparent;border-radius:9px;background:rgba(255,255,255,.64);color:#5d7188;font:inherit;font-size:12px;font-weight:800;line-height:1;cursor:pointer;transition:border-color .16s ease,background-color .16s ease,color .16s ease,box-shadow .16s ease}
+.calendar-status-tab:hover{border-color:#c7d7e6;background:#fff;color:var(--heading);box-shadow:0 1px 2px rgba(30,55,83,.06)}
 .calendar-status-tab:focus-visible{outline:3px solid rgba(31,111,235,.18);outline-offset:2px}
-.calendar-status-tab.is-selected{border-color:#9fc8ec;background:#eaf5ff;color:#075ea8;box-shadow:inset 0 0 0 1px rgba(7,94,168,.03)}
-.calendar-status-tab-count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:rgba(15,42,67,.07);color:inherit;font-size:10px;font-weight:900}
-.calendar-status-tab.is-selected .calendar-status-tab-count{background:rgba(7,94,168,.10)}
+.calendar-status-tab.is-selected{border-color:#a9cdea;background:#e8f4ff;color:#075c9f;box-shadow:inset 0 -2px 0 #1477ca,0 1px 2px rgba(24,91,151,.08)}
+.calendar-status-tab-count{display:inline-grid;place-items:center;min-width:23px;height:23px;padding:0 6px;border:1px solid rgba(55,84,114,.08);border-radius:7px;background:#e8eef4;color:#536a82;font-size:10px;font-weight:900;font-variant-numeric:tabular-nums}
+.calendar-status-tab.is-selected .calendar-status-tab-count{border-color:#c5def1;background:#d5ebfb;color:#075c9f}
+/* Semantic emphasis stays in the count, keeping the filter family cohesive. */
+.calendar-status-tab[data-calendar-status-filter="overdue"]:not([data-calendar-zero="true"]) .calendar-status-tab-count{border-color:#f0c9c3;background:#fff0ee;color:#aa362d}
+.calendar-status-tab[data-calendar-status-filter="returned"]:not([data-calendar-zero="true"]) .calendar-status-tab-count{border-color:#c8e5d3;background:#eef9f1;color:#24734d}
+.calendar-status-tab.is-selected[data-calendar-status-filter="overdue"]{border-color:#e3b6b0;background:#fff5f3;color:#9c332b;box-shadow:inset 0 -2px 0 #bb463d,0 1px 2px rgba(126,43,36,.06)}
+.calendar-status-tab.is-selected[data-calendar-status-filter="overdue"] .calendar-status-tab-count{border-color:#edc8c3;background:#fde5e2;color:#9c332b}
+.calendar-status-tab.is-selected[data-calendar-status-filter="returned"]{border-color:#add9be;background:#f0faf3;color:#236b47;box-shadow:inset 0 -2px 0 #32845a,0 1px 2px rgba(35,107,71,.06)}
+.calendar-status-tab.is-selected[data-calendar-status-filter="returned"] .calendar-status-tab-count{border-color:#c4e4d0;background:#def4e5;color:#236b47}
 .calendar-role-description{margin:6px 0 0;max-width:760px;color:var(--text-muted);font-size:13px;line-height:1.55}
 .calendar-day-flags{display:flex;align-items:center;justify-content:flex-end;gap:4px;flex-wrap:wrap;min-width:0}.calendar-day-heading .calendar-today-label{color:var(--interactive);font-size:8px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 .calendar-day-heading .calendar-operational-badge{display:inline-flex;align-items:center;max-width:100%;padding:2px 5px;border-radius:999px;font-size:7px;font-weight:800;line-height:1.25;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -231,12 +239,26 @@
 .calendar-day.calendar-operational-closed{background:#f7f8fa}.calendar-day.calendar-operational-closed:not(.outside-month){box-shadow:inset 0 3px 0 #c9ced6}.calendar-day.calendar-operational-special:not(.outside-month){box-shadow:inset 0 3px 0 #4d91e8}.calendar-day.calendar-operational-limited:not(.outside-month){box-shadow:inset 0 3px 0 #d9a629}
 .legend-mark.adjusted{background:#6f42c1}.legend-mark.operational-closed{background:#c9ced6}.legend-mark.operational-special{background:#4d91e8}
 .calendar-adjustment-reason dd{color:#7a4f00}.calendar-adjustment-reason{background:#fff9e8;border-radius:8px;padding:7px 8px}
-.calendar-status-tab[data-calendar-zero="true"]{opacity:.58}
-.calendar-status-tab[data-calendar-zero="true"] .calendar-status-tab-count{background:rgba(15,42,67,.04)}
+.calendar-status-tab[data-calendar-zero="true"]{color:#8797a9}
+.calendar-status-tab[data-calendar-zero="true"] .calendar-status-tab-count{border-color:transparent;background:#f1f4f7;color:#93a1b0}
 .calendar-day.calendar-status-jump-day{position:relative;z-index:1;box-shadow:inset 0 0 0 3px rgba(31,111,235,.28),0 0 0 3px rgba(31,111,235,.08)}
 .calendar-event.calendar-status-jump-target{outline:3px solid rgba(31,111,235,.35);outline-offset:2px;box-shadow:0 8px 22px rgba(31,111,235,.15)}
 .calendar-filter-empty.calendar-status-jump-empty{outline:3px solid rgba(31,111,235,.16);outline-offset:3px}
 @media(prefers-reduced-motion:reduce){.calendar-day.calendar-status-jump-day,.calendar-event.calendar-status-jump-target{scroll-behavior:auto}}
-@media(max-width:760px){.calendar-status-tabs{padding:10px;gap:6px}.calendar-status-tab{flex:1 1 auto;justify-content:center}.calendar-day-heading .calendar-operational-badge{font-size:6px;padding:2px 4px}}
+html[data-theme="dark"] .calendar-status-tabs{border-color:#2c3b4b;background:#172433;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+html[data-theme="dark"] .calendar-status-tab{background:rgba(33,49,66,.76);color:#aebccd}
+html[data-theme="dark"] .calendar-status-tab:hover{border-color:#4a6279;background:#213246;color:#e6edf5}
+html[data-theme="dark"] .calendar-status-tab.is-selected{border-color:#3f82ba;background:#173b5a;color:#a9d9ff;box-shadow:inset 0 -2px 0 #63b1ef,0 1px 2px rgba(0,0,0,.18)}
+html[data-theme="dark"] .calendar-status-tab-count{border-color:#31475d;background:#263a4d;color:#b8c7d8}
+html[data-theme="dark"] .calendar-status-tab.is-selected .calendar-status-tab-count{border-color:#3979aa;background:#25557b;color:#d7ecff}
+html[data-theme="dark"] .calendar-status-tab[data-calendar-status-filter="overdue"]:not([data-calendar-zero="true"]) .calendar-status-tab-count{border-color:#70413d;background:#422725;color:#f2aaa2}
+html[data-theme="dark"] .calendar-status-tab[data-calendar-status-filter="returned"]:not([data-calendar-zero="true"]) .calendar-status-tab-count{border-color:#3e674e;background:#233c2c;color:#a8dfba}
+html[data-theme="dark"] .calendar-status-tab.is-selected[data-calendar-status-filter="overdue"]{border-color:#895550;background:#492b29;color:#ffc1bb;box-shadow:inset 0 -2px 0 #e5776d,0 1px 2px rgba(0,0,0,.18)}
+html[data-theme="dark"] .calendar-status-tab.is-selected[data-calendar-status-filter="overdue"] .calendar-status-tab-count{border-color:#895550;background:#633633;color:#ffd1cb}
+html[data-theme="dark"] .calendar-status-tab.is-selected[data-calendar-status-filter="returned"]{border-color:#4f8361;background:#213e2c;color:#b8efc8;box-shadow:inset 0 -2px 0 #68b983,0 1px 2px rgba(0,0,0,.18)}
+html[data-theme="dark"] .calendar-status-tab.is-selected[data-calendar-status-filter="returned"] .calendar-status-tab-count{border-color:#4f8361;background:#2d593c;color:#cdf7d9}
+html[data-theme="dark"] .calendar-status-tab[data-calendar-zero="true"]{color:#718397}
+html[data-theme="dark"] .calendar-status-tab[data-calendar-zero="true"] .calendar-status-tab-count{background:#223142;color:#74879a}
+@media(max-width:760px){.calendar-status-tabs{padding:6px;gap:5px}.calendar-status-tab{flex:1 1 auto;justify-content:center}.calendar-day-heading .calendar-operational-badge{font-size:6px;padding:2px 4px}}
 </style>
 @endsection

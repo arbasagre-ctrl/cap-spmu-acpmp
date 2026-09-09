@@ -170,7 +170,7 @@
     <div>
         <p class="eyebrow">{{ $activeSectionHeading[0] ?? 'SPMU Head configuration' }}</p>
         <h1>{{ $activeSectionHeading[1] ?? 'Operational Configuration' }}</h1>
-        <p>{{ $activeSectionHeading[2] ?? 'Manage schedules, operational policies, and official document templates.' }}</p>
+        <p>{{ $activeSectionHeading[2] ?? 'Manage schedules, policies, and official templates.' }}</p>
     </div>
 
     @if($configurationSection)
@@ -200,7 +200,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="calendar-clock" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Special Dates &amp; Closures</strong>
-                    <span>Holidays, closures, and special working days</span>
+                    <span>Closures and special working days</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -215,7 +215,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="calendar" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Academic Period</strong>
-                    <span>Semester and academic year configuration</span>
+                    <span>Semester and academic year</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -224,7 +224,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="clock" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Late Return Policy</strong>
-                    <span>Return deadlines and financial assessment</span>
+                    <span>Late-return fee and assessment</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -233,7 +233,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Sanction Rules</strong>
-                    <span>Confirmed offense rules and defaults</span>
+                    <span>Confirmed offense rules</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -248,7 +248,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="requests" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Borrower's Slip Template</strong>
-                    <span>Manage approved Borrower's Slip template</span>
+                    <span>Approved Borrower's Slip</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -257,7 +257,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="custody" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Laundry Form Template</strong>
-                    <span>Manage approved Laundry Form template</span>
+                    <span>Approved Laundry Form</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -266,7 +266,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="id-badge" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Gate Pass Template</strong>
-                    <span>Manage approved Gate Pass template</span>
+                    <span>Approved Gate Pass</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -275,7 +275,25 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="reports" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>Billing Statement Template</strong>
-                    <span>Manage approved billing statement template</span>
+                    <span>Approved Billing Statement</span>
+                </span>
+                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+            </a>
+
+            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-accountability-compliance-notice']) }}">
+                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
+                <span class="operational-config-card-text">
+                    <strong>Compliance Notice Template</strong>
+                    <span>Approved compliance notice</span>
+                </span>
+                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+            </a>
+
+            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-administrative-sanction-notice']) }}">
+                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
+                <span class="operational-config-card-text">
+                    <strong>Sanction Notice Template</strong>
+                    <span>Approved administrative sanction notice</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>
@@ -284,7 +302,7 @@
                 <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
                 <span class="operational-config-card-text">
                     <strong>RSLDDP Template</strong>
-                    <span>Manage approved accountability report template</span>
+                    <span>Approved accountability report</span>
                 </span>
                 <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
             </a>

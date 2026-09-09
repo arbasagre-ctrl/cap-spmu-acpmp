@@ -17,6 +17,8 @@
         )
         : null;
 
+    $accountabilityIndicator = $custody?->activeAccountabilityIndicator();
+
     $laundry = $custody?->laundryJob;
 
     $laundryStatus = $laundry
@@ -327,6 +329,12 @@
         }
     }
 
+    if ($isReleased && $accountabilityIndicator) {
+        $returnDescription = $custody?->hasOutstandingProperty()
+            ? $accountabilityIndicator['label'].' is active while the remaining return branch is still being processed.'
+            : $accountabilityIndicator['label'].' remains active until SPMU records the required resolution.';
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Tracker steps
@@ -451,7 +459,7 @@
     ];
 
     $steps[$returnStepIndex] = [
-        'label' => 'Return Processing',
+        'label' => $accountabilityIndicator ? 'Return + Accountability' : 'Return Processing',
         'icon' => 'custody',
         'time' => $returnStartedAt,
         'description' => $returnDescription,
@@ -528,6 +536,9 @@
 
         $isClosed
             => 'Completed',
+
+        $isReleased && $accountabilityIndicator
+            => $custody?->hasOutstandingProperty() ? 'Return + Accountability' : 'Accountability Processing',
 
         $isReleased
             && $laundryStatus === 'FOR_LAUNDRY'

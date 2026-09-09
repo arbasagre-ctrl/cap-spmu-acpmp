@@ -14,6 +14,7 @@
 
     $requestStatus = $request->status;
     $custodyWorkflow = $custody?->workflowStatus();
+    $accountabilityIndicator = $custody?->activeAccountabilityIndicator();
 
     if ($custodyWorkflow) {
         [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($custodyWorkflow['key']) {
@@ -172,6 +173,9 @@
 
     <div class="mr-row-action">
         <span class="mr-badge is-{{ $statusTone }}">{{ $statusLabel }}</span>
+        @if($accountabilityIndicator)
+            <small class="mr-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
+        @endif
 
         <a class="mr-row-view" href="{{ route('requests.show', $request) }}">
             View request

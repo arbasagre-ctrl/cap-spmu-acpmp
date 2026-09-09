@@ -27,9 +27,9 @@ final class ReportExportOptions
     public const ACTION_LABELS = [
         'pdf' => 'Generate PDF',
         'docx' => 'Download Word',
-        'xlsx' => 'Download Excel',
-        'csv' => 'Download CSV',
-        'print' => 'Print Preview',
+        'xlsx' => 'Export XLSX',
+        'csv' => 'Export CSV',
+        'print' => 'Print Report',
     ];
 
     public const PAGE_SIZES = [
@@ -119,7 +119,8 @@ final class ReportExportOptions
             self::flag($request, 'include_generated_by', true),
             self::flag($request, 'include_filters', true),
             self::flag($request, 'include_footer', true),
-            self::flag($request, 'repeat_headers', true),
+            in_array($format, ['pdf', 'print'], true)
+                && self::flag($request, 'repeat_headers', true),
             $fontSize,
         );
     }

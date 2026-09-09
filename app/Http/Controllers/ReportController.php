@@ -56,32 +56,39 @@ class ReportController extends Controller
         }
 
         $scope = $this->resolveScope($request, $request->input('report'));
-
-        $dataset = app(ReportService::class)->generate($scope['filters'], $request->user());
+        $showPreview = $request->boolean('generated');
+        $dataset = null;
+        $paginator = null;
 
         /*
-         * The screen paginates; CSV and print render the whole dataset. All
-         * three come from this one generate() call, so a page of records can
-         * never disagree with the export beside it.
+         * Opening Reports is intentionally configuration-first. The report is
+         * generated only when the operator submits the builder, so a direct
+         * visit does not imply a report has been reviewed or is ready to
+         * export. CSV and print still generate their own full data sets from
+         * this same resolved scope.
          */
-        $page = LengthAwarePaginator::resolveCurrentPage();
+        if ($showPreview) {
+            $dataset = app(ReportService::class)->generate($scope['filters'], $request->user());
+            $page = LengthAwarePaginator::resolveCurrentPage();
 
-        $paginator = new LengthAwarePaginator(
-            $dataset->rows->forPage($page, self::PER_PAGE)->values(),
-            $dataset->count(),
-            self::PER_PAGE,
-            $page,
-            [
-                'path' => route('reports.index'),
-                'query' => $scope['filters']->toQuery(),
-            ]
-        );
+            $paginator = new LengthAwarePaginator(
+                $dataset->rows->forPage($page, self::PER_PAGE)->values(),
+                $dataset->count(),
+                self::PER_PAGE,
+                $page,
+                [
+                    'path' => route('reports.index'),
+                    'query' => array_merge($scope['filters']->toQuery(), ['generated' => '1']),
+                ]
+            );
+        }
 
         return view('reports.detailed', [
             'activeTab' => 'reports',
             'reportGroups' => ReportCatalogue::grouped(),
             'selectedReport' => $scope['report'],
             'selectedReportMeta' => ReportCatalogue::definition($scope['report']),
+            'showPreview' => $showPreview,
             'dataset' => $dataset,
             'records' => $paginator,
             'reportFilters' => $scope['filters'],
@@ -464,10 +471,7 @@ class ReportController extends Controller
     public function audit(Request $request): View
     {
         abort_unless(
-            in_array($request->user()?->access_classification, [
-                AccessClassification::SpmuHead,
-                AccessClassification::IctuMaintainer,
-            ], true),
+            $request->user()?->access_classification === AccessClassification::IctuMaintainer,
             403
         );
         return view('reports.audit', [

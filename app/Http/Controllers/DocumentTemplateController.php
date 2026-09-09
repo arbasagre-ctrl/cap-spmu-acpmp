@@ -30,6 +30,8 @@ class DocumentTemplateController extends Controller
         'LAUNDRY_FORM' => ['name' => 'Laundry Form', 'setting_key' => 'laundry_form_template_version'],
         'GATE_PASS' => ['name' => 'Gate Pass', 'setting_key' => 'gate_pass_template_version'],
         'BILLING_STATEMENT' => ['name' => 'Billing Statement', 'setting_key' => 'billing_statement_template_version'],
+        'ACCOUNTABILITY_COMPLIANCE_NOTICE' => ['name' => 'Accountability / Compliance Notice', 'setting_key' => 'accountability_compliance_notice_template_version'],
+        'ADMINISTRATIVE_SANCTION_NOTICE' => ['name' => 'Administrative Sanction Notice', 'setting_key' => 'administrative_sanction_notice_template_version'],
         'RSLDDP' => ['name' => 'RSLDDP', 'setting_key' => 'rslddp_template_version'],
     ];
 

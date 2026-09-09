@@ -132,9 +132,9 @@
                     <span>Include system-generated footer</span>
                 </label>
 
-                <label class="checkbox">
+                <label class="checkbox" data-repeat-header-setting>
                     <input type="checkbox" name="repeat_headers" value="1" checked>
-                    <span>Repeat table headers on each page</span>
+                    <span>Repeat table headers on each PDF/printed page</span>
                 </label>
             </fieldset>
 

@@ -33,8 +33,13 @@
 .return-flow-page .return-document-copy strong, .return-flow-page .return-document-copy small { display: block; }
 .return-flow-page .return-document-copy strong { color: var(--heading); font-size: 13px; }
 .return-flow-page .return-document-copy small { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
-.return-flow-page .return-document-row > .status-badge { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
-.return-flow-page .return-document-row > .button { flex-shrink: 0; min-height: 28px; padding: 5px 9px; font-size: 11px; }
+.return-flow-page .return-document-row > .status-badge, .return-flow-page .return-document-row-main > .status-badge { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+.return-flow-page .return-document-row > .button, .return-flow-page .return-document-row-main > .button { flex-shrink: 0; min-height: 28px; padding: 5px 9px; font-size: 11px; }
+/* The Gate Pass row alone can carry a subtle note under its copy/action line
+   without turning into a second alert card. */
+.return-flow-page .return-document-row-stacked { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; }
+.return-flow-page .return-document-row-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.return-flow-page .return-document-helper { margin: 0; padding-left: 34px; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
 .return-flow-page .return-inspection-card { display: grid; gap: 12px; }
 .return-flow-page .return-inspection-header { margin-bottom: 0; align-items: center; }
 .return-flow-page .return-outstanding-badge { padding: 6px 14px; color: var(--return-blue); border-color: var(--info-border); background: var(--info-bg); font-size: 12px; white-space: nowrap; }
@@ -115,8 +120,9 @@ html[data-theme="dark"] .return-flow-page { --return-blue: #72b7f4; }
     .return-flow-page .card { padding: 16px; }
     .return-flow-page .return-status-card { padding: 0; }
     .return-flow-page .return-inspection-header { flex-wrap: wrap; }
-    .return-flow-page .return-document-row { flex-wrap: wrap; }
-    .return-flow-page .return-document-row > .button { width: auto; }
+    .return-flow-page .return-document-row, .return-flow-page .return-document-row-main { flex-wrap: wrap; }
+    .return-flow-page .return-document-row > .button, .return-flow-page .return-document-row-main > .button { width: auto; }
+    .return-flow-page .return-document-helper { padding-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
     .return-flow-page * { transition: none !important; }

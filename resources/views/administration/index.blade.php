@@ -38,16 +38,17 @@
         @endif
     </article>
 
-    <article class="kpi-card kpi-card-inline admin-kpi-card @if(Route::has('reports.audit')) stat-card-link ui-pressable @endif">
+    <article class="kpi-card kpi-card-inline admin-kpi-card @if($mayViewAuditTrail && Route::has('reports.audit')) stat-card-link ui-pressable @endif">
         <span class="kpi-label">Open configuration values</span>
         <strong class="kpi-value">{{ $openSettings }}</strong>
-        @if(Route::has('reports.audit'))
+        @if($mayViewAuditTrail && Route::has('reports.audit'))
             <a class="dashboard-view-all" href="{{ route('reports.audit') }}">Open audit trail <x-icon name="chevron-right" size="12" /></a>
         @endif
     </article>
 </section>
 
-<section class="content-grid">
+<section class="content-grid @unless($mayViewAuditTrail) content-grid-single @endunless">
+    @if($mayViewAuditTrail)
     <div class="card">
         <div class="card-header">
             <div>
@@ -73,6 +74,7 @@
             @endforelse
         </div>
     </div>
+    @endif
 
     <div class="card">
         <div class="card-header">
