@@ -181,6 +181,21 @@ class ReportExportTest extends TestCase
         $this->assertCount(2, $lines);
     }
 
+    public function test_print_preview_uses_the_same_authorized_report_scope(): void
+    {
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
+        $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.print', [
+                'type' => 'borrowing',
+                'academic_period' => 'month',
+            ]))
+            ->assertOk()
+            ->assertSee('Export fixture activity', false)
+            ->assertSee('>Print<', false);
+    }
+
     /* ------------------------------------------------------------------ */
     /* Same dataset across every format                                    */
     /* ------------------------------------------------------------------ */

@@ -12,6 +12,8 @@ use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
 use App\Models\DownloadEvent;
 use App\Models\GatePass;
+use App\Models\Incident;
+use App\Models\OverdueCase;
 use App\Models\GeneratedDocument;
 use App\Models\RequestCancellation;
 use App\Models\RequestStatusHistory;
@@ -64,33 +66,96 @@ class RequestWorkflowService
             abort(403);
         }
 
-        $this->operationalCalendar->assertOpenFor(
-            OperationalCalendarService::REQUEST,
-            now(),
-            'submission'
-        );
         if (! $signatureConfirmed) {
             throw ValidationException::withMessages([
                 'confirm_e_signature' => 'Confirm that you want to apply your registered E-signature before submitting.',
             ]);
         }
 
-        $outstandingCustody = CustodyTransaction::query()
+        /*
+         * A normal active custody is NOT, by itself, a borrowing restriction.
+         * Borrowers may submit another request while previously issued property
+         * is still on custody, provided it is still within the effective return
+         * period and there is no unresolved accountability case or restriction.
+         *
+         * Block only when the borrower actually has a compliance problem:
+         *   - property is currently overdue and still physically outstanding;
+         *   - a late-return accountability case is still unresolved;
+         *   - a property accountability incident is still unresolved; or
+         *   - an active BorrowerRestriction exists (billing, sanction, etc.).
+         *
+         * RETURN_PROCESSING/PARTIALLY_RETURNED records that are still on time
+         * are deliberately allowed. This also avoids treating an internal
+         * Gate Pass/Laundry document follow-up as a new-borrowing prohibition
+         * unless an actual accountability restriction has been imposed.
+         */
+        $overdueCustody = CustodyTransaction::query()
             ->where('borrower_user_id', $borrower->id)
-            ->whereIn('status', [
-                'ACTIVE',
-                'RETURN_PROCESSING',
-                'OVERDUE',
-                'INCIDENT_OPEN',
-                'OBLIGATION_OPEN',
-            ])
+            ->whereNull('closed_at')
+            ->whereNotNull('released_at')
+            ->where(function ($query): void {
+                $query->where('status', 'OVERDUE')
+                    ->orWhere(function ($query): void {
+                        /*
+                         * Do not depend only on the scheduler having already
+                         * changed ACTIVE/RETURN_PROCESSING to OVERDUE. If the
+                         * effective due time has passed and released quantity is
+                         * still outstanding, submission must already be blocked.
+                         */
+                        $query->whereNotNull('due_at')
+                            ->where('due_at', '<', now())
+                            ->whereHas('lines', function ($lineQuery): void {
+                                $lineQuery->whereColumn(
+                                    'returned_quantity',
+                                    '<',
+                                    'actual_released_quantity'
+                                );
+                            });
+                    });
+            })
             ->latest('id')
             ->first();
 
-        if ($outstandingCustody) {
+        if ($overdueCustody) {
             throw ValidationException::withMessages([
                 'restriction' =>
-                    "You cannot submit a new borrowing request while {$outstandingCustody->custody_no} has an outstanding return or unresolved obligation.",
+                    "You cannot submit a new borrowing request while {$overdueCustody->custody_no} has property that is already overdue for return.",
+            ]);
+        }
+
+        $openLateReturnCase = OverdueCase::query()
+            ->where('borrower_user_id', $borrower->id)
+            ->where('status', '!=', 'RESOLVED')
+            ->latest('id')
+            ->first();
+
+        if ($openLateReturnCase) {
+            $custodyNo = CustodyTransaction::query()
+                ->whereKey($openLateReturnCase->custody_transaction_id)
+                ->value('custody_no');
+
+            throw ValidationException::withMessages([
+                'restriction' => $custodyNo
+                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved late-return accountability case."
+                    : 'You cannot submit a new borrowing request while you have an unresolved late-return accountability case.',
+            ]);
+        }
+
+        $openIncident = Incident::query()
+            ->where('borrower_user_id', $borrower->id)
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->latest('id')
+            ->first();
+
+        if ($openIncident) {
+            $custodyNo = CustodyTransaction::query()
+                ->whereKey($openIncident->custody_transaction_id)
+                ->value('custody_no');
+
+            throw ValidationException::withMessages([
+                'restriction' => $custodyNo
+                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved property accountability case."
+                    : 'You cannot submit a new borrowing request while you have an unresolved property accountability case.',
             ]);
         }
 
@@ -154,22 +219,15 @@ class RequestWorkflowService
                     ]);
                 }
 
-                if (! $this->operationalCalendar->isOpenFor(
-                    OperationalCalendarService::PICKUP,
-                    $scheduleDate
-                )) {
-                    $nextOpen = $this->operationalCalendar->nextOpenDate(
-                        OperationalCalendarService::PICKUP,
-                        $scheduleDate,
-                        true
-                    );
-
-                    throw ValidationException::withMessages([
-                        'schedule_date' =>
-                            'The selected Items Needed From / pickup date is closed for SPMU physical transactions. Next open pickup date: '
-                            .$nextOpen->format('F j, Y').'.',
-                    ]);
-                }
+                /*
+                 * Items Needed From records when the borrower first needs the
+                 * item(s). It is not the physical pickup appointment. The AO
+                 * schedules pickup/release after approval, and the Operational
+                 * Calendar validates the actual physical transaction date/time.
+                 * Therefore a weekend, closure, or special date must not block
+                 * online request submission solely because the need date itself
+                 * is not a Pickup / Release day.
+                 */
 
                 /*
                  * Make sure the requested inventory items
@@ -885,15 +943,33 @@ class RequestWorkflowService
                 );
 
                 /*
-                 * This is the only point in this workflow
-                 * where inventory reservation is created.
-                 *
-                 * InventoryService::allocate() performs
-                 * the final locked availability check.
+                 * The client-defined Pickup / Issuance date is automatic:
+                 * use the latest valid SPMU operating day strictly before
+                 * Items Needed From. Weekends, holidays, suspensions, and
+                 * closed dates are skipped by the Operational Calendar.
+                 */
+                $automaticPickupWindow = $this->operationalCalendar
+                    ->automaticPickupWindowBefore(
+                        $version->needed_from,
+                        now()
+                    );
+
+                if (! $automaticPickupWindow) {
+                    throw ValidationException::withMessages([
+                        'pickup' => 'No valid SPMU Pickup / Issuance operating window remains before the approved Items Needed From date. Revise the borrowing schedule before approval.',
+                    ]);
+                }
+
+                /*
+                 * This is the only point in this workflow where inventory
+                 * reservation is created. Because physical custody begins on
+                 * the earlier Pickup / Issuance date, reservation protection
+                 * also begins on that system-generated date.
                  */
                 try {
                     $this->inventory->allocate(
-                        $version
+                        $version,
+                        $automaticPickupWindow['start']->startOfDay()
                     );
                 } catch (
                     ValidationException $exception
@@ -1063,13 +1139,15 @@ class RequestWorkflowService
                  * Create the pickup/custody record immediately
                  * after SPMU approval and reservation.
                  *
-                 * No exact pickup time is assigned here.
-                 * SPMU will configure the pickup date/time and
-                 * pickup expiration from the Pickup workflow.
+                 * The system assigns the automatic Pickup / Issuance
+                 * operating window here. The Action Officer only confirms
+                 * that generated schedule before the borrower is notified.
                  */
                 $custody = $this->custody->ensurePickupRecord(
                     $request->fresh(),
-                    $approver
+                    $approver,
+                    $automaticPickupWindow['start'],
+                    $automaticPickupWindow['end']
                 );
 
                 /*
@@ -1172,7 +1250,16 @@ class RequestWorkflowService
                             true,
 
                         'pickup_schedule_created' =>
+                            true,
+
+                        'pickup_schedule_confirmed' =>
                             false,
+
+                        'automatic_pickup_at' =>
+                            $automaticPickupWindow['start']->toIso8601String(),
+
+                        'automatic_pickup_expires_at' =>
+                            $automaticPickupWindow['end']->toIso8601String(),
 
                         'borrower_documents_generated' =>
                             true,
@@ -1187,7 +1274,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. Bring the generated documents and proceed to SPMU on the scheduled pickup date.",
+                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. SPMU will notify you after the Action Officer confirms the system-generated Pickup / Issuance schedule.",
                     $request
                 );
 
@@ -1199,7 +1286,7 @@ class RequestWorkflowService
                 $this->notifications->send(
                     'REQUEST_APPROVED',
                     $actionOfficers,
-                    "Request {$request->request_no} was verified and approved by the SPMU Head. The approved quantity is allocated/held and is ready for pickup scheduling and release processing.",
+                    "Request {$request->request_no} was approved. The system generated the Pickup / Issuance window for {$automaticPickupWindow['start']->format('F j, Y g:i A')} to {$automaticPickupWindow['end']->format('g:i A')}. Review and confirm the schedule before borrower notification and item preparation.",
                     $request,
                     ['SYSTEM', 'EMAIL']
                 );

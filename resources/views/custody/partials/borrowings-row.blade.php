@@ -11,6 +11,7 @@
     $returnDate = $version?->return_date ?: $version?->return_due_at ?: $custody->due_at;
 
     $workflowStatus = $custody->workflowStatus();
+    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $operationalStatusKey = $workflowStatus['key'];
     $workflowGroup = $workflowStatus['group'];
@@ -60,6 +61,9 @@
             :status="$operationalStatusKey"
             :label="$operationalLabel"
         />
+        @if($accountabilityIndicator)
+            <small class="borrowings-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
+        @endif
         <strong>View<x-icon name="chevron-right" size="16" /></strong>
     </span>
 </a>

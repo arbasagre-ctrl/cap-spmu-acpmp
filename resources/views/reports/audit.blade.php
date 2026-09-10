@@ -35,7 +35,7 @@
 
 <section class="page-heading ictu-audit-heading">
     <div>
-        <p class="eyebrow">ICTU system administration</p>
+        <p class="eyebrow">System administration</p>
         <h1>Audit Trail</h1>
         <p>Review immutable records of account, system, and transaction activity.</p>
     </div>
@@ -340,7 +340,7 @@
 
 .ictu-audit-append-only {
     padding: 5px 9px;
-    border: 1px solid var(--border-color, #d8e1eb);
+    border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--surface, #fff);
     font-weight: 700;
@@ -391,7 +391,7 @@
     align-items: center;
     min-height: 23px;
     padding: 3px 8px;
-    border: 1px solid var(--border-color, #d6e0eb);
+    border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--surface-subtle, #f4f7fb);
     color: var(--text-muted, #536980);
@@ -443,7 +443,7 @@
 .ictu-audit-details-panel {
     margin-top: 12px;
     padding: 14px;
-    border: 1px solid var(--border-color, #d7e0ea);
+    border: 1px solid var(--border);
     border-radius: 12px;
     background: var(--surface-subtle, #f7f9fc);
 }
@@ -506,7 +506,7 @@
     overflow: auto;
     border-radius: 9px;
     background: var(--surface, #fff);
-    border: 1px solid var(--border-color, #d7e0ea);
+    border: 1px solid var(--border);
     white-space: pre-wrap;
     word-break: break-word;
     font-size: .76rem;

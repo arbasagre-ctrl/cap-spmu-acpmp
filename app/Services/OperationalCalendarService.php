@@ -71,36 +71,41 @@ class OperationalCalendarService
 
     public function isOpenFor(string $activity, CarbonInterface|string $dateTime, bool $respectHours = false): bool
     {
+        $activity = strtoupper($activity);
+
+        /*
+         * Borrower request submission is an online service and is available
+         * at any time. Weekly office state, operating hours, weekends, and
+         * special closures govern physical SPMU transactions only.
+         */
+        if ($activity === self::REQUEST) {
+            return true;
+        }
+
         $at = $this->asDateTime($dateTime);
         $profile = $this->profile($at);
 
-        /*
-         * OPEN/CLOSED vs ACTIVITY PERMISSION
-         * ----------------------------------
-         * is_open describes whether the SPMU office is physically operating
-         * that weekday. It deliberately does not gate the individual
-         * permissions: a physically closed day may still accept online
-         * request submissions when Requests is enabled, while physical
-         * pickup/release and returns stay unavailable.
-         *
-         * An institutional closure is expressed as a CLOSED date exception,
-         * which profileFromRecords() already resolves by turning every
-         * permission off, so that existing precedence is unchanged.
-         */
-        $allowed = match (strtoupper($activity)) {
-            self::REQUEST => (bool) $profile['accepts_requests'],
+        $allowed = match ($activity) {
             self::PICKUP => (bool) $profile['allows_pickup'],
             self::RETURN => (bool) $profile['allows_return'],
             default => false,
         };
 
-        if (! $allowed || ! $respectHours) {
-            return $allowed;
+        if (! $allowed) {
+            return false;
         }
 
         [$open, $close] = $this->operatingWindow($activity, $at, $profile);
 
-        if (! $open || ! $close) {
+        /*
+         * Physical transactions fail closed unless a complete, valid
+         * operating window is configured for the selected date.
+         */
+        if (! $open || ! $close || ! $open->lt($close)) {
+            return false;
+        }
+
+        if (! $respectHours) {
             return true;
         }
 
@@ -175,6 +180,114 @@ class OperationalCalendarService
 
         // Request creation must remain available even when no future
         // Pickup / Release window is currently configured.
+        return null;
+    }
+
+    /**
+     * Resolve the automatic Pickup / Issuance window for a newly approved
+     * request. The normal pickup date is the latest valid SPMU operating day
+     * strictly BEFORE the approved Items Needed From date. Closed weekends,
+     * holidays, suspensions, and date-specific closures are skipped.
+     *
+     * When approval happens on that same prior operating day, the window may
+     * start at the current minute as long as the office has not yet closed.
+     *
+     * @return array{start: CarbonImmutable, end: CarbonImmutable}|null
+     */
+    public function automaticPickupWindowBefore(
+        CarbonInterface|string $neededFrom,
+        CarbonInterface|string|null $notBefore = null
+    ): ?array {
+        $needDate = $this->asDate($neededFrom);
+        $floor = $notBefore !== null
+            ? $this->asDateTime($notBefore)
+            : CarbonImmutable::now(config('app.timezone') ?: 'Asia/Manila');
+
+        for (
+            $candidate = $needDate->subDay();
+            $candidate->gte($floor->startOfDay());
+            $candidate = $candidate->subDay()
+        ) {
+            if (! $this->isOpenFor(self::PICKUP, $candidate, false)) {
+                continue;
+            }
+
+            [$open, $close] = $this->operatingWindow(self::PICKUP, $candidate);
+
+            if (! $open || ! $close || ! $open->lt($close)) {
+                continue;
+            }
+
+            if ($candidate->isSameDay($floor)) {
+                if ($floor->gte($close)) {
+                    continue;
+                }
+
+                $start = $floor->gt($open)
+                    ? $floor->startOfMinute()
+                    : $open;
+
+                if ($start->gte($close)) {
+                    continue;
+                }
+
+                return ['start' => $start, 'end' => $close];
+            }
+
+            return ['start' => $open, 'end' => $close];
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve the latest configured Pickup / Release window that can still
+     * occur on or before the approved Items Needed From date. This is a
+     * scheduling suggestion only; the Action Officer still confirms the
+     * actual appointment and normal schedulePickup() validation remains
+     * authoritative.
+     *
+     * @return array{start: CarbonImmutable, end: CarbonImmutable}|null
+     */
+    public function latestPickupWindowOnOrBefore(
+        CarbonInterface|string $neededFrom,
+        CarbonInterface|string $notBefore
+    ): ?array {
+        $needDate = $this->asDate($neededFrom);
+        $floor = $this->asDateTime($notBefore);
+
+        if ($needDate->lt($floor->startOfDay())) {
+            return null;
+        }
+
+        for ($candidate = $needDate; $candidate->gte($floor->startOfDay()); $candidate = $candidate->subDay()) {
+            if (! $this->isOpenFor(self::PICKUP, $candidate, false)) {
+                continue;
+            }
+
+            [$open, $close] = $this->operatingWindow(self::PICKUP, $candidate);
+
+            if (! $open || ! $close || ! $open->lt($close)) {
+                continue;
+            }
+
+            if ($candidate->isSameDay($floor)) {
+                if ($floor->gt($close)) {
+                    continue;
+                }
+
+                $start = $floor->gt($open) ? $floor->startOfMinute() : $open;
+
+                if ($start->gt($close)) {
+                    continue;
+                }
+
+                return ['start' => $start, 'end' => $close];
+            }
+
+            return ['start' => $open, 'end' => $close];
+        }
+
         return null;
     }
 

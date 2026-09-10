@@ -23,4 +23,9 @@ class Penalty extends Model
     {
         return $this->belongsTo(CustodyTransaction::class, 'custody_transaction_id');
     }
+
+    public function incident(): BelongsTo
+    {
+        return $this->belongsTo(Incident::class);
+    }
 }

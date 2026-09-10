@@ -393,8 +393,9 @@ HTML;
             'REQUEST_RETURNED_FOR_REVISION' => 'Action Required: Request Revision',
             'REQUEST_REJECTED' => 'Borrowing Request Not Approved',
             'REQUEST_CANCELLED' => 'Borrowing Request Cancelled',
-            'PICKUP_SCHEDULED' => 'Pickup Schedule Confirmed',
-            'PICKUP_EXPIRED' => 'Pickup Reservation Expired',
+            'PICKUP_SCHEDULED' => 'Pickup & Issuance Schedule Confirmed',
+            'PICKUP_EXPIRED' => 'Pickup Schedule Passed',
+            'PICKUP_RESCHEDULE_REQUESTED' => 'Pickup Reschedule Requested',
             'ITEMS_RELEASED' => 'Borrowed Items Released',
             'LINEN_FOR_LAUNDRY' => 'Laundry Processing Required',
             'LAUNDRY_USED_LINEN_RECEIVED' => 'Used Linen Received by Laundry',
@@ -412,11 +413,13 @@ HTML;
         $next = match ($eventCode) {
             'REQUEST_SUBMITTED' => 'The SPMU Action Officer will verify the request and scanned supporting documents first. Verification is not approval and does not reserve inventory.',
             'REQUEST_VERIFIED' => 'The request is now routed to the SPMU Head for a separate approval, rejection, or return decision. No inventory is reserved until approval.',
-            'REQUEST_APPROVED' => 'The approved quantities are reserved and the Borrower Slip plus any applicable Gate Pass or Laundry Form are available to view and download. Bring the generated documents to SPMU on the separately scheduled pickup date.',
+            'REQUEST_APPROVED' => 'The approved quantities are reserved and the Borrower Slip plus any applicable Gate Pass or Laundry Form are available to view and download. The system will prepare the pickup and issuance schedule using the SPMU Operational Calendar, and you will receive a separate notification once the pickup window is confirmed.',
             'REQUEST_RETURNED_FOR_REVISION' => 'Open the request, review the SPMU remarks, correct the required information or documents, and resubmit the updated request.',
             'REQUEST_REJECTED' => 'No inventory reservation was created. Please review the recorded reason and coordinate with SPMU if clarification is needed.',
-            'PICKUP_SCHEDULED' => 'Proceed to SPMU within the confirmed pickup window and bring the generated Borrower Slip plus any applicable Gate Pass or Laundry Form. For linen, SPMU validates the release first, then Laundry Personnel issue the linen and wet-sign Issued by on the printed Laundry Form.',
-            'PICKUP_EXPIRED' => 'Coordinate with SPMU if the borrowing requirement is still active. An expired pickup reservation is not treated as a completed issuance.',
+            'REQUEST_CANCELLED' => 'No further pickup or issuance action is required for this cancelled request. Any unreleased reservation has been released. A new borrowing request is required if the items are needed for another borrowing period.',
+            'PICKUP_SCHEDULED' => 'Claim the approved items at SPMU within the confirmed pickup window shown below. Bring the generated Borrower Slip and any applicable Gate Pass or Laundry Form. If the pickup window passes without issuance, open My Borrowings to request rescheduling or cancel the unreleased request, subject to the approved Expected Return Date.',
+            'PICKUP_EXPIRED' => 'The confirmed pickup window has passed without issuance. Your approved request has not been automatically cancelled. Open My Borrowings and choose Request Reschedule if you still need the items, or Cancel Request if you no longer need them. Rescheduling is available only while another valid SPMU operating window remains strictly before the approved Expected Return Date.',
+            'PICKUP_RESCHEDULE_REQUESTED' => 'The borrower has requested another pickup schedule using the same approved request. Review the Release transaction and set the next valid SPMU operating window strictly before the approved Expected Return Date. No new borrowing request is required.',
             'ITEMS_RELEASED' => 'Please keep the issued property in proper custody and return all items on or before the expected return date. Follow applicable Gate Pass or Laundry requirements when relevant.',
             'LINEN_FOR_LAUNDRY' => 'At release, Laundry Personnel wet-sign Issued by on the printed Laundry Form when the linen is physically issued. On return, the borrower goes to the Laundry Area first; the Laundry Worker records the actual quantity/condition and wet-signs Received by with the actual Date. The Laundry Worker later delivers the accomplished form directly to SPMU, where the Action Officer uploads it and encodes the linen findings. No Laundry portal login or second turnover confirmation is required.',
             'LAUNDRY_USED_LINEN_RECEIVED' => 'Laundry Personnel have physically received the returned linen. The borrower no longer waits for the washing cycle. Processing continues inside the Laundry Area until clean/serviceable linen is marked Available.',
@@ -583,11 +586,11 @@ HTML;
                 $data['details']['Expected Return Date'] = $this->date($return);
             }
 
-            if ($eventCode === 'PICKUP_SCHEDULED' && $source->scheduled_release_at) {
+            if (in_array($eventCode, ['PICKUP_SCHEDULED', 'PICKUP_EXPIRED', 'PICKUP_RESCHEDULE_REQUESTED'], true) && $source->scheduled_release_at) {
                 $data['details']['Pickup Date & Time'] = $this->dateTime($source->scheduled_release_at);
             }
 
-            if ($eventCode === 'PICKUP_SCHEDULED' && $source->pickup_expires_at) {
+            if (in_array($eventCode, ['PICKUP_SCHEDULED', 'PICKUP_EXPIRED', 'PICKUP_RESCHEDULE_REQUESTED'], true) && $source->pickup_expires_at) {
                 $data['details']['Claim Until'] = $this->dateTime($source->pickup_expires_at);
             }
 
@@ -596,7 +599,7 @@ HTML;
             }
 
             $data['quantityLabel'] = match ($eventCode) {
-                'PICKUP_SCHEDULED' => 'Approved Quantity',
+                'PICKUP_SCHEDULED', 'PICKUP_EXPIRED', 'PICKUP_RESCHEDULE_REQUESTED' => 'Approved Quantity',
                 'ITEMS_RELEASED', 'LINEN_FOR_LAUNDRY' => 'Issued Quantity',
                 'RETURN_RECORDED', 'RETURN_INSPECTED', 'OVERDUE', 'RETURN_OVERDUE', 'TRANSACTION_CLOSED' => 'Outstanding Quantity',
                 default => 'Quantity',
@@ -798,7 +801,9 @@ HTML;
                 .$this->reasonParagraph($reason),
 
             'REQUEST_CANCELLED' =>
-                'This borrowing request has been cancelled. Any unreleased inventory allocation associated with the request is no longer being held for release.',
+                $isBorrower
+                    ? 'Your borrowing request has been cancelled before physical issuance. Any reserved quantity for this unreleased request has been released back to SPMU inventory. No further pickup action is required. If you need the items for another date, submit a new borrowing request for the new borrowing period.'
+                    : 'The unreleased borrowing request has been cancelled. Any reserved quantity has been released back to SPMU inventory, and no further pickup or issuance action is required for this request.',
 
             /*
              * -----------------------------------------------------
@@ -808,13 +813,18 @@ HTML;
 
             'PICKUP_SCHEDULED' =>
                 $isBorrower
-                    ? 'SPMU has confirmed the pickup schedule for your approved borrowing request. Please review the pickup information below and proceed to the Supply and Property Management Unit within the confirmed pickup window.'
-                    : 'A pickup schedule has been confirmed for the approved borrowing transaction. The borrower has been provided with the applicable pickup information.',
+                    ? 'Your pickup and issuance schedule is confirmed. Please claim the approved items at the Supply and Property Management Unit within the pickup window shown below. Bring your generated Borrower Slip and any applicable Gate Pass or Laundry Form. The items are not considered issued until SPMU completes the physical handover.'
+                    : 'The pickup and issuance schedule has been confirmed for this approved borrowing transaction. The borrower has been notified of the pickup window and required release documents.',
 
             'PICKUP_EXPIRED' =>
                 $isBorrower
-                    ? 'The confirmed pickup window for this borrowing transaction has expired without completion of physical issuance. Please coordinate with SPMU if the borrowing requirement is still active.'
-                    : 'The confirmed pickup window expired before physical issuance was completed. The transaction remains subject to the appropriate SPMU follow-up.',
+                    ? 'Your scheduled pickup window has passed and the approved items were not physically issued. Your request has not been automatically cancelled, and you do not need to submit a new borrowing request. Open My Borrowings and choose Request Reschedule if you still need the items, or Cancel Request if you no longer need them. A new pickup schedule can only be set while a valid SPMU operating window remains before your approved Expected Return Date.'
+                    : 'The confirmed pickup window passed without physical issuance. The borrower has been notified and must decide whether to request rescheduling or cancel the unreleased request. Keep the reservation active until the borrower responds or the approved pickup period can no longer be used.',
+
+            'PICKUP_RESCHEDULE_REQUESTED' =>
+                $isBorrower
+                    ? 'We received your request to reschedule pickup. Your original approved borrowing request remains active, so you do not need to submit another request. SPMU will set the next valid pickup window within the approved borrowing period, and you will receive another notification once the new schedule is confirmed.'
+                    : 'The borrower requested a new pickup schedule using the same approved request. Review the Release transaction and set the next valid SPMU operating window strictly before the approved Expected Return Date. The borrower will be notified again when the new pickup schedule is confirmed.',
 
             'ITEMS_RELEASED' =>
                 $isBorrower

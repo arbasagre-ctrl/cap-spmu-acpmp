@@ -142,6 +142,13 @@
 .release-step-panel { margin-top: 12px; }
 .release-flow-page .release-schedule-fields { margin-top: 0; gap: 16px; }
 .release-flow-page .release-schedule-form, .release-flow-page .release-preparation-form { margin: 0; }
+.release-flow-page .release-schedule-form > .meta { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.release-flow-page .release-schedule-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--info-border); border-radius: 7px; background: var(--info-bg); }
+.release-flow-page .release-schedule-suggestion > div { display: grid; gap: 3px; min-width: 0; }
+.release-flow-page .release-schedule-suggestion strong { color: var(--heading); font-size: 12px; font-weight: 750; }
+.release-flow-page .release-schedule-suggestion span { color: var(--info); font-size: 12px; font-weight: 700; }
+.release-flow-page .release-schedule-suggestion small { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.release-flow-page .release-schedule-suggestion .button { flex-shrink: 0; }
 .release-flow-page .release-preparation-form > p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .release-flow-page .release-preparation-form .table-wrap table { min-width: 580px; }
 .prepared-quantity-stepper {
@@ -248,6 +255,8 @@ html[data-theme="dark"] .release-process-step.is-current > .release-step-number 
     .release-document-row { grid-template-columns: minmax(0, 1fr) auto; }
     .release-document-row > .button { margin-right: 0; }
     .release-flow-page .release-schedule-fields { grid-template-columns: minmax(0, 1fr); }
+    .release-flow-page .release-schedule-suggestion { align-items: flex-start; flex-direction: column; }
+    .release-flow-page .release-schedule-suggestion .button { width: 100%; }
     .release-flow-page .release-handover-form .checkbox { gap: 12px; }
     .release-form-actions { padding-right: 0; flex-wrap: wrap; }
     .release-flow-page .release-context-list { grid-template-columns: minmax(120px, .95fr) minmax(0, 1fr); margin: 0; }

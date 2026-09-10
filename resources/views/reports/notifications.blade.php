@@ -462,8 +462,8 @@
     width: 100%;
     box-sizing: border-box;
     padding: 18px 22px 20px;
-    border-top: 1px solid var(--border-color, #d7e0ea);
-    border-bottom: 1px solid var(--border-color, #d7e0ea);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     background: var(--surface-subtle, #f7f9fc);
 }
 
@@ -775,8 +775,8 @@ document.addEventListener('DOMContentLoaded', () => {
     box-sizing: border-box !important;
     padding: 20px 24px !important;
     border: 0 !important;
-    border-top: 1px solid var(--border-color, #d7e0ea) !important;
-    border-bottom: 1px solid var(--border-color, #d7e0ea) !important;
+    border-top: 1px solid var(--border) !important;
+    border-bottom: 1px solid var(--border) !important;
     border-radius: 0 !important;
     background: var(--surface-subtle, #f7f9fc) !important;
 }

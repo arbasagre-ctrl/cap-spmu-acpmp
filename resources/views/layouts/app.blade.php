@@ -145,7 +145,9 @@
         /* Additional sidebar module icon colors */
         .sidebar-nav .nav-icon-users { color: #7A5AF8; }
         .sidebar-nav .nav-icon-settings { color: #0F9488; }
-        .sidebar-nav .nav-icon-reports { color: #2F80ED; }
+        .sidebar-nav .nav-icon-analytics { color: #7A5AF8; }
+        .sidebar-nav .nav-icon-reports,
+        .sidebar-nav .nav-icon-report-document { color: #2F80ED; }
         .sidebar-nav .nav-icon-notifications { color: #E9870C; }
 
         .sidebar-nav a.active .nav-icon,

@@ -14,20 +14,6 @@
 @endphp
 
 <section class="content-area late-fee-page">
-    <article class="card late-fee-identity">
-        <span class="late-fee-identity-icon" aria-hidden="true">
-            <x-icon name="banknote" size="24" />
-        </span>
-
-        <div class="late-fee-identity-copy">
-            <span class="badge">{{ $setting->group_code }}</span>
-            <h2>Late Return Daily Fee</h2>
-            <small class="setting-key">{{ strtoupper($setting->setting_key) }}</small>
-        </div>
-
-        <x-status-badge :status="$setting->status ?: 'NOT_CONFIGURED'" />
-    </article>
-
     <form
         id="setting-{{ $setting->setting_key }}"
         method="post"
@@ -38,22 +24,19 @@
         @csrf
         @method('PUT')
 
-        <div class="late-fee-current">
-            <span>Current value</span>
-            <strong>{{ $valueText }}</strong>
+        <div class="late-fee-form-header">
+            <div>
+                <span class="badge">{{ $setting->group_code }}</span>
+                <h2>Late Return Daily Fee</h2>
+                <p>Applied per calendar day late after the effective return deadline.</p>
+            </div>
+            <div class="late-fee-current-inline">
+                <span>Current</span>
+                <strong>{{ $valueText }}</strong>
+            </div>
         </div>
 
         <div class="late-fee-body">
-            @if(filled($setting->description))
-                <div class="late-fee-note">
-                    <x-icon name="information" size="20" />
-
-                    <p>
-                        <strong>{{ $setting->description }}</strong>
-                        This is the daily tariff used when a late-return accountability case is first created.
-                    </p>
-                </div>
-            @endif
 
             <label class="late-fee-field">
                 Value
@@ -66,17 +49,18 @@
                     inputmode="decimal"
                     placeholder="Not configured"
                 >
-                <small>Enter the daily tariff (e.g., 15.00). It is multiplied by calendar days late for a custody case; no grace period is applied.</small>
+                <small>Amount charged per calendar day late. The effective due date already follows the Operational Calendar.</small>
             </label>
 
             <label class="late-fee-field">
                 Reason for change <span class="late-fee-optional">(optional)</span>
                 <textarea
                     name="reason"
+                    rows="3"
                     maxlength="1000"
-                    placeholder="Describe the update reason..."
+                    placeholder="Optional note for the audit trail"
                 ></textarea>
-                <small>Provide context for this change. This will be logged in the system.</small>
+                <small>Saved with the configuration change for audit reference.</small>
             </label>
 
             <div class="late-fee-actions">
@@ -90,75 +74,16 @@
         </div>
     </form>
 
-    <aside class="late-fee-about">
-        <span class="late-fee-about-icon" aria-hidden="true">
-            <x-icon name="information" size="20" />
-        </span>
-
-        <div>
-            <h3>About Late Return Fee</h3>
-            <p>
-                Lateness begins on the calendar day after the effective return deadline. Operational Calendar closures may move that deadline to the next open return day. The tariff is copied to each new overdue case, so later changes do not rewrite existing accountability amounts.
-            </p>
-        </div>
-
-        <a
-            class="late-fee-learn-more"
-            href="{{ route('policies.index', ['section' => 'transaction-schedule']) }}"
-            target="_blank"
-            rel="noopener"
-        >
-            <x-icon name="external-link" size="15" />
-            Learn more
-        </a>
-    </aside>
+    <p class="late-fee-footnote">
+        <x-icon name="information" size="16" />
+        <span>Existing late-return cases keep the tariff captured when they were created; later policy changes affect new cases only.</span>
+    </p>
 </section>
 
 <style>
 .late-fee-page {
-    --late-fee-line: #e6ecf3;
-    --late-fee-blue: #1a6fd4;
-
     display: grid;
-    gap: 18px;
-}
-
-.late-fee-identity {
-    display: grid;
-    grid-template-columns: 56px minmax(0, 1fr) auto;
-    gap: 20px;
-    align-items: center;
-    padding: 22px 26px;
-}
-
-.late-fee-identity-icon {
-    display: grid;
-    width: 56px;
-    height: 56px;
-    place-items: center;
-    color: var(--late-fee-blue);
-    background: #e8f1fd;
-    border-radius: 50%;
-}
-
-.late-fee-identity-copy {
-    display: grid;
-    gap: 6px;
-    justify-items: start;
-    min-width: 0;
-}
-
-.late-fee-identity-copy h2 {
-    margin: 0;
-    color: var(--heading);
-    font-size: 20px;
-    font-weight: 750;
-}
-
-.late-fee-identity-copy .setting-key {
-    color: var(--text-muted);
-    font-size: 12px;
-    letter-spacing: .02em;
+    gap: 12px;
 }
 
 .late-fee-form {
@@ -166,212 +91,139 @@
     overflow: hidden;
 }
 
-.late-fee-current {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 18px 26px;
-    border-bottom: 1px solid var(--late-fee-line);
+.late-fee-form-header {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:20px;
+    padding:18px 22px;
+    border-bottom:1px solid var(--border);
 }
 
-.late-fee-current > span {
-    color: var(--text-muted);
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: .06em;
-    text-transform: uppercase;
+.late-fee-form-header > div:first-child {
+    display:grid;
+    gap:4px;
 }
 
-.late-fee-current > strong {
-    color: var(--heading);
-    font-size: 14px;
-    font-weight: 750;
+.late-fee-form-header h2 {
+    margin:0;
+    color:var(--heading);
+    font-size:18px;
+    font-weight:750;
+}
+
+.late-fee-form-header p {
+    margin:0;
+    color:var(--text-muted);
+    font-size:12px;
+    line-height:1.45;
+}
+
+.late-fee-current-inline {
+    display:grid;
+    justify-items:end;
+    gap:2px;
+    flex:0 0 auto;
+}
+
+.late-fee-current-inline span {
+    color:var(--text-muted);
+    font-size:10.5px;
+    font-weight:750;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+}
+
+.late-fee-current-inline strong {
+    color:var(--heading);
+    font-size:16px;
 }
 
 .late-fee-body {
-    display: grid;
-    gap: 20px;
-    padding: 22px 26px 26px;
-}
-
-.late-fee-note {
-    display: grid;
-    grid-template-columns: 20px minmax(0, 1fr);
-    gap: 14px;
-    align-items: start;
-    padding: 15px 17px;
-    border: 1px solid #c5ddf6;
-    border-radius: 10px;
-    background: #edf5fd;
-}
-
-.late-fee-note > .ui-icon {
-    margin-top: 1px;
-    color: var(--late-fee-blue);
-}
-
-.late-fee-note p {
-    margin: 0;
-    color: #2b4a6b;
-    font-size: 12.5px;
-    line-height: 1.6;
-}
-
-.late-fee-note strong {
-    display: block;
-    margin-bottom: 3px;
-    color: #12314f;
-    font-size: 13.5px;
-    font-weight: 750;
+    display:grid;
+    gap:16px;
+    padding:20px 22px 22px;
 }
 
 .late-fee-page label.late-fee-field {
-    display: grid;
-    gap: 9px;
-    margin: 0;
-    color: var(--heading);
-    font-size: 13px;
-    font-weight: 700;
+    display:grid;
+    gap:7px;
+    margin:0;
+    color:var(--heading);
+    font-size:12.5px;
+    font-weight:700;
 }
 
 .late-fee-optional {
-    color: var(--text-muted);
-    font-weight: 600;
+    color:var(--text-muted);
+    font-weight:600;
 }
 
 .late-fee-field input,
 .late-fee-field textarea {
-    min-height: 48px;
-    padding: 12px 15px;
-    border-radius: 9px;
-    font-size: 13.5px;
+    min-height:44px;
+    padding:11px 13px;
+    border-radius:8px;
+    font-size:13.5px;
 }
 
 .late-fee-field textarea {
-    min-height: 108px;
+    min-height:78px;
 }
 
 .late-fee-field small {
-    color: var(--text-muted);
-    font-size: 11.5px;
-    font-weight: 500;
-    line-height: 1.5;
+    color:var(--text-muted);
+    font-size:11.5px;
+    font-weight:500;
+    line-height:1.45;
 }
 
 .late-fee-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 2px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-top:0;
 }
 
 .late-fee-actions .button {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    min-height: 46px;
-    padding: 12px 22px;
-    font-size: 13.5px;
-    font-weight: 700;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    min-height:42px;
+    padding:9px 18px;
+    font-size:13px;
+    font-weight:700;
 }
 
-.late-fee-about {
-    display: grid;
-    grid-template-columns: 40px minmax(0, 1fr) auto;
-    gap: 16px;
-    align-items: start;
-    padding: 20px 24px;
-    border: 1px solid #d6e6f7;
-    border-radius: var(--radius);
-    background: #f2f8fe;
+.late-fee-footnote {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:7px;
+    margin:0;
+    color:var(--text-muted);
+    font-size:11.5px;
+    line-height:1.45;
+    text-align:center;
 }
 
-.late-fee-about-icon {
-    display: grid;
-    width: 40px;
-    height: 40px;
-    place-items: center;
-    color: var(--late-fee-blue);
-    background: #e2eefb;
-    border-radius: 50%;
+.late-fee-footnote > .ui-icon {
+    flex:0 0 auto;
 }
 
-.late-fee-about h3 {
-    margin: 4px 0 6px;
-    color: var(--heading);
-    font-size: 15px;
-    font-weight: 750;
-}
-
-.late-fee-about p {
-    max-width: 860px;
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 12.5px;
-    line-height: 1.65;
-}
-
-.late-fee-learn-more {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 4px;
-    color: var(--late-fee-blue);
-    font-size: 13px;
-    font-weight: 700;
-    text-decoration: none;
-    white-space: nowrap;
-}
-
-.late-fee-learn-more:hover,
-.late-fee-learn-more:focus-visible {
-    text-decoration: underline;
-}
-
-html[data-theme="dark"] .late-fee-page {
-    --late-fee-line: var(--row-border);
-    --late-fee-blue: var(--interactive);
-}
-
-html[data-theme="dark"] .late-fee-identity-icon,
-html[data-theme="dark"] .late-fee-about-icon {
-    background: rgba(74, 143, 247, .16);
-}
-
-html[data-theme="dark"] .late-fee-note,
-html[data-theme="dark"] .late-fee-about {
-    border-color: var(--info-border);
-    background: var(--info-bg);
-}
-
-html[data-theme="dark"] .late-fee-note p,
-html[data-theme="dark"] .late-fee-note strong {
-    color: var(--text-secondary);
-}
-
-@media (max-width: 780px) {
-    .late-fee-identity {
-        grid-template-columns: 56px minmax(0, 1fr);
-        row-gap: 14px;
+@media (max-width: 700px) {
+    .late-fee-form-header {
+        align-items:flex-start;
+        flex-direction:column;
     }
 
-    .late-fee-identity > .status-badge {
-        grid-column: 2;
-        justify-self: start;
-    }
-
-    .late-fee-about {
-        grid-template-columns: 40px minmax(0, 1fr);
-    }
-
-    .late-fee-learn-more {
-        grid-column: 2;
+    .late-fee-current-inline {
+        justify-items:start;
     }
 
     .late-fee-actions .button {
-        flex: 1 1 auto;
-        justify-content: center;
+        flex:1 1 auto;
+        justify-content:center;
     }
 }
 </style>

@@ -90,6 +90,8 @@
 
     $workflowStatus = $custody->workflowStatus();
     $operationalStatusKey = $workflowStatus['key'];
+    $obligationSummary = $custody->openObligationSummary();
+    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $transactionFullyComplete = $operationalStatusKey === 'COMPLETED';
     $transactionCancelled = $operationalStatusKey === 'CANCELLED';
@@ -110,9 +112,16 @@
             'Your return has been accepted and your obligation is cleared. Any remaining internal processing is handled by SPMU.',
             'success',
         ],
+        $accountabilityIndicator !== null => [
+            $custody->hasOutstandingProperty() ? 'Return + accountability in progress' : 'Accountability processing',
+            ($obligationSummary['copy'] ?? null) ?: $accountabilityIndicator['label'].' requires resolution. See My Obligations for the current action.',
+            'warning',
+        ],
         $custody->status === 'OBLIGATION_OPEN' => [
-            'Return completed with an open obligation',
-            'An accountability or billing obligation still needs resolution. See My Obligations for the required action.',
+            $obligationSummary ? 'Return completed — '.$obligationSummary['title'] : 'Return completed with an open obligation',
+            $obligationSummary
+                ? $obligationSummary['copy'].' See My Obligations for the required action.'
+                : 'An accountability or billing obligation still needs resolution. See My Obligations for the required action.',
             'warning',
         ],
         $custody->status === 'RETURN_PROCESSING' => [
@@ -185,9 +194,7 @@
             @endif
         </p>
     </div>
-    @if($isBorrower)
-        <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
-    @endif
+    <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
 </section>
 @endif
 
@@ -349,9 +356,9 @@
 
                 <a
                     class="button secondary small ui-pressable borrower-custody-status-action"
-                    href="{{ route('requests.show', $custody->request) }}"
+                    href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
                 >
-                    View request
+                    {{ $accountabilityIndicator ? 'View obligation' : 'View request' }}
                     <x-icon name="chevron-right" size="15" />
                 </a>
             </div>
@@ -658,9 +665,6 @@
 @else
     <x-request-progress-tracker :request="$custody->request" />
 
-@include('custody.partials.head-detail-styles')
-
-<div class="custody-head-detail">
 <section class="content-grid two">
     <article class="card">
         <div class="card-header">
@@ -746,7 +750,6 @@
         </div>
     </article>
 </section>
-</div>
 
 @endif {{-- useReleaseProcessLayout --}}
 @endif {{-- showReleaseWorkflow --}}

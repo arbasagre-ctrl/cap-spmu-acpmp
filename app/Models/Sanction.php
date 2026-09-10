@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Sanction extends Model
 {
@@ -19,6 +20,7 @@ class Sanction extends Model
         'effective_to',
         'status',
         'confirmed_by_user_id',
+        'signature_snapshot_id',
         'confirmed_at',
         'remarks',
     ];
@@ -56,5 +58,15 @@ class Sanction extends Model
     public function confirmedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'confirmed_by_user_id');
+    }
+
+    public function signatureSnapshot(): BelongsTo
+    {
+        return $this->belongsTo(SignatureSnapshot::class, 'signature_snapshot_id');
+    }
+
+    public function documents(): MorphMany
+    {
+        return $this->morphMany(GeneratedDocument::class, 'subject');
     }
 }

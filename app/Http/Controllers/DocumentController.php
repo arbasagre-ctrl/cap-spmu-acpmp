@@ -6,6 +6,7 @@ use App\Enums\UserRole;
 use App\Models\BillingStatement;
 use App\Models\EvidenceSubmission;
 use App\Models\GeneratedDocument;
+use App\Models\GatePass;
 use App\Models\Incident;
 use App\Models\Payment;
 use App\Models\RequestSupportingDocument;
@@ -196,6 +197,20 @@ class DocumentController extends Controller
             && (int) $requestOwnerId === (int) $user->id;
 
         /*
+         * Accomplished Gate Pass:
+         * the processing workspace remains Action-Officer-only, but the
+         * borrower may view the accomplished copy that belongs to their own
+         * custody transaction from My Borrowings.
+         */
+        $isBorrowerGatePassFile = GatePass::query()
+            ->where('accomplished_file_id', $file->id)
+            ->whereHas(
+                'custody',
+                fn ($query) => $query->where('borrower_user_id', $user->id)
+            )
+            ->exists();
+
+        /*
          * Ordinary operational evidence.
          */
         $belongsToBorrower = EvidenceSubmission::query()
@@ -239,6 +254,7 @@ class DocumentController extends Controller
             $uploadedByCurrentUser
             || $belongsToBorrower
             || $isRequestOwner
+            || $isBorrowerGatePassFile
             || ($requestSupportingDocument && $isSpmu)
             || ($operationalEvidence && $isSpmu)
             || ($isTemplateSource && ($isSpmu || $isIctu))

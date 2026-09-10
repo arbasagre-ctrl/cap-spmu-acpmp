@@ -13,19 +13,44 @@
             <dd>{{ $v->purpose_event }}</dd>
             <dt>Location</dt>
             <dd>{{ $v->location }}</dd>
-            <dt>Schedule Date</dt>
+            <dt>Items Needed From</dt>
             <dd>{{ optional($v->schedule_date ?: $v->needed_from)->format('d F Y') }}</dd>
             <dt>Expected Return Date</dt>
             <dd>{{ optional($v->return_date ?: $v->return_due_at)->format('d F Y') }}</dd>
         </dl>
     </article>
 
+    @php
+        $laundryAccomplishedFile = $custody?->laundryJob?->latestEvidence?->file;
+        $laundryAccomplishedVerified = (bool) $custody?->laundryJob?->form_verified_at;
+        $gatePassAccomplishedFile = $custody?->gatePass?->accomplishedFile;
+        $gatePassAccomplishedVerified = (bool) $custody?->gatePass?->verified_at;
+        $hasOperationalArchive = (bool) $borrowerSlipDocument
+            || (bool) $laundryFormDocument
+            || (bool) $gatePassDocument
+            || (bool) $laundryAccomplishedFile
+            || (bool) $gatePassAccomplishedFile;
+    @endphp
+
     <article class="card request-documents-card" aria-labelledby="request-documents-title">
-        <div class="card-header request-section-title">
-            <x-icon name="requests" size="20" />
-            <h2 id="request-documents-title">Documents</h2>
+        <div class="card-header request-section-title request-documents-heading">
+            <div class="request-documents-heading-copy">
+                <x-icon name="requests" size="20" />
+                <div>
+                    <h2 id="request-documents-title">Documents</h2>
+                    @if($requestIsCompleted)
+                        <small>Historical copies retained with the completed transaction.</small>
+                    @endif
+                </div>
+            </div>
+            @if($requestIsCompleted)
+                <span class="status-badge status-success">Archived</span>
+            @endif
         </div>
+
         <div class="request-operational-document-list">
+            <p class="request-document-group-label">Request Documents</p>
+
             @forelse($currentDocs->sortBy(fn ($doc) => $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER ? 1 : 0) as $doc)
                 <div class="request-operational-document">
                     <div class="request-operational-document-copy">
@@ -42,8 +67,114 @@
                     </a>
                 </div>
             @empty
-                <div class="empty-state"><strong>No current scanned supporting document.</strong></div>
+                <div class="request-document-empty">No current scanned request document.</div>
             @endforelse
+
+            @if($custody)
+                <p class="request-document-group-label">Release Documents</p>
+
+                <div class="request-operational-document">
+                    <div class="request-operational-document-copy">
+                        <strong>Borrower Slip</strong>
+                        <small>{{ $borrowerSlipDocument ? 'Generated · Retained with transaction' : 'Not generated' }}</small>
+                    </div>
+                    @if($borrowerSlipDocument)
+                        <div class="request-document-actions">
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('documents.view', $borrowerSlipDocument) }}"
+                                target="_blank" rel="noopener">View</a>
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
+                        </div>
+                    @else
+                        <span class="status-badge status-neutral">Not available</span>
+                    @endif
+                </div>
+
+                @if($requestHasLaundry)
+                    <div class="request-operational-document">
+                        <div class="request-operational-document-copy">
+                            <strong>Laundry Form</strong>
+                            <small>{{ $laundryFormDocument ? 'Generated · Original operational form' : 'Not generated' }}</small>
+                        </div>
+                        @if($laundryFormDocument)
+                            <div class="request-document-actions">
+                                <a class="button secondary small ui-pressable request-document-link"
+                                    href="{{ route('documents.view', $laundryFormDocument) }}"
+                                    target="_blank" rel="noopener">View</a>
+                                <a class="button secondary small ui-pressable request-document-link"
+                                    href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
+                            </div>
+                        @else
+                            <span class="status-badge status-neutral">Not available</span>
+                        @endif
+                    </div>
+
+                    <div class="request-operational-document">
+                        <div class="request-operational-document-copy">
+                            <strong>Accomplished Laundry Form</strong>
+                            <small>
+                                @if($laundryAccomplishedFile)
+                                    {{ $laundryAccomplishedVerified ? 'Verified · Historical return evidence' : 'Uploaded · Awaiting verification' }}
+                                @else
+                                    No accomplished scan on file
+                                @endif
+                            </small>
+                        </div>
+                        @if($laundryAccomplishedFile)
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('files.show', $laundryAccomplishedFile, false) }}"
+                                target="_blank" rel="noopener">View</a>
+                        @else
+                            <span class="status-badge status-neutral">Not available</span>
+                        @endif
+                    </div>
+                @endif
+
+                @if($requestHasOffCampus)
+                    <div class="request-operational-document">
+                        <div class="request-operational-document-copy">
+                            <strong>Gate Pass</strong>
+                            <small>{{ $gatePassDocument ? 'Generated · Original operational form' : 'Not generated' }}</small>
+                        </div>
+                        @if($gatePassDocument)
+                            <div class="request-document-actions">
+                                <a class="button secondary small ui-pressable request-document-link"
+                                    href="{{ route('documents.view', $gatePassDocument) }}"
+                                    target="_blank" rel="noopener">View</a>
+                                <a class="button secondary small ui-pressable request-document-link"
+                                    href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
+                            </div>
+                        @else
+                            <span class="status-badge status-neutral">Not available</span>
+                        @endif
+                    </div>
+
+                    <div class="request-operational-document">
+                        <div class="request-operational-document-copy">
+                            <strong>Accomplished Gate Pass</strong>
+                            <small>
+                                @if($gatePassAccomplishedFile)
+                                    {{ $gatePassAccomplishedVerified ? 'Verified · Historical exit/return evidence' : 'Uploaded · Awaiting verification' }}
+                                @else
+                                    No accomplished scan on file
+                                @endif
+                            </small>
+                        </div>
+                        @if($gatePassAccomplishedFile)
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('files.show', $gatePassAccomplishedFile, false) }}"
+                                target="_blank" rel="noopener">View</a>
+                        @else
+                            <span class="status-badge status-neutral">Not available</span>
+                        @endif
+                    </div>
+                @endif
+            @endif
+
+            @if($custody && !$hasOperationalArchive)
+                <div class="request-document-empty">Operational documents will appear here once generated or uploaded.</div>
+            @endif
         </div>
     </article>
 </section>
@@ -75,4 +206,3 @@
         </div>
     </article>
 </section>
-

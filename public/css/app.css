@@ -429,6 +429,7 @@ small, .muted { color: var(--text-muted); }
 .content-grid > * { min-width: 0; }
 .content-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .content-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.content-grid.content-grid-single { grid-template-columns: minmax(0, 1fr); }
 .card-grid, .approval-grid, .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
 
 /* Cards and dashboard */
@@ -926,6 +927,30 @@ html[data-theme="dark"] .button.config-back-button:hover, html[data-theme="dark"
 .notification-list article.unread { background: var(--blue-50); border-left: 3px solid var(--navy-700); }
 nav[role="navigation"] { margin-top: 16px; }
 nav[role="navigation"] svg { width: 18px; height: 18px; }
+
+/* Shared pagination: the default list-page control for any paginator that
+   has no bespoke pagination view of its own (resources/views/partials/pagination.blade.php). */
+.app-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+.app-pagination-link {
+    display: inline-flex;
+    min-width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    color: var(--text-secondary);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 750;
+    text-decoration: none;
+    line-height: 1;
+}
+a.app-pagination-link:hover { color: var(--heading); border-color: var(--border-strong); background: var(--surface-hover); }
+.app-pagination-link.is-active { color: #fff; background: var(--primary-action); border-color: var(--primary-action); }
+.app-pagination-link[aria-disabled="true"] { color: var(--text-soft); background: var(--surface-subtle); cursor: not-allowed; }
+.app-pagination-ellipsis { padding: 0 2px; color: var(--text-muted); }
 
 /* Borrower portal */
 .full-span { grid-column: 1 / -1; }

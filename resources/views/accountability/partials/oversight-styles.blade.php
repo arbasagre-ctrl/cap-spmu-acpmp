@@ -57,8 +57,12 @@
 .accountability-kpi-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
 .accountability-kpi-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-/* Selected card reads as selected through its border, not a filled panel. */
-.accountability-kpi-card.is-active {
+/* Selected card reads as selected through its border, not a filled panel.
+   Head/AO select a view server-side (.is-active); the borrower's cards
+   filter the table already on the page client-side (.is-selected) — same
+   look, different mechanism. */
+.accountability-kpi-card.is-active,
+.accountability-kpi-card.is-selected {
     border-color: var(--interactive);
     background: var(--info-bg);
     box-shadow: none;
@@ -256,17 +260,11 @@ html[data-theme="dark"] .kpi-accent-restriction {
 }
 
 /* Sub-navigation --------------------------------------------------------- */
-/* The selected view reads as selected on its own, without a count chip. */
+/* The selected view reads as selected on its own, without a count chip.
+   The active/inactive/hover colors themselves live in the single
+   .accountability-tab.is-active rule above — this block only adds icon color. */
 .accountability-tab .ui-icon { flex: 0 0 auto; color: var(--text-soft); }
-
-.accountability-tab.is-active {
-    color: #fff;
-    background: var(--interactive);
-    border-color: var(--interactive);
-    box-shadow: var(--shadow-sm);
-}
-
-.accountability-tab.is-active .ui-icon { color: #fff; }
+.accountability-tab.is-active .ui-icon,
 .accountability-tab:hover:not(.is-active) .ui-icon { color: var(--interactive); }
 
 /* Active caseload -------------------------------------------------------- */
@@ -505,23 +503,15 @@ html[data-theme="dark"] .kpi-accent-restriction {
     font-size: 12px;
 }
 
-/* Scope note ------------------------------------------------------------- */
-.accountability-scope-note {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 11px;
-    margin-top: 14px;
-    padding: 13px 16px;
-    border-color: var(--info-border);
-    background: var(--info-bg);
+/* Scope hint --------------------------------------------------------------
+   Subtle helper text, not a second callout: the tabs already say where the
+   completed cases went, so this only needs to be legible, not prominent. */
+.accountability-scope-hint {
+    margin: 12px 0 0;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.55;
 }
-
-.accountability-scope-note .ui-icon { flex: 0 0 auto; margin-top: 1px; color: var(--info); }
-.accountability-scope-note > div { min-width: 0; }
-.accountability-scope-note strong { display: block; color: var(--heading); font-size: 12.5px; }
-.accountability-scope-note p { margin: 3px 0 0; color: var(--text-secondary); font-size: 11.5px; line-height: 1.5; }
-.accountability-scope-note small { display: block; margin-top: 5px; color: var(--text-muted); font-size: 10.5px; line-height: 1.55; }
 
 /* Responsive ------------------------------------------------------------- */
 @media (max-width: 900px) {

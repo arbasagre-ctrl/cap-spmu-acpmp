@@ -26,6 +26,7 @@ class ProcessOperationalDeadlines extends Command
         OperationalCalendarService $operationalCalendar
     ): int {
         $pickupExpired = $custodyService->expirePickupWindows();
+        $legacyLaundryReconciled = $custodyService->reconcileLegacyLaundryAvailability();
         $issuanceLocked = 0;
         $dueSoon = 0;
         $markedOverdue = 0;
@@ -54,7 +55,11 @@ class ProcessOperationalDeadlines extends Command
             });
 
         $openCustodies = CustodyTransaction::query()
-            ->with(['borrower', 'lines'])
+            ->with([
+                'borrower',
+                'lines.requestItem.inventoryItem',
+                'laundryJob',
+            ])
             ->whereIn('status', [
                 'ACTIVE',
                 'RETURN_PROCESSING',
@@ -110,6 +115,78 @@ class ProcessOperationalDeadlines extends Command
              */
             if (! $today->gt($dueDate)) {
                 continue;
+            }
+
+            /*
+             * LINEN DOCUMENTARY HOLD
+             * ----------------------
+             * When every still-outstanding quantity belongs to laundry-required
+             * linen, do not declare the borrower overdue merely because the
+             * accomplished offline Laundry Form has not reached SPMU yet.
+             *
+             * - No RECEIVED BY date yet: status stays pending verification.
+             * - RECEIVED BY on/before due date: documentary delay is not late.
+             * - RECEIVED BY after due date: normal overdue processing continues.
+             *
+             * If any non-linen property is still outstanding, the ordinary
+             * overdue rule still applies immediately.
+             */
+            $outstandingLines = $custody->lines->filter(
+                fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+            );
+
+            $onlyLinenOutstanding = $outstandingLines->isNotEmpty()
+                && $outstandingLines->every(
+                    fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+                );
+
+            if ($onlyLinenOutstanding) {
+                $physicalLaundryReceipt = $custody->laundryJob?->worker_received_at?->copy()->startOfDay();
+
+                if (! $physicalLaundryReceipt || ! $physicalLaundryReceipt->gt($dueDate)) {
+                    /*
+                     * Clean up an older scheduler-created provisional overdue
+                     * state when this transaction is now known to be a
+                     * linen-documentary hold. This does not waive a settled or
+                     * manually processed accountability case; only an untouched
+                     * automatic OVERDUE case can be reversed here.
+                     */
+                    $provisionalOverdue = OverdueCase::query()
+                        ->where('custody_transaction_id', $custody->id)
+                        ->first();
+
+                    $canReturnToPendingVerification = ! $provisionalOverdue
+                        || ($provisionalOverdue->status === 'OVERDUE'
+                            && ! $provisionalOverdue->penalties()->where('status', '!=', 'VOID')->exists());
+
+                    if ($canReturnToPendingVerification) {
+                        if ($provisionalOverdue) {
+                            $provisionalOverdue->update([
+                                'status' => 'RESOLVED',
+                                'accrued_amount' => 0,
+                                'sanction_type' => null,
+                            ]);
+                        }
+
+                        BorrowerRestriction::query()
+                            ->where('borrower_user_id', $custody->borrower_user_id)
+                            ->whereIn('restriction_type', ['PENDING_RETURN', 'OVERDUE_RETURN'])
+                            ->where('status', 'ACTIVE')
+                            ->update([
+                                'status' => 'LIFTED',
+                                'effective_to' => now(),
+                            ]);
+
+                        if ($custody->status === 'OVERDUE') {
+                            $custody->update([
+                                'status' => 'RETURN_PROCESSING',
+                                'closed_at' => null,
+                            ]);
+                        }
+                    }
+
+                    continue;
+                }
             }
 
             if ($custody->status !== 'OVERDUE') {
@@ -186,6 +263,7 @@ class ProcessOperationalDeadlines extends Command
 
         $this->info(
             "Processed {$pickupExpired} pickup expiration(s), "
+            ."{$legacyLaundryReconciled} legacy Laundry availability reconciliation(s), "
             ."{$issuanceLocked} issuance auto-lock(s), "
             ."{$dueSoon} due reminder(s), "
             ."{$markedOverdue} newly overdue custody record(s), "

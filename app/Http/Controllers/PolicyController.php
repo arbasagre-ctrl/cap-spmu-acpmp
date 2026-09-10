@@ -480,26 +480,39 @@ class PolicyController extends Controller
 
         $data = $request->validate([
             'is_open' => ['required', 'boolean'],
-            'accepts_requests' => ['required', 'boolean'],
             'allows_pickup' => ['required', 'boolean'],
             'allows_return' => ['required', 'boolean'],
             'open_time' => ['nullable', 'date_format:H:i'],
             'close_time' => ['nullable', 'date_format:H:i'],
         ]);
 
+        $physicalTransactionsEnabled = (bool) $data['is_open']
+            && ((bool) $data['allows_pickup'] || (bool) $data['allows_return']);
+
+        if ($physicalTransactionsEnabled && (! $data['open_time'] || ! $data['close_time'])) {
+            return back()->withErrors([
+                'open_time' => 'Open Time and Close Time are required when Pickup / Release or Returns are enabled.',
+            ])->withInput();
+        }
+
+        if (($data['open_time'] && ! $data['close_time']) || (! $data['open_time'] && $data['close_time'])) {
+            return back()->withErrors([
+                'open_time' => 'Set both Open Time and Close Time, or leave both blank.',
+            ])->withInput();
+        }
+
         if ($data['open_time'] && $data['close_time'] && $data['close_time'] <= $data['open_time']) {
             return back()->withErrors([
                 'close_time' => 'Closing time must be later than opening time.',
-            ]);
+            ])->withInput();
         }
 
-        /*
-         * Closing a day withdraws its transaction permissions and hours. The
-         * form locks those controls for a closed day, so the stored row has to
-         * match what the SPMU Head is shown.
-         */
+        // Online borrowing request submission is available 24/7 and is not
+        // configured by this physical transaction schedule. Keep the legacy
+        // database flag enabled for compatibility with older records/code.
+        $data['accepts_requests'] = true;
+
         if (! (bool) $data['is_open']) {
-            $data['accepts_requests'] = false;
             $data['allows_pickup'] = false;
             $data['allows_return'] = false;
             $data['open_time'] = null;
@@ -528,7 +541,6 @@ class PolicyController extends Controller
             'only_day' => ['nullable', 'integer', 'between:1,7'],
             'schedule' => ['required', 'array'],
             'schedule.*.is_open' => ['required', 'boolean'],
-            'schedule.*.accepts_requests' => ['required', 'boolean'],
             'schedule.*.allows_pickup' => ['required', 'boolean'],
             'schedule.*.allows_return' => ['required', 'boolean'],
             'schedule.*.open_time' => ['nullable', 'date_format:H:i'],
@@ -561,12 +573,24 @@ class PolicyController extends Controller
 
         foreach ($weekdays as $weekday) {
             $row = $data['schedule'][$weekday];
+            $openTime = ($row['open_time'] ?? null) ?: null;
+            $closeTime = ($row['close_time'] ?? null) ?: null;
+            $physicalTransactionsEnabled = (bool) ($row['is_open'] ?? false)
+                && ((bool) ($row['allows_pickup'] ?? false) || (bool) ($row['allows_return'] ?? false));
 
-            if (
-                ($row['open_time'] ?? null)
-                && ($row['close_time'] ?? null)
-                && $row['close_time'] <= $row['open_time']
-            ) {
+            if ($physicalTransactionsEnabled && (! $openTime || ! $closeTime)) {
+                $errors["schedule.{$weekday}.open_time"] =
+                    'Open Time and Close Time are required when Pickup / Release or Returns are enabled.';
+                continue;
+            }
+
+            if (($openTime && ! $closeTime) || (! $openTime && $closeTime)) {
+                $errors["schedule.{$weekday}.open_time"] =
+                    'Set both Open Time and Close Time, or leave both blank.';
+                continue;
+            }
+
+            if ($openTime && $closeTime && $closeTime <= $openTime) {
                 $errors["schedule.{$weekday}.close_time"] =
                     'Closing time must be later than opening time.';
             }
@@ -583,7 +607,7 @@ class PolicyController extends Controller
 
             $values = [
                 'is_open' => (bool) $row['is_open'],
-                'accepts_requests' => (bool) $row['accepts_requests'],
+                'accepts_requests' => true,
                 'allows_pickup' => (bool) $row['allows_pickup'],
                 'allows_return' => (bool) $row['allows_return'],
                 'open_time' => ($row['open_time'] ?? null) ?: null,
@@ -591,11 +615,10 @@ class PolicyController extends Controller
             ];
 
             /*
-             * Closing a day withdraws its transaction permissions and hours,
-             * matching the controls the form locks for a closed day.
+             * The weekly grid governs physical transactions only. Online
+             * request submission remains available regardless of office state.
              */
             if (! $values['is_open']) {
-                $values['accepts_requests'] = false;
                 $values['allows_pickup'] = false;
                 $values['allows_return'] = false;
                 $values['open_time'] = null;
@@ -669,7 +692,6 @@ class PolicyController extends Controller
         $data = $request->validate([
             'exception_date' => ['required', 'date'],
             'status' => ['required', Rule::in(['OPEN', 'CLOSED'])],
-            'accepts_requests' => ['required', 'boolean'],
             'allows_pickup' => ['required', 'boolean'],
             'allows_return' => ['required', 'boolean'],
             'open_time' => ['nullable', 'date_format:H:i'],
@@ -677,24 +699,38 @@ class PolicyController extends Controller
             'reason' => ['required', 'string', 'max:500'],
         ]);
 
-        if ($data['open_time'] && $data['close_time'] && $data['close_time'] <= $data['open_time']) {
-            return back()->withErrors([
-                'close_time' => 'Closing time must be later than opening time.',
-            ]);
-        }
+        // Special dates govern physical SPMU availability only. Online
+        // borrowing request submission remains available at any time.
+        $data['accepts_requests'] = true;
 
         if ($data['status'] === 'CLOSED') {
-            $data['accepts_requests'] = false;
             $data['allows_pickup'] = false;
             $data['allows_return'] = false;
             $data['open_time'] = null;
             $data['close_time'] = null;
-        } elseif (! $data['accepts_requests'] && ! $data['allows_pickup'] && ! $data['allows_return']) {
-            // A special working day should be useful by default. The Head can
-            // still uncheck individual transaction types before saving.
-            $data['accepts_requests'] = true;
-            $data['allows_pickup'] = true;
-            $data['allows_return'] = true;
+        }
+
+        if ($data['status'] === 'OPEN') {
+            $specialPhysicalTransactionsEnabled = (bool) $data['allows_pickup']
+                || (bool) $data['allows_return'];
+
+            if ($specialPhysicalTransactionsEnabled && (! $data['open_time'] || ! $data['close_time'])) {
+                return back()->withErrors([
+                    'open_time' => 'Open Time and Close Time are required for an open special date that allows Pickup / Release or Returns.',
+                ])->withInput();
+            }
+
+            if (($data['open_time'] && ! $data['close_time']) || (! $data['open_time'] && $data['close_time'])) {
+                return back()->withErrors([
+                    'open_time' => 'Set both Open Time and Close Time, or leave both blank.',
+                ])->withInput();
+            }
+
+            if ($data['open_time'] && $data['close_time'] && $data['close_time'] <= $data['open_time']) {
+                return back()->withErrors([
+                    'close_time' => 'Closing time must be later than opening time.',
+                ])->withInput();
+            }
         }
 
         $exception = OperationalDateException::query()->firstOrNew([

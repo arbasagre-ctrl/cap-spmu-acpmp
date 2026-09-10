@@ -14,25 +14,16 @@ use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
- * An SPMU day carries an operating state and three transaction permissions:
+ * Operational configuration governs physical SPMU transactions only.
  *
- *   Requests          online workflow action
- *   Pickup / Release  physical counter transaction, 1:00 PM - 4:00 PM
- *   Returns           physical counter transaction, unchanged hours
+ *   Online requests     available 24/7, independent of office state/hours
+ *   Pickup / Release    physical transaction; configured day + hours
+ *   Returns             physical transaction; configured day + hours
  *
- * Persistence rule: closing a day withdraws all three permissions and both
- * operating hours. PolicyController normalises this on both the single-day and
- * the batch save, so a stored closed day never carries a permission or a time.
- *
- * OperationalCalendarService is a separate concern: it reads the permission
- * flags rather than is_open, so a row seeded directly with a permission on a
- * closed day still evaluates that permission. That combination is no longer
- * reachable through the UI, but legacy rows keep it well defined.
- *
- * Boundary convention: the pickup window is inclusive at both ends
- * (13:00 <= t <= 16:00), matching the existing betweenIncluded() convention
- * used for configured operating hours.
+ * A physical transaction fails closed when its day is disabled or when an
+ * enabled day does not have a complete, valid Open Time / Close Time pair.
  */
+
 class OperationalTransactionScheduleTest extends TestCase
 {
     use RefreshDatabase;
@@ -63,6 +54,16 @@ class OperationalTransactionScheduleTest extends TestCase
     /** Configure the weekday that "today" falls on. */
     private function configureToday(array $values): void
     {
+        $physicalEnabled = (bool) ($values['allows_pickup'] ?? false)
+            || (bool) ($values['allows_return'] ?? false);
+
+        if ($physicalEnabled && ! array_key_exists('open_time', $values)) {
+            $values['open_time'] = '13:00';
+        }
+        if ($physicalEnabled && ! array_key_exists('close_time', $values)) {
+            $values['close_time'] = '16:00';
+        }
+
         OperationalWeeklySchedule::query()->updateOrCreate(
             ['weekday' => Carbon::now()->dayOfWeekIso],
             $values
@@ -77,64 +78,42 @@ class OperationalTransactionScheduleTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // 1-2. Closed day, Requests permission decides submission
+    // 1-2. Online request submission is 24/7
     // -----------------------------------------------------------------
 
-    public function test_closed_day_still_accepts_requests_when_the_permission_is_enabled(): void
+    public function test_online_request_submission_is_available_on_a_closed_weekday(): void
     {
         $this->configureToday([
             'is_open' => false,
-            'accepts_requests' => true,
+            'accepts_requests' => false,
             'allows_pickup' => false,
             'allows_return' => false,
         ]);
 
         $this->assertTrue(
-            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, Carbon::now())
+            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, $this->at('23:30'), true)
         );
-
-        // The office being closed does not by itself permit physical work.
-        $this->assertFalse(
-            $this->calendar->isOpenFor(OperationalCalendarService::PICKUP, Carbon::now())
-        );
-        $this->assertFalse(
-            $this->calendar->isOpenFor(OperationalCalendarService::RETURN, Carbon::now())
-        );
-    }
-
-    public function test_closed_day_without_the_requests_permission_blocks_submission(): void
-    {
-        $this->configureToday([
-            'is_open' => false,
-            'accepts_requests' => false,
-            'allows_pickup' => false,
-            'allows_return' => false,
-        ]);
-
-        $this->assertFalse(
-            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, Carbon::now())
-        );
-
-        $this->expectException(ValidationException::class);
 
         $this->calendar->assertOpenFor(
             OperationalCalendarService::REQUEST,
-            Carbon::now(),
+            $this->at('23:30'),
             'submission'
         );
     }
 
-    public function test_open_day_without_the_requests_permission_blocks_submission(): void
+    public function test_online_request_submission_is_available_during_a_closed_special_date(): void
     {
-        $this->configureToday([
-            'is_open' => true,
+        OperationalDateException::query()->create([
+            'exception_date' => Carbon::now()->toDateString(),
+            'status' => 'CLOSED',
             'accepts_requests' => false,
-            'allows_pickup' => true,
-            'allows_return' => true,
+            'allows_pickup' => false,
+            'allows_return' => false,
+            'reason' => 'Institutional closure.',
         ]);
 
-        $this->assertFalse(
-            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, Carbon::now())
+        $this->assertTrue(
+            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, $this->at('21:00'), true)
         );
     }
 
@@ -160,7 +139,7 @@ class OperationalTransactionScheduleTest extends TestCase
     private function assertDayIsFullyClosed(OperationalWeeklySchedule $stored): void
     {
         $this->assertFalse((bool) $stored->is_open);
-        $this->assertFalse((bool) $stored->accepts_requests, 'Closing a day withdraws Requests.');
+        $this->assertTrue((bool) $stored->accepts_requests, 'The legacy request flag remains enabled because online submission is 24/7.');
         $this->assertFalse((bool) $stored->allows_pickup, 'Closing a day withdraws Pickup / Release.');
         $this->assertFalse((bool) $stored->allows_return, 'Closing a day withdraws Returns.');
         $this->assertNull($stored->open_time, 'A closed day keeps no opening time.');
@@ -273,10 +252,50 @@ class OperationalTransactionScheduleTest extends TestCase
             $this->calendar->isOpenFor(OperationalCalendarService::PICKUP, $this->at('14:00'), true)
         );
 
-        // Online request submission is unaffected.
+        // Online request submission remains available at all times.
         $this->assertTrue(
             $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, $this->at('14:00'))
         );
+    }
+
+    public function test_physical_transactions_fail_closed_when_hours_are_blank(): void
+    {
+        $this->configureToday([
+            'is_open' => true,
+            'accepts_requests' => true,
+            'allows_pickup' => true,
+            'allows_return' => true,
+            'open_time' => null,
+            'close_time' => null,
+        ]);
+
+        $this->assertTrue(
+            $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, $this->at('21:00'), true),
+            'Online request submission is not limited by physical counter hours.'
+        );
+        $this->assertFalse(
+            $this->calendar->isOpenFor(OperationalCalendarService::PICKUP, $this->at('14:00'), true)
+        );
+        $this->assertFalse(
+            $this->calendar->isOpenFor(OperationalCalendarService::RETURN, $this->at('14:00'), true)
+        );
+    }
+
+    public function test_weekly_schedule_rejects_blank_hours_when_physical_transactions_are_enabled(): void
+    {
+        $weekday = Carbon::now()->dayOfWeekIso;
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($this->spmuHead())
+            ->put(route('policies.weekly-schedule.update', $weekday), [
+                'is_open' => 1,
+                'accepts_requests' => 1,
+                'allows_pickup' => 1,
+                'allows_return' => 1,
+                'open_time' => '',
+                'close_time' => '',
+            ])
+            ->assertSessionHasErrors('open_time');
     }
 
     public static function pickupBoundaries(): array
@@ -288,6 +307,7 @@ class OperationalTransactionScheduleTest extends TestCase
             'exactly 4:00 PM' => ['16:00', true],
             'one minute after the window' => ['16:01', false],
             'evening' => ['17:00', false],
+            'late evening' => ['21:00', false],
         ];
     }
 
@@ -373,6 +393,18 @@ class OperationalTransactionScheduleTest extends TestCase
             $this->assertStringContainsString('window has ended', $message);
         }
 
+        OperationalWeeklySchedule::query()->updateOrCreate(
+            ['weekday' => Carbon::now()->addDay()->dayOfWeekIso],
+            [
+                'is_open' => true,
+                'accepts_requests' => true,
+                'allows_pickup' => true,
+                'allows_return' => true,
+                'open_time' => '13:00',
+                'close_time' => '16:00',
+            ]
+        );
+
         $next = $this->calendar->nextPickupWindow($this->at('17:00'));
 
         $this->assertTrue($next->gt($this->at('17:00')));
@@ -382,6 +414,46 @@ class OperationalTransactionScheduleTest extends TestCase
     // -----------------------------------------------------------------
     // 8. Next valid day resolution
     // -----------------------------------------------------------------
+
+    public function test_latest_pickup_window_on_or_before_need_date_uses_the_previous_operational_day(): void
+    {
+        $tuesday = Carbon::now()->addDay();
+        $wednesday = Carbon::now()->addDays(2);
+
+        OperationalWeeklySchedule::query()->updateOrCreate(
+            ['weekday' => $tuesday->dayOfWeekIso],
+            [
+                'is_open' => true,
+                'accepts_requests' => false,
+                'allows_pickup' => true,
+                'allows_return' => true,
+                'open_time' => '13:00',
+                'close_time' => '16:00',
+            ]
+        );
+
+        OperationalWeeklySchedule::query()->updateOrCreate(
+            ['weekday' => $wednesday->dayOfWeekIso],
+            [
+                'is_open' => false,
+                'accepts_requests' => false,
+                'allows_pickup' => false,
+                'allows_return' => false,
+                'open_time' => null,
+                'close_time' => null,
+            ]
+        );
+
+        $window = $this->calendar->latestPickupWindowOnOrBefore(
+            $wednesday,
+            Carbon::now()
+        );
+
+        $this->assertNotNull($window);
+        $this->assertSame($tuesday->toDateString(), $window['start']->toDateString());
+        $this->assertSame('13:00', $window['start']->format('H:i'));
+        $this->assertSame('16:00', $window['end']->format('H:i'));
+    }
 
     public function test_next_pickup_window_skips_days_where_pickup_is_disabled(): void
     {
@@ -406,6 +478,18 @@ class OperationalTransactionScheduleTest extends TestCase
             ]
         );
 
+        OperationalWeeklySchedule::query()->updateOrCreate(
+            ['weekday' => Carbon::now()->addDays(2)->dayOfWeekIso],
+            [
+                'is_open' => true,
+                'accepts_requests' => true,
+                'allows_pickup' => true,
+                'allows_return' => true,
+                'open_time' => '13:00',
+                'close_time' => '16:00',
+            ]
+        );
+
         $next = $this->calendar->nextPickupWindow($this->at('17:00'));
 
         $this->assertNotSame(
@@ -417,7 +501,7 @@ class OperationalTransactionScheduleTest extends TestCase
         $this->assertNotSame($today, 0);
     }
 
-    public function test_a_closed_date_exception_still_overrides_every_permission(): void
+    public function test_a_closed_date_exception_blocks_physical_transactions_but_not_online_requests(): void
     {
         $this->configureToday([
             'is_open' => true,
@@ -435,8 +519,8 @@ class OperationalTransactionScheduleTest extends TestCase
             'reason' => 'Institutional holiday.',
         ]);
 
-        // Special-date precedence is unchanged: a closure closes everything.
-        $this->assertFalse(
+        // The closure blocks physical transactions, but online submission remains available.
+        $this->assertTrue(
             $this->calendar->isOpenFor(OperationalCalendarService::REQUEST, Carbon::now())
         );
         $this->assertFalse(
@@ -470,25 +554,36 @@ class OperationalTransactionScheduleTest extends TestCase
     // 9. Returns regression
     // -----------------------------------------------------------------
 
-    public function test_returns_keep_their_own_permission_and_no_pickup_time_window(): void
+    public function test_returns_use_their_own_permission_and_configured_physical_hours(): void
     {
         $this->configureToday([
-            'is_open' => false,
-            'accepts_requests' => false,
+            'is_open' => true,
+            'accepts_requests' => true,
             'allows_pickup' => false,
             'allows_return' => true,
+            'open_time' => '08:00',
+            'close_time' => '17:00',
         ]);
 
-        // Returns are independently allowed, and the 1-4 PM pickup window is
-        // not applied to them at any hour.
-        foreach (['08:00', '12:59', '13:00', '16:00', '17:30'] as $time) {
+        foreach (['08:00', '12:59', '13:00', '16:00', '17:00'] as $time) {
             $this->assertTrue(
                 $this->calendar->isOpenFor(
                     OperationalCalendarService::RETURN,
                     $this->at($time),
                     true
                 ),
-                'Returns must not inherit the pickup window at '.$time.'.'
+                'Return should be permitted inside its configured window at '.$time.'.'
+            );
+        }
+
+        foreach (['07:59', '17:01', '21:00'] as $time) {
+            $this->assertFalse(
+                $this->calendar->isOpenFor(
+                    OperationalCalendarService::RETURN,
+                    $this->at($time),
+                    true
+                ),
+                'Return should be blocked outside its configured window at '.$time.'.'
             );
         }
     }

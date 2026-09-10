@@ -13,13 +13,11 @@
     const submit = dialog.querySelector('[data-export-submit]');
     const error = dialog.querySelector('[data-export-error]');
     const pageSettings = Array.from(dialog.querySelectorAll('[data-page-setting]'));
+    const repeatHeaderSetting = dialog.querySelector('[data-repeat-header-setting]');
 
     const ACTION_LABELS = @json(App\Reports\ReportExportOptions::ACTION_LABELS);
 
-    const printUrl = @json(route('reports.print', array_merge(
-        ['type' => $selectedReport],
-        $reportFilters->toQuery()
-    )));
+    const printUrl = @json(route('reports.print', ['type' => $selectedReport]));
 
     /*
      * Page setup only means something for the paginated formats. CSV and
@@ -33,6 +31,11 @@
         pageSettings.forEach((setting) => {
             setting.hidden = !paginated;
         });
+
+        /* A repeated header is a page concept, not a CSV/XLSX/DOCX setting. */
+        if (repeatHeaderSetting) {
+            repeatHeaderSetting.hidden = value !== 'pdf' && value !== 'print';
+        }
 
         submit.textContent = ACTION_LABELS[value] || 'Export';
     };
@@ -48,7 +51,15 @@
         /* Print opens the preview rather than downloading a file. */
         if (format.value === 'print') {
             event.preventDefault();
-            window.open(printUrl, '_blank', 'noopener');
+            const url = new URL(printUrl, window.location.origin);
+            const values = new FormData(form);
+
+            values.forEach((value, key) => {
+                url.searchParams.append(key, value);
+            });
+            url.searchParams.set('format', 'print');
+
+            window.open(url.toString(), '_blank', 'noopener');
             dialog.close();
 
             return;

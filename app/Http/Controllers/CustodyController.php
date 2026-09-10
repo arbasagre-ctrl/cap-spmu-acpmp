@@ -6,8 +6,10 @@ use App\Enums\AccessClassification;
 use App\Models\BillingStatement;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
+use App\Models\NotificationEvent;
 use App\Models\Penalty;
 use App\Services\CustodyService;
+use App\Services\OperationalCalendarService;
 use App\Services\ProtectedFileService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -21,7 +23,7 @@ class CustodyController extends Controller
 {
     public function index(Request $request): View
     {
-        $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'])->latest();
+        $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'])->latest();
         if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
             $query->where('borrower_user_id', $request->user()->id);
         }
@@ -33,7 +35,7 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
-        $custodies = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem'])
+        $custodies = CustodyTransaction::with(['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'incidents', 'overdueCase'])
             ->whereNull('released_at')
             ->where('status', 'PREPARING_RELEASE')
             ->latest()
@@ -49,7 +51,7 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
-        $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file'];
+        $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'];
         $hasEarlyReturnTable = Schema::hasTable('early_return_requests');
 
         if ($hasEarlyReturnTable) {
@@ -142,6 +144,8 @@ class CustodyController extends Controller
             'lines.allocation',
             'lines.requestItem.inventoryItem.unit',
             'returns.lines.laundryRecord',
+            'incidents',
+            'overdueCase',
             'gatePass.accomplishedFile',
         ];
 
@@ -201,11 +205,56 @@ class CustodyController extends Controller
             ->sortByDesc(fn ($payment) => $payment->submitted_at?->timestamp ?? 0)
             ->first();
 
+        $pickupNotificationEvents = NotificationEvent::query()
+            ->with(['deliveries' => fn ($query) => $query
+                ->where('recipient_user_id', $custody->borrower_user_id)
+                ->orderByDesc('attempted_at')])
+            ->where('source_type', $custody->getMorphClass())
+            ->where('source_id', $custody->id)
+            ->whereIn('event_code', ['PICKUP_SCHEDULED', 'PICKUP_EXPIRED', 'PICKUP_RESCHEDULE_REQUESTED'])
+            ->latest('occurred_at')
+            ->get()
+            ->groupBy('event_code')
+            ->map(fn ($events) => $events->first());
+
+        /*
+         * A missed/unusable pickup can stay on the same approved request only
+         * while another valid SPMU Pickup / Release operating window still
+         * exists strictly BEFORE the approved Expected Return Date. The AO
+         * must never extend the approved borrowing period through rescheduling.
+         */
+        $nextPickupRescheduleAt = null;
+        $pickupRescheduleAvailable = false;
+        $approvedReturnDate = $custody->original_due_at ?: $custody->due_at;
+
+        if (! $custody->released_at && $custody->status === 'PREPARING_RELEASE' && $approvedReturnDate) {
+            $timezone = config('app.timezone') ?: 'Asia/Manila';
+            $now = now($timezone);
+            $nextPickupRescheduleAt = app(OperationalCalendarService::class)->nextPickupWindow($now);
+            $returnDay = \Carbon\CarbonImmutable::parse($approvedReturnDate, $timezone)->startOfDay();
+
+            $pickupRescheduleAvailable = $nextPickupRescheduleAt !== null
+                && $nextPickupRescheduleAt->copy()->startOfDay()->lt($returnDay);
+        }
+
+        $pickupRescheduleRequestEvent = $pickupNotificationEvents->get('PICKUP_RESCHEDULE_REQUESTED');
+        $pickupRescheduleRequested = (bool) $pickupRescheduleRequestEvent
+            && (
+                ! $custody->pickup_scheduled_at
+                || $pickupRescheduleRequestEvent->occurred_at?->gt($custody->pickup_scheduled_at)
+            );
+
         return view('custody.show', [
             'custody' => $custody,
             'spmuMode' => $spmuMode,
             'relatedBillings' => $relatedBillings,
             'latestReceipt' => $latestReceipt,
+            'pickupScheduleNotification' => $pickupNotificationEvents->get('PICKUP_SCHEDULED'),
+            'pickupMissedNotification' => $pickupNotificationEvents->get('PICKUP_EXPIRED'),
+            'pickupRescheduleRequestEvent' => $pickupRescheduleRequestEvent,
+            'pickupRescheduleRequested' => $pickupRescheduleRequested,
+            'pickupRescheduleAvailable' => $pickupRescheduleAvailable,
+            'nextPickupRescheduleAt' => $nextPickupRescheduleAt,
             'documents' => $custody->request->currentVersion
                 ->documents()
                 ->where(function ($query) use ($custody) {
@@ -235,23 +284,74 @@ class CustodyController extends Controller
             403
         );
 
-        $data = $request->validate([
-            'pickup_at' => ['required', 'date'],
-            'pickup_expires_at' => ['required', 'date', 'after:pickup_at'],
-        ]);
+        $preparationAlreadyComplete = (bool) $custody->prepared_at;
 
-        $service->schedulePickup(
+        $service->confirmPickupSchedule(
             $custody,
-            $request->user(),
-            $data['pickup_at'],
-            $data['pickup_expires_at']
+            $request->user()
         );
+
+        $message = 'System-generated Pickup / Issuance schedule confirmed. Notification delivery attempts were recorded and are shown in the Pickup & Issuance Schedule section.';
+
+        $message .= $preparationAlreadyComplete
+            ? ' Existing item preparation remains valid.'
+            : ' Continue with Item Preparation below.';
 
         return redirect()
             ->to(route('custody.release.show', $custody).'#item-preparation')
+            ->with('status', $message);
+    }
+
+    public function requestPickupReschedule(
+        Request $request,
+        CustodyTransaction $custody,
+        CustodyService $service
+    ): RedirectResponse {
+        $this->authorizeCustody($request, $custody);
+
+        abort_unless(
+            strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER'
+                && $request->user()?->id === $custody->borrower_user_id,
+            403
+        );
+
+        $service->requestPickupReschedule(
+            $custody,
+            $request->user()
+        );
+
+        return redirect()
+            ->to(route('custody.show', $custody).'#pickup-reschedule')
             ->with(
                 'status',
-                'Pickup schedule saved and the borrower was notified. Continue with Item Preparation below.'
+                'Pickup reschedule requested. SPMU has been notified and will confirm the next valid operating window. You do not need to submit a new borrowing request.'
+            );
+    }
+
+    public function reschedulePickup(
+        Request $request,
+        CustodyTransaction $custody,
+        CustodyService $service
+    ): RedirectResponse {
+        $this->authorizeCustody($request, $custody);
+
+        abort_unless(
+            strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU'
+                && $request->user()?->access_classification === AccessClassification::SpmuOfficer
+                && $custody->borrower_user_id !== $request->user()->id,
+            403
+        );
+
+        $service->rescheduleMissedPickup(
+            $custody,
+            $request->user()
+        );
+
+        return redirect()
+            ->to(route('custody.release.show', $custody).'#pickup-schedule')
+            ->with(
+                'status',
+                'Pickup & Issuance was rescheduled on the same approved request to the next valid SPMU operating window. Notification delivery attempts were recorded; no new borrowing request is required.'
             );
     }
 
@@ -442,15 +542,21 @@ class CustodyController extends Controller
 
             $laundryJob = $custody->laundryJob;
 
-            if ($laundryJob
-                && ($laundryJob->status === 'TURNED_OVER_TO_LAUNDRY'
-                    || ($laundryJob->status === 'FOR_LAUNDRY'
-                        && $laundryJob->hasVerifiedAccomplishedForm()))) {
+            if ($laundryJob && $laundryJob->status === 'TURNED_OVER_TO_LAUNDRY') {
                 return redirect()
                     ->route('laundry.show', $laundryJob)
                     ->with(
                         'status',
-                        'Return inspection recorded. Next: finalize the serviceable linen availability for this transaction.'
+                        'Return inspection recorded. This older Laundry record is awaiting compatibility availability reconciliation.'
+                    );
+            }
+
+            if ($laundryJob && $laundryJob->status === 'LAUNDRY_COMPLETED') {
+                return redirect()
+                    ->to(route('custody.return.show', $custody).'#return-summary')
+                    ->with(
+                        'status',
+                        'Return inspection recorded. The completed Laundry Form was encoded and serviceable linen is Available. Any late or adverse finding continues through Accountability Processing.'
                     );
             }
         }

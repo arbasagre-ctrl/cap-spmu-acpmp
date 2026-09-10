@@ -38,6 +38,7 @@
         || $borrowingRequest->status === App\Enums\RequestStatus::Cancelled;
     $detailStatus = $borrowingRequest->status->value;
     $detailStatusLabel = null;
+    $obligationSummary = $custody?->openObligationSummary();
 
     $isBorrowerDraftWorkflow = $isBorrower
         && in_array(
@@ -219,7 +220,9 @@
 @endif
 
 @unless($isBorrower)
-<x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" :compact="$isOperationalRequestLayout" />
+    @if($detailStatus !== 'OBLIGATION_OPEN')
+        <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" :compact="$isOperationalRequestLayout" />
+    @endif
 @endunless
 
 @if($isBorrower)
@@ -671,9 +674,19 @@
 
 @if($isBorrower)
 @include('requests.partials.borrower-detail-styles')
+@if($detailStatus !== 'OBLIGATION_OPEN')
 <div class="borrower-progress-always" aria-label="Current request progress">
     <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
 </div>
+@elseif($obligationSummary)
+<div class="content-area">
+    <div class="callout warning">
+        <strong>{{ $obligationSummary['label'] }} — {{ $obligationSummary['title'] }}</strong>
+        <p>{{ $obligationSummary['copy'] }}</p>
+        <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}">View My Obligations</a>
+    </div>
+</div>
+@endif
 
 <div class="content-area borrower-request-detail">
     <div class="borrower-detail-grid">

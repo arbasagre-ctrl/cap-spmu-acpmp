@@ -439,11 +439,11 @@ class CalendarController extends Controller
     private function operationalPresentation(array $profile): array
     {
         $isOpen = (bool) ($profile['is_open'] ?? false);
-        $acceptsRequests = (bool) ($profile['accepts_requests'] ?? false);
+        $acceptsRequests = true; // Online borrowing request submission is available 24/7.
         $allowsPickup = (bool) ($profile['allows_pickup'] ?? false);
         $allowsReturn = (bool) ($profile['allows_return'] ?? false);
         $isException = ($profile['source'] ?? null) === 'EXCEPTION';
-        $isLimited = $isOpen && ! ($acceptsRequests && $allowsPickup && $allowsReturn);
+        $isLimited = $isOpen && ! ($allowsPickup && $allowsReturn);
 
         $label = match (true) {
             ! $isOpen => 'SPMU Closed',
@@ -464,13 +464,12 @@ class CalendarController extends Controller
         }
 
         $capabilities = collect([
-            'Requests' => $acceptsRequests,
             'Pickup / Release' => $allowsPickup,
             'Returns' => $allowsReturn,
         ])->map(fn (bool $allowed, string $name) => $name.': '.($allowed ? 'Open' : 'Closed'))->values()->implode(' · ');
 
         $details = ! $isOpen
-            ? ((string) ($profile['reason'] ?? '') ?: 'No SPMU transactions are accepted on this date.')
+            ? (((string) ($profile['reason'] ?? '') ?: 'Physical SPMU transactions are unavailable on this date.').' Online borrowing request submission remains available.')
             : $capabilities.($hours ? ' · Hours: '.$hours : '').(! empty($profile['reason']) ? ' · '.$profile['reason'] : '');
 
         return [

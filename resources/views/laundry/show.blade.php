@@ -10,13 +10,10 @@
 
     $totalIssued = (int) round($job->lines->sum(fn ($line) => (float) $line->issued_quantity));
     $formArchived = $job->hasVerifiedAccomplishedForm();
-    $legacyReadyForInternalLaundry = $job->status === 'FOR_LAUNDRY'
-        && $formArchived
-        && $allLinenReturned;
-    $internalLaundryQuantity = function ($line) use ($legacyReadyForInternalLaundry): int {
+    $internalLaundryQuantity = function ($line): int {
         $stored = (int) round((float) ($line->received_quantity ?? 0));
 
-        if ($stored > 0 || ! $legacyReadyForInternalLaundry) {
+        if ($stored > 0) {
             return $stored;
         }
 
@@ -27,6 +24,32 @@
     $totalInternalLaundry = $job->lines->sum(fn ($line) => $internalLaundryQuantity($line));
     $returnEncoded = $allLinenReturned
         || in_array($job->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true);
+
+    $expectedReturn = $job->custody?->original_due_at;
+    $isLateReturn = $job->worker_received_at && $expectedReturn
+        ? $job->worker_received_at->copy()->startOfDay()->gt($expectedReturn->copy()->startOfDay())
+        : false;
+    $adverseConditions = $job->lines
+        ->flatMap(fn ($line) => $line->custodyLine?->returnLines ?? collect())
+        ->map(fn ($returnLine) => strtoupper((string) $returnLine->condition_code))
+        ->filter(fn ($condition) => $condition !== '' && $condition !== 'FINE')
+        ->unique()
+        ->values();
+    $hasAdverseFinding = $adverseConditions->isNotEmpty();
+    $adverseReason = $adverseConditions
+        ->map(fn ($condition) => match ($condition) {
+            'DAMAGED' => 'Damaged Item',
+            'DESTROYED' => 'Destroyed Item',
+            'MISSING' => 'Missing Item',
+            'LOST' => 'Lost Item',
+            'STOLEN' => 'Stolen Item',
+            default => ucwords(strtolower(str_replace('_', ' ', $condition))),
+        })
+        ->implode(' + ');
+    $accountabilityReason = collect([
+        $isLateReturn ? 'Late Return' : null,
+        $hasAdverseFinding ? $adverseReason : null,
+    ])->filter()->implode(' + ') ?: null;
 @endphp
 
 <div class="laundry-detail">
@@ -51,7 +74,9 @@
                 <h2>Laundry Form</h2>
             </div>
 
-            <p class="laundry-form-description">The same printed form travels with the borrower during custody. On return, the borrower brings the linen and form to the Laundry Area. The offline Laundry Worker checks the quantity/condition, wet-signs Received by and the Date row, keeps the accomplished form, and later delivers it directly to SPMU. No Laundry portal login is used.</p>
+            @if($job->status !== 'LAUNDRY_COMPLETED')
+                <p class="laundry-form-description">The same printed form travels with the borrower during custody. On return, Laundry Personnel record <strong>Received by</strong> and the actual receipt date, complete the offline laundry process, then deliver the accomplished form to SPMU. No Laundry portal login is used.</p>
+            @endif
 
             <div class="inline-actions laundry-form-actions">
                 @if($job->latestEvidence?->file)
@@ -61,33 +86,53 @@
                 @endif
             </div>
 
-            <p class="meta top-gap">The Laundry Worker checks and signs the physical form at return, then later delivers it directly to SPMU. The Action Officer uploads and encodes it while the linen remains in the Laundry Area for the internal washing cycle.</p>
+            @if($job->status === 'LAUNDRY_COMPLETED')
+                <p class="meta top-gap"><strong>Received by Laundry</strong> is the borrower's actual linen return date.</p>
+            @else
+                <p class="meta top-gap"><strong>Received by</strong> is the borrower's actual linen return date and controls return timeliness. The later SPMU upload/encoding date does not replace it.</p>
+            @endif
         </article>
 
         <article class="card laundry-linen-card">
             <div class="card-header laundry-detail-card-title"><x-icon name="box" size="27" /><h2>Linen Status</h2></div>
             <dl class="detail-list laundry-linen-facts">
                 <dt>Total issued:</dt><dd>{{ $totalIssued }}</dd>
-                <dt>Completed form:</dt><dd>{{ $formArchived ? 'Received by SPMU' : 'Pending from Laundry Personnel' }}</dd>
-                <dt>SPMU return encoding:</dt><dd>{{ $returnEncoded ? 'Complete' : 'Pending' }}</dd>
+                <dt>Received by Laundry:</dt><dd>{{ $job->worker_received_at?->format('d F Y') ?: 'Pending' }}</dd>
+
+                @if($job->status !== 'LAUNDRY_COMPLETED')
+                    <dt>Completed form:</dt><dd>{{ $formArchived ? 'Received by SPMU' : 'Pending from Laundry Personnel' }}</dd>
+                    <dt>SPMU return encoding:</dt><dd>{{ $returnEncoded ? 'Complete' : 'Pending' }}</dd>
+                @endif
+
                 <dt>Serviceable quantity:</dt><dd>{{ $totalInternalLaundry }}</dd>
-                <dt>Availability:</dt><dd>{{ $job->status === 'LAUNDRY_COMPLETED' ? 'Available' : ($returnEncoded ? 'Pending finalization' : 'Waiting for final form') }}</dd>
+                <dt>Availability:</dt>
+                <dd>
+                    @if($job->status === 'LAUNDRY_COMPLETED')
+                        Available
+                    @elseif($job->status === 'TURNED_OVER_TO_LAUNDRY')
+                        System reconciliation pending
+                    @elseif($formArchived)
+                        Waiting for SPMU return encoding
+                    @else
+                        Waiting for completed form
+                    @endif
+                </dd>
             </dl>
         </article>
     </div>
 </section>
 
-@if($job->status === 'FOR_LAUNDRY' && ! $legacyReadyForInternalLaundry)
+@if($job->status === 'FOR_LAUNDRY')
 <section class="content-area">
     <article class="card laundry-next-action">
         <x-icon name="requests" size="36" />
         <div>
             @if(! $formArchived)
-                <h2>Laundry processing / final form pending</h2>
-                <p>The borrower returns the linen and Laundry Form to the Laundry Area first. The Laundry Worker checks the actual quantity and condition at handover, records any finding, wet-signs <strong>Received by</strong> and the <strong>Date</strong> row, then keeps the accomplished form for delivery to SPMU. Even if SPMU receives it days later, the Date written on the form is the borrower's linen return date.</p>
+                <h2>Laundry processing / completed form pending</h2>
+                <p>The borrower returns the linen and form to the Laundry Area first. Laundry Personnel record <strong>Received by</strong> and the actual receipt date, finish the laundry process, then deliver the accomplished form to SPMU. Even if SPMU receives it later, the Received by date controls borrower lateness.</p>
             @else
-                <h2>Encode the accomplished Laundry Form in SPMU Return</h2>
-                <p>The accomplished form delivered by the Laundry Worker is already on file. Record the linen quantities and conditions exactly as written. No second linen inspection or Laundry portal action is required.</p>
+                <h2>Encode the completed Laundry Form in SPMU Return</h2>
+                <p>The completed form is already on file. Record the full received quantity as Fine / Good when no issue was reported; otherwise encode the applicable adverse quantity with evidence. Serviceable linen becomes Available automatically after encoding. No second linen inspection is required.</p>
             @endif
         </div>
         <a class="button primary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-primary">Open SPMU Return</a>
@@ -95,49 +140,14 @@
 </section>
 @endif
 
-@if($job->status === 'TURNED_OVER_TO_LAUNDRY' || $legacyReadyForInternalLaundry)
+@if($job->status === 'TURNED_OVER_TO_LAUNDRY')
 <section class="content-area">
-    <div class="content-grid two laundry-operation-grid">
-        <article class="card">
-            <div class="card-header">
-                <div><p class="eyebrow">Borrower obligation</p><h2>Linen return completed</h2></div>
-            </div>
-            <div class="callout success">
-                <strong>No further linen action is required from the borrower.</strong>
-            </div>
-
-        </article>
-
-        <article class="card">
-            <div class="card-header"><div><p class="eyebrow">Inventory reconciliation</p><h2>Finalize linen availability</h2></div></div>
-            <p class="meta">The returned quantity/condition has already been documented on the accomplished Laundry Form and encoded by SPMU. This step only restores the serviceable quantity after the internal washing cycle to Available inventory.</p>
-
-            <form method="post" action="{{ route('laundry.complete-processing', $job) }}" class="form-grid top-gap">
-                @csrf
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr><th>Item</th><th>Serviceable quantity in Laundry</th></tr>
-                        </thead>
-                        <tbody>
-                        @foreach($job->lines as $line)
-                            @php $received = $internalLaundryQuantity($line); @endphp
-                            <tr>
-                                <td>{{ $line->custodyLine?->requestItem?->description_snapshot ?? 'Linen item' }}</td>
-                                <td>{{ $received }}</td>
-                            </tr>
-                        @endforeach
-                        </tbody>
-                    </table>
-                </div>
-                <label>
-                    Availability remarks <small>Optional</small>
-                    <textarea name="worker_remarks" placeholder="Optional reconciliation note">{{ old('worker_remarks', $job->worker_remarks) }}</textarea>
-                </label>
-                <button class="button primary ui-pressable link-button" type="submit">Finalize Linen Availability</button>
-            </form>
-        </article>
-    </div>
+    <article class="card">
+        <div class="callout info">
+            <strong>Older Laundry record pending automatic reconciliation.</strong>
+            <p>No Action Officer action is required. The system reconciliation restores the already-confirmed serviceable quantity to Available inventory.</p>
+        </div>
+    </article>
 </section>
 @endif
 
@@ -145,18 +155,26 @@
 <section class="content-area">
     <article class="card">
         <div class="card-header">
-            <div>
-                <p class="eyebrow">Inventory available</p>
-                <h2>Serviceable linen available</h2>
+            <h2>Completion Summary</h2>
+        </div>
+        <p><strong>{{ $totalInternalLaundry }} serviceable linen {{ $totalInternalLaundry === 1 ? 'item has' : 'items have' }} been returned to Available inventory.</strong></p>
+        <div class="meta top-gap">
+            @if($job->worker_received_at)
+                <span>Borrower return: {{ $job->worker_received_at->format('d M Y') }}</span>
+            @endif
+            @if($job->completed_at)
+                <span> · Recorded by SPMU: {{ $job->completed_at->format('d M Y, g:i A') }}</span>
+            @endif
+        </div>
+
+        @if($accountabilityReason)
+            <div class="callout warning top-gap">
+                <strong>Accountability Required — {{ $accountabilityReason }}</strong>
+                <p>This Laundry case is complete and serviceable linen is already Available. The borrower issue is handled separately in Accountability Processing.</p>
+                @if($isLateReturn && $expectedReturn && $job->worker_received_at)
+                    <p class="meta">Expected return: {{ $expectedReturn->format('d M Y') }} · Actual linen return: {{ $job->worker_received_at->format('d M Y') }}</p>
+                @endif
             </div>
-            <x-status-badge status="LAUNDRY_COMPLETED" />
-        </div>
-        <div class="callout success">
-            <strong>Serviceable linen is available for future borrowing.</strong>
-            <p>Any adverse-condition quantity remains outside normal Available stock and follows the applicable accountability process.</p>
-        </div>
-        @if($job->completed_at)
-            <p class="meta">Recorded {{ $job->completed_at->format('d M Y, g:i A') }}</p>
         @endif
     </article>
 </section>

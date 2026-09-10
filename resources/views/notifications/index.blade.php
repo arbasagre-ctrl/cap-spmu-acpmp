@@ -29,6 +29,6 @@
         <div class="empty-state borrower-empty-state"><div><strong>No notifications yet.</strong><span>Updates addressed to your account will appear here.</span></div></div>
     @endforelse
     </div>
-    <div class="top-gap">{{ $notifications->links() }}</div>
+    <div class="top-gap">{{ $notifications->links('partials.pagination') }}</div>
 </section>
 @endsection

@@ -9,7 +9,7 @@
 |
 */
 
-.is-borrower-dashboard { --borrower-dash-blue: #0f62d6; }
+.is-borrower-dashboard { --borrower-dash-blue: var(--interactive); }
 
 /* 1. Summary cards -------------------------------------------------------- */
 
@@ -96,6 +96,16 @@
 .is-borrower-dashboard .borrower-dash-card > .card-header .dashboard-view-all {
     flex: 0 0 auto;
 }
+
+/* Persistent accountability summary ------------------------------------- */
+.borrower-obligation-card { border-color: var(--warning-border); }
+.borrower-obligation-summary { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px 20px; }
+.borrower-obligation-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--warning-bg); color: var(--warning); }
+.borrower-obligation-copy .eyebrow { margin: 0 0 3px; color: var(--warning); }
+.borrower-obligation-copy h2 { margin: 0; color: var(--heading); font-size: 16px; }
+.borrower-obligation-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+.borrower-active-obligation { display: block; margin-top: 4px; color: var(--warning); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+@media (max-width: 680px) { .borrower-obligation-summary { grid-template-columns: 40px minmax(0, 1fr); } .borrower-obligation-summary .button { grid-column: 1 / -1; width: 100%; } }
 
 /* 3. Active requests table ------------------------------------------------ */
 
@@ -323,7 +333,7 @@
     font-size: 12.5px;
 }
 
-html[data-theme="dark"] .is-borrower-dashboard { --borrower-dash-blue: #72b7f4; }
+html[data-theme="dark"] .is-borrower-dashboard { --borrower-dash-blue: var(--interactive); }
 html[data-theme="dark"] .is-borrower-dashboard .borrower-active-action:hover,
 html[data-theme="dark"] .is-borrower-dashboard .borrower-active-action:focus-visible { color: var(--navy-950); }
 

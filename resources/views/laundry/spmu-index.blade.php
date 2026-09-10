@@ -31,7 +31,7 @@
                 <div class="empty-state"><strong>No Laundry final-acceptance cases need action.</strong></div>
             @endforelse
         </div>
-        @if($jobs->hasPages())<div class="top-gap">{{ $jobs->links() }}</div>@endif
+        @if($jobs->hasPages())<div class="top-gap">{{ $jobs->links('partials.pagination') }}</div>@endif
     </article>
 </section>
 @endsection

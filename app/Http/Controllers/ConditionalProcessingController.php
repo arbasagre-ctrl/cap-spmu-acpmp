@@ -206,23 +206,27 @@ class ConditionalProcessingController extends Controller
             : 'This Gate Pass is already verified. No duplicate scan or verification was recorded.';
 
         /*
-         * Continue the exact transaction automatically. If linen Return
-         * Inspection is already encoded and only availability finalization is
-         * left, go straight to that Laundry case. Otherwise return to the exact
-         * Return workspace instead of the Gate Pass list.
+         * Continue the exact transaction automatically. Current Laundry records
+         * return to SPMU Return for form-based linen encoding. Only older
+         * TURNED_OVER_TO_LAUNDRY records wait for the system's one-time
+         * availability reconciliation. No Action Officer step is required.
          */
         $custody = $gatePass->custody()->with('laundryJob.latestEvidence')->first();
 
         if ($custody) {
             $laundryJob = $custody->laundryJob;
 
-            if ($laundryJob
-                && ($laundryJob->status === 'TURNED_OVER_TO_LAUNDRY'
-                    || ($laundryJob->status === 'FOR_LAUNDRY'
-                        && $laundryJob->hasVerifiedAccomplishedForm()))) {
+            if ($laundryJob?->status === 'TURNED_OVER_TO_LAUNDRY') {
                 return redirect()
                     ->route('laundry.show', $laundryJob)
-                    ->with('status', $statusMessage.' Next: finalize the linen availability.');
+                    ->with('status', $statusMessage.' This older Laundry record is pending automatic availability reconciliation; no Action Officer action is required.');
+            }
+
+            if ($laundryJob?->status === 'FOR_LAUNDRY'
+                && $laundryJob->hasVerifiedAccomplishedForm()) {
+                return redirect()
+                    ->to(route('custody.return.show', $custody).'#return-primary')
+                    ->with('status', $statusMessage.' Next: encode the completed Laundry Form in Return.');
             }
 
             return redirect()

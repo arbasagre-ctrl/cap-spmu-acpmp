@@ -5,8 +5,6 @@ namespace App\Services;
 use App\Models\DocumentTemplate;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Validation\ValidationException;
-use Symfony\Component\Process\Process;
-use Throwable;
 use ZipArchive;
 
 /**
@@ -20,16 +18,22 @@ class DocumentTemplateLayoutService
 {
     private const MAX_BYTES = 10 * 1024 * 1024;
 
+    public function __construct(
+        private GenericPdfLayoutReader $pdfReader,
+        private DocumentTemplateSemanticInterpreter $interpreter,
+    ) {}
+
     /** @var array<string, array<string, array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string}>> */
     private const FIELD_DEFINITIONS = [
         'BORROWER_SLIP' => [
             // The official form's top data is filled only from the existing
-            // request/custody profile. Its handwritten signature cells remain
-            // intentionally outside this schema.
-            'document_date' => ['label' => 'Document Date', 'aliases' => ['date'], 'required' => false, 'manual' => false, 'table' => null],
-            'employee_checkbox' => ['label' => 'Employee', 'aliases' => ['employee'], 'required' => false, 'manual' => false, 'table' => null],
-            'others_checkbox' => ['label' => 'Others', 'aliases' => ['others'], 'required' => false, 'manual' => false, 'table' => null],
-            'other_classification' => ['label' => 'Others Classification', 'aliases' => ['others classification'], 'required' => false, 'manual' => false, 'table' => null],
+            // request/custody profile. Signature images are supported only
+            // where an immutable workflow signature snapshot exists; all
+            // other handwritten signature cells remain outside this schema.
+            'document_date' => ['label' => 'Document Date', 'aliases' => ['date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date', 'placement' => 'header'],
+            'employee_checkbox' => ['label' => 'Employee', 'aliases' => ['employee'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'checkbox'],
+            'others_checkbox' => ['label' => 'Others', 'aliases' => ['others'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'checkbox'],
+            'other_classification' => ['label' => 'Others Classification', 'aliases' => ['others classification'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
             'items.qty' => ['label' => 'Quantity', 'aliases' => ['qty', 'quantity'], 'required' => true, 'manual' => false, 'table' => 'borrowed_items'],
             'items.unit' => ['label' => 'Unit', 'aliases' => ['unit'], 'required' => true, 'manual' => false, 'table' => 'borrowed_items'],
             'items.description' => ['label' => 'Article / Description', 'aliases' => ['article / description', 'article description', 'description'], 'required' => true, 'manual' => false, 'table' => 'borrowed_items'],
@@ -39,15 +43,19 @@ class DocumentTemplateLayoutService
             'release_time' => ['label' => 'Release Time', 'aliases' => ['release time', 'time released'], 'required' => false, 'manual' => false, 'table' => 'release_return'],
             'date_returned' => ['label' => 'Date Returned', 'aliases' => ['date returned', 'return date'], 'required' => false, 'manual' => false, 'table' => 'release_return'],
             'remarks' => ['label' => 'Remarks', 'aliases' => ['remarks', 'return remarks'], 'required' => false, 'manual' => false, 'table' => 'release_return'],
+            'borrowed_by_signature' => ['label' => 'Borrowed By Signature', 'aliases' => ['borrowed by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['borrowed by']]],
             'borrowed_by_printed_name' => ['label' => 'Borrowed By Printed Name', 'aliases' => ['borrowed by'], 'required' => false, 'manual' => false, 'table' => null],
             'borrowed_by_designation' => ['label' => 'Borrowed By Designation', 'aliases' => ['borrowed by designation'], 'required' => false, 'manual' => false, 'table' => null],
             'borrowed_by_date' => ['label' => 'Borrowed By Date', 'aliases' => ['borrowed by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_signature' => ['label' => 'Approved By Signature', 'aliases' => ['approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['approved by', 'approved']]],
             'approved_by_printed_name' => ['label' => 'Approved By Printed Name', 'aliases' => ['approved by'], 'required' => false, 'manual' => false, 'table' => null],
             'approved_by_designation' => ['label' => 'Approved By Designation', 'aliases' => ['approved by designation'], 'required' => false, 'manual' => false, 'table' => null],
             'approved_by_date' => ['label' => 'Approved By Date', 'aliases' => ['approved by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'issued_by_signature' => ['label' => 'Issued By Signature', 'aliases' => ['issued by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['issued by']]],
             'issued_by_printed_name' => ['label' => 'Issued By Printed Name', 'aliases' => ['issued by'], 'required' => false, 'manual' => false, 'table' => null],
             'issued_by_designation' => ['label' => 'Issued By Designation', 'aliases' => ['issued by designation'], 'required' => false, 'manual' => false, 'table' => null],
             'issued_by_date' => ['label' => 'Issued By Date', 'aliases' => ['issued by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'return_received_by_signature' => ['label' => 'Return Received By Signature', 'aliases' => ['return received by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['received by'], 'after_headers' => ['returned by'], 'before_headers' => ['verified by']]],
             'return_received_by_printed_name' => ['label' => 'Return Received By Printed Name', 'aliases' => ['received by'], 'required' => false, 'manual' => false, 'table' => null],
             'return_received_by_designation' => ['label' => 'Return Received By Designation', 'aliases' => ['return received by designation'], 'required' => false, 'manual' => false, 'table' => null],
             'return_received_by_date' => ['label' => 'Return Received By Date', 'aliases' => ['return received by date'], 'required' => false, 'manual' => false, 'table' => null],
@@ -60,47 +68,165 @@ class DocumentTemplateLayoutService
             'verified_by' => ['label' => 'Verified By', 'aliases' => ['verified by'], 'required' => false, 'manual' => true, 'table' => null],
         ],
         'LAUNDRY_FORM' => [
-            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number'], 'required' => false, 'manual' => false, 'table' => null],
-            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'requested by'], 'required' => false, 'manual' => false, 'table' => null],
-            'requesting_office' => ['label' => 'Requesting Office', 'aliases' => ['requesting office'], 'required' => false, 'manual' => false, 'table' => null],
-            'date_requested' => ['label' => 'Date Requested', 'aliases' => ['date requested'], 'required' => false, 'manual' => false, 'table' => null],
-            'items.qty' => ['label' => 'Quantity', 'aliases' => ['qty', 'quantity'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
-            'items.unit' => ['label' => 'Unit', 'aliases' => ['unit'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
-            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'article'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
-            'date_completed' => ['label' => 'Date Completed', 'aliases' => ['date completed'], 'required' => false, 'manual' => false, 'table' => null],
-            'received_by' => ['label' => 'Received By', 'aliases' => ['received by'], 'required' => false, 'manual' => true, 'table' => null],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number', 'request reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number', 'custody reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'requested by', 'requester'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'requesting_office' => ['label' => 'Requesting Office', 'aliases' => ['requesting office', 'office', 'division', 'department'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'date_requested' => ['label' => 'Date Requested', 'aliases' => ['date requested', 'request date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'date_released' => ['label' => 'Date Released', 'aliases' => ['date released', 'release date', 'date issued'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'items.qty' => ['label' => 'Quantity', 'aliases' => ['qty', 'quantity', 'no of units', 'number'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
+            'items.unit' => ['label' => 'Unit', 'aliases' => ['unit', 'unit of measure'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
+            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'article', 'article / description', 'linen description', 'particulars'], 'required' => true, 'manual' => false, 'table' => 'laundry_items'],
+            // Physical Laundry dates are item-table semantics whenever an
+            // uploaded layout presents them as columns. The same authoritative
+            // job timestamp may legitimately appear in each affected row.
+            'items.date_requested' => ['label' => 'Date Requested', 'aliases' => ['date requested', 'request date'], 'required' => false, 'manual' => false, 'table' => 'laundry_items', 'field_type' => 'date'],
+            'items.date_received' => ['label' => 'Date Received', 'aliases' => ['date received', 'received date', 'date of receipt', 'physical received date'], 'required' => false, 'manual' => false, 'table' => 'laundry_items', 'field_type' => 'date'],
+            'items.date_completed' => ['label' => 'Date Completed', 'aliases' => ['date completed', 'date returned', 'completed date', 'returned date'], 'required' => false, 'manual' => false, 'table' => 'laundry_items', 'field_type' => 'date'],
+            'items.received_quantity' => ['label' => 'Received Quantity', 'aliases' => ['received qty', 'quantity received', 'qty received'], 'required' => false, 'manual' => false, 'table' => 'laundry_items'],
+            'items.completed_quantity' => ['label' => 'Completed Quantity', 'aliases' => ['completed qty', 'quantity completed', 'qty completed'], 'required' => false, 'manual' => false, 'table' => 'laundry_items'],
+            'items.affected_quantity' => ['label' => 'Affected Quantity', 'aliases' => ['affected qty', 'quantity affected', 'qty affected'], 'required' => false, 'manual' => false, 'table' => 'laundry_items'],
+            'items.issue_type' => ['label' => 'Issue Type', 'aliases' => ['issue type', 'finding', 'condition'], 'required' => false, 'manual' => false, 'table' => 'laundry_items'],
+            'items.remarks' => ['label' => 'Remarks', 'aliases' => ['remarks', 'notes', 'findings'], 'required' => false, 'manual' => false, 'table' => 'laundry_items'],
+            'requested_by_signature' => ['label' => 'Requested By Signature', 'aliases' => ['requested by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['requested by', 'requester']]],
+            'requested_by_printed_name' => ['label' => 'Requested By Printed Name', 'aliases' => ['requested by'], 'required' => false, 'manual' => false, 'table' => null],
+            'requested_by_designation' => ['label' => 'Requested By Designation', 'aliases' => ['requested by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'requested_by_date' => ['label' => 'Requested By Date', 'aliases' => ['requested by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_signature' => ['label' => 'Approved By Signature', 'aliases' => ['approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['approved by', 'approved']]],
+            'approved_by_printed_name' => ['label' => 'Approved By Printed Name', 'aliases' => ['approved by'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_designation' => ['label' => 'Approved By Designation', 'aliases' => ['approved by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_date' => ['label' => 'Approved By Date', 'aliases' => ['approved by date'], 'required' => false, 'manual' => false, 'table' => null],
+            // The worker is an offline physical actor. Their recorded name
+            // can populate a Printed Name row, but no system e-signature or
+            // designation is invented.
+            'received_by_signature' => ['label' => 'Received By Signature', 'aliases' => ['received by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['received by', 'received from laundry']]],
+            'received_by_printed_name' => ['label' => 'Received By Printed Name', 'aliases' => ['received by'], 'required' => false, 'manual' => false, 'table' => null],
+            'received_by_designation' => ['label' => 'Received By Designation', 'aliases' => ['received by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'received_by_date' => ['label' => 'Received By Date', 'aliases' => ['received by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_signature' => ['label' => 'Verified By Signature', 'aliases' => ['verified by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['verified by', 'form verified by']]],
+            'verified_by_printed_name' => ['label' => 'Verified By Printed Name', 'aliases' => ['verified by'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_designation' => ['label' => 'Verified By Designation', 'aliases' => ['verified by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_date' => ['label' => 'Verified By Date', 'aliases' => ['verified by date'], 'required' => false, 'manual' => false, 'table' => null],
         ],
         'GATE_PASS' => [
-            'gate_pass_no' => ['label' => 'Gate Pass Number', 'aliases' => ['gp no', 'gate pass no', 'gate pass number'], 'required' => false, 'manual' => false, 'table' => null],
-            'borrower_name' => ['label' => 'Bearer', 'aliases' => ['bearer', 'accountable person'], 'required' => false, 'manual' => false, 'table' => null],
-            'purpose' => ['label' => 'Purpose', 'aliases' => ['purpose'], 'required' => true, 'manual' => false, 'table' => null],
-            'destination' => ['label' => 'Destination', 'aliases' => ['destination'], 'required' => false, 'manual' => false, 'table' => null],
-            'items.qty' => ['label' => 'Quantity', 'aliases' => ['quantity', 'qty'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
-            'items.unit' => ['label' => 'Unit', 'aliases' => ['unit'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
-            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'article'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
-            'issued_by' => ['label' => 'Released By', 'aliases' => ['released by', 'issued by'], 'required' => false, 'manual' => true, 'table' => null],
-            'verified_by' => ['label' => 'Verified By', 'aliases' => ['verified by'], 'required' => false, 'manual' => false, 'table' => null],
-            'approved_by' => ['label' => 'Approved By', 'aliases' => ['approved by'], 'required' => false, 'manual' => false, 'table' => null],
+            'gate_pass_no' => ['label' => 'Gate Pass Number', 'aliases' => ['gp no', 'gate pass no', 'gate pass number', 'gate pass reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number', 'request reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number', 'custody reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'document_date' => ['label' => 'Document Date', 'aliases' => ['date', 'date issued', 'release date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date', 'placement' => 'header'],
+            'borrower_name' => ['label' => 'Bearer', 'aliases' => ['bearer', 'accountable person', 'borrower'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'requesting_office' => ['label' => 'Office / Division', 'aliases' => ['office', 'division', 'department', 'requesting office'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'purpose' => ['label' => 'Purpose', 'aliases' => ['purpose', 'purpose of movement', 'reason'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'destination' => ['label' => 'Destination', 'aliases' => ['destination', 'place of destination', 'location'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'movement_scope' => ['label' => 'Movement Scope', 'aliases' => ['premises', 'off campus', 'on campus', 'movement type'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'exit_date' => ['label' => 'Exit Date', 'aliases' => ['exit date', 'date released', 'actual release date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'verification_remarks' => ['label' => 'Remarks', 'aliases' => ['remarks', 'verification remarks', 'notes'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'items.qty' => ['label' => 'Quantity', 'aliases' => ['quantity', 'qty', 'no of units', 'number'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
+            'items.unit' => ['label' => 'Unit', 'aliases' => ['unit', 'unit of measure'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
+            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'article', 'article / description', 'item description', 'particulars'], 'required' => true, 'manual' => false, 'table' => 'gate_items'],
+            'items.movement_scope' => ['label' => 'Premises', 'aliases' => ['premises', 'location', 'movement type', 'use location'], 'required' => false, 'manual' => false, 'table' => 'gate_items'],
+            'requested_by_signature' => ['label' => 'Requested By Signature', 'aliases' => ['requested by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['requested by', 'requester', 'bearer']]],
+            'requested_by_printed_name' => ['label' => 'Requested By Printed Name', 'aliases' => ['requested by', 'requester', 'bearer'], 'required' => false, 'manual' => false, 'table' => null],
+            'requested_by_designation' => ['label' => 'Requested By Designation', 'aliases' => ['requested by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'requested_by_date' => ['label' => 'Requested By Date', 'aliases' => ['requested by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_signature' => ['label' => 'Verified By Signature', 'aliases' => ['verified by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['verified by', 'prepared and verified by']]],
+            'verified_by_printed_name' => ['label' => 'Verified By Printed Name', 'aliases' => ['verified by'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_designation' => ['label' => 'Verified By Designation', 'aliases' => ['verified by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'verified_by_date' => ['label' => 'Verified By Date', 'aliases' => ['verified by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_signature' => ['label' => 'Approved By Signature', 'aliases' => ['approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['approved by', 'approved']]],
+            'approved_by_printed_name' => ['label' => 'Approved By Printed Name', 'aliases' => ['approved by'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_designation' => ['label' => 'Approved By Designation', 'aliases' => ['approved by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'approved_by_date' => ['label' => 'Approved By Date', 'aliases' => ['approved by date'], 'required' => false, 'manual' => false, 'table' => null],
+            'guard_signature' => ['label' => 'Guard Signature', 'aliases' => ['guard signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['guard', 'security guard', 'released by']]],
+            'guard_printed_name' => ['label' => 'Guard Printed Name', 'aliases' => ['guard', 'security guard', 'released by'], 'required' => false, 'manual' => false, 'table' => null],
+            'guard_designation' => ['label' => 'Guard Designation', 'aliases' => ['guard designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'guard_date' => ['label' => 'Guard Date', 'aliases' => ['guard date'], 'required' => false, 'manual' => false, 'table' => null],
         ],
         'BILLING_STATEMENT' => [
-            'billing_no' => ['label' => 'Billing Statement Number', 'aliases' => ['billing no', 'billing statement no', 'billing statement number'], 'required' => true, 'manual' => false, 'table' => null],
-            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'billed to'], 'required' => true, 'manual' => false, 'table' => null],
-            'issued_date' => ['label' => 'Issued Date', 'aliases' => ['issued date', 'date issued'], 'required' => false, 'manual' => false, 'table' => null],
-            'due_date' => ['label' => 'Due Date', 'aliases' => ['due date', 'payment due date'], 'required' => false, 'manual' => false, 'table' => null],
-            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'particulars'], 'required' => true, 'manual' => false, 'table' => 'billing_lines'],
-            'items.amount' => ['label' => 'Amount', 'aliases' => ['amount'], 'required' => true, 'manual' => false, 'table' => 'billing_lines'],
-            'total_amount' => ['label' => 'Total Amount', 'aliases' => ['total amount', 'total'], 'required' => true, 'manual' => false, 'table' => null],
-            'issued_by' => ['label' => 'Issued By', 'aliases' => ['issued by'], 'required' => false, 'manual' => true, 'table' => null],
+            'billing_no' => ['label' => 'Billing Statement Number', 'aliases' => ['billing no', 'billing statement no', 'billing statement number', 'statement no'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'billed to', 'accountable person'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number', 'request reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number', 'custody reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'incident_no' => ['label' => 'Incident Number', 'aliases' => ['incident no', 'incident number', 'accountability reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'issued_date' => ['label' => 'Issued Date', 'aliases' => ['issued date', 'date issued', 'statement date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'due_date' => ['label' => 'Due Date', 'aliases' => ['due date', 'payment due date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'statement_remarks' => ['label' => 'Remarks', 'aliases' => ['remarks', 'notes', 'details'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'items.description' => ['label' => 'Description', 'aliases' => ['description', 'particulars', 'item description', 'charge description'], 'required' => true, 'manual' => false, 'table' => 'billing_lines'],
+            'items.line_type' => ['label' => 'Line Type', 'aliases' => ['line type', 'charge type', 'classification', 'type'], 'required' => false, 'manual' => false, 'table' => 'billing_lines'],
+            'items.basis' => ['label' => 'Basis', 'aliases' => ['basis', 'basis of charge', 'basis for charge'], 'required' => false, 'manual' => false, 'table' => 'billing_lines'],
+            'items.penalty_type' => ['label' => 'Penalty Type', 'aliases' => ['penalty type', 'fine type', 'loss or damage type'], 'required' => false, 'manual' => false, 'table' => 'billing_lines'],
+            'items.incident_no' => ['label' => 'Incident Reference', 'aliases' => ['incident no', 'incident reference', 'reference no'], 'required' => false, 'manual' => false, 'table' => 'billing_lines'],
+            'items.amount' => ['label' => 'Amount', 'aliases' => ['amount', 'assessed amount', 'charge amount'], 'required' => true, 'manual' => false, 'table' => 'billing_lines'],
+            'total_amount' => ['label' => 'Total Amount', 'aliases' => ['total amount', 'total due', 'total'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            // Billing records a responsible issuer, but no immutable billing
+            // signature snapshot. The generic renderer therefore prints the
+            // factual name/role/date only and leaves Signature empty.
+            'issuer_signature' => ['label' => 'Issuer Signature', 'aliases' => ['issuer signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['issued by', 'issuer', 'prepared by']]],
+            'issuer_printed_name' => ['label' => 'Issuer Printed Name', 'aliases' => ['issued by', 'issuer', 'prepared by'], 'required' => false, 'manual' => false, 'table' => null],
+            'issuer_designation' => ['label' => 'Issuer Designation', 'aliases' => ['issuer designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'issuer_date' => ['label' => 'Issuer Date', 'aliases' => ['issuer date'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_signature' => ['label' => 'SPMU Head Authorization Signature', 'aliases' => ['head signature', 'authorized by signature', 'approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['authorized by', 'approved by', 'spmu head']]],
+            'head_printed_name' => ['label' => 'SPMU Head Printed Name', 'aliases' => ['authorized by', 'approved by', 'spmu head'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_designation' => ['label' => 'SPMU Head Designation', 'aliases' => ['head designation', 'designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_date' => ['label' => 'SPMU Head Authorization Date', 'aliases' => ['head date', 'authorization date', 'approved date'], 'required' => false, 'manual' => false, 'table' => null],
+        ],
+        'ACCOUNTABILITY_COMPLIANCE_NOTICE' => [
+            'incident_no' => ['label' => 'Case Number', 'aliases' => ['case no', 'case number', 'incident no', 'accountability reference'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'decision_date' => ['label' => 'Decision Date', 'aliases' => ['decision date', 'date issued', 'date confirmed'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'accountable person'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'office_unit' => ['label' => 'Office / Unit', 'aliases' => ['office', 'office unit', 'department', 'unit'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'incident_type' => ['label' => 'Finding / Case Type', 'aliases' => ['finding', 'case type', 'incident type'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'decision_remarks' => ['label' => 'Required Compliance / Head Instruction', 'aliases' => ['required compliance', 'head instruction', 'decision remarks', 'instruction'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'items.description' => ['label' => 'Item', 'aliases' => ['item', 'property', 'description'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.qty' => ['label' => 'Quantity', 'aliases' => ['qty', 'quantity'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.finding' => ['label' => 'Finding', 'aliases' => ['finding', 'condition'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.disposition' => ['label' => 'Required Action', 'aliases' => ['required action', 'disposition', 'action'], 'required' => false, 'manual' => false, 'table' => 'affected_items'],
+            'head_signature' => ['label' => 'SPMU Head Signature', 'aliases' => ['head signature', 'confirmed by signature', 'approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['confirmed by', 'spmu head', 'approved by']]],
+            'head_printed_name' => ['label' => 'SPMU Head Printed Name', 'aliases' => ['confirmed by', 'spmu head', 'approved by'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_designation' => ['label' => 'SPMU Head Designation', 'aliases' => ['head designation', 'designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_date' => ['label' => 'SPMU Head Date', 'aliases' => ['head date', 'date confirmed', 'decision date'], 'required' => false, 'manual' => false, 'table' => null],
+        ],
+        'ADMINISTRATIVE_SANCTION_NOTICE' => [
+            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'accountable person'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'office_unit' => ['label' => 'Office / Unit', 'aliases' => ['office', 'office unit', 'department', 'unit'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'academic_period' => ['label' => 'Academic Period', 'aliases' => ['academic period', 'semester'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'offense_level' => ['label' => 'Offense Level', 'aliases' => ['offense level', 'offense no', 'offense number'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'confirmed_date' => ['label' => 'Date Confirmed', 'aliases' => ['date confirmed', 'confirmed date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'reason_text' => ['label' => 'Confirmed Offense Basis', 'aliases' => ['offense basis', 'finding', 'reason'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'sanction_label' => ['label' => 'Administrative Sanction', 'aliases' => ['sanction', 'administrative sanction'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'effective_from' => ['label' => 'Effective From', 'aliases' => ['effective from', 'start date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'effective_to' => ['label' => 'Effective Until', 'aliases' => ['effective until', 'end date'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'head_remarks' => ['label' => 'Head Remarks', 'aliases' => ['head remarks', 'remarks', 'decision remarks'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'head_signature' => ['label' => 'SPMU Head Signature', 'aliases' => ['head signature', 'confirmed by signature', 'approved by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['confirmed by', 'spmu head', 'approved by']]],
+            'head_printed_name' => ['label' => 'SPMU Head Printed Name', 'aliases' => ['confirmed by', 'spmu head', 'approved by'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_designation' => ['label' => 'SPMU Head Designation', 'aliases' => ['head designation', 'designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'head_date' => ['label' => 'SPMU Head Date', 'aliases' => ['head date', 'date confirmed'], 'required' => false, 'manual' => false, 'table' => null],
         ],
         'RSLDDP' => [
-            'incident_no' => ['label' => 'Incident Number', 'aliases' => ['incident no', 'incident number'], 'required' => true, 'manual' => false, 'table' => null],
-            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'accountable person'], 'required' => true, 'manual' => false, 'table' => null],
-            'incident_type' => ['label' => 'Incident Type', 'aliases' => ['incident type'], 'required' => false, 'manual' => false, 'table' => null],
-            'reported_date' => ['label' => 'Reported Date', 'aliases' => ['reported date', 'date reported'], 'required' => false, 'manual' => false, 'table' => null],
-            'items.qty' => ['label' => 'Affected Quantity', 'aliases' => ['quantity', 'qty'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
-            'items.description' => ['label' => 'Affected Property', 'aliases' => ['affected property', 'property description', 'description'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
-            'items.condition' => ['label' => 'Observed Condition', 'aliases' => ['observed condition', 'condition'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
-            'reported_by' => ['label' => 'Reported By', 'aliases' => ['reported by'], 'required' => false, 'manual' => true, 'table' => null],
+            'rslddp_reference' => ['label' => 'RSLDDP Number', 'aliases' => ['rslddp no', 'rslddp number', 'rslddp reference', 'document no'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'incident_no' => ['label' => 'Incident Number', 'aliases' => ['incident no', 'incident number', 'incident reference'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'custody_no' => ['label' => 'Custody Number', 'aliases' => ['custody no', 'custody number', 'custody reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'request_no' => ['label' => 'Request Number', 'aliases' => ['request no', 'request number', 'request reference'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'police_blotter_reference' => ['label' => 'Blotter Reference', 'aliases' => ['police blotter reference', 'blotter reference', 'blotter no'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'borrower_name' => ['label' => 'Borrower', 'aliases' => ['borrower', 'accountable person', 'responsible person'], 'required' => true, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'incident_type' => ['label' => 'Incident Type', 'aliases' => ['incident type', 'type of incident', 'loss or damage type'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'reported_date' => ['label' => 'Reported Date', 'aliases' => ['reported date', 'date reported', 'date of incident'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'date'],
+            'incident_remarks' => ['label' => 'Incident Remarks', 'aliases' => ['remarks', 'incident remarks', 'details', 'narrative'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'appraisal_amount' => ['label' => 'Appraised Amount', 'aliases' => ['appraised amount', 'appraisal amount', 'assessed amount', 'total appraisal'], 'required' => false, 'manual' => false, 'table' => null, 'field_type' => 'text'],
+            'items.qty' => ['label' => 'Affected Quantity', 'aliases' => ['quantity', 'qty', 'affected qty', 'no of units'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.description' => ['label' => 'Affected Property', 'aliases' => ['affected property', 'property description', 'description', 'article / description', 'particulars'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.condition' => ['label' => 'Observed Condition', 'aliases' => ['observed condition', 'condition', 'condition found'], 'required' => true, 'manual' => false, 'table' => 'affected_items'],
+            'items.assessed_value' => ['label' => 'Assessed Value', 'aliases' => ['assessed value', 'appraised value', 'amount'], 'required' => false, 'manual' => false, 'table' => 'affected_items'],
+            'items.disposition' => ['label' => 'Disposition', 'aliases' => ['disposition', 'recommended disposition', 'action taken'], 'required' => false, 'manual' => false, 'table' => 'affected_items'],
+            // Incident reporting has a recorded officer and date, but no
+            // incident-signature snapshot. Its signature row remains blank.
+            'reported_by_signature' => ['label' => 'Reported By Signature', 'aliases' => ['reported by signature'], 'required' => false, 'manual' => false, 'table' => null, 'signatory' => ['header_aliases' => ['reported by', 'reported and inspected by']]],
+            'reported_by_printed_name' => ['label' => 'Reported By Printed Name', 'aliases' => ['reported by'], 'required' => false, 'manual' => false, 'table' => null],
+            'reported_by_designation' => ['label' => 'Reported By Designation', 'aliases' => ['reported by designation'], 'required' => false, 'manual' => false, 'table' => null],
+            'reported_by_date' => ['label' => 'Reported By Date', 'aliases' => ['reported by date'], 'required' => false, 'manual' => false, 'table' => null],
             'noted_by' => ['label' => 'Noted By', 'aliases' => ['noted by'], 'required' => false, 'manual' => true, 'table' => null],
         ],
     ];
@@ -201,7 +327,7 @@ class DocumentTemplateLayoutService
         return null;
     }
 
-    /** @return array{format:string,render_representation:string,review:array<string,mixed>,mappings:list<array<string,mixed>>,table_layouts:array<string,array{row_height_percent:float,max_rows:int}>,analysis:array<string,mixed>} */
+    /** @return array{format:string,render_representation:string,review:array<string,mixed>,mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,mixed>>,analysis:array<string,mixed>} */
     public function configuration(DocumentTemplate $template): array
     {
         $decoded = json_decode((string) $template->content_template, true);
@@ -220,7 +346,7 @@ class DocumentTemplateLayoutService
         ];
     }
 
-    /** @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array{row_height_percent:float,max_rows:int}>,analysis:array<string,mixed>} */
+    /** @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,mixed>>,analysis:array<string,mixed>} */
     public function autoMap(string $type, string $format, array $review): array
     {
         $formMappings = is_array($review['fillable_widgets'] ?? null)
@@ -229,16 +355,21 @@ class DocumentTemplateLayoutService
         $layoutMappings = $format === 'PDF' || ! empty($review['layout_words'])
             ? $this->automaticPdfLayoutMappings($type, $review, $formMappings['mappings'])
             : ['mappings' => [], 'table_layouts' => []];
-        $borrowerSlipMappings = $type === 'BORROWER_SLIP'
-            ? $this->automaticBorrowerSlipSystemMappings($review, $layoutMappings['mappings'])
-            : ['mappings' => [], 'table_layouts' => []];
-        $mappings = collect([...$layoutMappings['mappings'], ...$borrowerSlipMappings['mappings'], ...$formMappings['mappings']])
+        // The generic reader supplies a page-relative model; the semantic
+        // interpreter uses the type schema's aliases and relationships only.
+        // It contains no revision, filename, or copied-coordinate rules.
+        $semanticMappings = $this->interpreter->supplementalMappings(
+            $this->fieldDefinitions($type),
+            $review,
+            [...$layoutMappings['mappings'], ...$formMappings['mappings']],
+        );
+        $mappings = collect([...$layoutMappings['mappings'], ...$semanticMappings['mappings'], ...$formMappings['mappings']])
             ->keyBy('field')
             ->values()
             ->all();
         $tableLayouts = array_replace(
             $layoutMappings['table_layouts'],
-            $borrowerSlipMappings['table_layouts'],
+            $semanticMappings['table_layouts'],
             $formMappings['table_layouts'],
         );
         $mappedFields = collect($mappings)->pluck('field')->filter()->all();
@@ -332,7 +463,14 @@ class DocumentTemplateLayoutService
         return 'The system could not identify every required section needed to generate this document.';
     }
 
-    /** @param array<string,mixed> $tableLayouts @return array<string,array{row_height_percent:float,max_rows:int}> */
+    /**
+     * Normalise only page-relative table geometry discovered from an uploaded
+     * form.  No administrator-entered coordinates or document revision data
+     * are accepted here.
+     *
+     * @param array<string,mixed> $tableLayouts
+     * @return array<string,array<string,mixed>>
+     */
     public function normalizeTableLayouts(string $type, array $tableLayouts): array
     {
         $allowedTables = array_values(array_unique(array_filter(array_map(
@@ -362,9 +500,46 @@ class DocumentTemplateLayoutService
                 'max_rows' => $maxRows,
                 'max_height_percent' => round($maximumHeight, 2),
             ];
+            $grid = $this->normalizeTableGrid($layout['grid'] ?? null);
+            if ($grid !== null) {
+                $normalized[$table]['grid'] = $grid;
+            }
         }
 
         return $normalized;
+    }
+
+    /** @return array<string,mixed>|null */
+    private function normalizeTableGrid(mixed $grid): ?array
+    {
+        if (! is_array($grid)) {
+            return null;
+        }
+        $page = filter_var($grid['page'] ?? null, FILTER_VALIDATE_INT) ?: 0;
+        $left = is_numeric($grid['left_percent'] ?? null) ? (float) $grid['left_percent'] : -1.0;
+        $right = is_numeric($grid['right_percent'] ?? null) ? (float) $grid['right_percent'] : -1.0;
+        $top = is_numeric($grid['body_top_percent'] ?? null) ? (float) $grid['body_top_percent'] : -1.0;
+        $bottom = is_numeric($grid['body_bottom_percent'] ?? null) ? (float) $grid['body_bottom_percent'] : -1.0;
+        if ($page < 1 || $left < 0 || $right <= $left || $right > 100 || $top < 0 || $bottom <= $top || $bottom > 100) {
+            return null;
+        }
+        $boundaries = array_values(array_unique(array_filter(array_map(
+            fn (mixed $value): ?float => is_numeric($value) && (float) $value >= $left && (float) $value <= $right ? round((float) $value, 2) : null,
+            is_array($grid['vertical_boundaries_percent'] ?? null) ? $grid['vertical_boundaries_percent'] : [],
+        ), fn (?float $value): bool => $value !== null)));
+        sort($boundaries, SORT_NUMERIC);
+        if (count($boundaries) < 2 || abs($boundaries[0] - $left) > 0.6 || abs($boundaries[array_key_last($boundaries)] - $right) > 0.6) {
+            return null;
+        }
+
+        return [
+            'page' => $page,
+            'left_percent' => round($left, 2),
+            'right_percent' => round($right, 2),
+            'body_top_percent' => round($top, 2),
+            'body_bottom_percent' => round($bottom, 2),
+            'vertical_boundaries_percent' => $boundaries,
+        ];
     }
 
     /** @return array<string,mixed> */
@@ -401,10 +576,70 @@ class DocumentTemplateLayoutService
             'approved_by' => 'SPMU Head approval record',
         ];
         return match ($type) {
-            'LAUNDRY_FORM' => $common + ['request_no' => 'BR-2026-0001', 'requesting_office' => 'Sample Office', 'date_requested' => '10 September 2026', 'date_completed' => '12 September 2026'],
-            'GATE_PASS' => $common + ['gate_pass_no' => 'GP-2026-0001', 'destination' => 'Approved off-campus location'],
-            'BILLING_STATEMENT' => $common + ['billing_no' => 'BILL-2026-0001', 'due_date' => '20 September 2026', 'items.amount' => 'PHP 150.00', 'total_amount' => 'PHP 150.00'],
-            'RSLDDP' => $common + ['incident_no' => 'INC-2026-0001', 'incident_type' => 'Damaged property', 'reported_date' => '10 September 2026', 'items.condition' => 'Damaged'],
+            'LAUNDRY_FORM' => $common + [
+                'request_no' => 'BR-2026-0001', 'custody_no' => 'CUS-2026-0001', 'requesting_office' => 'Sample Office',
+                'date_requested' => '10 September 2026', 'date_released' => '10 September 2026',
+                'items.date_requested' => '10 September 2026', 'items.date_received' => '12 September 2026',
+                'items.date_completed' => '13 September 2026', 'items.received_quantity' => '15',
+                'items.completed_quantity' => '15', 'items.affected_quantity' => '0', 'items.issue_type' => 'Serviceable',
+                'items.remarks' => 'Sample physical laundry finding',
+                'requested_by_printed_name' => 'SAMPLE BORROWER', 'requested_by_designation' => 'Instructor',
+                'requested_by_date' => '10 September 2026', 'approved_by_printed_name' => 'SAMPLE SPMU HEAD',
+                'approved_by_designation' => 'SPMU Head', 'approved_by_date' => '10 September 2026',
+                'received_by_printed_name' => 'SAMPLE LAUNDRY WORKER', 'received_by_date' => '12 September 2026',
+                'verified_by_printed_name' => 'SAMPLE ACTION OFFICER', 'verified_by_designation' => 'SPMU Action Officer',
+                'verified_by_date' => '13 September 2026',
+            ],
+            'GATE_PASS' => $common + [
+                'gate_pass_no' => 'GP-2026-0001', 'request_no' => 'BR-2026-0001', 'custody_no' => 'CUS-2026-0001',
+                'document_date' => '10 September 2026', 'requesting_office' => 'Sample Office',
+                'destination' => 'Approved off-campus location', 'movement_scope' => 'Off Campus', 'exit_date' => '10 September 2026',
+                'verification_remarks' => 'Verified for approved movement', 'items.movement_scope' => 'Off Campus',
+                'requested_by_printed_name' => 'SAMPLE BORROWER', 'requested_by_designation' => 'Instructor',
+                'requested_by_date' => '10 September 2026', 'verified_by_printed_name' => 'SAMPLE ACTION OFFICER',
+                'verified_by_designation' => 'SPMU Action Officer', 'verified_by_date' => '10 September 2026',
+                'approved_by_printed_name' => 'SAMPLE SPMU HEAD', 'approved_by_designation' => 'SPMU Head',
+                'approved_by_date' => '10 September 2026', 'guard_printed_name' => 'SAMPLE SECURITY GUARD',
+                'guard_date' => '10 September 2026',
+            ],
+            'BILLING_STATEMENT' => $common + [
+                'billing_no' => 'BILL-2026-0001', 'request_no' => 'BR-2026-0001', 'custody_no' => 'CUS-2026-0001',
+                'incident_no' => 'INC-2026-0001', 'due_date' => '20 September 2026',
+                'statement_remarks' => 'Sample accountability billing details', 'items.line_type' => 'PROPERTY CHARGE',
+                'items.basis' => 'Approved accountability assessment', 'items.penalty_type' => 'Damage',
+                'items.incident_no' => 'INC-2026-0001', 'items.amount' => 'PHP 150.00', 'total_amount' => 'PHP 150.00',
+                'issuer_printed_name' => 'SAMPLE SPMU OFFICER', 'issuer_designation' => 'SPMU Action Officer',
+                'issuer_date' => '10 September 2026',
+            ],
+            'ACCOUNTABILITY_COMPLIANCE_NOTICE' => $common + [
+                'incident_no' => 'INC-2026-0001', 'decision_date' => '10 September 2026',
+                'office_unit' => 'College of Sample Studies', 'request_no' => 'BR-2026-0001',
+                'custody_no' => 'CUS-2026-0001', 'incident_type' => 'Damaged',
+                'decision_remarks' => 'Repair or replace the affected property and coordinate with SPMU for verification.',
+                'items.finding' => 'Damaged', 'items.disposition' => 'Repair / Replacement',
+                'head_printed_name' => 'SAMPLE SPMU HEAD', 'head_designation' => 'Head, Supply and Property Management Unit',
+                'head_date' => '10 September 2026',
+            ],
+            'ADMINISTRATIVE_SANCTION_NOTICE' => $common + [
+                'office_unit' => 'College of Sample Studies', 'request_no' => 'BR-2026-0001',
+                'custody_no' => 'CUS-2026-0001', 'academic_period' => '2026-2027 · 1st Semester',
+                'offense_level' => '1st Offense', 'confirmed_date' => '10 September 2026',
+                'reason_text' => 'Damaged', 'sanction_label' => 'Written Reprimand',
+                'effective_from' => '10 September 2026', 'effective_to' => '',
+                'head_remarks' => 'Confirmed after review of the recorded finding and supporting evidence.',
+                'head_printed_name' => 'SAMPLE SPMU HEAD', 'head_designation' => 'Head, Supply and Property Management Unit',
+                'head_date' => '10 September 2026',
+            ],
+            'RSLDDP' => $common + [
+                'rslddp_reference' => 'RSLDDP-2026-0001', 'incident_no' => 'INC-2026-0001',
+                'custody_no' => 'CUS-2026-0001', 'request_no' => 'BR-2026-0001',
+                'police_blotter_reference' => 'BLT-2026-0001', 'incident_type' => 'Damaged property',
+                'reported_date' => '10 September 2026', 'incident_remarks' => 'Sample incident details',
+                'appraisal_amount' => 'PHP 150.00', 'items.condition' => 'Damaged',
+                'items.assessed_value' => 'PHP 150.00', 'items.disposition' => 'For accountability assessment',
+                'reported_by_printed_name' => 'SAMPLE ACTION OFFICER', 'reported_by_designation' => 'SPMU Action Officer',
+                'reported_by_date' => '10 September 2026',
+            ],
             default => $common,
         };
     }
@@ -427,7 +662,9 @@ class DocumentTemplateLayoutService
         $text = implode("\n", array_filter([...$strings, ...($fieldNames[1] ?? [])]));
         $pages = preg_match_all('/\/Type\s*\/Page\b/', $bytes);
         $widgets = $this->pdfFormWidgets($bytes);
-        $layout = $withLayoutAnalysis ? $this->pdfLayoutAnalysis($bytes) : ['source' => 'NOT_REQUESTED', 'words' => [], 'lines' => []];
+        $layout = $withLayoutAnalysis
+            ? $this->pdfReader->read($bytes)
+            : ['source' => 'NOT_REQUESTED', 'words' => [], 'lines' => [], 'model' => []];
 
         return [
             'pages' => max(1, (int) $pages),
@@ -441,340 +678,10 @@ class DocumentTemplateLayoutService
             'layout_source' => $layout['source'],
             'layout_words' => $layout['words'],
             'layout_lines' => $layout['lines'],
+            // Generic, page-relative structural model. It is consumed only
+            // while preparing a template and is never exposed to an admin.
+            'layout_model' => $layout['model'],
         ];
-    }
-
-    /**
-     * Extract positioned words from the actual PDF representation. Text PDFs
-     * use Poppler's bounding boxes; image-only PDFs fall back to Tesseract TSV
-     * so both paths produce page-relative geometry for the same mapper.
-     *
-     * @return array{source:string,words:list<array<string,mixed>>,lines:list<array<string,mixed>>}
-     */
-    private function pdfLayoutAnalysis(string $bytes): array
-    {
-        $directory = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'spmu-layout-analysis-'.bin2hex(random_bytes(8));
-        if (! mkdir($directory, 0700, true) && ! is_dir($directory)) {
-            return ['source' => 'UNAVAILABLE', 'words' => [], 'lines' => []];
-        }
-        $sourcePath = $directory.DIRECTORY_SEPARATOR.'approved-layout.pdf';
-
-        try {
-            if (file_put_contents($sourcePath, $bytes) === false) {
-                return ['source' => 'UNAVAILABLE', 'words' => [], 'lines' => []];
-            }
-            @chmod($sourcePath, 0600);
-
-            $textProcess = new Process(['pdftotext', '-bbox-layout', '-enc', 'UTF-8', $sourcePath, '-']);
-            $textProcess->setTimeout(45);
-            $textProcess->run();
-            $words = $textProcess->isSuccessful() ? $this->parsePopplerBoundingBoxes($textProcess->getOutput()) : [];
-            if ($words !== []) {
-                return ['source' => 'TEXT_LAYER', 'words' => $words, 'lines' => $this->layoutLines($words)];
-            }
-
-            $images = $this->renderPdfPagesForAnalysis($sourcePath, $directory);
-            $ocrWords = [];
-            foreach ($images as $page => $image) {
-                $ocr = new Process(['tesseract', $image, 'stdout', '-l', 'eng', 'tsv']);
-                $ocr->setTimeout(60);
-                $ocr->run();
-                if ($ocr->isSuccessful()) {
-                    $ocrWords = [...$ocrWords, ...$this->parseTesseractTsv($ocr->getOutput(), $page, $image)];
-                }
-            }
-
-            return ['source' => $ocrWords === [] ? 'UNAVAILABLE' : 'OCR', 'words' => $ocrWords, 'lines' => $this->layoutLines($ocrWords)];
-        } catch (Throwable) {
-            return ['source' => 'UNAVAILABLE', 'words' => [], 'lines' => []];
-        } finally {
-            foreach (glob($directory.DIRECTORY_SEPARATOR.'*') ?: [] as $path) {
-                @unlink($path);
-            }
-            @rmdir($directory);
-        }
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function parsePopplerBoundingBoxes(string $html): array
-    {
-        preg_match_all('/<page\b([^>]*)>(.*?)<\/page>/si', $html, $pages, PREG_SET_ORDER);
-        $words = [];
-        foreach ($pages as $pageIndex => $page) {
-            $width = $this->xmlNumber($page[1], 'width');
-            $height = $this->xmlNumber($page[1], 'height');
-            if ($width === null || $height === null || $width <= 0 || $height <= 0) {
-                continue;
-            }
-            preg_match_all('/<word\b([^>]*)>(.*?)<\/word>/si', $page[2], $matches, PREG_SET_ORDER);
-            foreach ($matches as $match) {
-                $left = $this->xmlNumber($match[1], 'xMin');
-                $top = $this->xmlNumber($match[1], 'yMin');
-                $right = $this->xmlNumber($match[1], 'xMax');
-                $bottom = $this->xmlNumber($match[1], 'yMax');
-                $text = trim(html_entity_decode(strip_tags($match[2]), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-                if ($left === null || $top === null || $right === null || $bottom === null || $text === '') {
-                    continue;
-                }
-                $words[] = [
-                    'page' => $pageIndex + 1,
-                    'text' => $text,
-                    'x' => round($left / $width * 100, 2),
-                    'y' => round($top / $height * 100, 2),
-                    'width' => round(max(0.2, ($right - $left) / $width * 100), 2),
-                    'height' => round(max(0.2, ($bottom - $top) / $height * 100), 2),
-                    'confidence' => 1.0,
-                ];
-            }
-        }
-
-        return $words;
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function parseTesseractTsv(string $tsv, int $page, string $image): array
-    {
-        $dimensions = @getimagesize($image);
-        if (! is_array($dimensions) || ($dimensions[0] ?? 0) <= 0 || ($dimensions[1] ?? 0) <= 0) {
-            return [];
-        }
-        $words = [];
-        foreach (preg_split('/\R/', trim($tsv)) ?: [] as $lineNumber => $line) {
-            if ($lineNumber === 0 || $line === '') {
-                continue;
-            }
-            $columns = explode("\t", $line, 12);
-            if (count($columns) < 12 || (int) $columns[0] !== 5) {
-                continue;
-            }
-            $confidence = (float) $columns[10];
-            $text = trim($columns[11]);
-            if ($confidence < 35 || $text === '') {
-                continue;
-            }
-            $words[] = [
-                'page' => $page,
-                'text' => $text,
-                'x' => round((float) $columns[6] / $dimensions[0] * 100, 2),
-                'y' => round((float) $columns[7] / $dimensions[1] * 100, 2),
-                'width' => round(max(0.2, (float) $columns[8] / $dimensions[0] * 100), 2),
-                'height' => round(max(0.2, (float) $columns[9] / $dimensions[1] * 100), 2),
-                'confidence' => round($confidence / 100, 2),
-            ];
-        }
-
-        return $words;
-    }
-
-    /** @return array<int,string> */
-    private function renderPdfPagesForAnalysis(string $sourcePath, string $directory): array
-    {
-        $prefix = $directory.DIRECTORY_SEPARATOR.'page';
-        $process = new Process(['pdftoppm', '-r', '150', '-png', $sourcePath, $prefix]);
-        $process->setTimeout(90);
-        $process->run();
-        if (! $process->isSuccessful()) {
-            return [];
-        }
-        $pages = [];
-        foreach (glob($prefix.'-*.png') ?: [] as $path) {
-            if (preg_match('/-(\d+)\.png$/', $path, $match) === 1) {
-                $pages[(int) $match[1]] = $path;
-            }
-        }
-        ksort($pages);
-
-        return $pages;
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function layoutLines(array $words): array
-    {
-        usort($words, fn (array $left, array $right): int => [(int) $left['page'], (float) $left['y'], (float) $left['x']] <=> [(int) $right['page'], (float) $right['y'], (float) $right['x']]);
-        $lines = [];
-        foreach ($words as $word) {
-            $last = array_key_last($lines);
-            if ($last === null
-                || (int) $lines[$last]['page'] !== (int) $word['page']
-                || abs((float) $lines[$last]['y'] - (float) $word['y']) > max(0.9, (float) $word['height'])) {
-                $lines[] = ['page' => (int) $word['page'], 'text' => (string) $word['text'], 'x' => (float) $word['x'], 'y' => (float) $word['y'], 'width' => (float) $word['width'], 'height' => (float) $word['height'], 'confidence' => (float) $word['confidence']];
-                continue;
-            }
-            $line = &$lines[$last];
-            $line['text'] .= ' '.(string) $word['text'];
-            $right = max((float) $line['x'] + (float) $line['width'], (float) $word['x'] + (float) $word['width']);
-            $bottom = max((float) $line['y'] + (float) $line['height'], (float) $word['y'] + (float) $word['height']);
-            $line['x'] = min((float) $line['x'], (float) $word['x']);
-            $line['y'] = min((float) $line['y'], (float) $word['y']);
-            $line['width'] = $right - (float) $line['x'];
-            $line['height'] = $bottom - (float) $line['y'];
-            $line['confidence'] = min((float) $line['confidence'], (float) $word['confidence']);
-            unset($line);
-        }
-
-        return array_slice($lines, 0, 500);
-    }
-
-    /**
-     * Form labels often share a printed header row. Generate short, bounded
-     * phrases from that row so "Quantity" and "Unit" retain distinct x
-     * positions instead of inheriting one combined line rectangle.
-     *
-     * @param list<array<string,mixed>> $words
-     * @return list<array<string,mixed>>
-     */
-    private function layoutPhrases(array $words): array
-    {
-        usort($words, fn (array $left, array $right): int => [(int) $left['page'], (float) $left['y'], (float) $left['x']] <=> [(int) $right['page'], (float) $right['y'], (float) $right['x']]);
-        $wordLines = [];
-        foreach ($words as $word) {
-            $last = array_key_last($wordLines);
-            if ($last === null
-                || (int) $wordLines[$last]['page'] !== (int) $word['page']
-                || abs((float) $wordLines[$last]['y'] - (float) $word['y']) > max(0.9, (float) $word['height'])) {
-                $wordLines[] = ['page' => (int) $word['page'], 'y' => (float) $word['y'], 'words' => [$word]];
-                continue;
-            }
-            $wordLines[$last]['words'][] = $word;
-        }
-
-        $phrases = [];
-        foreach ($wordLines as $line) {
-            $lineWords = $line['words'];
-            usort($lineWords, fn (array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
-            $count = count($lineWords);
-            for ($start = 0; $start < $count; $start++) {
-                $text = '';
-                $left = (float) $lineWords[$start]['x'];
-                $top = (float) $lineWords[$start]['y'];
-                $right = $left;
-                $bottom = $top;
-                $confidence = 1.0;
-                for ($end = $start; $end < min($count, $start + 6); $end++) {
-                    $word = $lineWords[$end];
-                    $text .= ($end === $start ? '' : ' ').(string) $word['text'];
-                    $right = max($right, (float) $word['x'] + (float) $word['width']);
-                    $bottom = max($bottom, (float) $word['y'] + (float) $word['height']);
-                    $confidence = min($confidence, (float) $word['confidence']);
-                    $phrases[] = [
-                        'page' => (int) $line['page'],
-                        'text' => $text,
-                        'x' => $left,
-                        'y' => $top,
-                        'width' => $right - $left,
-                        'height' => $bottom - $top,
-                        'confidence' => $confidence,
-                    ];
-                }
-            }
-        }
-
-        return array_slice($phrases, 0, 2000);
-    }
-
-    /**
-     * Poppler emits stacked table labels as separate visual rows. Combine
-     * nearby, horizontally-overlapping fragments (for example, "Expected
-     * Date of" above "Return") so the matcher can recognize a complete
-     * header without depending on a fixed form coordinate.
-     *
-     * @param list<array<string,mixed>> $words
-     * @return list<array<string,mixed>>
-     */
-    private function multilineHeaderPhrases(array $words): array
-    {
-        usort($words, fn (array $left, array $right): int => [(int) $left['page'], (float) $left['y'], (float) $left['x']] <=> [(int) $right['page'], (float) $right['y'], (float) $right['x']]);
-        $rows = [];
-        foreach ($words as $word) {
-            $last = array_key_last($rows);
-            if ($last === null
-                || (int) $rows[$last]['page'] !== (int) $word['page']
-                || abs((float) $rows[$last]['y'] - (float) $word['y']) > 0.45) {
-                $rows[] = ['page' => (int) $word['page'], 'y' => (float) $word['y'], 'words' => [$word]];
-                continue;
-            }
-            $rows[$last]['words'][] = $word;
-        }
-
-        $phrases = [];
-        foreach ($rows as $topIndex => $topRow) {
-            $topWords = $topRow['words'];
-            usort($topWords, fn (array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
-            for ($bottomIndex = $topIndex + 1; $bottomIndex < count($rows); $bottomIndex++) {
-                $bottomRow = $rows[$bottomIndex];
-                if ((int) $bottomRow['page'] !== (int) $topRow['page'] || (float) $bottomRow['y'] - (float) $topRow['y'] > 2.5) {
-                    break;
-                }
-                $bottomWords = $bottomRow['words'];
-                usort($bottomWords, fn (array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
-
-                foreach ($this->boundedWordPhrases($topWords, (int) $topRow['page']) as $top) {
-                    foreach ($this->boundedWordPhrases($bottomWords, (int) $bottomRow['page']) as $bottom) {
-                        $topRight = (float) $top['x'] + (float) $top['width'];
-                        $bottomRight = (float) $bottom['x'] + (float) $bottom['width'];
-                        if (min($topRight, $bottomRight) < max((float) $top['x'], (float) $bottom['x']) - 0.8) {
-                            continue;
-                        }
-                        $left = min((float) $top['x'], (float) $bottom['x']);
-                        $right = max($topRight, $bottomRight);
-                        $bottomEdge = max((float) $top['y'] + (float) $top['height'], (float) $bottom['y'] + (float) $bottom['height']);
-                        $phrases[] = [
-                            'page' => (int) $topRow['page'],
-                            'text' => trim((string) $top['text'].' '.(string) $bottom['text']),
-                            'x' => $left,
-                            'y' => (float) $top['y'],
-                            'width' => $right - $left,
-                            'height' => $bottomEdge - (float) $top['y'],
-                            'confidence' => min((float) $top['confidence'], (float) $bottom['confidence']),
-                        ];
-                    }
-                }
-            }
-        }
-
-        return array_slice($phrases, 0, 2000);
-    }
-
-    /** @return list<array<string,mixed>> */
-    private function boundedWordPhrases(array $words, int $page): array
-    {
-        $phrases = [];
-        $count = count($words);
-        for ($start = 0; $start < $count; $start++) {
-            $text = '';
-            $left = (float) $words[$start]['x'];
-            $top = (float) $words[$start]['y'];
-            $right = $left;
-            $bottom = $top;
-            $confidence = 1.0;
-            for ($end = $start; $end < min($count, $start + 4); $end++) {
-                $word = $words[$end];
-                $text .= ($end === $start ? '' : ' ').(string) $word['text'];
-                $right = max($right, (float) $word['x'] + (float) $word['width']);
-                $bottom = max($bottom, (float) $word['y'] + (float) $word['height']);
-                $confidence = min($confidence, (float) $word['confidence']);
-                $phrases[] = [
-                    'page' => $page,
-                    'text' => $text,
-                    'x' => $left,
-                    'y' => $top,
-                    'width' => $right - $left,
-                    'height' => $bottom - $top,
-                    'confidence' => $confidence,
-                ];
-            }
-        }
-
-        return $phrases;
-    }
-
-    private function xmlNumber(string $attributes, string $attribute): ?float
-    {
-        if (preg_match('/\b'.preg_quote($attribute, '/').'="([-+]?\d*\.?\d+)"/i', $attributes, $match) !== 1) {
-            return null;
-        }
-
-        return (float) $match[1];
     }
 
     /**
@@ -828,146 +735,6 @@ class DocumentTemplateLayoutService
     }
 
     /**
-     * Map the system-backed fields that are unique to the approved Borrower's
-     * Slip. This is deliberately separate from generic PDF layout extraction:
-     * it derives positions from the form's own visible labels and rows, never
-     * from fixed page coordinates or from signature imagery.
-     *
-     * @param list<array<string,mixed>> $baseMappings
-     * @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,float|int>>}
-     */
-    private function automaticBorrowerSlipSystemMappings(array $review, array $baseMappings): array
-    {
-        $words = is_array($review['layout_words'] ?? null) ? $review['layout_words'] : [];
-        if ($words === []) {
-            return ['mappings' => [], 'table_layouts' => []];
-        }
-
-        $mappings = [];
-        $add = function (string $field, array $anchor, float $x, float $y, string $label, ?float $maxWidth = null) use (&$mappings): void {
-            $mapping = $this->mapping(
-                $field,
-                'click:automatic-borrower-slip-layout',
-                'PDF_BORROWER_SLIP_SYSTEM_REGION',
-                0.98,
-                $label,
-                false,
-                (int) $anchor['page'],
-                round($x, 2),
-                round($y, 2),
-            );
-            if ($maxWidth !== null) {
-                $mapping['max_width_percent'] = round($maxWidth, 2);
-            }
-            $mappings[] = $mapping;
-        };
-
-        $topWords = array_values(array_filter($words, fn (array $word): bool => (float) ($word['y'] ?? 100) < 18));
-        $firstWord = function (callable $predicate) use ($topWords): ?array {
-            foreach ($topWords as $word) {
-                if ($predicate($word)) {
-                    return $word;
-                }
-            }
-
-            return null;
-        };
-        $dateBlank = $firstWord(fn (array $word): bool => str_contains((string) ($word['text'] ?? ''), '_'));
-        if ($dateBlank) {
-            $add('document_date', $dateBlank, (float) $dateBlank['x'], (float) $dateBlank['y'], 'Document Date', (float) $dateBlank['width']);
-        }
-        $employee = $firstWord(fn (array $word): bool => $this->normalise((string) ($word['text'] ?? '')) === 'employee');
-        if ($employee) {
-            $add('employee_checkbox', $employee, max(0.0, (float) $employee['x'] - 1.12), (float) $employee['y'] - 0.1, 'Employee checkbox', 0.95);
-        }
-        $others = $firstWord(fn (array $word): bool => $this->normalise((string) ($word['text'] ?? '')) === 'others');
-        if ($others) {
-            $add('others_checkbox', $others, max(0.0, (float) $others['x'] - 1.12), (float) $others['y'] - 0.1, 'Others checkbox', 0.95);
-        }
-        $otherBlank = $firstWord(fn (array $word): bool => str_contains((string) ($word['text'] ?? ''), '_') && $dateBlank !== $word);
-        if ($otherBlank) {
-            $add('other_classification', $otherBlank, (float) $otherBlank['x'], (float) $otherBlank['y'], 'Others classification', (float) $otherBlank['width']);
-        }
-
-        $phrases = array_values(array_filter($this->layoutPhrases($words), function (array $phrase): bool {
-            return (float) ($phrase['y'] ?? 0) >= 63 && (float) ($phrase['y'] ?? 100) <= 67;
-        }));
-        $allowedHeaders = ['borrowed by', 'approved by', 'issued by', 'received by', 'returned by', 'verified by'];
-        $headers = array_values(array_filter($phrases, fn (array $phrase): bool => in_array($this->normalise((string) $phrase['text']), $allowedHeaders, true)));
-        usort($headers, fn (array $left, array $right): int => (float) $left['x'] <=> (float) $right['x']);
-        $headerFor = function (string $label, bool $returnSection = false) use ($headers): ?array {
-            foreach ($headers as $header) {
-                if ($this->normalise((string) $header['text']) === $label
-                    && ($returnSection ? (float) $header['x'] > 70 : (float) $header['x'] < 60)) {
-                    return $header;
-                }
-            }
-
-            return null;
-        };
-        $rowFor = function (string $label) use ($words): ?array {
-            foreach ($words as $word) {
-                if ((float) ($word['y'] ?? 0) >= 67
-                    && (float) ($word['y'] ?? 100) <= 75
-                    && $this->normalise((string) ($word['text'] ?? '')) === $label) {
-                    return $word;
-                }
-            }
-
-            return null;
-        };
-        $printedNameRow = $rowFor('printed');
-        $designationRow = $rowFor('designation');
-        $dateRow = $rowFor('date');
-        $signatories = [
-            'borrowed_by' => $headerFor('borrowed by'),
-            'approved_by' => $headerFor('approved by'),
-            'issued_by' => $headerFor('issued by'),
-            'return_received_by' => $headerFor('received by', true),
-        ];
-        foreach ($signatories as $prefix => $header) {
-            if (! $header || ! $printedNameRow || ! $designationRow || ! $dateRow) {
-                continue;
-            }
-            $start = max(0.0, (float) $header['x'] - max(3.0, (float) $header['width'] * 0.82));
-            $next = collect($headers)->first(fn (array $candidate): bool => (float) $candidate['x'] > (float) $header['x']);
-            $width = is_array($next)
-                ? max(6.0, (float) $next['x'] - $start - 1.2)
-                : max(6.0, 96.0 - $start);
-            $add($prefix.'_printed_name', $header, $start, (float) $printedNameRow['y'], ucwords(str_replace('_', ' ', $prefix)).' printed name', $width);
-            $add($prefix.'_designation', $header, $start, (float) $designationRow['y'], ucwords(str_replace('_', ' ', $prefix)).' designation', $width);
-            $add($prefix.'_date', $header, $start, (float) $dateRow['y'], ucwords(str_replace('_', ' ', $prefix)).' date', $width);
-        }
-
-        $releaseMappings = collect($baseMappings)
-            ->filter(fn (array $mapping): bool => in_array((string) ($mapping['field'] ?? ''), ['date_released', 'release_time', 'date_returned', 'remarks'], true))
-            ->values()
-            ->all();
-        $tableLayouts = [];
-        if (count($releaseMappings) === 4) {
-            $firstRowY = max(array_map(fn (array $mapping): float => (float) $mapping['y'], $releaseMappings));
-            $page = (int) $releaseMappings[0]['page'];
-            $nextSectionY = min(array_filter(array_map(
-                fn (array $line): ?float => (int) ($line['page'] ?? 0) === $page
-                    && (float) ($line['y'] ?? 0) > $firstRowY + 1.2
-                    ? (float) $line['y']
-                    : null,
-                $review['layout_lines'] ?? [],
-            )) ?: [0.0]);
-            $availableHeight = $nextSectionY - $firstRowY - 2.6;
-            if ($availableHeight >= 2.2) {
-                $tableLayouts['release_return'] = [
-                    'row_height_percent' => 1.8,
-                    'max_rows' => 1,
-                    'max_height_percent' => round($availableHeight, 2),
-                ];
-            }
-        }
-
-        return ['mappings' => $mappings, 'table_layouts' => $tableLayouts];
-    }
-
-    /**
      * Infer writable regions from visible labels and their page geometry. This
      * intentionally runs before FPDI rendering and stores only internal
      * percentages, never exposing implementation coordinates to an admin.
@@ -979,11 +746,8 @@ class DocumentTemplateLayoutService
     {
         $definitions = $this->fieldDefinitions($type);
         $existing = collect($existingMappings)->pluck('field')->filter()->all();
-        $lines = ! empty($review['layout_words'])
-            ? [
-                ...$this->layoutPhrases($review['layout_words']),
-                ...$this->multilineHeaderPhrases($review['layout_words']),
-            ]
+        $lines = is_array($review['layout_model']['phrases'] ?? null) && $review['layout_model']['phrases'] !== []
+            ? $review['layout_model']['phrases']
             : array_values(array_filter($review['layout_lines'] ?? [], fn ($line): bool => is_array($line) && filled($line['text'] ?? null)));
         if ($lines === []) {
             return ['mappings' => [], 'table_layouts' => []];
@@ -1008,6 +772,7 @@ class DocumentTemplateLayoutService
         $mappings = [];
         foreach ($candidates as $field => $candidate) {
             $fieldDefinition = $definitions[$field];
+            $maxWidth = null;
             $sameHeaderLine = array_filter(
                 $candidates,
                 fn (array $other, string $otherField): bool => ($definitions[$otherField]['table'] ?? null) === $fieldDefinition['table']
@@ -1020,9 +785,17 @@ class DocumentTemplateLayoutService
                 $y = (float) $candidate['y'];
                 $method = 'PDF_VALUE_MARKER';
             } elseif ($fieldDefinition['table'] !== null && count($sameHeaderLine) >= 2) {
-                $y = min(96.0, max(array_map(fn (array $other): float => (float) $other['y'] + (float) $other['height'], $sameHeaderLine)) + 1.4);
-                $x = (float) $candidate['x'];
-                $method = 'PDF_TABLE_HEADER';
+                $cell = $this->tableBodyCell($candidate, $review);
+                if ($cell !== null) {
+                    $x = (float) $cell['x'] + 0.35;
+                    $y = (float) $cell['y'] + 0.2;
+                    $maxWidth = max(1.0, (float) $cell['width'] - 0.7);
+                    $method = 'PDF_TABLE_CELL';
+                } else {
+                    $y = min(96.0, max(array_map(fn (array $other): float => (float) $other['y'] + (float) $other['height'], $sameHeaderLine)) + 1.4);
+                    $x = (float) $candidate['x'];
+                    $method = 'PDF_TABLE_HEADER';
+                }
             } elseif ($field === 'remarks') {
                 $x = (float) $candidate['x'];
                 $y = min(96.0, (float) $candidate['y'] + (float) $candidate['height'] + 1.2);
@@ -1032,7 +805,7 @@ class DocumentTemplateLayoutService
                 $y = (float) $candidate['y'];
                 $method = 'PDF_LABEL_VALUE_REGION';
             }
-            $mappings[] = $this->mapping(
+            $mapping = $this->mapping(
                 $field,
                 'click:automatic-layout-analysis',
                 $method,
@@ -1043,12 +816,41 @@ class DocumentTemplateLayoutService
                 round($x, 2),
                 round($y, 2),
             );
+            if ($maxWidth !== null) {
+                $mapping['max_width_percent'] = round($maxWidth, 2);
+            }
+            $mappings[] = $mapping;
         }
 
         return [
             'mappings' => $mappings,
-            'table_layouts' => $this->automaticLayoutTableLayouts($definitions, $mappings, $lines),
+            'table_layouts' => $this->automaticLayoutTableLayouts($definitions, $mappings, $lines, $review),
         ];
+    }
+
+    /**
+     * Return the first generic grid cell directly under a matched table
+     * header. The relationship is geometric; no document-type or revision
+     * coordinate is consulted.
+     *
+     * @param array<string,mixed> $header
+     * @param array<string,mixed> $review
+     * @return array<string,mixed>|null
+     */
+    private function tableBodyCell(array $header, array $review): ?array
+    {
+        $center = (float) $header['x'] + (float) $header['width'] / 2;
+        $minimumY = (float) $header['y'] + max(0.2, (float) $header['height'] * 0.55);
+        $cells = array_values(array_filter((array) ($review['layout_model']['cells'] ?? []), function ($cell) use ($header, $center, $minimumY): bool {
+            return is_array($cell)
+                && (int) ($cell['page'] ?? 0) === (int) $header['page']
+                && (float) ($cell['y'] ?? 0) >= $minimumY - 0.3
+                && $center >= (float) ($cell['x'] ?? 0) - 0.4
+                && $center <= (float) ($cell['x'] ?? 0) + (float) ($cell['width'] ?? 0) + 0.4;
+        }));
+        usort($cells, fn (array $left, array $right): int => (float) $left['y'] <=> (float) $right['y']);
+
+        return $cells[0] ?? null;
     }
 
     /**
@@ -1101,9 +903,10 @@ class DocumentTemplateLayoutService
      * @param array<string,array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string}> $definitions
      * @param list<array<string,mixed>> $mappings
      * @param list<array<string,mixed>> $layoutLines
-     * @return array<string,array{row_height_percent:float,max_rows:int}>
+     * @param array<string,mixed> $review
+     * @return array<string,array<string,mixed>>
      */
-    private function automaticLayoutTableLayouts(array $definitions, array $mappings, array $layoutLines): array
+    private function automaticLayoutTableLayouts(array $definitions, array $mappings, array $layoutLines, array $review): array
     {
         $mappedByField = collect($mappings)->keyBy('field');
         $layouts = [];
@@ -1119,7 +922,11 @@ class DocumentTemplateLayoutService
             }
             $page = (int) $itemMappings[0]['page'];
             $firstRowY = max(array_map(fn (array $mapping): float => (float) $mapping['y'], $itemMappings));
-            $nextSectionY = min(array_filter(array_map(
+            $grid = $this->pdfReader->tableGridForMappings(
+                $itemMappings,
+                is_array($review['layout_model'] ?? null) ? $review['layout_model'] : [],
+            );
+            $nextSectionY = $grid['body_bottom_percent'] ?? min(array_filter(array_map(
                 fn (array $line): ?float => (int) ($line['page'] ?? 0) === $page
                     && filled($line['text'] ?? null)
                     && (float) ($line['y'] ?? 0) > $firstRowY + 1.2
@@ -1128,19 +935,30 @@ class DocumentTemplateLayoutService
                 $layoutLines,
             )) ?: [0.0]);
 
-            // A following label normally sits below the table rule. Keep a
-            // clearance band for that rule and label before calculating rows.
-            $availableHeight = $nextSectionY - $firstRowY - 2.6;
+            // A detected grid has an exact approved bottom boundary.  When
+            // raster geometry is unavailable, keep a conservative clearance
+            // before the next visible section and never claim that grid rows
+            // can be redrawn.
+            $availableHeight = $grid !== null
+                ? (float) $grid['body_bottom_percent'] - (float) $grid['body_top_percent']
+                : (float) $nextSectionY - $firstRowY - 2.6;
             if ($availableHeight < 2.2) {
                 continue;
             }
-            $maxRows = max(1, min(20, (int) floor($availableHeight / 1.8)));
-            $rowHeight = min(6.0, max(1.8, $availableHeight / $maxRows));
+            $maxRows = $grid !== null
+                ? max(1, (int) $grid['row_capacity'])
+                : max(1, min(20, (int) floor($availableHeight / 1.8)));
+            $rowHeight = $grid !== null
+                ? (float) $grid['baseline_row_height_percent']
+                : min(6.0, max(1.8, $availableHeight / $maxRows));
             $layouts[$table] = [
                 'row_height_percent' => round($rowHeight, 2),
                 'max_rows' => $maxRows,
                 'max_height_percent' => round($availableHeight, 2),
             ];
+            if ($grid !== null) {
+                $layouts[$table]['grid'] = $grid;
+            }
         }
 
         return $layouts;

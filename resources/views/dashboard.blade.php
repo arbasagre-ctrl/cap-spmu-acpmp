@@ -160,6 +160,36 @@
     @endforeach
 </section>
 
+@if($dashboardMode === 'BORROWER' && $borrowerObligationOverview)
+    @php
+        $dashboardObligationCount = (int) ($borrowerObligationOverview['count'] ?? 0);
+        $dashboardBillingCount = (int) ($borrowerObligationOverview['billings'] ?? 0);
+        $dashboardBillingTotal = (float) ($borrowerObligationOverview['billing_total'] ?? 0);
+        $dashboardRestrictionCount = (int) ($borrowerObligationOverview['restrictions'] ?? 0);
+
+        $dashboardObligationCopy = match (true) {
+            $dashboardBillingCount > 0 => $dashboardBillingCount === 1
+                ? 'Billing pending'.($dashboardBillingTotal > 0 ? ' · PHP '.number_format($dashboardBillingTotal, 2) : '')
+                : $dashboardBillingCount.' billings pending'.($dashboardBillingTotal > 0 ? ' · PHP '.number_format($dashboardBillingTotal, 2).' total' : ''),
+            ($borrowerObligationOverview['property_cases'] ?? 0) > 0 => 'Property accountability requires resolution.',
+            ($borrowerObligationOverview['late_returns'] ?? 0) > 0 => 'Late-return accountability requires resolution.',
+            default => 'A borrowing restriction requires resolution.',
+        };
+    @endphp
+
+    <article class="borrower-dash-card borrower-obligation-card" aria-labelledby="borrower-obligation-title">
+        <div class="borrower-obligation-summary">
+            <span class="borrower-obligation-icon" aria-hidden="true"><x-icon name="warning" size="22" /></span>
+            <div class="borrower-obligation-copy">
+                <p class="eyebrow">Action required</p>
+                <h2 id="borrower-obligation-title">{{ $dashboardObligationCount }} outstanding {{ $dashboardObligationCount === 1 ? 'obligation' : 'obligations' }}</h2>
+                <p>{{ $dashboardObligationCopy }}{{ $dashboardRestrictionCount > 0 ? ' Borrowing is restricted until the applicable obligation is resolved.' : '' }}</p>
+            </div>
+            <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}">View My Obligations</a>
+        </div>
+    </article>
+@endif
+
 @if($dashboardMode === 'BORROWER')
     <article class="borrower-dash-card" aria-labelledby="active-requests-title">
         <div class="card-header">
@@ -188,22 +218,29 @@
                     @php
                         $activeCustody = $activeRequest->custody;
                         $activeCustodyStatus = strtoupper((string) ($activeCustody?->status ?? ''));
+                        $activeAccountability = $activeCustody?->activeAccountabilityIndicator();
+                        $activeWorkflow = $activeCustody?->workflowStatus();
 
-                        [$activeStateLabel, $activeStateTone] = match (true) {
-                            $activeCustodyStatus === 'OVERDUE' => ['Overdue', 'danger'],
-                            $activeCustodyStatus === 'OBLIGATION_OPEN' => ['Obligation Open', 'danger'],
-                            $activeCustodyStatus === 'INCIDENT_OPEN' => ['Property Case Open', 'danger'],
-                            in_array($activeCustodyStatus, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED'], true) => ['Return Processing', 'warning'],
-                            $activeCustody?->released_at !== null && $activeCustodyStatus !== 'CLOSED' => ['Items Released', 'success'],
-                            $activeRequest->status === App\Enums\RequestStatus::ReturnedForRevision => ['Revision Required', 'warning'],
-                            $activeCustody?->scheduled_release_at !== null && $activeCustody?->released_at === null => ['Pickup Scheduled', 'info'],
-                            $activeCustodyStatus === 'PREPARING_RELEASE' => ['Preparing Release', 'info'],
-                            in_array($activeRequest->status, [App\Enums\RequestStatus::FinalApprovedAwaitingDownload, App\Enums\RequestStatus::ApprovedReadyForRelease], true) => ['Approved', 'success'],
-                            $activeRequest->status === App\Enums\RequestStatus::UnderSpmu => ['Under SPMU Review', 'info'],
-                            in_array($activeRequest->status, [App\Enums\RequestStatus::Submitted, App\Enums\RequestStatus::Signed], true) => ['Submitted', 'info'],
-                            $activeRequest->status === App\Enums\RequestStatus::Draft => ['Draft', 'neutral'],
-                            default => [$activeRequest->status?->label() ?? 'In Progress', 'neutral'],
-                        };
+                        [$activeStateLabel, $activeStateTone] = $activeWorkflow
+                            ? [
+                                $activeWorkflow['label'],
+                                match ($activeWorkflow['group']) {
+                                    'attention' => 'warning',
+                                    'return' => 'warning',
+                                    'completed' => 'success',
+                                    'cancelled' => 'neutral',
+                                    'custody' => 'success',
+                                    default => 'info',
+                                },
+                            ]
+                            : match (true) {
+                                $activeRequest->status === App\Enums\RequestStatus::ReturnedForRevision => ['Revision Required', 'warning'],
+                                in_array($activeRequest->status, [App\Enums\RequestStatus::FinalApprovedAwaitingDownload, App\Enums\RequestStatus::ApprovedReadyForRelease], true) => ['Approved', 'success'],
+                                $activeRequest->status === App\Enums\RequestStatus::UnderSpmu => ['Under SPMU Review', 'info'],
+                                in_array($activeRequest->status, [App\Enums\RequestStatus::Submitted, App\Enums\RequestStatus::Signed], true) => ['Submitted', 'info'],
+                                $activeRequest->status === App\Enums\RequestStatus::Draft => ['Draft', 'neutral'],
+                                default => [$activeRequest->status?->label() ?? 'In Progress', 'neutral'],
+                            };
 
                         [$activeDateLabel, $activeDateValue] = match (true) {
                             $activeCustody?->released_at !== null && $activeCustody?->due_at !== null => ['Return due', $activeCustody->due_at->format('d M Y')],
@@ -228,6 +265,9 @@
 
                         <td data-label="Status">
                             <span class="status-badge status-{{ $activeStateTone }}">{{ $activeStateLabel }}</span>
+                            @if($activeAccountability)
+                                <small class="borrower-active-obligation">{{ $activeAccountability['label'] }}</small>
+                            @endif
                         </td>
 
                         <td class="borrower-active-schedule" data-label="Pickup schedule">

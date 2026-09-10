@@ -1,6 +1,30 @@
 @php
+    /*
+     * Defensive release-schedule state.
+     *
+     * Some release routes already provide $hasPickupSchedule and
+     * $pickupWindowPassed, while older/current view paths may not provide the
+     * newer $hasSystemPickupWindow variable. Derive the missing values here so
+     * this partial can render safely without changing the pickup workflow.
+     */
+    $hasSystemPickupWindow = isset($hasSystemPickupWindow)
+        ? (bool) $hasSystemPickupWindow
+        : ((bool) $custody->scheduled_release_at && (bool) $custody->pickup_expires_at);
+
+    $hasPickupSchedule = isset($hasPickupSchedule)
+        ? (bool) $hasPickupSchedule
+        : ($hasSystemPickupWindow
+            && (bool) $custody->pickup_scheduled_at
+            && ! $custody->pickup_expired_at);
+
+    $pickupWindowPassed = isset($pickupWindowPassed)
+        ? (bool) $pickupWindowPassed
+        : ($hasSystemPickupWindow
+            && $custody->pickup_expires_at
+            && now()->gt($custody->pickup_expires_at));
+
     $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed;
-    $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup_at') || $errors->has('pickup_expires_at');
+    $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup');
     $releaseCurrentDocuments = $documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']);
     $releaseDocumentsReady = $releaseCurrentDocuments->contains('document_type', 'BORROWER_SLIP')
         && (! $hasOffCampusItem || $releaseCurrentDocuments->contains('document_type', 'GATE_PASS'))
@@ -14,7 +38,7 @@
         <div class="release-card-title"><x-icon name="calendar" size="21" /><h2>Borrowing Schedule</h2></div>
         <dl class="detail-list release-context-list">
             <dt>Purpose / Event</dt><dd>{{ $version?->purpose_event ?: '—' }}</dd>
-            <dt>Schedule Date</dt><dd>{{ $scheduleDate?->format('d F Y') ?: 'Not available' }}</dd>
+            <dt>Items Needed From</dt><dd>{{ $scheduleDate?->format('d F Y') ?: 'Not available' }}</dd>
             <dt>Expected Return Date</dt><dd>{{ $returnDate?->format('d F Y') ?: 'Not available' }}</dd>
             <dt>Borrower</dt><dd>{{ $custody->borrower?->full_name ?: '—' }}</dd>
         </dl>
@@ -58,24 +82,27 @@
                 <span class="release-step-number" aria-hidden="true">1</span>
                 <div class="release-step-heading">
                     <div class="release-step-copy">
-                        <h3>Pickup Schedule</h3>
-                        @if($hasPickupSchedule)
+                        <h3>Pickup &amp; Issuance Schedule</h3>
+                        @if($hasSystemPickupWindow)
                             <p class="release-step-schedule"><x-icon name="calendar" size="16" />{{ $custody->scheduled_release_at->format('M j, Y') }} · {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}</p>
-                            @if($custody->pickup_scheduled_at)
-                                <p class="release-step-notified"><x-icon name="approval" size="16" />Borrower has been notified.</p>
+                            @if($hasPickupSchedule)
+                                @if($pickupWindowPassed)
+                                    <p class="release-step-notified"><x-icon name="warning" size="16" />The scheduled pickup window has passed. Follow the missed-pickup handling process.</p>
+                                @else
+                                    <p class="release-step-notified"><x-icon name="approval" size="16" />Scheduled automatically from the SPMU Operational Calendar.</p>
+                                @endif
+                            @else
+                                <p class="release-step-notified"><x-icon name="information" size="16" />Automatic scheduling requires SPMU exception handling.</p>
                             @endif
                         @else
-                            <p>Set the pickup date and claim window.</p>
+                            <p>No automatic pre-borrowing pickup window is available.</p>
                         @endif
                     </div>
                     <div class="release-schedule-status">
-                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $releaseScheduleAttention ? 'Schedule Required' : 'Scheduled' }}</span>
-                        @if($hasPickupSchedule)
-                            <button class="link-button release-schedule-edit" type="button" data-release-schedule-edit aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}"><x-icon name="edit" size="15" />Edit schedule</button>
-                        @endif
+                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $pickupWindowPassed ? 'Schedule Passed' : ($hasPickupSchedule ? 'Scheduled' : 'Schedule Exception') }}</span>
                     </div>
                     <div class="release-step-actions release-schedule-actions">
-                        <button class="icon-button release-step-toggle release-schedule-toggle" type="button" data-release-panel-toggle aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}" aria-label="Toggle pickup schedule editor" title="Show or hide pickup schedule"><x-icon name="chevron-down" size="18" /></button>
+                        <button class="icon-button release-step-toggle release-schedule-toggle" type="button" data-release-panel-toggle aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}" aria-label="Toggle pickup schedule details" title="Show or hide pickup schedule details"><x-icon name="chevron-down" size="18" /></button>
                     </div>
                 </div>
                 <div class="release-step-panel" id="release-schedule-editor" @if(!$releaseScheduleEditorOpen) hidden @endif>

@@ -15,6 +15,7 @@ use App\Models\RequestItem;
 use App\Models\RequestSupportingDocument;
 use App\Models\StoredFile;
 use App\Models\NotificationEvent;
+use App\Models\OperationalWeeklySchedule;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\CustodyService;
@@ -34,6 +35,16 @@ class CompleteWorkflowTest extends TestCase
     {
         parent::setUp();
         $this->seed(DatabaseSeeder::class);
+
+        // Physical pickup/release and return transactions require a complete
+        // operating window. Keep workflow fixtures deterministic without
+        // relying on a developer-local Operational Configuration state.
+        OperationalWeeklySchedule::query()
+            ->where('is_open', true)
+            ->update([
+                'open_time' => '13:00',
+                'close_time' => '16:00',
+            ]);
     }
 
     public function test_complete_spmu_approval_pickup_and_physical_release_workflow(): void
@@ -630,7 +641,7 @@ class CompleteWorkflowTest extends TestCase
     public function test_release_is_blocked_after_pickup_window_expiry_until_rescheduled(): void
     {
         [$borrower, $spmu, $spmuOfficer, $request, $version] =
-            $this->approvedRequest(2, 'BR-SCENARIO-L-001', 'Round Table');
+            $this->approvedRequest(2, 'BR-SCENARIO-L-001', 'Round Table', 5);
 
         $custody = CustodyTransaction::query()
             ->where('request_id', $request->id)
@@ -676,12 +687,18 @@ class CompleteWorkflowTest extends TestCase
         $this->assertNull($custody->fresh()->released_at);
 
         /*
-         * Reschedule to a new, later window on the same calendar day
-         * (pickup must stay on the approved Schedule Date) -- the
-         * transaction is still PREPARING_RELEASE, so rescheduling is
-         * allowed.
+         * Reschedule to a later operational date inside the same approved
+         * borrowing period. Missing the original pickup window does not
+         * cancel the reservation and does not force pickup back onto the
+         * already-expired Schedule Date.
          */
-        $newPickupAt = $pickupAt->copy()->setTime(14, 0, 0);
+        $newPickupAt = app(\App\Services\OperationalCalendarService::class)
+            ->nextOpenDate(
+                \App\Services\OperationalCalendarService::PICKUP,
+                $pickupAt->copy()->addDay(),
+                true
+            )
+            ->setTime(13, 0, 0);
         $newPickupExpiresAt = $newPickupAt->copy()->addHours(2);
 
         $this->withSession(['active_workspace' => 'SPMU'])
@@ -1185,7 +1202,8 @@ class CompleteWorkflowTest extends TestCase
     private function approvedRequest(
         float $quantity,
         string $requestNo = 'BR-CURRENT-001',
-        string $itemDescription = 'Round Table'
+        string $itemDescription = 'Round Table',
+        int $returnDays = 3
     ): array {
         /*
          * Request submission is only permitted on an open SPMU operational
@@ -1235,7 +1253,7 @@ class CompleteWorkflowTest extends TestCase
 
         $returnDate =
             now()
-                ->addDays(3)
+                ->addDays($returnDays)
                 ->startOfDay();
 
         $request =

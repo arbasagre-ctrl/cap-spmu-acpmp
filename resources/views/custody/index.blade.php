@@ -15,7 +15,7 @@
 
     $pageCopy = match (true) {
         $isBorrower => 'Track your pickup, issued items, returns, and completed borrowings.',
-        $mode === 'release' => 'Schedule pickup, confirm item preparation, print the required physical documents, and record the actual handover.',
+        $mode === 'release' => 'Review the automatic pickup schedule, confirm item preparation, print the required physical documents, and record the actual handover.',
         $mode === 'return' => 'Inspect physically returned items, record full-quantity accounting, monitor linen/laundry return, and complete reconciliation.',
         $isHead => 'Monitor release preparation, active custody, return processing, overdue or unresolved cases, and completed transactions.',
         default => null,
@@ -298,6 +298,7 @@
 
                     $hasActivePickupSchedule = (bool) $custody->scheduled_release_at
                         && (bool) $custody->pickup_expires_at
+                        && (bool) $custody->pickup_scheduled_at
                         && ! $custody->pickup_expired_at;
 
                     $activeEarlyReturn = $mode === 'return'
@@ -307,6 +308,7 @@
                         : null;
 
                     $workflowStatus = $custody->workflowStatus();
+                    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
                     $operationalLabel = $workflowStatus['label'];
                     $operationalStatusKey = $workflowStatus['key'];
                     $isCompleted = $workflowStatus['group'] === 'completed';
@@ -337,7 +339,7 @@
 
                     <span class="operational-record-facts">
                         @if($mode === 'release')
-                            <span><small>Pickup</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong></span>
+                            <span><small>{{ $custody->pickup_scheduled_at ? 'Pickup Scheduled' : 'Schedule Exception' }}</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Unavailable' }}</strong></span>
                             <span><small>Preparation</small><strong>{{ $custody->prepared_at ? 'Confirmed' : 'Pending' }}</strong></span>
                             <span><small>Issued</small><strong>Not yet</strong></span>
                         @elseif($mode === 'return')
@@ -372,6 +374,9 @@
                             :status="$operationalStatusKey"
                             :label="$operationalLabel"
                         />
+                        @if($accountabilityIndicator)
+                            <small class="operational-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
+                        @endif
                         <strong>View<x-icon name="chevron-right" size="16" /></strong>
                     </span>
                 </a>
@@ -397,10 +402,11 @@
     @if(in_array($mode, ['release','return'], true))
     <style>
     .operational-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,230px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
-    .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+    .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--text-muted)}
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
     .early-return-fact small,.early-return-fact strong{color:#0b6f8c}
     .operational-record-action{align-content:center}
+    .operational-accountability-note{display:block;color:var(--warning);font-size:10.5px;font-weight:700;line-height:1.25}
     @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
     </style>
     <script>

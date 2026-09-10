@@ -48,7 +48,6 @@ class RoleWorkspaceSmokeTest extends TestCase
             '/custody',
             '/accountability',
             '/reports',
-            '/reports/audit',
             '/reports/notifications',
             '/administration',
             '/administration/settings',

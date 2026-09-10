@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
 
 class CustodyTransaction extends Model
 {
@@ -132,6 +133,11 @@ class CustodyTransaction extends Model
         return $this->hasMany(ReturnTransaction::class);
     }
 
+    public function incidents(): HasMany
+    {
+        return $this->hasMany(Incident::class, 'custody_transaction_id');
+    }
+
     public function gatePass(): HasOne
     {
         return $this->hasOne(GatePass::class);
@@ -150,6 +156,247 @@ class CustodyTransaction extends Model
     public function earlyReturnRequests(): HasMany
     {
         return $this->hasMany(EarlyReturnRequest::class);
+    }
+
+    /**
+     * Return the active accountability signal for this custody, independent of
+     * the stored custody status. This keeps older/mixed return records honest:
+     * once an adverse finding or late-return case exists, every transaction
+     * view can surface it even while another item branch is still returning.
+     *
+     * @return array{key:string,label:string}|null
+     */
+    public function activeAccountabilityIndicator(): ?array
+    {
+        $incidents = $this->relationLoaded('incidents')
+            ? $this->incidents
+            : $this->incidents()->get();
+
+        $incident = $incidents
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->sortByDesc(fn ($record) => $record->reported_at?->timestamp ?? $record->id)
+            ->first();
+
+        if ($incident) {
+            return match ((string) $incident->status) {
+                'FOR_BILLING' => ['key' => 'FOR_BILLING', 'label' => 'Billing Required'],
+                'BILLING_PENDING' => ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending'],
+                'COMPLIANCE_REQUIRED' => ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
+                default => ['key' => 'INCIDENT_OPEN', 'label' => 'Property Case Open'],
+            };
+        }
+
+        /*
+         * Defensive fallback for older records: a linked Billing Statement or
+         * restriction may still be active even if an older incident row was
+         * prematurely moved to a terminal status. Do not let that financial or
+         * borrowing obligation disappear from transaction views.
+         */
+        $incidentIds = $incidents->pluck('id')->filter()->values();
+
+        if ($incidentIds->isNotEmpty()) {
+            $billingStatus = DB::table('billing_lines')
+                ->join('billing_statements', 'billing_statements.id', '=', 'billing_lines.billing_statement_id')
+                ->whereIn('billing_lines.incident_id', $incidentIds)
+                ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
+                ->orderByDesc('billing_statements.issued_at')
+                ->value('billing_statements.status');
+
+            if ($billingStatus) {
+                return [
+                    'key' => (string) $billingStatus,
+                    'label' => (string) $billingStatus === 'RECEIPT_SUBMITTED'
+                        ? 'Payment Verification'
+                        : 'Billing Pending',
+                ];
+            }
+
+            $hasActiveRestriction = BorrowerRestriction::query()
+                ->whereIn('incident_id', $incidentIds)
+                ->where('status', 'ACTIVE')
+                ->where(function ($query): void {
+                    $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
+                })
+                ->exists();
+
+            if ($hasActiveRestriction) {
+                return ['key' => 'BORROWING_RESTRICTED', 'label' => 'Borrowing Restricted'];
+            }
+        }
+
+        $overdue = $this->relationLoaded('overdueCase')
+            ? $this->overdueCase
+            : $this->overdueCase()->first();
+
+        if ($overdue && (string) $overdue->status !== 'RESOLVED') {
+            return ['key' => 'LATE_RETURN', 'label' => 'Late Return Accountability'];
+        }
+
+        return null;
+    }
+
+    public function hasOutstandingProperty(): bool
+    {
+        if ($this->relationLoaded('lines')) {
+            return $this->lines->contains(
+                fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+            );
+        }
+
+        return $this->lines()
+            ->whereColumn('returned_quantity', '<', 'actual_released_quantity')
+            ->exists();
+    }
+
+    /**
+     * Explain why a fully returned custody is still open.
+     *
+     * The stored custody status remains OBLIGATION_OPEN. This presentation
+     * helper exposes the actual unresolved branch so detail pages do not show
+     * a generic status without telling the user why.
+     *
+     * @return array{key:string,label:string,title:string,copy:string}|null
+     */
+    public function openObligationSummary(): ?array
+    {
+        $activeAccountability = $this->activeAccountabilityIndicator();
+
+        if (
+            ! in_array((string) $this->status, ['OBLIGATION_OPEN', 'INCIDENT_OPEN'], true)
+            && $activeAccountability === null
+        ) {
+            return null;
+        }
+
+        $incidentIds = Incident::query()
+            ->where('custody_transaction_id', $this->id)
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->pluck('id');
+
+        $penaltyIds = Penalty::query()
+            ->where('custody_transaction_id', $this->id)
+            ->pluck('id');
+
+        $billingId = null;
+
+        if ($incidentIds->isNotEmpty() || $penaltyIds->isNotEmpty()) {
+            $billingId = DB::table('billing_lines')
+                ->where(function ($query) use ($incidentIds, $penaltyIds): void {
+                    if ($incidentIds->isNotEmpty()) {
+                        $query->whereIn('incident_id', $incidentIds);
+                    }
+
+                    if ($penaltyIds->isNotEmpty()) {
+                        $method = $incidentIds->isNotEmpty() ? 'orWhereIn' : 'whereIn';
+                        $query->{$method}('penalty_id', $penaltyIds);
+                    }
+                })
+                ->value('billing_statement_id');
+        }
+
+        if ($billingId) {
+            $billing = BillingStatement::query()->find($billingId);
+
+            if ($billing && ! in_array($billing->status, ['SETTLED', 'WAIVED', 'VOID'], true)) {
+                return match ((string) $billing->status) {
+                    'ISSUED' => [
+                        'key' => 'BILLING_ISSUED',
+                        'label' => 'Billing Unpaid',
+                        'title' => 'Billing Statement issued',
+                        'copy' => 'An issued Billing Statement still needs settlement through the CSPC Cashier.',
+                    ],
+                    'RECEIPT_SUBMITTED' => [
+                        'key' => 'PAYMENT_VERIFICATION',
+                        'label' => 'Payment Verification',
+                        'title' => 'Cashier payment under verification',
+                        'copy' => 'SPMU is verifying the recorded CSPC Cashier receipt before the obligation can be cleared.',
+                    ],
+                    default => [
+                        'key' => 'BILLING_OPEN',
+                        'label' => 'Billing Pending',
+                        'title' => 'Billing obligation pending',
+                        'copy' => 'The related financial obligation has not yet been resolved.',
+                    ],
+                };
+            }
+        }
+
+        $incident = Incident::query()
+            ->where('custody_transaction_id', $this->id)
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->latest('reported_at')
+            ->first();
+
+        if ($incident) {
+            return match ((string) $incident->status) {
+                'FOR_BILLING' => [
+                    'key' => 'FOR_BILLING',
+                    'label' => 'Billing Statement Pending',
+                    'title' => 'Billing required',
+                    'copy' => 'The SPMU Head/Admin has required billing for this property case. The formal Billing Statement still needs to be issued.',
+                ],
+                'BILLING_PENDING' => [
+                    'key' => 'BILLING_PENDING',
+                    'label' => 'Billing Pending',
+                    'title' => 'Billing obligation pending',
+                    'copy' => 'The property case has been routed to billing and remains open until the financial obligation is settled or formally waived.',
+                ],
+                'COMPLIANCE_REQUIRED' => [
+                    'key' => 'COMPLIANCE_REQUIRED',
+                    'label' => 'Compliance Required',
+                    'title' => 'Property compliance required',
+                    'copy' => 'SPMU still needs to verify the required repair, replacement, or other compliance.',
+                ],
+                default => [
+                    'key' => 'ACCOUNTABILITY_REVIEW',
+                    'label' => 'Accountability Review',
+                    'title' => 'Property case under review',
+                    'copy' => 'The recorded property finding still requires an accountability decision or resolution.',
+                ],
+            };
+        }
+
+        $overdue = OverdueCase::query()
+            ->where('custody_transaction_id', $this->id)
+            ->where('status', '!=', 'RESOLVED')
+            ->latest('overdue_started_at')
+            ->first();
+
+        if ($overdue) {
+            return [
+                'key' => 'LATE_RETURN',
+                'label' => 'Late Return Processing',
+                'title' => 'Late-return obligation pending',
+                'copy' => 'The date-based late-return assessment has not yet been resolved.',
+            ];
+        }
+
+        $gatePass = $this->gatePass()->first();
+        if ($gatePass && ! in_array($gatePass->status, ['VERIFIED', 'VOID'], true)) {
+            return [
+                'key' => 'GATE_PASS_PENDING',
+                'label' => 'Gate Pass Pending',
+                'title' => 'Accomplished Gate Pass pending',
+                'copy' => 'The property has been returned, but the accomplished Gate Pass still needs to be recorded by SPMU.',
+            ];
+        }
+
+        $laundry = $this->laundryJob()->first();
+        if ($laundry && ! in_array($laundry->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
+            return [
+                'key' => 'LINEN_PENDING',
+                'label' => 'Linen Pending',
+                'title' => 'Linen return documentation pending',
+                'copy' => 'The non-linen return may be complete, but the linen branch still has an unresolved Laundry Form or return record.',
+            ];
+        }
+
+        return [
+            'key' => 'OBLIGATION_OPEN',
+            'label' => 'Obligation Open',
+            'title' => 'Outstanding obligation',
+            'copy' => 'The physical return is complete, but an accountability obligation still requires resolution.',
+        ];
     }
 
     /**
@@ -182,6 +429,18 @@ class CustodyTransaction extends Model
             return $fullyComplete
                 ? ['key' => 'COMPLETED', 'label' => 'Completed', 'group' => 'completed']
                 : ['key' => 'BORROWER_CLEARED', 'label' => 'Borrower Cleared', 'group' => 'completed'];
+        }
+
+        $activeAccountability = $this->activeAccountabilityIndicator();
+
+        if ($activeAccountability) {
+            return [
+                'key' => 'OBLIGATION_OPEN',
+                'label' => $this->hasOutstandingProperty()
+                    ? 'Return + Accountability'
+                    : 'Accountability Processing',
+                'group' => 'attention',
+            ];
         }
 
         if ((string) $this->status === 'OBLIGATION_OPEN') {

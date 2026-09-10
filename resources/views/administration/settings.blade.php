@@ -10,6 +10,8 @@
         'template-laundry-form',
         'template-gate-pass',
         'template-billing-statement',
+        'template-accountability-compliance-notice',
+        'template-administrative-sanction-notice',
         'template-rslddp',
     ];
 
@@ -23,6 +25,8 @@
         'template-laundry-form' => ['Controlled Documents', 'Laundry Form Template', 'Maintain the approved Laundry Form source file and activate new versions.'],
         'template-gate-pass' => ['Controlled Documents', 'Gate Pass Template', 'Maintain the approved Gate Pass source file and activate new versions.'],
         'template-billing-statement' => ['Controlled Documents', 'Billing Statement Template', 'Maintain the approved Billing Statement source file and activate new versions.'],
+        'template-accountability-compliance-notice' => ['Controlled Documents', 'Accountability / Compliance Notice Template', 'Maintain the approved accountability/compliance notice source file and activate new versions.'],
+        'template-administrative-sanction-notice' => ['Controlled Documents', 'Administrative Sanction Notice Template', 'Maintain the approved administrative sanction notice source file and activate new versions.'],
         'template-rslddp' => ['Controlled Documents', 'RSLDDP Template', 'Maintain the approved RSLDDP source file and activate new versions.'],
     ];
 
@@ -33,6 +37,8 @@
         'template-laundry-form' => 'LAUNDRY_FORM',
         'template-gate-pass' => 'GATE_PASS',
         'template-billing-statement' => 'BILLING_STATEMENT',
+        'template-accountability-compliance-notice' => 'ACCOUNTABILITY_COMPLIANCE_NOTICE',
+        'template-administrative-sanction-notice' => 'ADMINISTRATIVE_SANCTION_NOTICE',
         'template-rslddp' => 'RSLDDP',
         default => null,
     };

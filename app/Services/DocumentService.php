@@ -12,6 +12,7 @@ use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
 use App\Models\RequestVersion;
+use App\Models\Sanction;
 use App\Models\SignatureSnapshot;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -23,6 +24,8 @@ use Throwable;
 
 class DocumentService
 {
+    private const NOTHING_FOLLOWS_MARKER = '*** NOTHING FOLLOWS ***';
+
     public function __construct(
         private SimplePdfService $pdf,
         private ProtectedFileService $files,
@@ -316,9 +319,16 @@ class DocumentService
                 .'<div style="width:88%;margin-top:6pt;font-size:8pt;"><strong>Date Returned:</strong> '.$dateReturned.'</div>';
         }
 
-        $formDate = $custody->scheduled_release_at
-            ? $custody->scheduled_release_at->format('m-d-Y')
-            : '';
+        /*
+         * The Borrower's Slip is generated immediately after final SPMU Head
+         * approval. Its document date therefore uses the immutable approval
+         * timestamp instead of the later pickup schedule. This keeps the date
+         * populated as soon as the approved slip is generated and prevents a
+         * later reschedule/release from changing the original document date.
+         */
+        $formDate = $approval['signed_at']
+            ? $approval['signed_at']->format('m-d-Y')
+            : now()->format('m-d-Y');
 
         $returnDate = $custody->due_at
             ? $custody->due_at->format('F j, Y')
@@ -381,6 +391,15 @@ class DocumentService
 
                 .'</tr>';
         }
+
+        // Formal terminal marker: the approved item list is closed and no
+        // additional property may be inserted after this controlled copy is generated.
+        $itemRows .=
+            '<tr>'
+            .'<td colspan="4" style="border:1px solid #222;height:15pt;padding:2pt 4pt;text-align:center;vertical-align:middle;font-weight:bold;letter-spacing:.3px;">'
+            .self::NOTHING_FOLLOWS_MARKER
+            .'</td>'
+            .'</tr>';
 
         $body = <<<HTML
 <section style="
@@ -927,11 +946,13 @@ HTML;
 
         $custody->loadMissing([
             'request.borrower',
+            'request.borrower.organizationalUnit',
             'request.currentVersion',
             'request.currentVersion.borrowerSignature.file',
             'request.currentVersion.approvalSteps.approver',
             'request.currentVersion.approvalSteps.signatureSnapshot.file',
             'lines.requestItem.inventoryItem',
+            'lines.laundryJobLine',
             'gatePass.preparedVerifier',
             'gatePass.preparedVerifierSignature.file',
             'gatePass.approver',
@@ -939,7 +960,7 @@ HTML;
             'gatePass.delegation',
             'releaseSignature.file',
             'borrower',
-            'laundryJob',
+            'laundryJob.formVerifier',
         ]);
 
         $hasOffCampusProperty = $custody->lines->contains(
@@ -1072,7 +1093,7 @@ HTML;
 
         $formDate = $custody->scheduled_release_at
             ? $custody->scheduled_release_at->format('m-d-Y')
-            : now()->format('m-d-Y');
+            : ($gatePass?->approved_at?->format('m-d-Y') ?: now()->format('m-d-Y'));
 
         /*
          * The final Gate Pass carries three immutable system E-signatures:
@@ -1137,8 +1158,18 @@ HTML;
                 .'</tr>';
         }
 
+        // Close the approved item list formally. The marker occupies the first
+        // row after the last approved item so blank rows cannot be mistaken for
+        // space where more property may be added later.
+        $itemRows .=
+            '<tr>'
+            .'<td colspan="3" style="border:1px solid #222;height:23px;text-align:center;padding:3px 7px;font-weight:bold;letter-spacing:.3px;">'
+            .self::NOTHING_FOLLOWS_MARKER
+            .'</td>'
+            .'</tr>';
+
         $minimumRows = 9;
-        $existingRows = $offCampusLines->count();
+        $existingRows = $offCampusLines->count() + 1; // includes terminal marker
 
         for ($i = $existingRows; $i < $minimumRows; $i++) {
             $itemRows .=
@@ -1583,6 +1614,7 @@ HTML;
     ): string {
         $custody->loadMissing([
             'request.borrower',
+            'request.borrower.organizationalUnit',
             'request.currentVersion',
             'lines.requestItem.inventoryItem',
         ]);
@@ -1632,14 +1664,33 @@ HTML;
          * =========================================================
          */
 
+        /*
+         * Use the immutable Office / Unit snapshot selected on the borrowing
+         * request. The borrower profile organizational unit is only a legacy
+         * fallback for older records that predate request-level snapshots.
+         */
         $requestingOffice = e((string) (
-            $version?->represented_program_department
-            ?: $borrower?->department
+            $version?->office_unit
+            ?: $version?->represented_program_department
+            ?: $borrower?->organizationalUnit?->unit_name
             ?: ''
         ));
 
         $requestNumber = e((string) $custody->request->request_no);
         $borrowerName = e((string) $borrower->full_name);
+
+        /*
+         * These dates already exist once this controlled Laundry Form can be
+         * generated: the borrower's request/submission date and the SPMU Head
+         * approval date. Physical Laundry fields (Date Completed, Issued by,
+         * Received by) remain blank for the offline Laundry Personnel.
+         */
+        $laundryRequestDateSource = $version?->signed_at
+            ?: $version?->submitted_at
+            ?: $version?->created_at;
+        $laundryRequestDate = $laundryRequestDateSource
+            ? e($laundryRequestDateSource->format('F j, Y'))
+            : '';
 
         /*
          * SIGNATURE / CONTROL MATRIX SIGNATORIES
@@ -1656,6 +1707,12 @@ HTML;
          */
         $laundryApproval = $this->approvalSignatory($version);
         $laundryApproverName = e((string) $laundryApproval['name']);
+        $laundryApproverDesignation = e((string) (
+            $laundryApproval['designation'] ?: 'ADMIN. OFFICER V, SPMU'
+        ));
+        $laundryApprovalDate = $laundryApproval['signed_at']
+            ? e($laundryApproval['signed_at']->format('F j, Y'))
+            : '';
         $laundryApproverSignature = $this->signatureImage($laundryApproval['snapshot'], 110, 20);
 
         $laundryBorrowerSignature = $this->signatureImage(
@@ -1739,6 +1796,15 @@ HTML;
             $quantityContent = '&nbsp;';
             $unitContent = '&nbsp;';
             $descriptionContent = '&nbsp;';
+        } else {
+            // Keep the official uninterrupted writing area while formally closing
+            // the approved linen list immediately beneath the final description.
+            $quantityContent .= '<div style="height:17pt;line-height:17pt;">&nbsp;</div>';
+            $unitContent .= '<div style="height:17pt;line-height:17pt;">&nbsp;</div>';
+            $descriptionContent .=
+                '<div style="min-height:17pt;line-height:17pt;text-align:center;font-weight:bold;letter-spacing:.3px;">'
+                .self::NOTHING_FOLLOWS_MARKER
+                .'</div>';
         }
 
 
@@ -2139,7 +2205,7 @@ HTML;
 
 
                 <!-- DATE REQUESTED:
-                     remains blank for physical completion -->
+                     borrower request/submission date from the approved version -->
 
                 <td style="
                     width:19%;
@@ -2150,8 +2216,9 @@ HTML;
 
                     padding:7pt 4pt;
 
+                    text-align:center;
                     vertical-align:top;
-                "></td>
+                ">{$laundryRequestDate}</td>
 
 
                 <!-- DATE COMPLETED:
@@ -2400,7 +2467,7 @@ HTML;
                 line-height:1;
                 letter-spacing:0;
                 white-space:nowrap;
-            ">ADMIN. OFFICER V, SPMU</td>
+            ">{$laundryApproverDesignation}</td>
 
 
             <td style="border:1px solid #222;"></td>
@@ -2428,12 +2495,14 @@ HTML;
             </td>
 
 
+            <td style="border:1px solid #222;text-align:center;vertical-align:middle;">{$laundryRequestDate}</td>
+
+            <td style="border:1px solid #222;text-align:center;vertical-align:middle;">{$laundryApprovalDate}</td>
+
+            <!-- Issued by date is handwritten by Laundry Personnel at issuance. -->
             <td style="border:1px solid #222;"></td>
 
-            <td style="border:1px solid #222;"></td>
-
-            <td style="border:1px solid #222;"></td>
-
+            <!-- Received by date is handwritten by Laundry Personnel at return. -->
             <td style="border:1px solid #222;"></td>
 
 
@@ -2722,14 +2791,21 @@ HTML;
         return $this->saveHtml('OFFICIAL_FORM_PACKET', '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.implode('<div class="page-break"></div>', $htmlPages).'</body></html>', $custody->request->currentVersion, $custody::class, $custody->id, 'FINAL', $custody->custody_no.'-OFFICIAL-PACKET.pdf');
     }
 
-    public function billingStatement(BillingStatement $billing): GeneratedDocument
+    public function billingStatement(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): GeneratedDocument
     {
-        $billing->loadMissing(['borrower', 'lines', 'responsibleSpmuUser']);
+        $billing->loadMissing([
+            'borrower.organizationalUnit',
+            'responsibleSpmuUser',
+            'lines.incident.custody.request.currentVersion',
+            'lines.penalty.incident.custody.request.currentVersion',
+            'lines.penalty.custody.request.currentVersion',
+        ]);
+
         if ($customTemplate = $this->activeUploadedTemplate('BILLING_STATEMENT')) {
             return $this->saveRenderedTemplate(
                 $customTemplate,
                 'BILLING_STATEMENT',
-                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing)),
+                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing, $authorizationSignature)),
                 null,
                 $billing::class,
                 $billing->id,
@@ -2737,36 +2813,299 @@ HTML;
                 $billing->billing_no.'.pdf',
             );
         }
-        $lines = [
-            'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
-            'BILLING STATEMENT - PENALTIES AND PROPERTY CHARGES ONLY',
-            'Billing No.: '.$billing->billing_no,
-            'Borrower: '.$billing->borrower->full_name,
-            'Issued: '.$billing->issued_at->format('F j, Y'),
-            '',
-        ];
-        foreach ($billing->lines as $line) {
-            $lines[] = sprintf('%s | %s | PHP %s', $line->line_type, $line->description, number_format((float) $line->amount, 2));
+
+        return $this->saveHtml(
+            'BILLING_STATEMENT',
+            $this->billingStatementHtml($billing, $authorizationSignature),
+            null,
+            $billing::class,
+            $billing->id,
+            'FINAL',
+            $billing->billing_no.'.pdf',
+        );
+    }
+
+    public function accountabilityComplianceNotice(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): GeneratedDocument {
+        $incident->loadMissing([
+            'borrower.organizationalUnit',
+            'custody.request.currentVersion',
+            'lines.custodyLine.requestItem',
+        ]);
+
+        GeneratedDocument::query()
+            ->where('subject_type', $incident::class)
+            ->where('subject_id', $incident->id)
+            ->where('document_type', 'ACCOUNTABILITY_COMPLIANCE_NOTICE')
+            ->where('status', 'FINAL')
+            ->update([
+                'status' => 'SUPERSEDED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Replaced by the latest SPMU Head compliance decision notice.',
+            ]);
+
+        if ($customTemplate = $this->activeUploadedTemplate('ACCOUNTABILITY_COMPLIANCE_NOTICE')) {
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'ACCOUNTABILITY_COMPLIANCE_NOTICE',
+                $this->templateRenderer->render(
+                    $customTemplate,
+                    $this->accountabilityComplianceNoticeRenderData($incident, $spmuHead, $decisionRemarks, $headSignature)
+                ),
+                $incident->custody?->request?->currentVersion,
+                $incident::class,
+                $incident->id,
+                'FINAL',
+                $incident->incident_no.'-COMPLIANCE-NOTICE.pdf',
+            );
         }
-        $lines[] = '';
-        $lines[] = 'TOTAL: PHP '.number_format((float) $billing->total_amount, 2);
-        $lines[] = 'Payment is processed externally through Accounting/Cashier. Submit Official Receipt evidence to SPMU for verification.';
 
-        /*
-         * A Billing Statement is a printed, handwritten-signed instrument that
-         * the borrower carries to the CSPC Cashier, so this is a named wet
-         * signature block rather than an embedded E-signature. Previously the
-         * statement carried no signature area at all.
-         */
-        $lines[] = '';
-        $lines[] = 'ISSUED BY (Supply and Property Management Unit):';
-        $lines[] = '';
-        $lines[] = '_________________________________________';
-        $lines[] = strtoupper((string) ($billing->responsibleSpmuUser?->full_name ?: 'Authorized SPMU Signatory'));
-        $lines[] = (string) ($billing->responsibleSpmuUser?->designation ?: 'Supply and Property Management Unit');
-        $lines[] = 'Signature over Printed Name / Date';
+        return $this->saveHtml(
+            'ACCOUNTABILITY_COMPLIANCE_NOTICE',
+            $this->accountabilityComplianceNoticeHtml($incident, $spmuHead, $decisionRemarks, $headSignature),
+            $incident->custody?->request?->currentVersion,
+            $incident::class,
+            $incident->id,
+            'FINAL',
+            $incident->incident_no.'-COMPLIANCE-NOTICE.pdf',
+        );
+    }
 
-        return $this->save('BILLING_STATEMENT', $lines, null, $billing::class, $billing->id, 'FINAL', $billing->billing_no.'.pdf');
+    public function administrativeSanctionNotice(Sanction $sanction, ?SignatureSnapshot $headSignature = null): GeneratedDocument
+    {
+        $sanction->loadMissing([
+            'borrower.organizationalUnit',
+            'academicPeriod',
+            'confirmedBy',
+            'violation.custody.request.currentVersion',
+        ]);
+
+        GeneratedDocument::query()
+            ->where('subject_type', $sanction::class)
+            ->where('subject_id', $sanction->id)
+            ->where('document_type', 'ADMINISTRATIVE_SANCTION_NOTICE')
+            ->where('status', 'FINAL')
+            ->update([
+                'status' => 'SUPERSEDED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Replaced by the latest controlled administrative sanction notice.',
+            ]);
+
+        $headSignature ??= $sanction->signatureSnapshot;
+
+        if ($customTemplate = $this->activeUploadedTemplate('ADMINISTRATIVE_SANCTION_NOTICE')) {
+            return $this->saveRenderedTemplate(
+                $customTemplate,
+                'ADMINISTRATIVE_SANCTION_NOTICE',
+                $this->templateRenderer->render(
+                    $customTemplate,
+                    $this->administrativeSanctionNoticeRenderData($sanction, $headSignature)
+                ),
+                $sanction->violation?->custody?->request?->currentVersion,
+                $sanction::class,
+                $sanction->id,
+                'FINAL',
+                'SANCTION-'.$sanction->id.'-'.$sanction->offense_no.'-OFFENSE.pdf',
+            );
+        }
+
+        return $this->saveHtml(
+            'ADMINISTRATIVE_SANCTION_NOTICE',
+            $this->administrativeSanctionNoticeHtml($sanction, $headSignature),
+            $sanction->violation?->custody?->request?->currentVersion,
+            $sanction::class,
+            $sanction->id,
+            'FINAL',
+            'SANCTION-'.$sanction->id.'-'.$sanction->offense_no.'-OFFENSE.pdf',
+        );
+    }
+
+    private function billingStatementHtml(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): string
+    {
+        $sourceLine = $billing->lines->first();
+        $incident = $sourceLine?->incident ?: $sourceLine?->penalty?->incident;
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $authorizationSignature ??= $incident?->headDecisionSignature;
+        $custody = $incident?->custody ?: $sourceLine?->penalty?->custody;
+        $request = $custody?->request;
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $logoDataUri = $this->institutionalLogoDataUri();
+
+        return view('documents.accountability.billing-statement', [
+            'billing' => $billing,
+            'logoDataUri' => $logoDataUri,
+            'issuedDate' => $billing->issued_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'dueDate' => $billing->due_at?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'officeUnit' => (string) ($billing->borrower?->organizationalUnit?->unit_name
+                ?? $billing->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($custody?->custody_no ?? ''),
+            'incidentNo' => (string) ($incident?->incident_no ?? ''),
+            'issuerName' => (string) ($billing->responsibleSpmuUser?->full_name ?: 'Authorized SPMU Signatory'),
+            'issuerDesignation' => $this->templatePrintedDesignation($billing->responsibleSpmuUser),
+            'headName' => (string) ($billing->responsibleSpmuUser?->full_name
+                ?: $incident?->headDecidedBy?->full_name
+                ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation(
+                $billing->responsibleSpmuUser ?: $incident?->headDecidedBy
+            ),
+            'headDecisionDate' => ($billing->issued_at ?: $incident?->head_decided_at)
+                ?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'headSignatureHtml' => $this->signatureImage($authorizationSignature, 150, 42),
+        ])->render();
+    }
+
+    private function accountabilityComplianceNoticeHtml(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): string {
+        $request = $incident->custody?->request;
+
+        return view('documents.accountability.compliance-notice', [
+            'incident' => $incident,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'decisionDate' => now()->timezone('Asia/Manila')->format('d F Y'),
+            'decisionRemarks' => trim($decisionRemarks),
+            'officeUnit' => (string) ($incident->borrower?->organizationalUnit?->unit_name
+                ?? $incident->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($incident->custody?->custody_no ?? ''),
+            'headName' => (string) ($spmuHead->full_name ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation($spmuHead),
+            'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
+        ])->render();
+    }
+
+    private function administrativeSanctionNoticeHtml(Sanction $sanction, ?SignatureSnapshot $headSignature = null): string
+    {
+        $violation = $sanction->violation;
+        $request = $violation?->custody?->request;
+        $reasons = collect($violation?->details_json['reasons'] ?? [])
+            ->map(fn ($reason) => str((string) $reason)->replace('_', ' ')->title()->toString())
+            ->filter()
+            ->values();
+
+        $offenseLabel = match ((int) $sanction->offense_no) {
+            1 => '1st Offense',
+            2 => '2nd Offense',
+            3 => '3rd Offense',
+            default => $sanction->offense_no.'th Offense',
+        };
+
+        $hasBorrowingSuspension = strtoupper((string) $sanction->sanction_code) === 'BORROWING_SUSPENSION'
+            || str_contains(strtolower((string) $sanction->sanction_label), 'suspension');
+
+        return view('documents.accountability.sanction-notice', [
+            'sanction' => $sanction,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'offenseLabel' => $offenseLabel,
+            'confirmedDate' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'effectiveFrom' => $sanction->effective_from?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'effectiveTo' => $sanction->effective_to?->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'academicPeriod' => trim((string) (($sanction->academicPeriod?->academic_year ?? '').' '.($sanction->academicPeriod?->term_name ?? ''))) ?: '—',
+            'officeUnit' => (string) ($sanction->borrower?->organizationalUnit?->unit_name
+                ?? $sanction->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($violation?->custody?->custody_no ?? ''),
+            'reasonText' => $reasons->isNotEmpty() ? $reasons->implode(', ') : 'Confirmed borrowing accountability offense',
+            'hasBorrowingSuspension' => $hasBorrowingSuspension,
+            'headName' => (string) ($sanction->confirmedBy?->full_name ?: 'SPMU Head'),
+            'headDesignation' => $this->templatePrintedDesignation($sanction->confirmedBy),
+            'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
+        ])->render();
+    }
+
+    /** @return array<string,mixed> */
+    private function accountabilityComplianceNoticeRenderData(
+        Incident $incident,
+        User $spmuHead,
+        string $decisionRemarks,
+        ?SignatureSnapshot $headSignature = null
+    ): array {
+        $request = $incident->custody?->request;
+
+        return [
+            'incident_no' => $incident->incident_no,
+            'decision_date' => ($incident->head_decided_at ?: now())->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'borrower_name' => (string) ($incident->borrower?->full_name ?? ''),
+            'office_unit' => (string) ($incident->borrower?->organizationalUnit?->unit_name
+                ?? $incident->borrower?->organizationalUnit?->name ?? ''),
+            'request_no' => (string) ($request?->request_no ?? ''),
+            'custody_no' => (string) ($incident->custody?->custody_no ?? ''),
+            'incident_type' => str((string) $incident->incident_type)->replace('_', ' ')->title()->toString(),
+            'decision_remarks' => trim($decisionRemarks),
+            'head_signature' => $this->templateSignatureAsset($headSignature),
+            'head_printed_name' => (string) ($spmuHead->full_name ?? ''),
+            'head_designation' => $this->templatePrintedDesignation($spmuHead),
+            'head_date' => ($incident->head_decided_at ?: now())->copy()->timezone('Asia/Manila')->format('d F Y'),
+            'items' => $incident->lines->map(fn ($line): array => [
+                'description' => (string) ($line->custodyLine?->requestItem?->description_snapshot ?? 'Inventory item'),
+                'qty' => (string) ($line->quantity + 0),
+                'finding' => str((string) $line->observed_condition)->replace('_', ' ')->title()->toString(),
+                'disposition' => str((string) $line->disposition_state)->replace('_', ' ')->title()->toString(),
+            ])->values()->all(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function administrativeSanctionNoticeRenderData(
+        Sanction $sanction,
+        ?SignatureSnapshot $headSignature = null
+    ): array {
+        $violation = $sanction->violation;
+        $request = $violation?->custody?->request;
+        $reasons = collect($violation?->details_json['reasons'] ?? [])
+            ->map(fn ($reason) => str((string) $reason)->replace('_', ' ')->title()->toString())
+            ->filter()->values();
+
+        $offenseLabel = match ((int) $sanction->offense_no) {
+            1 => '1st Offense',
+            2 => '2nd Offense',
+            3 => '3rd Offense',
+            default => $sanction->offense_no.'th Offense',
+        };
+
+        return [
+            'borrower_name' => (string) ($sanction->borrower?->full_name ?? ''),
+            'office_unit' => (string) ($sanction->borrower?->organizationalUnit?->unit_name
+                ?? $sanction->borrower?->organizationalUnit?->name ?? ''),
+            'request_no' => (string) ($request?->request_no ?? ''),
+            'custody_no' => (string) ($violation?->custody?->custody_no ?? ''),
+            'academic_period' => trim((string) (($sanction->academicPeriod?->academic_year ?? '').' · '.($sanction->academicPeriod?->term_name ?? ''))),
+            'offense_level' => $offenseLabel,
+            'confirmed_date' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'reason_text' => $reasons->isNotEmpty() ? $reasons->implode(', ') : 'Confirmed borrowing accountability offense',
+            'sanction_label' => (string) $sanction->sanction_label,
+            'effective_from' => $sanction->effective_from?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'effective_to' => $sanction->effective_to?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+            'head_remarks' => (string) ($sanction->remarks ?? ''),
+            'head_signature' => $this->templateSignatureAsset($headSignature),
+            'head_printed_name' => (string) ($sanction->confirmedBy?->full_name ?? ''),
+            'head_designation' => $this->templatePrintedDesignation($sanction->confirmedBy),
+            'head_date' => $sanction->confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '',
+        ];
+    }
+
+    private function institutionalLogoDataUri(): string
+    {
+        $logoPath = resource_path('images/cspc-logo-print.jpg');
+
+        if (! is_file($logoPath)) {
+            throw ValidationException::withMessages([
+                'document' => 'The institutional logo asset is unavailable.',
+            ]);
+        }
+
+        return 'data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath));
     }
 
     public function rslddp(Incident $incident): GeneratedDocument
@@ -2949,7 +3288,7 @@ HTML;
             : '';
 
         return [
-            'document_date' => $custody->scheduled_release_at?->format('F j, Y') ?: '',
+            'document_date' => $approval['signed_at']?->format('F j, Y') ?: now()->format('F j, Y'),
             'employee_checkbox' => $employmentType === 'EMPLOYEE' ? 'X' : '',
             'others_checkbox' => $employmentType !== '' && $employmentType !== 'EMPLOYEE' ? 'X' : '',
             'other_classification' => $otherClassification,
@@ -2959,26 +3298,30 @@ HTML;
             'release_time' => $custody->released_at?->copy()->timezone('Asia/Manila')->format('g:i A') ?: '',
             'date_returned' => $return['signed_at']?->format('F j, Y') ?: '',
             'remarks' => implode('; ', $return['findings'] ?? []),
+            'borrowed_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
             'borrowed_by_printed_name' => (string) ($borrower?->full_name ?? ''),
             'borrowed_by_designation' => $borrowerDesignation,
             'borrowed_by_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'approved_by_signature' => $this->templateSignatureAsset($approval['snapshot'] ?? null),
             'approved_by_printed_name' => (string) ($approval['name'] ?? ''),
             'approved_by_designation' => (string) ($approval['designation'] ?? ''),
             'approved_by_date' => $approval['signed_at']?->format('F j, Y') ?: '',
+            'issued_by_signature' => $this->templateSignatureAsset($issuance['snapshot'] ?? null),
             'issued_by_printed_name' => (string) ($issuance['name'] ?? ''),
             'issued_by_designation' => (string) ($issuance['designation'] ?? ''),
             'issued_by_date' => $issuance['signed_at']?->format('F j, Y') ?: '',
+            'return_received_by_signature' => $this->templateSignatureAsset($return['signature'] ?? null),
             'return_received_by_printed_name' => (string) ($return['received_by_name'] ?? ''),
             'return_received_by_designation' => (string) ($return['received_by_designation'] ?? ''),
             'return_received_by_date' => $return['signed_at']?->format('F j, Y') ?: '',
             'approved_by' => (string) ($approval['name'] ?? ''),
-            'items' => $custody->lines
+            'items' => $this->appendNothingFollowsItem($custody->lines
                 ->filter(fn ($line) => (float) $line->quantity_to_receive > 0)
                 ->map(fn ($line): array => [
                     'qty' => (string) (int) round((float) $line->quantity_to_receive),
                     'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
                     'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
-                ])->values()->all(),
+                ])->values()->all()),
         ];
     }
 
@@ -2987,20 +3330,67 @@ HTML;
     {
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
+        $job = $custody->laundryJob;
+        $approval = $this->approvalSignatory($version);
+        $requestDateSource = $version?->signed_at ?: $version?->submitted_at ?: $version?->created_at;
+        $dateRequested = $requestDateSource?->format('F j, Y') ?: '';
+        $requestingOffice = (string) (
+            $version?->office_unit
+            ?: $version?->represented_program_department
+            ?: $borrower?->organizationalUnit?->unit_name
+            ?: ''
+        );
+        $physicalReceivedDate = $job?->worker_received_at?->format('F j, Y') ?: '';
+        $physicalCompletedDate = $job?->worker_completed_at?->format('F j, Y') ?: '';
 
         return [
             'request_no' => (string) ($custody->request->request_no ?? ''),
+            'custody_no' => (string) ($custody->custody_no ?? ''),
             'borrower_name' => (string) ($borrower?->full_name ?? ''),
-            'requesting_office' => (string) ($version?->office_unit ?? ''),
-            'date_requested' => $version?->schedule_date?->format('F j, Y') ?: $version?->needed_from?->format('F j, Y') ?: '',
-            'date_completed' => $custody->laundryJob?->worker_completed_at?->format('F j, Y') ?: '',
-            'items' => $custody->lines
+            'requesting_office' => $requestingOffice,
+            'date_requested' => $dateRequested,
+            'date_released' => $custody->released_at?->format('F j, Y') ?: '',
+            'requested_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
+            'requested_by_printed_name' => (string) ($borrower?->full_name ?? ''),
+            'requested_by_designation' => $this->templatePrintedDesignation($borrower),
+            'requested_by_date' => $dateRequested,
+            'approved_by_signature' => $this->templateSignatureAsset($approval['snapshot'] ?? null),
+            'approved_by_printed_name' => (string) ($approval['name'] ?? ''),
+            'approved_by_designation' => (string) ($approval['designation'] ?? ''),
+            'approved_by_date' => $approval['signed_at']?->format('F j, Y') ?: '',
+            // Laundry workers are offline physical actors. Name and their
+            // actual receipt date are saved on LaundryJob; a signature image
+            // and designation are intentionally not manufactured.
+            'received_by_signature' => null,
+            'received_by_printed_name' => (string) ($job?->worker_name ?? ''),
+            'received_by_designation' => '',
+            'received_by_date' => $physicalReceivedDate,
+            'verified_by_signature' => null,
+            'verified_by_printed_name' => (string) ($job?->formVerifier?->full_name ?? ''),
+            'verified_by_designation' => $this->templatePrintedDesignation($job?->formVerifier),
+            'verified_by_date' => $job?->form_verified_at?->format('F j, Y') ?: '',
+            'items' => $this->appendNothingFollowsItem($custody->lines
                 ->filter(fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required && (float) $line->quantity_to_receive > 0)
-                ->map(fn ($line): array => [
-                    'qty' => (string) (int) round((float) $line->quantity_to_receive),
-                    'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
-                    'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
-                ])->values()->all(),
+                ->map(function ($line) use ($job, $dateRequested, $physicalReceivedDate, $physicalCompletedDate): array {
+                    $laundryLine = $line->laundryJobLine;
+
+                    return [
+                        'qty' => (string) (int) round((float) $line->quantity_to_receive),
+                        'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
+                        'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
+                        // These are deliberately attached to every item row:
+                        // table redraw removes the original row artwork, and
+                        // the official form may put physical dates in columns.
+                        'date_requested' => $dateRequested,
+                        'date_received' => $physicalReceivedDate,
+                        'date_completed' => $physicalCompletedDate,
+                        'received_quantity' => $laundryLine?->received_quantity === null ? '' : (string) $laundryLine->received_quantity,
+                        'completed_quantity' => $laundryLine?->completed_quantity === null ? '' : (string) $laundryLine->completed_quantity,
+                        'affected_quantity' => $laundryLine?->affected_quantity === null ? '' : (string) $laundryLine->affected_quantity,
+                        'issue_type' => (string) ($laundryLine?->issue_type ?? ''),
+                        'remarks' => (string) ($laundryLine?->remarks ?: $job?->worker_remarks ?: ''),
+                    ];
+                })->values()->all()),
         ];
     }
 
@@ -3009,35 +3399,114 @@ HTML;
     {
         $version = $custody->request->currentVersion;
         $gatePass = $custody->gatePass;
+        $borrower = $custody->request->borrower;
+        $movementScope = $custody->lines
+            ->first(fn ($line) => $line->requestItem?->use_location !== null)?->requestItem?->use_location;
 
         return [
             'gate_pass_no' => (string) $custody->custody_no,
-            'borrower_name' => (string) ($custody->request->borrower?->full_name ?? ''),
+            'request_no' => (string) ($custody->request->request_no ?? ''),
+            'custody_no' => (string) ($custody->custody_no ?? ''),
+            'document_date' => $custody->scheduled_release_at?->format('F j, Y')
+                ?: $gatePass?->approved_at?->format('F j, Y')
+                ?: now()->format('F j, Y'),
+            'borrower_name' => (string) ($gatePass?->bearer_name ?: ($borrower?->full_name ?? '')),
+            'requesting_office' => (string) ($version?->office_unit ?: $version?->represented_program_department ?: $borrower?->organizationalUnit?->unit_name ?: ''),
             'purpose' => (string) ($gatePass?->purpose ?: $version?->purpose_event ?: ''),
             'destination' => (string) ($gatePass?->destination ?? ''),
-            'verified_by' => (string) ($gatePass?->preparedVerifier?->full_name ?? ''),
-            'approved_by' => (string) ($gatePass?->approver?->full_name ?? ''),
-            'items' => $custody->lines
+            'movement_scope' => $movementScope ? str((string) $movementScope)->replace('_', ' ')->title()->toString() : '',
+            'exit_date' => $custody->released_at?->format('F j, Y') ?: '',
+            'verification_remarks' => (string) ($gatePass?->verification_remarks ?? ''),
+            'requested_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
+            'requested_by_printed_name' => (string) ($borrower?->full_name ?? ''),
+            'requested_by_designation' => $this->templatePrintedDesignation($borrower),
+            'requested_by_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'verified_by_signature' => $this->templateSignatureAsset($gatePass?->preparedVerifierSignature),
+            'verified_by_printed_name' => (string) ($gatePass?->preparedVerifier?->full_name ?? ''),
+            'verified_by_designation' => $this->templatePrintedDesignation($gatePass?->preparedVerifier),
+            'verified_by_date' => $gatePass?->prepared_verified_at?->format('F j, Y') ?: '',
+            'approved_by_signature' => $this->templateSignatureAsset($gatePass?->approverSignature),
+            'approved_by_printed_name' => (string) ($gatePass?->approver?->full_name ?? ''),
+            'approved_by_designation' => $this->templatePrintedDesignation($gatePass?->approver),
+            'approved_by_date' => $gatePass?->approved_at?->format('F j, Y') ?: '',
+            // A guard's handwritten approval is recorded as a name/date,
+            // not as an application signature snapshot.
+            'guard_signature' => null,
+            'guard_printed_name' => (string) ($gatePass?->guard_name ?? ''),
+            'guard_designation' => '',
+            'guard_date' => $gatePass?->guard_signed_at?->format('F j, Y') ?: '',
+            'items' => $this->appendNothingFollowsItem($custody->lines
                 ->filter(fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS' && (float) $line->quantity_to_receive > 0)
                 ->map(fn ($line): array => [
                     'qty' => (string) (int) round((float) $line->quantity_to_receive),
                     'unit' => (string) ($line->requestItem?->unit_snapshot ?? ''),
                     'description' => (string) ($line->requestItem?->description_snapshot ?? ''),
-                ])->values()->all(),
+                    'movement_scope' => str((string) ($line->requestItem?->use_location ?? ''))->replace('_', ' ')->title()->toString(),
+                ])->values()->all()),
         ];
     }
 
-    /** @return array<string,mixed> */
-    private function billingStatementRenderData(BillingStatement $billing): array
+    /**
+     * Append the formal terminal row used by controlled, approved operational
+     * forms. Blank non-description cells make the marker read as a closure of
+     * the item list rather than another property line.
+     *
+     * @param array<int,array<string,mixed>> $items
+     * @return array<int,array<string,mixed>>
+     */
+    private function appendNothingFollowsItem(array $items): array
     {
+        if ($items === []) {
+            return $items;
+        }
+
+        $items[] = [
+            'qty' => '',
+            'unit' => '',
+            'description' => self::NOTHING_FOLLOWS_MARKER,
+        ];
+
+        return $items;
+    }
+
+    /** @return array<string,mixed> */
+    private function billingStatementRenderData(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): array
+    {
+        $incidents = $billing->lines
+            ->map(fn ($line) => $line->incident ?: $line->penalty?->incident)
+            ->filter();
+
+        $incident = $incidents->first();
+        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+        $authorizationSignature ??= $incident?->headDecisionSignature;
+        $custodies = $billing->lines
+            ->map(fn ($line) => $line->incident?->custody ?: $line->penalty?->custody ?: $line->penalty?->incident?->custody)
+            ->filter()
+            ->unique('id')
+            ->values();
+
         return [
             'billing_no' => (string) $billing->billing_no,
             'borrower_name' => (string) ($billing->borrower?->full_name ?? ''),
+            'request_no' => $custodies->pluck('request.request_no')->filter()->unique()->implode(', '),
+            'custody_no' => $custodies->pluck('custody_no')->filter()->unique()->implode(', '),
+            'incident_no' => $incidents->pluck('incident_no')->filter()->unique()->implode(', '),
             'issued_date' => $billing->issued_at?->format('F j, Y') ?: '',
             'due_date' => $billing->due_at?->format('F j, Y') ?: '',
+            'statement_remarks' => (string) ($billing->remarks ?? ''),
             'total_amount' => 'PHP '.number_format((float) $billing->total_amount, 2),
+            'issuer_signature' => $this->templateSignatureAsset($authorizationSignature),
+            'issuer_printed_name' => (string) ($billing->responsibleSpmuUser?->full_name
+                ?: $incident?->headDecidedBy?->full_name
+                ?: ''),
+            'issuer_designation' => $this->templatePrintedDesignation($billing->responsibleSpmuUser),
+            'issuer_date' => $billing->issued_at?->format('F j, Y') ?: '',
             'items' => $billing->lines->map(fn ($line): array => [
                 'description' => (string) $line->description,
+                'line_type' => (string) ($line->line_type ?? ''),
+                'basis' => (string) ($line->basis ?? ''),
+                'penalty_type' => (string) ($line->penalty?->penalty_type ?? ''),
+                'incident_no' => (string) ($line->incident?->incident_no ?: $line->penalty?->incident?->incident_no ?: ''),
                 'amount' => 'PHP '.number_format((float) $line->amount, 2),
             ])->values()->all(),
         ];
@@ -3047,14 +3516,26 @@ HTML;
     private function rslddpRenderData(Incident $incident): array
     {
         return [
+            'rslddp_reference' => (string) ($incident->rslddp_reference ?? ''),
             'incident_no' => (string) $incident->incident_no,
+            'custody_no' => (string) ($incident->custody?->custody_no ?? ''),
+            'request_no' => (string) ($incident->custody?->request?->request_no ?? ''),
+            'police_blotter_reference' => (string) ($incident->police_blotter_reference ?? ''),
             'borrower_name' => (string) ($incident->borrower?->full_name ?? ''),
             'incident_type' => (string) $incident->incident_type,
             'reported_date' => $incident->reported_at?->format('F j, Y g:i A') ?: '',
+            'incident_remarks' => (string) ($incident->remarks ?? ''),
+            'appraisal_amount' => $incident->appraisal_amount === null ? '' : 'PHP '.number_format((float) $incident->appraisal_amount, 2),
+            'reported_by_signature' => null,
+            'reported_by_printed_name' => (string) ($incident->reportedBy?->full_name ?? ''),
+            'reported_by_designation' => $this->templatePrintedDesignation($incident->reportedBy),
+            'reported_by_date' => $incident->reported_at?->format('F j, Y') ?: '',
             'items' => $incident->lines->map(fn ($line): array => [
                 'qty' => (string) ($line->quantity + 0),
                 'description' => (string) ($line->custodyLine?->requestItem?->description_snapshot ?? 'Custody line '.$line->custody_line_id),
                 'condition' => (string) $line->observed_condition,
+                'assessed_value' => $line->assessed_value === null ? '' : 'PHP '.number_format((float) $line->assessed_value, 2),
+                'disposition' => (string) ($line->disposition_state ?? ''),
             ])->values()->all(),
         ];
     }
@@ -3094,7 +3575,7 @@ HTML;
         $returnRemarks = implode('; ', $returnInspection['findings'] ?? []);
 
         return [
-            'document_date' => $custody->scheduled_release_at?->format('F j, Y') ?: '',
+            'document_date' => $approval['signed_at']?->format('F j, Y') ?: now()->format('F j, Y'),
             'employee_checkbox' => $employmentType === 'EMPLOYEE' ? '☒' : '☐',
             'others_checkbox' => $employmentType === 'EMPLOYEE' ? '☐' : '☒',
             'other_type' => $otherType,
@@ -3109,7 +3590,7 @@ HTML;
             'head_signature' => ['html' => $this->signatureImage($approval['snapshot'], 120, 24)],
             'head_name' => (string) ($approval['name'] ?? ''),
             'head_role' => (string) ($approval['designation'] ?? 'SPMU Admin / Head'),
-            'approval_date' => '',
+            'approval_date' => $approval['signed_at']?->format('F j, Y') ?: '',
             'issued_by_name' => (string) ($custody->releasedBy?->full_name ?? ''),
             'issued_by_role' => $custody->releasedBy ? 'SPMU Action Officer' : '',
             'date_released' => $custody->released_at?->format('F j, Y')
@@ -3161,20 +3642,18 @@ HTML;
         }
 
         return [
-            'office_unit' => (string) ($version?->office_unit ?? ''),
+            'office_unit' => (string) ($version?->office_unit ?: $version?->represented_program_department ?: $borrower?->organizationalUnit?->unit_name ?: ''),
             'request_no' => (string) ($custody->request->request_no ?? ''),
-            'date_requested' => $version?->schedule_date?->format('F j, Y')
-                ?: $version?->needed_from?->format('F j, Y')
-                ?: '',
+            'date_requested' => ($version?->signed_at ?: $version?->submitted_at ?: $version?->created_at)?->format('F j, Y') ?: '',
             'date_completed' => $custody->laundryJob?->worker_completed_at?->format('F j, Y') ?: '',
             'borrower_signature' => ['html' => $this->signatureImage($version?->borrowerSignature, 105, 20)],
             'borrower_name' => (string) ($borrower?->full_name ?? ''),
             'borrower_position' => $designation,
-            'request_date' => $version?->signed_at?->format('F j, Y') ?: '',
+            'request_date' => ($version?->signed_at ?: $version?->submitted_at ?: $version?->created_at)?->format('F j, Y') ?: '',
             'head_signature' => ['html' => $this->signatureImage($approval['snapshot'], 105, 20)],
             'head_name' => (string) ($approval['name'] ?? ''),
             'head_role' => (string) ($approval['designation'] ?? 'SPMU Admin / Head'),
-            'approval_date' => '',
+            'approval_date' => $approval['signed_at']?->format('F j, Y') ?: '',
             /* Laundry Personnel are offline/wet-signature actors. */
             'issued_by_name' => '',
             'issued_by_role' => '',
@@ -3242,7 +3721,7 @@ HTML;
 
     private function activeTemplate(string $type): ?DocumentTemplate
     {
-        if (! in_array($type, ['BORROWER_SLIP', 'LAUNDRY_FORM', 'GATE_PASS', 'BILLING_STATEMENT', 'RSLDDP'], true)) {
+        if (! in_array($type, ['BORROWER_SLIP', 'LAUNDRY_FORM', 'GATE_PASS', 'BILLING_STATEMENT', 'ACCOUNTABILITY_COMPLIANCE_NOTICE', 'ADMINISTRATIVE_SANCTION_NOTICE', 'RSLDDP'], true)) {
             return null;
         }
 
@@ -3349,6 +3828,57 @@ HTML;
             .'max-width:'.$maxWidthPt.'pt;max-height:'.$maxHeightPt.'pt;object-fit:contain;">';
     }
 
+    private function templatePrintedDesignation(?User $user): string
+    {
+        $designation = trim((string) ($user?->designation ?? ''));
+        if ($designation === ''
+            || strcasecmp($designation, AccessClassification::BorrowerOnly->label()) === 0
+            || $designation === $user?->access_classification?->label()) {
+            return '';
+        }
+
+        return $designation;
+    }
+
+    /**
+     * Supply the uploaded-template renderer with one immutable signature
+     * snapshot. Missing or unreadable snapshots deliberately remain blank;
+     * rendering a controlled document must never manufacture a signature.
+     *
+     * @return array{kind:'signature_image',bytes:string,mime_type:string}|null
+     */
+    private function templateSignatureAsset(?SignatureSnapshot $snapshot): ?array
+    {
+        if (! $snapshot) {
+            return null;
+        }
+
+        $snapshot->loadMissing('file');
+        $file = $snapshot->file;
+        if (! $file) {
+            return null;
+        }
+
+        try {
+            $bytes = $this->files->bytes($file);
+        } catch (Throwable $exception) {
+            Log::warning('Signature snapshot file unavailable for template rendering.', [
+                'operation' => 'template_signature_image',
+                'signature_snapshot_id' => $snapshot->id,
+                'stored_file_id' => $file->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        return [
+            'kind' => 'signature_image',
+            'bytes' => $bytes,
+            'mime_type' => (string) ($file->mime_type ?: 'image/png'),
+        ];
+    }
+
     /**
      * Resolve the SPMU Head (or formally delegated officer) who approved this
      * request version, together with the immutable approval snapshot.
@@ -3418,7 +3948,8 @@ HTML;
      *     signed_at: ?CarbonInterface,
      *     findings: list<string>,
      *     received_by_name: string,
-     *     received_by_designation: string
+     *     received_by_designation: string,
+     *     signature: ?SignatureSnapshot
      * }
      */
     private function returnInspectionData(CustodyTransaction $custody): array
@@ -3473,6 +4004,7 @@ HTML;
             'findings' => $findings,
             'received_by_name' => (string) ($return?->receivedBy?->full_name ?? ''),
             'received_by_designation' => (string) ($return?->receivedBy?->designation ?? ''),
+            'signature' => $return?->inspectionSignature,
         ];
     }
 

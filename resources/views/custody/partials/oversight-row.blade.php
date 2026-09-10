@@ -7,6 +7,7 @@
     $returnDate = $returnDateValue ? \Illuminate\Support\Carbon::parse($returnDateValue) : null;
 
     $workflowStatus = $custody->workflowStatus();
+    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $operationalStatusKey = $workflowStatus['key'];
     $group = $workflowStatus['group'];
@@ -126,6 +127,9 @@
                 :label="$operationalLabel"
                 :title="$operationalLabel"
             />
+            @if($accountabilityIndicator)
+                <small class="custody-oversight-accountability">{{ $accountabilityIndicator['label'] }}</small>
+            @endif
         </span>
     </div>
 

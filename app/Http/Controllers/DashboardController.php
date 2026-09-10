@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Models\BorrowingRequest;
+use App\Models\OverdueCase;
+use App\Models\Incident;
+use App\Models\BorrowerRestriction;
+use App\Models\BillingStatement;
 use App\Models\CustodyTransaction;
 use App\Models\InventoryItem;
 use App\Models\LaundryJob;
@@ -35,6 +39,7 @@ class DashboardController extends Controller
         $nextCustodies = collect();
         $activeRequestBars = collect();
         $activeRequestTotal = 0;
+        $borrowerObligationOverview = null;
         $dashboardMode = $workspace;
 
         if ($workspace === 'BORROWER') {
@@ -104,7 +109,7 @@ class DashboardController extends Controller
             // released/on-custody, laundry in process, etc.) remains visible in
             // Active Requests without being duplicated under "Needs My Action".
             $queue = BorrowingRequest::query()
-                ->with(['currentVersion', 'custody.laundryJob'])
+                ->with(['currentVersion', 'custody.laundryJob', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
                 ->get()
@@ -169,7 +174,7 @@ class DashboardController extends Controller
             };
 
             $activeBorrowerRequests = BorrowingRequest::query()
-                ->with(['currentVersion', 'custody.laundryJob'])
+                ->with(['currentVersion', 'custody.laundryJob', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
                 ->get()
@@ -186,6 +191,51 @@ class DashboardController extends Controller
 
             $activeRequestTotal = $activeBorrowerRequests->count();
             $activeRequestBars = $activeBorrowerRequests->take(5)->values();
+
+            /*
+             * Persistent borrower accountability summary. Notifications are only
+             * alerts; unresolved obligations stay visible on the dashboard until
+             * SPMU resolves them. Keep this compact and link to My Obligations
+             * rather than duplicating the full case workflow here.
+             */
+            $openBillings = BillingStatement::query()
+                ->where('borrower_user_id', $user->id)
+                ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
+                ->get(['id', 'billing_no', 'status', 'total_amount']);
+
+            $openPropertyCases = Incident::query()
+                ->where('borrower_user_id', $user->id)
+                ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+                ->count();
+
+            $openLateReturns = OverdueCase::query()
+                ->where('borrower_user_id', $user->id)
+                ->where('status', '!=', 'RESOLVED')
+                ->count();
+
+            $activeRestrictions = BorrowerRestriction::query()
+                ->where('borrower_user_id', $user->id)
+                ->where('status', 'ACTIVE')
+                ->where(function ($query): void {
+                    $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
+                })
+                ->count();
+
+            $activeObligationCount = $openPropertyCases + $openLateReturns;
+            $openBillingTotal = (float) $openBillings->sum('total_amount');
+
+            if ($activeObligationCount > 0 || $openBillings->isNotEmpty() || $activeRestrictions > 0) {
+                $borrowerObligationOverview = [
+                    'count' => max($activeObligationCount, $openBillings->count(), $activeRestrictions),
+                    'property_cases' => $openPropertyCases,
+                    'late_returns' => $openLateReturns,
+                    'billings' => $openBillings->count(),
+                    'billing_total' => $openBillingTotal,
+                    'restrictions' => $activeRestrictions,
+                ];
+
+                $statistics['Needs My Action'] += $borrowerObligationOverview['count'];
+            }
 
             // Pickup and return dates are already shown contextually in the
             // Active Requests rows, so the borrower dashboard no longer performs
@@ -323,7 +373,8 @@ class DashboardController extends Controller
             'queue',
             'nextCustodies',
             'activeRequestBars',
-            'activeRequestTotal'
+            'activeRequestTotal',
+            'borrowerObligationOverview'
         ));
     }
 }

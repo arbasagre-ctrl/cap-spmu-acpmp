@@ -14,7 +14,13 @@ class BillingLine extends Model
         return ['amount' => 'decimal:2'];
     }
 
-    /** The charge this line bills, and through it the case it came from. */
+    /** The incident reference already captured for this billing line. */
+    public function incident(): BelongsTo
+    {
+        return $this->belongsTo(Incident::class);
+    }
+
+    /** The existing penalty source, when this line was assessed from one. */
     public function penalty(): BelongsTo
     {
         return $this->belongsTo(Penalty::class);

@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\InventoryService;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
+use App\Services\TransactionAccountabilityHistoryService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -76,7 +77,7 @@ class BorrowingRequestController extends Controller
     public function index(Request $request): View
     {
         $query = BorrowingRequest::query()
-            ->with(['borrower', 'currentVersion.items', 'custody'])
+            ->with(['borrower', 'currentVersion.items', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
             ->latest();
 
         $workspace = strtoupper(
@@ -258,12 +259,6 @@ class BorrowingRequestController extends Controller
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
 
-                /*
-                 * Online request submission and physical pickup/release are
-                 * separate availabilities. This is informational only and
-                 * never blocks the form.
-                 */
-                'pickupAvailability' => $this->pickupAvailability(),
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
@@ -279,25 +274,6 @@ class BorrowingRequestController extends Controller
                     ->get(),
             ]
         );
-    }
-
-    /**
-     * Informational pickup/release availability for the borrower form.
-     *
-     * @return array{available: bool, next: ?\Carbon\CarbonImmutable}
-     */
-    private function pickupAvailability(): array
-    {
-        $calendar = app(\App\Services\OperationalCalendarService::class);
-
-        return [
-            'available' => $calendar->isOpenFor(
-                \App\Services\OperationalCalendarService::PICKUP,
-                now(),
-                true
-            ),
-            'next' => $calendar->nextPickupWindow(now()),
-        ];
     }
 
     public function store(
@@ -429,7 +405,8 @@ class BorrowingRequestController extends Controller
 
     public function show(
         Request $request,
-        BorrowingRequest $borrowingRequest
+        BorrowingRequest $borrowingRequest,
+        TransactionAccountabilityHistoryService $transactionHistory
     ): View {
         $canVerify = $this->canVerifyRequest($request, $borrowingRequest);
         $canDecide = $this->canDecideApproval($request, $borrowingRequest);
@@ -470,10 +447,14 @@ class BorrowingRequestController extends Controller
             'statusHistory.actor',
 
             'custody.lines.requestItem.inventoryItem',
-            'custody.returns',
+            'custody.incidents',
+            'custody.overdueCase',
+            'custody.returns.lines.custodyLine.requestItem.inventoryItem',
             'custody.laundryJob.latestEvidence.file',
             'custody.gatePass.accomplishedFile',
         ]);
+
+        $accountabilityHistory = $transactionHistory->forCustody($borrowingRequest->custody);
 
         return view(
             'requests.show',
@@ -482,7 +463,8 @@ class BorrowingRequestController extends Controller
                 'canDecide',
                 'canVerify',
                 'reviewMode',
-                'approvalStage'
+                'approvalStage',
+                'accountabilityHistory'
             )
         );
     }
@@ -778,10 +760,18 @@ class BorrowingRequestController extends Controller
             $data['reason']
         );
 
-        return back()->with(
-            'status',
-            'Request cancelled. Any approved but unreleased allocation has been restored to Available inventory, and any pending pickup schedule/documents are no longer active.'
-        );
+        $message = 'Request cancelled. Any approved but unreleased allocation has been restored to Available inventory, and any pending pickup schedule/documents are no longer active.';
+
+        if (
+            $request->input('return_to') === 'release'
+            && strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU'
+        ) {
+            return redirect()
+                ->route('custody.release.index')
+                ->with('status', $message);
+        }
+
+        return back()->with('status', $message);
     }
 
     public function reviewCancellation(

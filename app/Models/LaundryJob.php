@@ -77,10 +77,11 @@ class LaundryJob extends Model
      * ---------------------------------------------
      * Laundry Personnel are a physical/offline actor with no portal account.
      * FOR_LAUNDRY covers the offline period while Laundry Personnel receive,
-     * wash/assess the linen, complete the physical form, and deliver that form
-     * to SPMU. TURNED_OVER_TO_LAUNDRY is retained as the internal post-encoding
-     * state, but the UI presents it as availability finalization rather than a
-     * second physical Laundry step.
+     * wash/process the linen, complete the physical form, and deliver that form
+     * to SPMU. New records move directly to LAUNDRY_COMPLETED when SPMU encodes
+     * a fully accomplished form. TURNED_OVER_TO_LAUNDRY is retained only as
+     * a legacy data state and is reconciled automatically; availability changes
+     * only through completed-form return encoding.
      */
     public function displayStatusLabel(): string
     {
@@ -88,7 +89,7 @@ class LaundryJob extends Model
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
                 => 'Ready for SPMU Encoding',
             $this->status === 'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
-            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Availability Finalization',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Availability Reconciliation Pending',
             $this->status === 'LAUNDRY_COMPLETED' => 'Available',
             default => str($this->status)->replace('_', ' ')->title(),
         };
@@ -102,7 +103,7 @@ class LaundryJob extends Model
             $this->status === 'FOR_LAUNDRY'
                 => 'Laundry Personnel are processing the linen offline · completed form not yet received by SPMU',
             $this->status === 'TURNED_OVER_TO_LAUNDRY'
-                => 'SPMU return encoded · serviceable linen ready for availability finalization',
+                => 'Legacy record · SPMU return encoded · automatic reconciliation pending',
             $this->status === 'LAUNDRY_COMPLETED'
                 => 'Serviceable linen available',
             default => $this->displayStatusLabel(),

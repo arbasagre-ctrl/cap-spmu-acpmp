@@ -46,6 +46,9 @@
     .doc-meta span { display: inline-block; width: 96pt; }
 
     table.doc-table { width: 100%; border-collapse: collapse; }
+    @if(! ($options['repeat_headers'] ?? true))
+    table.doc-table thead { display: table-row-group; }
+    @endif
     table.doc-table th {
         padding: 4pt 4pt;
         background: #f2f2f2;

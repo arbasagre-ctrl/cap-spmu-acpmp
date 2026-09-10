@@ -67,7 +67,6 @@
             <dl class="detail-list">
                 <dt>Recorded by SPMU Action Officer</dt><dd>{{ $job->worker_name ?: 'Not recorded' }}</dd>
                 <dt>Date received</dt><dd>{{ optional($job->worker_received_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
-                <dt>Date completed</dt><dd>{{ optional($job->worker_completed_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
                 <dt>Total items received</dt><dd>{{ $totalReceived + 0 }}</dd>
             </dl>
             <div class="table-wrap top-gap">
