@@ -197,12 +197,15 @@ class ForecastService
 
         $previous = $counts[0] ?? 0;
 
+        $readiness = $this->readinessFacts($windows, $counts);
+
         if (! $this->hasEnoughHistory($windows, $counts)) {
             return [
                 'available' => false,
                 'current' => $current,
                 'previous' => $previous,
                 'history' => $this->historyRows($windows, $counts),
+                'readiness' => $readiness,
                 'reason' => 'Not enough historical data to generate a reliable forecast.',
                 'requirement' => 'Forecasts become available once '
                     .self::HISTORY_PERIODS.' completed periods with at least '
@@ -218,9 +221,42 @@ class ForecastService
             'previous' => $previous,
             'forecast' => $forecast,
             'history' => $this->historyRows($windows, $counts),
+            'readiness' => $readiness,
             'direction' => $this->direction($forecast, $current),
             'change' => $forecast - $current,
             'summary' => $this->demandSentence($forecast, $current),
+        ];
+    }
+
+    /**
+     * The two conditions hasEnoughHistory() tests, stated so a reader can see
+     * which one is holding a forecast back.
+     *
+     * Reporting only: the same windows and counts the check itself uses, so
+     * this can never disagree with it, and nothing here is queried again.
+     *
+     * @param  list<array{0: Carbon, 1: Carbon}>  $windows
+     * @param  list<int>  $counts
+     * @return array<string, mixed>
+     */
+    private function readinessFacts(array $windows, array $counts): array
+    {
+        $complete = count(array_filter(
+            $windows,
+            static fn (array $window): bool => ! $window[1]->isFuture()
+        ));
+
+        $observations = array_sum($counts);
+
+        return [
+            'periods_complete' => $complete,
+            'periods_required' => self::HISTORY_PERIODS,
+            'periods_met' => $complete >= self::HISTORY_PERIODS,
+            'observations' => $observations,
+            'observations_required' => self::MINIMUM_OBSERVATIONS,
+            'observations_met' => $observations >= self::MINIMUM_OBSERVATIONS,
+            'method' => 'Weighted Moving Average',
+            'weights' => self::WEIGHTS,
         ];
     }
 

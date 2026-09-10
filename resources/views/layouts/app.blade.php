@@ -456,8 +456,8 @@
                     ['inventory.index', 'inventory.*', 'Inventory Overview', 'inventory'],
                     ['calendar.index', 'calendar.*', 'Borrowing & Operations Calendar', 'calendar'],
                     ['accountability.index', 'accountability.*', 'Accountability Oversight', 'accountability'],
-                    ['analytics.index', 'analytics.*', 'Analytics', 'reports'],
-                    ['reports.index', 'reports.index', 'Reports', 'reports'],
+                    ['analytics.index', 'analytics.*', 'Analytics', 'analytics'],
+                    ['reports.index', 'reports.index', 'Reports', 'report-document'],
                     ['policies.index', 'policies.*', 'Operational Configuration', 'settings'],
                 ]
                 : [

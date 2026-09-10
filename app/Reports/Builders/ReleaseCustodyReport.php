@@ -32,7 +32,9 @@ class ReleaseCustodyReport implements ReportBuilder
         /*
          * currentVersion and lines.requestItem are eager loaded because the
          * row loop reads the version snapshot for every record and the
-         * equipment filter reads each line's inventory item.
+         * equipment filter reads each line's inventory item. returns joins
+         * them because the Early Returned filter reads the recorded return
+         * type rather than a custody status.
          */
         $custodies = CustodyTransaction::query()
             ->with([
@@ -40,6 +42,7 @@ class ReleaseCustodyReport implements ReportBuilder
                 'request.currentVersion',
                 'lines.requestItem',
                 'releasedBy',
+                'returns',
             ])
             ->where(function ($query) use ($filters): void {
                 $query->whereBetween('created_at', [$filters->from, $filters->to])
@@ -64,6 +67,15 @@ class ReleaseCustodyReport implements ReportBuilder
 
                 return [
                     '_status' => $status,
+                    /*
+                     * CustodyService writes return_type EARLY when the physical
+                     * return is received before the due date. Reading it back
+                     * keeps this filter on the same rule the return itself was
+                     * classified by, rather than re-deciding it here.
+                     */
+                    '_early_returned' => $custody->returns->contains(
+                        fn ($return): bool => (string) $return->return_type === 'EARLY'
+                    ),
                     '_division_code' => (string) ($version?->division_code ?? ''),
                     '_office_unit' => (string) ($version?->office_unit ?? ''),
                     '_item_ids' => $custody->lines
@@ -77,7 +89,7 @@ class ReleaseCustodyReport implements ReportBuilder
                     '_tone_status' => match ($status) {
                         'CLOSED', 'ACTIVE' => 'positive',
                         'OVERDUE', 'INCIDENT_OPEN' => 'critical',
-                        'RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'OBLIGATION_OPEN' => 'attention',
+                        'RETURN_PROCESSING', 'OBLIGATION_OPEN' => 'attention',
                         default => 'progress',
                     },
 
@@ -130,7 +142,9 @@ class ReleaseCustodyReport implements ReportBuilder
             ->when(
                 $custodyStatus !== null,
                 fn (Collection $rows): Collection => $rows->filter(
-                    fn (array $row): bool => $row['_status'] === $custodyStatus
+                    fn (array $row): bool => $custodyStatus === 'EARLY_RETURNED'
+                        ? $row['_early_returned']
+                        : $row['_status'] === $custodyStatus
                 )
             )
             ->when(
@@ -183,7 +197,6 @@ class ReleaseCustodyReport implements ReportBuilder
             'PREPARING_RELEASE' => 'Preparing Release',
             'ACTIVE' => 'Released / On Custody',
             'RETURN_PROCESSING' => 'Return Processing',
-            'PARTIALLY_RETURNED' => 'Partially Returned',
             'OVERDUE' => 'Overdue',
             'INCIDENT_OPEN' => 'Incident Open',
             'OBLIGATION_OPEN' => 'Obligation Open',

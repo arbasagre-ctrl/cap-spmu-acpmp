@@ -149,6 +149,60 @@ class ReportReleaseReturnTest extends TestCase
         $this->assertSame(2, $this->release()->count());
     }
 
+    /**
+     * Early Returned is a return-timing classification, not a custody status.
+     *
+     * CustodyService stamps return_type EARLY when the physical return is
+     * received before the due date, so the filter reads that back rather than
+     * matching a status column no record can hold.
+     */
+    public function test_release_report_filters_by_early_return_timing(): void
+    {
+        $item = $this->item('Monoblock Chair', 300);
+
+        $early = $this->request(
+            'ACADEMIC',
+            'College of Computer Studies',
+            RequestStatus::ApprovedReadyForRelease,
+            lines: [['item' => $item, 'released' => 10, 'returned' => 10]],
+            custody: ['status' => 'CLOSED', 'released_at' => $this->from->copy()->addDay()]
+        );
+
+        $normal = $this->request(
+            'ADMINISTRATION',
+            'Library',
+            RequestStatus::ApprovedReadyForRelease,
+            lines: [['item' => $item, 'released' => 5, 'returned' => 5]],
+            custody: ['status' => 'CLOSED', 'released_at' => $this->from->copy()->addDay()]
+        );
+
+        $this->recordReturn($early->custody, $this->from->copy()->addDays(2), 'EARLY');
+        $this->recordReturn($normal->custody, $this->from->copy()->addDays(2), 'NORMAL');
+
+        $rows = $this->release(['custody_status' => 'EARLY_RETURNED']);
+
+        $this->assertSame(1, $rows->count());
+        $this->assertSame(
+            $early->custody->custody_no,
+            $rows->rows->first()['custody_no'] ?? null
+        );
+
+        /* Both are still reported when the filter is not applied. */
+        $this->assertSame(2, $this->release()->count());
+    }
+
+    /* The retired value is no longer offered, so it can no longer be chosen. */
+    public function test_partially_returned_is_not_a_selectable_custody_status(): void
+    {
+        $options = \App\Reports\ReportFilters::optionsFor(
+            \App\Reports\ReportCatalogue::filterDefinitions()['custody_status']
+        );
+
+        $this->assertArrayNotHasKey('PARTIALLY_RETURNED', $options);
+        $this->assertArrayHasKey('EARLY_RETURNED', $options);
+        $this->assertSame('Early Returned', $options['EARLY_RETURNED']);
+    }
+
     /* ------------------------------------------------------------------ */
     /* Return & Accountability                                             */
     /* ------------------------------------------------------------------ */
@@ -503,8 +557,11 @@ class ReportReleaseReturnTest extends TestCase
         ]);
     }
 
-    private function recordReturn(CustodyTransaction $custody, Carbon $receivedAt): ReturnTransaction
-    {
+    private function recordReturn(
+        CustodyTransaction $custody,
+        Carbon $receivedAt,
+        string $type = 'NORMAL'
+    ): ReturnTransaction {
         /* received_by_user_id is NOT NULL: a receipt always has a receiver. */
         $receiver = User::factory()->create([
             'access_classification' => AccessClassification::SpmuOfficer,
@@ -514,7 +571,7 @@ class ReportReleaseReturnTest extends TestCase
             'return_no' => 'RET-'.fake()->unique()->numberBetween(10000, 99999),
             'custody_transaction_id' => $custody->id,
             'received_by_user_id' => $receiver->id,
-            'return_type' => 'NORMAL',
+            'return_type' => $type,
             'received_at' => $receivedAt,
         ]);
     }

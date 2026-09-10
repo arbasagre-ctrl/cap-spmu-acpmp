@@ -47,12 +47,15 @@ class AnalyticsDetailService
         'coverage',
         'forecast',
         'trend',
+        /* Card-level detail: one panel rather than one figure. */
+        'card',
     ];
 
     public function __construct(
         private readonly AnalyticsService $analytics,
         private readonly InventoryService $inventory,
         private readonly ForecastService $forecasts,
+        private readonly AnalyticsCardDetailService $cards,
     ) {}
 
     /**
@@ -94,6 +97,7 @@ class AnalyticsDetailService
             'coverage' => $this->coverage($scope, (string) $request->input('item', '')),
             'forecast' => $this->forecast($scope, (string) $request->input('metric', 'demand')),
             'trend' => $this->trend($scope, (int) $request->input('bucket', 0)),
+            'card' => $this->cards->resolve($scope, (string) $request->input('for', '')),
         };
 
         if ($detail === null) {

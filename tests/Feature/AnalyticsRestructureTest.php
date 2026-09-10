@@ -552,7 +552,13 @@ class AnalyticsRestructureTest extends TestCase
 
         $response->assertOk();
 
-        foreach (['Overview', 'Demand &amp; Usage', 'Inventory Health', 'Borrowing &amp; Returns', 'Predictive Analytics'] as $tab) {
+        foreach ([
+            'Overview',
+            'Demand &amp; Utilization',
+            'Inventory Health',
+            'Borrowing &amp; Return Performance',
+            'Forecast &amp; Planning',
+        ] as $tab) {
             $response->assertSee($tab, false);
         }
     }
@@ -560,9 +566,9 @@ class AnalyticsRestructureTest extends TestCase
     public function test_renamed_sections_still_open_from_an_old_link(): void
     {
         foreach ([
-            'borrowers' => 'Borrowing &amp; Returns',
-            'equipment' => 'Demand &amp; Usage',
-            'forecast' => 'Predictive Analytics',
+            'borrowers' => 'Borrowing &amp; Return Performance',
+            'equipment' => 'Demand &amp; Utilization',
+            'forecast' => 'Forecast &amp; Planning',
         ] as $legacy => $heading) {
             $this->actingAs($this->spmuHead())
                 ->get(route('analytics.index', ['section' => $legacy]))

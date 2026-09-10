@@ -131,6 +131,9 @@
         @case('check-circle')
             <circle cx="12" cy="12" r="9" /><path d="m8.2 12.2 2.6 2.6 5-5.6" />
             @break
+        @case('coins')
+            <ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" /><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+            @break
         @case('banknote')
             <rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2.5" /><path d="M6 12h.01M18 12h.01" />
             @break

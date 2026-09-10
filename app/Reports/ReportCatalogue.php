@@ -113,7 +113,14 @@ final class ReportCatalogue
                     'PREPARING_RELEASE' => 'Preparing Release',
                     'ACTIVE' => 'Released / On Custody',
                     'RETURN_PROCESSING' => 'Return Processing',
-                    'PARTIALLY_RETURNED' => 'Partially Returned',
+                    /*
+                     * Not a custody status. PARTIALLY_RETURNED was retired by
+                     * migration and could never match a row again; this takes
+                     * its place and is matched on return timing instead - a
+                     * custody whose physical return was recorded before its
+                     * due date, which the return transaction already stores.
+                     */
+                    'EARLY_RETURNED' => 'Early Returned',
                     'OVERDUE' => 'Overdue',
                     'INCIDENT_OPEN' => 'Incident Open',
                     'OBLIGATION_OPEN' => 'Obligation Open',

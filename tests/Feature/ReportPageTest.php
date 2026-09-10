@@ -114,7 +114,7 @@ class ReportPageTest extends TestCase
             'Busiest Forecast Unit',
             'Equipment Shortage Forecast',
             'Expected Busy Period',
-            'What You Need to Know',
+            'Priority Insights',
         ] as $analyticsOnly) {
             $response->assertDontSee($analyticsOnly, false);
         }

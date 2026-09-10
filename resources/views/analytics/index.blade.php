@@ -3,6 +3,8 @@
 @section('content')
 
 @include('analytics.partials.analytics-styles')
+@include('analytics.partials.card-interactions')
+@include('analytics.partials.chart-tooltip')
 
 @php
     /* Filters carry across the sub-navigation so switching tab keeps context. */
@@ -13,11 +15,11 @@
     ]);
 @endphp
 
-<section class="page-heading">
+<section class="page-heading analytics-heading">
     <div>
         <p class="eyebrow">Borrowing insights</p>
         <h1>Analytics</h1>
-        <p>Understand borrowing activity, equipment usage, returns, and future demand.</p>
+        <p>Understand borrowing activity, equipment usage, returns, and planning signals at a glance.</p>
     </div>
 </section>
 
@@ -42,7 +44,9 @@
             <input type="hidden" name="section" value="{{ $section }}">
 
             <label for="analytics-period">
-                Reporting period
+                <span class="analytics-filter-label">
+                    Reporting period
+                </span>
                 <select id="analytics-period" name="academic_period" onchange="this.form.submit()">
                     <option value="week" @selected($periodSelection === 'week')>This week</option>
                     <option value="month" @selected($periodSelection === 'month')>This month</option>
@@ -52,7 +56,9 @@
             </label>
 
             <label for="analytics-group">
-                Borrower group
+                <span class="analytics-filter-label">
+                    Borrower group
+                </span>
                 <select id="analytics-group" name="group" onchange="this.form.submit()">
                     <option value="all" @selected($selectedDivision === 'all')>All groups</option>
                     @foreach($divisions as $code => $label)
@@ -62,7 +68,9 @@
             </label>
 
             <label for="analytics-unit">
-                Unit
+                <span class="analytics-filter-label">
+                    Unit
+                </span>
                 <select id="analytics-unit" name="unit" onchange="this.form.submit()">
                     <option value="all" @selected($selectedUnit === 'all')>All units</option>
                     @foreach($selectableUnits as $unitName)

@@ -224,18 +224,131 @@
 @unless($isBorrower)
 @php
     /*
-     * Open Cases counts overdue, returned-late and property matters. Property
-     * is named only when there is one, so the caption stays short.
-     */
-    $openCaseCaption = $currentlyOverdueCases->count().' overdue &middot; '
-        .$returnedLateCases->count().' late return'
-        .($openIncidents->count() ? ' &middot; '.$openIncidents->count().' property' : '');
-
-    /*
-     * The KPI row and the tab row are two ways into the same ?view= values.
-     * Nothing here changes which records a view returns.
+     | The summary row and the tab row answer two different questions.
+     |
+     | The tabs are the working queues: Head Review, Billing, Restrictions are
+     | places to go and their counts belong on them. The cards above are the
+     | state of accountability as a whole, so none of them repeats a tab.
+     |
+     | Nothing here queries. Every figure is a re-read of collections the
+     | controller already loaded.
      */
     $accountabilityView = $isHead ? $headView : $officerView;
+
+    /*
+     | OPEN ACCOUNTABILITIES
+     |
+     | Counts cases, not their consequences. A billing and a restriction are
+     | things a case produces, so including them would count one matter two or
+     | three times; a case that has been billed is still its own overdue case
+     | and is counted once, there. Violations already exclude any whose custody
+     | carries an open incident, so a single custody is never counted twice.
+     */
+    $incidentCustodyIds = $openIncidents
+        ->pluck('custody_transaction_id')
+        ->filter()
+        ->map(fn ($id): int => (int) $id);
+
+    /*
+     | An overdue case and a property incident raised against the same custody
+     | are one accountability matter, not two, so the overdue side is dropped
+     | where the incident already stands for it.
+     */
+    $openAccountabilities = $openIncidents->count()
+        + $openOverdueCases->reject(
+            fn ($case): bool => $case->custody_transaction_id !== null
+                && $incidentCustodyIds->contains((int) $case->custody_transaction_id)
+        )->count();
+
+    /*
+     | OUTSTANDING BALANCE
+     |
+     | What is genuinely still owed. A billing carries its penalties as lines,
+     | so summing billings counts each obligation once - adding the penalties
+     | or the overdue-case fees separately would count the same money twice.
+     | Settled, waived and void billings are excluded outright, and a partly
+     | paid billing contributes only what its verified payments have not yet
+     | covered. Only a VERIFIED payment reduces the balance; one still awaiting
+     | verification has not settled anything.
+     */
+    $outstandingBalance = $billings
+        ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
+        ->sum(function ($billing): float {
+            $verified = $billing->payments
+                ->where('status', 'VERIFIED')
+                ->sum(fn ($payment): float => (float) $payment->amount);
+
+            return max(0, (float) $billing->total_amount - $verified);
+        });
+
+    /*
+     | RESOLVED THIS PERIOD
+     |
+     | This page carries no reporting-period control, so rather than invent one
+     | the card reads the calendar month it is being viewed in and says so on
+     | the card. resolvedHistory() already carries a real resolved_at for every
+     | row: a verified payment date for a settled billing, otherwise the date
+     | the record reached its final state.
+     */
+    $resolvedPeriodStart = now()->subDays(30)->startOfDay();
+    $resolvedPeriodLabel = 'the last 30 days';
+
+    $resolvedThisPeriod = $resolvedHistory
+        ->filter(fn (array $row): bool => $row['resolved_at'] !== null
+            && \Illuminate\Support\Carbon::parse($row['resolved_at'])->greaterThanOrEqualTo($resolvedPeriodStart))
+        ->count();
+
+    /*
+     | Where each card goes. The first three open the Active Cases queue; the
+     | two that describe a subset of it carry a focus hint the queue's own
+     | client-side status filter reads, so the reader lands on the rows the
+     | number was counted from. The hint narrows what is already on the page
+     | and never changes which records the view returned.
+     */
+    /*
+     | The four summary cards read across the workflow; the tabs below navigate
+     | it. They deliberately do not share figures - a card that repeated a tab
+     | count would be telling the reader something the tab already says.
+     */
+    $summaryCards = [
+        [
+            'tone' => 'open',
+            'icon' => 'requests',
+            'label' => 'Open Accountability Cases',
+            'value' => $openAccountabilities,
+            'note' => 'Unresolved cases',
+            'meta' => 'Counted once per matter',
+            'href' => route('accountability.index', ['view' => $isHead ? 'cases' : 'all']),
+        ],
+        [
+            'tone' => 'overdue',
+            'icon' => 'warning',
+            'label' => 'Currently Overdue',
+            'value' => $currentlyOverdueCases->count(),
+            'note' => 'Awaiting return',
+            'meta' => 'Not yet returned, as of today',
+            'href' => route('accountability.index', ['view' => $isHead ? 'cases' : 'overdue', 'focus' => 'overdue']),
+        ],
+        [
+            'tone' => 'balance',
+            'icon' => 'coins',
+            'label' => 'Outstanding Balance',
+            'value' => 'PHP '.number_format($outstandingBalance, 2),
+            'note' => 'Unpaid obligations',
+            'meta' => 'Not covered by a verified payment',
+            'href' => route('accountability.index', ['view' => 'billings']),
+        ],
+        [
+            'tone' => 'resolved',
+            'icon' => 'approval',
+            'label' => 'Resolved This Period',
+            'value' => $resolvedThisPeriod,
+            'note' => 'Cleared cases',
+            'meta' => 'Closed during '.$resolvedPeriodLabel,
+            'href' => route('accountability.index', ['view' => 'resolved']),
+        ],
+    ];
+
     $accountabilityTabs = $isHead
         ? [
             ['view' => 'cases', 'label' => 'Active Cases', 'count' => $openCaseCount],
@@ -254,101 +367,24 @@
         ];
 @endphp
 
-<section
-    class="stat-grid dashboard-stat-grid accountability-kpi-grid"
-    aria-label="Accountability overview"
->
-    @if($isHead)
+<section class="accountability-overview" aria-label="Accountability summary">
+    @foreach($summaryCards as $card)
         <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $headView === 'head_review' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'head_review']) }}"
-            aria-current="{{ $headView === 'head_review' ? 'page' : 'false' }}"
+            class="accountability-overview-card tone-{{ $card['tone'] }}"
+            href="{{ $card['href'] }}"
+            aria-label="{{ $card['label'] }}: {{ $card['value'] }}. {{ $card['note'] }}"
         >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
-            <strong class="kpi-value">{{ $headReviewCount }}</strong>
-            <span class="kpi-label">Needs Head Review</span>
-            <small>Awaiting decision</small>
+            <span class="accountability-overview-icon" aria-hidden="true"><x-icon :name="$card['icon']" size="22" /></span>
+            <span class="accountability-overview-label">{{ $card['label'] }}</span>
+            <strong class="accountability-overview-value">{{ $card['value'] }}</strong>
+            <span class="accountability-overview-note">{{ $card['note'] }}</span>
+            <x-icon name="chevron-right" size="15" class="accountability-overview-arrow" />
         </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-kpi-card {{ $headView === 'cases' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'cases']) }}"
-            aria-current="{{ $headView === 'cases' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="custody" size="18" /></span>
-            <strong class="kpi-value">{{ $openCaseCount }}</strong>
-            <span class="kpi-label">Open Cases</span>
-            <small>{!! $openCaseCaption !!}</small>
-        </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-success accountability-kpi-card {{ $headView === 'billings' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'billings']) }}"
-            aria-current="{{ $headView === 'billings' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
-            <strong class="kpi-value">{{ $openBillings->count() }}</strong>
-            <span class="kpi-label">Open Billings</span>
-            <small>Awaiting payment</small>
-        </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-restriction accountability-kpi-card {{ $headView === 'restrictions' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'restrictions']) }}"
-            aria-current="{{ $headView === 'restrictions' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
-            <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
-            <span class="kpi-label">Active Restrictions</span>
-            <small>Borrowing restricted</small>
-        </a>
-    @else
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-danger accountability-kpi-card {{ $officerView === 'overdue' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'overdue']) }}"
-            aria-current="{{ $officerView === 'overdue' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="calendar" size="18" /></span>
-            <strong class="kpi-value">{{ $openOverdueCases->count() }}</strong>
-            <span class="kpi-label">Overdue / Late Returns</span>
-            <small>{{ $currentlyOverdueCases->count() }} outstanding &middot; {{ $returnedLateCases->count() }} returned late</small>
-        </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $officerView === 'property' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'property']) }}"
-            aria-current="{{ $officerView === 'property' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="accountability" size="18" /></span>
-            <strong class="kpi-value">{{ $openIncidents->count() }}</strong>
-            <span class="kpi-label">Property Cases</span>
-            <small>Findings and Head follow-up</small>
-        </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-info accountability-kpi-card {{ $officerView === 'billings' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'billings']) }}"
-            aria-current="{{ $officerView === 'billings' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="requests" size="18" /></span>
-            <strong class="kpi-value">{{ $openBillings->count() }}</strong>
-            <span class="kpi-label">Open Billings</span>
-            <small>Awaiting Cashier payment</small>
-        </a>
-        <a
-            class="card stat-card kpi-card dashboard-kpi-card kpi-accent-warning accountability-kpi-card {{ $officerView === 'restrictions' ? 'is-active' : '' }}"
-            href="{{ route('accountability.index', ['view' => 'restrictions']) }}"
-            aria-current="{{ $officerView === 'restrictions' ? 'page' : 'false' }}"
-        >
-            <span class="kpi-icon" aria-hidden="true"><x-icon name="lock" size="18" /></span>
-            <strong class="kpi-value">{{ $activeRestrictions->count() }}</strong>
-            <span class="kpi-label">Active Restrictions</span>
-            <small>Borrowers currently blocked</small>
-        </a>
-    @endif
+    @endforeach
 </section>
 
 @php
-    /*
-     * One icon per destination. The counts these tabs used to carry are the
-     * same four figures the KPI row above already states, so the tab keeps
-     * only what the KPI row does not say: where it goes.
-     */
+    /* One icon per destination. */
     $accountabilityTabIcons = [
         'all' => 'clipboard-check',
         'cases' => 'plus-circle',
@@ -642,14 +678,17 @@
                                 />
                             </td>
                             <td>{{ $overdue->custody->due_at->format('d M Y') }}</td>
-                            <td>{{ $assessment['rate'] === null ? 'Not determined' : 'PHP '.number_format($assessment['amount'], 2) }}</td>
+                            <td>
+                                {{ $assessment['rate'] === null ? 'Not determined' : 'PHP '.number_format($assessment['amount'], 2) }}
+                                <small>{{ $assessment['is_estimate'] ? 'Estimated Fee So Far' : 'Final Late Return Fee' }}</small>
+                            </td>
                             <td>{{ $assessment['rate'] === null ? 'Not set' : 'PHP '.number_format($assessment['rate'], 2).'/day' }}</td>
                             <td class="is-numeric">{{ $assessment['late_days'] }}</td>
                             <td>
                                 @if($isOfficer && $forOfficerConfirmation)
                                     <form method="post" action="{{ route('overdue.confirm-late-return', $overdue) }}">
                                         @csrf
-                                        <button class="button primary ui-pressable accountability-row-action">Confirm</button>
+                                        <button class="button primary ui-pressable accountability-row-action">Confirm Late Return</button>
                                     </form>
                                 @elseif($headCanDecide)
                                     <span class="accountability-row-note">Decide below</span>
@@ -666,8 +705,11 @@
                                     <div class="accountability-detail-panel is-warning">
                                         <x-icon name="warning" size="17" />
                                         <div>
-                                            <strong>Awaiting borrower return.</strong>
-                                            <p>The fee shown is only an estimate and may increase for each additional late day.</p>
+                                            <strong>Still overdue &mdash; figures are an estimate.</strong>
+                                            <p>
+                                                Awaiting borrower return. The fee shown may increase
+                                                for each additional late day.
+                                            </p>
                                             <small>A final Late Return Fee Form cannot be issued yet.</small>
                                         </div>
                                     </div>
@@ -683,7 +725,11 @@
                                             @if($overdue->correction_remarks)
                                                 <small>Returned for correction: {{ $overdue->correction_remarks }}</small>
                                             @else
-                                                <small>{{ $fromLaundry ? 'Laundry received' : 'Returned' }} {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}.</small>
+                                                <small>
+                                                    {{ $fromLaundry ? 'Laundry Received' : 'Actual Return' }}:
+                                                    {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}
+                                                    &middot; Late Days: {{ $assessment['late_days'] }}
+                                                </small>
                                             @endif
                                         </div>
                                     </div>

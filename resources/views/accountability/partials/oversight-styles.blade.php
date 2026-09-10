@@ -436,6 +436,15 @@ html[data-theme="dark"] .kpi-accent-restriction {
     background: currentColor;
 }
 
+/* The qualifier sits under the amount it belongs to, not beside it. */
+.accountability-case-row > td > small {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.3;
+}
+
 .accountability-row-none { color: var(--text-soft); }
 .accountability-row-note { color: var(--text-muted); font-size: 11px; font-weight: 700; }
 .accountability-row-action { min-height: 30px; padding: 0 14px; font-size: 11.5px; }
@@ -548,5 +557,211 @@ html[data-theme="dark"] .kpi-accent-restriction {
 
 @media (prefers-reduced-motion: reduce) {
     .accountability-filter-button { transition: none; }
+}
+
+/* ========================================================================
+   Accountability overview row.
+
+   Four soft-tinted cards, each stacked: a round icon tile, the name of the
+   reading, the figure, then one line of context. The tint carries the tone,
+   so nothing needs a border rule or an arrow.
+
+   Named -overview rather than -summary because public/css/app.css already
+   owns .accountability-summary for an older four-cell strip, and its
+   descendant selectors would win over these class-level rules.
+   ======================================================================== */
+
+.accountability-overview {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.accountability-overview-card {
+    --tone: #1769e0;
+    --tone-tile: rgba(23, 105, 224, .14);
+    --tone-fill: #eaf1fd;
+
+    position: relative;
+    display: grid;
+    gap: 0;
+    align-content: start;
+    min-width: 0;
+    padding: 18px 20px 20px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    /* One flat, light tint across the whole card rather than a fading wash. */
+    background: var(--tone-fill);
+    color: inherit;
+    text-decoration: none;
+    transition: border-color var(--motion) ease, box-shadow var(--motion) ease, transform var(--motion) ease;
+}
+
+/*
+| Each card opens the queue its figure was counted from. The tone carries the
+| hover so the card that lifts is unmistakably the one under the cursor.
+*/
+.accountability-overview-card:hover {
+    border-color: var(--tone);
+    box-shadow: var(--shadow);
+    transform: translateY(-1px);
+}
+
+.accountability-overview-card:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
+
+/* The chevron is affordance only; the whole card is the target. */
+.accountability-overview-arrow {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    color: var(--text-soft);
+    transition: color var(--motion) ease, transform var(--motion) ease;
+}
+
+.accountability-overview-card:hover .accountability-overview-arrow {
+    color: var(--tone);
+    transform: translateX(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .accountability-overview-card,
+    .accountability-overview-arrow { transition: none; }
+    .accountability-overview-card:hover { transform: none; }
+    .accountability-overview-card:hover .accountability-overview-arrow { transform: none; }
+}
+
+.accountability-overview-icon {
+    display: inline-grid;
+    width: 52px;
+    height: 52px;
+    place-items: center;
+    margin-bottom: 14px;
+    border-radius: 50%;
+    color: var(--tone);
+    background: var(--tone-tile);
+}
+
+.accountability-overview-label {
+    color: var(--heading);
+    font-size: 14.5px;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.accountability-overview-value {
+    margin-top: 6px;
+    color: var(--heading);
+    font-size: 31px;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+
+.accountability-overview-note {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+/* Tones ------------------------------------------------------------------ */
+.accountability-overview-card.tone-open {
+    --tone: #2563eb;
+    --tone-tile: rgba(37, 99, 235, .13);
+    --tone-fill: #e9f1fd;
+}
+
+.accountability-overview-card.tone-overdue {
+    --tone: #dc2626;
+    --tone-tile: rgba(220, 38, 38, .12);
+    --tone-fill: #fdecec;
+}
+
+.accountability-overview-card.tone-balance {
+    --tone: #d97706;
+    --tone-tile: rgba(217, 119, 6, .14);
+    --tone-fill: #fdf3e2;
+}
+
+.accountability-overview-card.tone-resolved {
+    --tone: #16a34a;
+    --tone-tile: rgba(22, 163, 74, .13);
+    --tone-fill: #e8f7ee;
+}
+
+html[data-theme="dark"] .accountability-overview-card.tone-open { --tone: #6aa6f5; --tone-fill: #141c33; }
+html[data-theme="dark"] .accountability-overview-card.tone-overdue { --tone: #f08d82; --tone-fill: #2a1618; }
+html[data-theme="dark"] .accountability-overview-card.tone-balance { --tone: #e0b354; --tone-fill: #291f11; }
+html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5fc6a8; --tone-fill: #10261d; }
+
+/* A peso amount is a longer string than a case count, so it takes less size. */
+.accountability-overview-card.tone-balance .accountability-overview-value { font-size: 27px; }
+
+/* ========================================================================
+   Workflow tabs.
+
+   One white strip holding five evenly-spread destinations. The selected one
+   is a filled blue pill with a deeper bar along its foot, so the choice is
+   readable at a glance without any tab shouting a number.
+   ======================================================================== */
+
+.accountability-tabs {
+    gap: 4px;
+    padding: 6px;
+    border-color: var(--border);
+    border-radius: 14px;
+    background: var(--surface-elevated);
+}
+
+.accountability-tab {
+    position: relative;
+    flex: 1 1 0;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0 10px;
+    border-radius: 10px;
+    color: var(--heading);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.accountability-tab .ui-icon { color: var(--text-soft); }
+
+.accountability-tab:hover:not(.is-active) { background: var(--surface-hover); }
+
+.accountability-tab.is-active {
+    color: #fff;
+    background: #1d6ff2;
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.accountability-tab.is-active .ui-icon { color: #fff; }
+
+/* The bar sits along the foot of the pill, not under the whole strip. */
+.accountability-tab.is-active::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 3px;
+    border-radius: 0 0 10px 10px;
+    background: #1550c4;
+}
+
+/* Responsive ------------------------------------------------------------- */
+@media (max-width: 1180px) {
+    .accountability-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+    .accountability-tab { flex: 0 0 auto; justify-content: flex-start; }
+}
+
+@media (max-width: 620px) {
+    .accountability-overview { grid-template-columns: minmax(0, 1fr); }
+    .accountability-overview-card { padding: 16px 18px 18px; }
+    .accountability-overview-icon { width: 46px; height: 46px; margin-bottom: 12px; }
+    .accountability-overview-value { font-size: 27px; }
 }
 </style>

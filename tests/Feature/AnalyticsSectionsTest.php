@@ -100,7 +100,7 @@ class AnalyticsSectionsTest extends TestCase
         $this->actingAs($this->spmuHead())
             ->get(route('analytics.index', ['section' => 'not-a-section']))
             ->assertOk()
-            ->assertSee('What You Need to Know');
+            ->assertSee('Priority Insights');
     }
 
     public function test_overview_shows_the_four_headline_figures(): void
@@ -112,9 +112,9 @@ class AnalyticsSectionsTest extends TestCase
             ->assertOk()
             ->assertSee('Requests')
             ->assertSee('Currently Out')
-            ->assertSee('Need Follow-up')
+            ->assertSee('Currently Overdue')
             ->assertSee('Low Availability')
-            ->assertSee('Borrowing Activity Trend')
+            ->assertSee('Borrowing Demand Trend')
             ->assertSee('Top Borrowing Units');
     }
 
@@ -145,8 +145,8 @@ class AnalyticsSectionsTest extends TestCase
             ->get(route('analytics.index', ['section' => 'equipment', 'academic_period' => 'month']))
             ->assertOk()
             ->assertSee('Most Requested Items')
-            ->assertSee('Actually Released')
-            ->assertSee('No equipment was requested during this period.')
+            ->assertSee('Top Released Items')
+            ->assertSee('No requested items were recorded during this period.')
             ->assertSee('No equipment was physically released during this period.');
     }
 
@@ -159,7 +159,56 @@ class AnalyticsSectionsTest extends TestCase
             ->assertSee('Returned Late')
             ->assertSee('Currently Overdue')
             ->assertSee('Open Accountability')
-            ->assertSee('No completed returns are available for this period yet.');
+            ->assertSee('No completed returns during this period.');
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Chart tooltips                                                      */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Every chart mark states the figure it draws, and states it from the
+     * values the service produced rather than from anything the browser
+     * works out later.
+     */
+    public function test_chart_marks_carry_their_own_figures(): void
+    {
+        $this->request('ACADEMIC', 'College of Computer Studies', Carbon::create(2026, 4, 5, 10));
+
+        $html = $this->actingAs($this->spmuHead())
+            ->get(route('analytics.index', ['section' => 'overview', 'academic_period' => 'month']))
+            ->assertOk()
+            ->getContent();
+
+        /* One shared controller, not one per partial. */
+        $this->assertStringContainsString('data-chart-tip', $html);
+        $this->assertSame(1, substr_count($html, "const MARK = '[data-chart-tip]'"));
+
+        /* The trend bar names its bucket and the count the bar was drawn from. */
+        $this->assertMatchesRegularExpression('/data-tip-title="[^"]+"/', $html);
+        $this->assertMatchesRegularExpression('/data-tip-rows="\[\[&quot;Request/', $html);
+    }
+
+    public function test_every_section_wires_its_charts_to_the_shared_tooltip(): void
+    {
+        $head = $this->spmuHead();
+
+        foreach (array_keys(AnalyticsController::SECTIONS) as $section) {
+            $html = $this->actingAs($head)
+                ->get(route('analytics.index', ['section' => $section, 'academic_period' => 'month']))
+                ->assertOk()
+                ->getContent();
+
+            /* The controller ships on every tab, even where a tab has no data. */
+            $this->assertStringContainsString('analytics-tip', $html, $section.' is missing the tooltip layer');
+
+            /* A mark that declares a title must also declare its figures. */
+            $this->assertSame(
+                substr_count($html, 'data-tip-title='),
+                substr_count($html, 'data-tip-rows='),
+                $section.' has a tooltip mark without figures'
+            );
+        }
     }
 
     public function test_forecast_withholds_numbers_without_enough_history(): void
@@ -169,9 +218,10 @@ class AnalyticsSectionsTest extends TestCase
         $this->actingAs($this->spmuHead())
             ->get(route('analytics.index', ['section' => 'forecast', 'academic_period' => 'month']))
             ->assertOk()
-            ->assertSee('Not enough historical data to generate a reliable forecast.')
-            ->assertSee('Known scheduled demand')
-            ->assertSee('Forecast Basis')
+            /* The outlook notice moved into Forecast Readiness; the state is still stated. */
+            ->assertSee('Forecast unavailable')
+            ->assertSee('Scheduled Demand')
+            ->assertSee('Forecast Methodology')
             /* A withheld forecast must not still show headline predictions. */
             ->assertDontSee('Expected Requests')
             ->assertDontSee('Busiest Unit');
@@ -193,9 +243,9 @@ class AnalyticsSectionsTest extends TestCase
             ->get(route('analytics.index', ['section' => 'forecast', 'academic_period' => 'month']))
             ->assertOk()
             ->assertSee('Forecasted Demand')
-            ->assertSee('Projected next period')
-            ->assertSee('Borrowing Demand Forecast')
-            ->assertSee('Forecast Basis')
+            ->assertSee('Projected requests for the next period')
+            ->assertSee('Borrowing Demand Outlook')
+            ->assertSee('Forecast Methodology')
             ->assertDontSee('Not enough historical data to generate a reliable forecast.');
     }
 

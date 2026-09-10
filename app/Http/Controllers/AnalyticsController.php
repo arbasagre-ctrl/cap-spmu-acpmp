@@ -29,10 +29,10 @@ class AnalyticsController extends Controller
     /** The sections offered in the sub-navigation, in display order. */
     public const SECTIONS = [
         'overview' => 'Overview',
-        'demand' => 'Demand & Usage',
+        'demand' => 'Demand & Utilization',
         'inventory' => 'Inventory Health',
-        'returns' => 'Borrowing & Returns',
-        'predictive' => 'Predictive Analytics',
+        'returns' => 'Borrowing & Return Performance',
+        'predictive' => 'Forecast & Planning',
     ];
 
     /**
@@ -234,11 +234,20 @@ class AnalyticsController extends Controller
                     $trend,
                     $returns
                 ),
+
+                /*
+                 * Already computed above for insights(). Overview's priority
+                 * rows and period snapshot read the same figures, so handing
+                 * the array to the view costs nothing extra.
+                 */
+                'returns' => $returns,
             ];
         }
 
         if ($section === 'demand') {
             return [
+                /* Headline figures: filed demand, expressed demand, actual release. */
+                'totals' => $analytics->demandTotals($from, $to, $division, $unit),
                 'trend' => $analytics->trend($from, $to, $division, $unit, $periodSelection),
                 'requested' => $analytics->requestedEquipment($from, $to, $division, $unit, 10),
                 'released' => $analytics->equipment($from, $to, $division, $unit, 10),
@@ -254,18 +263,24 @@ class AnalyticsController extends Controller
                 'inventory' => $analytics->inventory($inventory),
                 'lowAvailability' => $analytics->lowAvailability($inventory, 10),
                 'released' => $analytics->equipment($from, $to, $division, $unit, 5),
-                'slowMoving' => $analytics->slowMovingItems($from, $to, 5),
+                /* Quiet items are reported on Demand & Utilization, not here. */
                 'coverage' => $analytics->stockCoverage($inventory, $from, $to),
             ];
         }
 
         if ($section === 'returns') {
+            /*
+             * Borrowing demand belongs to Demand & Utilization, so the borrower
+             * and unit rankings are no longer computed for this tab. What
+             * replaces them answers the tab's own question: how returns,
+             * overdue follow-up and accountability outcomes are performing.
+             */
             return [
-                'groups' => $analytics->borrowerGroups($from, $to, $division, $unit),
-                'units' => $analytics->unitRankings($from, $to, $division, $unit),
                 'returns' => $analytics->returns($from, $to, $division, $unit),
-                'borrowers' => $analytics->frequentBorrowers($from, $to, $division, $unit),
-                'lateBorrowers' => $analytics->lateReturnBorrowers($from, $to, $division, $unit),
+                'returnTrend' => $analytics->returnTrend($from, $to, $division, $unit, $periodSelection),
+                'lifecycle' => $analytics->lifecycle($from, $to, $division, $unit),
+                'currentOverdue' => $analytics->currentOverdue($division, $unit),
+                'returnConditions' => $analytics->returnConditions($from, $to, $division, $unit),
                 'incidents' => $analytics->incidentSummary($from, $to, $division, $unit),
             ];
         }
@@ -276,6 +291,19 @@ class AnalyticsController extends Controller
         return [
             'forecastFrom' => $forecastFrom,
             'forecastTo' => $forecastTo,
+            /*
+             * Known scheduled demand: requests already filed for the period the
+             * forecast covers. These are records that exist, not a projection,
+             * so they are fetched and reported apart from anything the weighted
+             * average produces and are never merged with it.
+             */
+            'scheduled' => [
+                'requests' => $analytics->requestScope($forecastFrom, $forecastTo, $division, $unit)
+                    ->count('borrowing_requests.id'),
+                'divisions' => $analytics->borrowerGroups($forecastFrom, $forecastTo, $division, $unit),
+                'units' => $analytics->unitRankings($forecastFrom, $forecastTo, $division, $unit),
+            ],
+
             'demand' => $forecasts->demand($analytics, $from, $to, $division, $unit),
             'divisionForecast' => $forecasts->divisionDemand($analytics, $from, $to),
             'unitForecast' => $forecasts->unitDemand($analytics, $from, $to),

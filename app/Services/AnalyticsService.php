@@ -517,6 +517,70 @@ class AnalyticsService
     }
 
     /**
+     * The four headline figures for Demand & Utilization.
+     *
+     * Demand and utilisation are kept apart here as they are everywhere else
+     * in this class. Requests filed and requested quantity describe what was
+     * asked for; released quantity describes what physically left the store.
+     * They are never added together and never substituted for one another.
+     *
+     * Four scalar aggregates against the scope the rest of the tab uses, so
+     * the KPI row costs four counted queries and never walks a result set.
+     *
+     * @return array{
+     *     requests:int, requested_quantity:float, released_quantity:float, active_units:int
+     * }
+     */
+    public function demandTotals(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $requests = (clone $this->requestScope($from, $to, $division, $unit))
+            ->count('borrowing_requests.id');
+
+        /*
+         * Distinct units that actually filed something. An office that exists
+         * in the organisation but filed nothing this period is not active, so
+         * the count comes from the request versions rather than the org table.
+         */
+        $activeUnits = (clone $this->requestScope($from, $to, $division, $unit))
+            ->whereNotNull('request_versions.office_unit')
+            ->where('request_versions.office_unit', '!=', '')
+            ->distinct()
+            ->count('request_versions.office_unit');
+
+        /* Expressed demand: what the request items asked for. */
+        $requestedQuantity = (float) DB::table('request_items')
+            ->whereIn(
+                'request_items.request_version_id',
+                $this->requestScope($from, $to, $division, $unit)->select('request_versions.id')
+            )
+            ->sum('request_items.requested_quantity');
+
+        /*
+         * Actual utilisation: the quantity recorded at physical release. Not
+         * the approved quantity, and not the requested quantity.
+         */
+        $releasedQuantity = (float) DB::table('custody_lines')
+            ->whereIn(
+                'custody_lines.custody_transaction_id',
+                $this->custodyScope($from, $to, $division, $unit)
+                    ->whereNotNull('released_at')
+                    ->select('id')
+            )
+            ->sum('custody_lines.actual_released_quantity');
+
+        return [
+            'requests' => $requests,
+            'requested_quantity' => $requestedQuantity + 0,
+            'released_quantity' => $releasedQuantity + 0,
+            'active_units' => $activeUnits,
+        ];
+    }
+
+    /**
      * The equipment a single organisational unit asks for most.
      *
      * Counted the same way as requestedEquipment(): one per request the item
@@ -819,33 +883,90 @@ class AnalyticsService
         );
 
         $totals = [
+            'serviceable' => 0.0,
             'available' => 0.0,
             'allocated' => 0.0,
             'on_custody' => 0.0,
             'maintenance' => 0.0,
             'problem' => 0.0,
+            /*
+             * Held by an open incident. Kept apart from `problem`, which also
+             * carries lost, stolen and destroyed: only this one is subtracted
+             * from current availability, so only this one belongs in a
+             * composition of serviceable stock.
+             */
+            'incident' => 0.0,
             'laundry' => 0.0,
         ];
+
+        /*
+         * Per-item availability, read off the balances already fetched above.
+         * No further query: the ranking is a second pass over the same rows the
+         * totals are summed from.
+         */
+        $availability = [];
 
         foreach ($items as $item) {
             $balance = $balances[$item->id] ?? [];
 
+            $totals['serviceable'] += (float) ($balance['serviceable_total'] ?? 0);
             $totals['available'] += (float) ($balance['current_available'] ?? 0);
-            $totals['allocated'] += (float) ($balance['allocated'] ?? 0) + (float) ($balance['reserved'] ?? 0);
+
+            /*
+             * allocated and reserved are the same units read over two windows:
+             * allocated is the allocation total inside the window passed in,
+             * reserved is the all-time total. This method asks for a window of
+             * plus and minus ten years, so the two are the same number and
+             * adding them counted every reserved unit twice. The rest of the
+             * codebase reads `allocated ?? reserved`, one or the other, and
+             * this now follows it.
+             */
+            $totals['allocated'] += (float) ($balance['reserved'] ?? 0);
+
             $totals['on_custody'] += (float) ($balance['borrowed'] ?? 0);
             $totals['maintenance'] += (float) ($balance['damaged_maintenance'] ?? 0);
             $totals['laundry'] += (float) ($balance['laundry'] ?? 0);
+            $totals['incident'] += (float) ($balance['incident'] ?? 0);
             $totals['problem'] += (float) ($balance['lost'] ?? 0)
                 + (float) ($balance['stolen'] ?? 0)
                 + (float) ($balance['destroyed'] ?? 0)
                 + (float) ($balance['incident'] ?? 0);
+
+            $stock = (float) ($balance['serviceable_total'] ?? 0);
+
+            /* Nothing serviceable to be a share of. */
+            if (! $item->borrowable || $stock <= 0) {
+                continue;
+            }
+
+            $usable = (float) ($balance['current_available'] ?? 0);
+            $share = $usable / $stock;
+
+            $availability[] = [
+                'item_id' => $item->id,
+                'name' => $item->unique_description,
+                'available' => $usable + 0,
+                'stock' => $stock + 0,
+                'on_custody' => (float) ($balance['borrowed'] ?? 0) + 0,
+                'laundry' => (float) ($balance['laundry'] ?? 0) + 0,
+                'incident' => (float) ($balance['incident'] ?? 0) + 0,
+                'share' => (int) round($share * 100),
+                /* The existing threshold, not a new one. */
+                'low' => $share <= self::LOW_AVAILABILITY_RATIO,
+                'status' => $usable <= 0 ? 'Unavailable' : ($share <= self::LOW_AVAILABILITY_RATIO ? 'Limited' : 'Healthy'),
+            ];
         }
+
+        /* Health first: the tightest stock is the row worth reading. */
+        usort($availability, fn (array $a, array $b): int => $a['share'] <=> $b['share']);
 
         $totals = array_map(fn (float $value): float => $value + 0, $totals);
 
         return [
             'item_count' => $items->count(),
             'totals' => $totals,
+            'availability' => $availability,
+            'threshold' => self::LOW_AVAILABILITY_RATIO,
             'summary' => $items->isEmpty()
                 ? 'No active inventory items are recorded yet.'
                 : ($totals['problem'] > 0 || $totals['maintenance'] > 0
@@ -1360,6 +1481,201 @@ class AnalyticsService
      *
      * @return array<string, mixed>
      */
+    /* ------------------------------------------------------------------ */
+    /* Section F2 - Return performance detail                              */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Completed returns per bucket, split into on-time and late.
+     *
+     * Same population as returns(): custody belonging to requests filed in the
+     * period. Buckets follow the selected period exactly as trend() does, so a
+     * return closed outside the window is not plotted - the card says so.
+     *
+     * ON TIME and LATE are both finished borrowings. Equipment that is still
+     * out is OVERDUE and never appears here; that measure is reported on its
+     * own and the two are never added together.
+     *
+     * @return array<string, mixed>
+     */
+    public function returnTrend(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        string $periodSelection
+    ): array {
+        $closed = $this->custodyScope($from, $to, $division, $unit)
+            ->whereNotNull('released_at')
+            ->whereNotNull('closed_at')
+            ->get(['closed_at', 'due_at']);
+
+        $buckets = [];
+
+        foreach ($this->emptyBuckets($from, $to, $periodSelection) as $key => $bucket) {
+            $buckets[$key] = $bucket + ['on_time' => 0, 'late' => 0];
+        }
+
+        foreach ($closed as $custody) {
+            $key = $this->bucketKey($custody->closed_at, $periodSelection);
+
+            if (! isset($buckets[$key])) {
+                continue;
+            }
+
+            $onTime = $custody->due_at === null
+                || $custody->closed_at->lessThanOrEqualTo($custody->due_at);
+
+            $buckets[$key][$onTime ? 'on_time' : 'late']++;
+        }
+
+        $points = collect($buckets)->values();
+        $highest = (int) max(1, $points->max(fn (array $p): int => $p['on_time'] + $p['late']));
+
+        return [
+            'granularity' => match ($periodSelection) {
+                'week' => 'day',
+                'month' => 'week',
+                default => 'month',
+            },
+            'points' => $points->map(fn (array $p): array => [
+                'label' => $p['label'],
+                'on_time' => $p['on_time'],
+                'late' => $p['late'],
+                /* Both series share one scale so the shapes stay comparable. */
+                'on_time_share' => (int) round($p['on_time'] / $highest * 100),
+                'late_share' => (int) round($p['late'] / $highest * 100),
+            ])->all(),
+            'plotted' => (int) $points->sum(fn (array $p): int => $p['on_time'] + $p['late']),
+            'total' => $closed->count(),
+        ];
+    }
+
+    /**
+     * Where this period's borrowings currently stand.
+     *
+     * Every stage is a status the workflow actually writes, counted over the
+     * requests filed in the selected period, so the strip reads as one
+     * population moving through the process rather than five unrelated totals.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function lifecycle(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $approved = (clone $this->requestScope($from, $to, $division, $unit))
+            ->whereIn('borrowing_requests.status', $this->approvedStatuses())
+            ->count('borrowing_requests.id');
+
+        $preparing = (clone $this->custodyScope($from, $to, $division, $unit))
+            ->where('status', 'PREPARING_RELEASE')
+            ->count();
+
+        $onCustody = (clone $this->custodyScope($from, $to, $division, $unit))
+            ->whereNotNull('released_at')
+            ->whereNull('closed_at')
+            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+            ->count();
+
+        $returned = (clone $this->custodyScope($from, $to, $division, $unit))
+            ->whereNotNull('released_at')
+            ->whereNotNull('closed_at')
+            ->count();
+
+        return [
+            ['key' => 'approved', 'label' => 'Approved', 'value' => $approved, 'note' => 'Cleared for release'],
+            ['key' => 'preparing', 'label' => 'Preparing release', 'value' => $preparing, 'note' => 'Being prepared by SPMU'],
+            ['key' => 'custody', 'label' => 'On custody', 'value' => $onCustody, 'note' => 'Released, not yet returned'],
+            ['key' => 'returned', 'label' => 'Returned', 'value' => $returned, 'note' => 'Physical return recorded'],
+        ];
+    }
+
+    /**
+     * The borrowings that are out past their due date right now.
+     *
+     * Present tense on purpose, and filtered by borrower exactly as the other
+     * current-state figures are: an item released in August and still held in
+     * September is overdue in September. Ordered by the oldest due date, which
+     * is the one needing attention first.
+     *
+     * @return array<string, mixed>
+     */
+    public function currentOverdue(?string $division, ?string $unit, int $limit = 5): array
+    {
+        $rows = $this->currentlyOverdueQuery($division, $unit)
+            ->with(['borrower', 'request'])
+            ->orderBy('due_at')
+            ->limit($limit)
+            ->get();
+
+        $total = $this->currentlyOverdueQuery($division, $unit)->count();
+
+        return [
+            'total' => $total,
+            'shown' => $rows->count(),
+            'cases' => $rows->map(function ($custody): array {
+                /* Whole calendar days after the due date, never negative. */
+                $days = $custody->due_at
+                    ? max(0, (int) $custody->due_at->startOfDay()->diffInDays(now()->startOfDay()))
+                    : null;
+
+                return [
+                    'custody_id' => $custody->id,
+                    'borrower' => (string) ($custody->borrower?->full_name ?? 'Unknown borrower'),
+                    'custody_no' => (string) $custody->custody_no,
+                    'request_no' => (string) ($custody->request?->request_no ?? ''),
+                    'due_at' => $custody->due_at,
+                    'days_overdue' => $days,
+                ];
+            })->all(),
+        ];
+    }
+
+    /**
+     * What condition equipment came back in.
+     *
+     * Read straight from return_lines.condition_code, which is the value the
+     * receiving officer recorded at inspection. Only codes actually present
+     * are listed - a condition nobody recorded is not charted as a zero.
+     *
+     * @return array<string, mixed>
+     */
+    public function returnConditions(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): array {
+        $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
+
+        $rows = DB::table('return_lines')
+            ->join('return_transactions', 'return_transactions.id', '=', 'return_lines.return_transaction_id')
+            ->whereIn('return_transactions.custody_transaction_id', $custodyIds)
+            ->groupBy('return_lines.condition_code')
+            ->select('return_lines.condition_code AS code')
+            ->selectRaw('SUM(return_lines.quantity_received) AS quantity')
+            ->orderByDesc('quantity')
+            ->get();
+
+        $highest = (float) ($rows->max('quantity') ?: 0);
+        $total = (float) $rows->sum('quantity');
+
+        return [
+            'total' => $total + 0,
+            'rows' => $rows->map(fn ($row): array => [
+                'code' => (string) $row->code,
+                'label' => str((string) $row->code)->replace('_', ' ')->title()->toString(),
+                'quantity' => (float) $row->quantity + 0,
+                'share' => $highest > 0 ? (int) round((float) $row->quantity / $highest * 100) : 0,
+                /* FINE is the only code that means nothing went wrong. */
+                'is_fine' => strtoupper((string) $row->code) === 'FINE',
+            ])->all(),
+        ];
+    }
+
     public function stockCoverage(
         InventoryService $inventoryService,
         CarbonInterface $from,

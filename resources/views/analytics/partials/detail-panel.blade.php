@@ -17,8 +17,8 @@
     <a
         class="analytics-detail-scrim"
         href="{{ $closeUrl }}"
-        aria-label="Close detail"
         tabindex="-1"
+        aria-hidden="true"
     ></a>
 
     <section
@@ -158,6 +158,22 @@
 
     const panel = overlay.querySelector('[data-analytics-detail-panel]');
     const close = overlay.querySelector('[data-analytics-detail-close]');
+
+    /*
+     * The page behind the drawer must not scroll: a flick of the wheel over
+     * the scrim should do nothing, not move the dashboard the reader is using
+     * for context. Removing the page scrollbar would shift the layout under
+     * the drawer, so its width is paid back as padding.
+     *
+     * Closing is a navigation, so the next page load clears both.
+     */
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth;
+
+    if (scrollbar > 0) {
+        document.body.style.paddingRight = scrollbar + 'px';
+    }
+
+    document.body.classList.add('analytics-detail-open');
 
     /* Focus moves into the panel so the keyboard follows the reader. */
     (panel.querySelector('h2') || close)?.focus?.();

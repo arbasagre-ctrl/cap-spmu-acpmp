@@ -918,7 +918,7 @@ class LateReturnAccountabilityTest extends TestCase
             ->assertSee('Overdue - Item Not Returned')
             ->assertSee('Estimated Fee So Far')
             ->assertSee('Still overdue', false)
-            ->assertSee('A final fee form can only be issued after the physical return is recorded.')
+            ->assertSee('A final Late Return Fee Form cannot be issued yet.')
             ->assertSee('Awaiting borrower return')
             /* No confirmation or approval control while it is merely overdue. */
             ->assertDontSee('Confirm Late Return')
