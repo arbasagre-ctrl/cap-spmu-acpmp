@@ -5,16 +5,15 @@ namespace App\Http\Controllers;
 use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
 use App\Models\BorrowingRequest;
-use App\Models\OverdueCase;
-use App\Models\Incident;
 use App\Models\BorrowerRestriction;
-use App\Models\BillingStatement;
 use App\Models\CustodyTransaction;
 use App\Models\InventoryItem;
+use App\Models\Incident;
 use App\Models\LaundryJob;
 use App\Models\NotificationDelivery;
 use App\Models\TemporaryDelegation;
 use App\Models\User;
+use App\Services\BorrowerObligationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -39,58 +38,51 @@ class DashboardController extends Controller
         $nextCustodies = collect();
         $activeRequestBars = collect();
         $activeRequestTotal = 0;
-        $borrowerObligationOverview = null;
         $dashboardMode = $workspace;
+        $borrowerObligationOverview = null;
 
         if ($workspace === 'BORROWER') {
             $dashboardMode = 'BORROWER';
 
-            $openRequests = BorrowingRequest::query()
-                ->where('borrower_user_id', $user->id)
-                ->whereNotIn('status', [
-                    RequestStatus::Cancelled,
-                    RequestStatus::Rejected,
-                    RequestStatus::Expired,
-                ])
-                ->whereDoesntHave('custody', fn ($query) => $query->whereNotNull('released_at'))
-                ->count();
-
             $activeBorrowings = CustodyTransaction::query()
                 ->where('borrower_user_id', $user->id)
-                ->where('status', '!=', 'CLOSED')
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
                 ->whereNotNull('released_at')
                 ->count();
 
-            $dueForReturn = CustodyTransaction::query()
-                ->where('borrower_user_id', $user->id)
-                ->where('status', '!=', 'CLOSED')
-                ->whereNotNull('released_at')
-                ->whereNotNull('due_at')
-                ->where('due_at', '<=', now()->addDay()->endOfDay())
-                ->count();
-
-            $requestActions = BorrowingRequest::query()
-                ->where('borrower_user_id', $user->id)
-                ->whereIn('status', [RequestStatus::Draft, RequestStatus::ReturnedForRevision])
-                ->count();
-
-            $pickupActions = CustodyTransaction::query()
+            $upcomingPickup = CustodyTransaction::query()
                 ->where('borrower_user_id', $user->id)
                 ->whereNull('released_at')
                 ->whereNotNull('scheduled_release_at')
                 ->whereNull('pickup_expired_at')
+                ->where(function ($query) {
+                    $query->whereNull('pickup_expires_at')
+                        ->orWhere('pickup_expires_at', '>=', now());
+                })
                 ->count();
 
-            $laundryActions = LaundryJob::query()
-                ->whereHas('custody', fn ($query) => $query->where('borrower_user_id', $user->id))
-                ->where('status', 'FOR_LAUNDRY')
+            $returnsDue = CustodyTransaction::query()
+                ->where('borrower_user_id', $user->id)
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED', 'OVERDUE'])
+                ->whereNotNull('released_at')
+                ->whereNotNull('due_at')
+                ->whereBetween('due_at', [now()->startOfDay(), now()->addDay()->endOfDay()])
                 ->count();
+
+            // Grouped obligation count: one incident/late-return + its linked
+            // billing/restriction is one obligation, and a standalone
+            // administrative restriction is recognized even without an
+            // active CustodyTransaction. This is the same grouping
+            // My Obligations uses, from the one shared implementation, so
+            // the two screens never disagree.
+            $borrowerObligationOverview = app(BorrowerObligationService::class)->overview($user->id);
+            $activeObligations = $borrowerObligationOverview['count'];
 
             $statistics = [
-                'Open Requests' => $openRequests,
                 'Active Borrowings' => $activeBorrowings,
-                'Due for Return' => $dueForReturn,
-                'Needs My Action' => $requestActions + $pickupActions + $laundryActions,
+                'Upcoming Pickup' => $upcomingPickup,
+                'Returns Due' => $returnsDue,
+                'Active Obligations' => $activeObligations,
             ];
 
             $liveBorrowerRequest = static fn ($query) => $query
@@ -109,7 +101,7 @@ class DashboardController extends Controller
             // released/on-custody, laundry in process, etc.) remains visible in
             // Active Requests without being duplicated under "Needs My Action".
             $queue = BorrowingRequest::query()
-                ->with(['currentVersion', 'custody.laundryJob', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
+                ->with(['currentVersion', 'custody.laundryJob'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
                 ->get()
@@ -118,11 +110,11 @@ class DashboardController extends Controller
                     $laundry = $custody?->laundryJob;
 
                     return in_array($record->status, [RequestStatus::Draft, RequestStatus::ReturnedForRevision], true)
+                        || in_array((string) $custody?->status, ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'], true)
                         || $laundry?->status === 'FOR_LAUNDRY'
                         || (
                             $custody?->scheduled_release_at !== null
                             && $custody?->released_at === null
-                            && $custody?->pickup_expired_at === null
                         );
                 })
                 ->sort(function (BorrowingRequest $left, BorrowingRequest $right): int {
@@ -132,10 +124,15 @@ class DashboardController extends Controller
 
                         return match (true) {
                             $record->status === RequestStatus::ReturnedForRevision => 1,
-                            $record->status === RequestStatus::Draft => 2,
-                            $laundry?->status === 'FOR_LAUNDRY' => 3,
-                            $custody?->scheduled_release_at !== null && $custody?->released_at === null => 4,
-                            default => 5,
+                            in_array((string) $custody?->status, ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'], true) => 2,
+                            $custody?->released_at === null && (
+                                $custody?->pickup_expired_at !== null
+                                || ($custody?->pickup_expires_at !== null && now()->gt($custody->pickup_expires_at))
+                            ) => 3,
+                            $record->status === RequestStatus::Draft => 4,
+                            $laundry?->status === 'FOR_LAUNDRY' => 5,
+                            $custody?->scheduled_release_at !== null && $custody?->released_at === null => 6,
+                            default => 7,
                         };
                     };
 
@@ -174,7 +171,7 @@ class DashboardController extends Controller
             };
 
             $activeBorrowerRequests = BorrowingRequest::query()
-                ->with(['currentVersion', 'custody.laundryJob', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
+                ->with(['currentVersion', 'custody.laundryJob'])
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
                 ->get()
@@ -192,51 +189,6 @@ class DashboardController extends Controller
             $activeRequestTotal = $activeBorrowerRequests->count();
             $activeRequestBars = $activeBorrowerRequests->take(5)->values();
 
-            /*
-             * Persistent borrower accountability summary. Notifications are only
-             * alerts; unresolved obligations stay visible on the dashboard until
-             * SPMU resolves them. Keep this compact and link to My Obligations
-             * rather than duplicating the full case workflow here.
-             */
-            $openBillings = BillingStatement::query()
-                ->where('borrower_user_id', $user->id)
-                ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
-                ->get(['id', 'billing_no', 'status', 'total_amount']);
-
-            $openPropertyCases = Incident::query()
-                ->where('borrower_user_id', $user->id)
-                ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-                ->count();
-
-            $openLateReturns = OverdueCase::query()
-                ->where('borrower_user_id', $user->id)
-                ->where('status', '!=', 'RESOLVED')
-                ->count();
-
-            $activeRestrictions = BorrowerRestriction::query()
-                ->where('borrower_user_id', $user->id)
-                ->where('status', 'ACTIVE')
-                ->where(function ($query): void {
-                    $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
-                })
-                ->count();
-
-            $activeObligationCount = $openPropertyCases + $openLateReturns;
-            $openBillingTotal = (float) $openBillings->sum('total_amount');
-
-            if ($activeObligationCount > 0 || $openBillings->isNotEmpty() || $activeRestrictions > 0) {
-                $borrowerObligationOverview = [
-                    'count' => max($activeObligationCount, $openBillings->count(), $activeRestrictions),
-                    'property_cases' => $openPropertyCases,
-                    'late_returns' => $openLateReturns,
-                    'billings' => $openBillings->count(),
-                    'billing_total' => $openBillingTotal,
-                    'restrictions' => $activeRestrictions,
-                ];
-
-                $statistics['Needs My Action'] += $borrowerObligationOverview['count'];
-            }
-
             // Pickup and return dates are already shown contextually in the
             // Active Requests rows, so the borrower dashboard no longer performs
             // a second schedule query that would duplicate the same records.
@@ -252,31 +204,25 @@ class DashboardController extends Controller
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->count();
 
-            $forPickupScheduling = CustodyTransaction::query()
+            $forRelease = CustodyTransaction::query()
                 ->where('status', 'PREPARING_RELEASE')
-                ->whereNull('scheduled_release_at')
+                ->whereNull('released_at')
                 ->count();
 
-            $readyForRelease = CustodyTransaction::query()
-                ->where('status', 'PREPARING_RELEASE')
-                ->whereNotNull('scheduled_release_at')
-                ->whereNull('pickup_expired_at')
+            $forReturn = CustodyTransaction::query()
+                ->whereIn('status', ['ACTIVE', 'RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'])
+                ->whereNotNull('released_at')
                 ->count();
 
-            $forReturnCheck = CustodyTransaction::query()
-                ->whereIn('status', ['ACTIVE', 'RETURN_PROCESSING', 'OVERDUE'])
-                ->count();
-
-            $laundryOperations = LaundryJob::query()
-                ->where('status', '!=', 'LAUNDRY_COMPLETED')
+            $accountabilityActions = CustodyTransaction::query()
+                ->whereIn('status', ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'])
                 ->count();
 
             $statistics = [
                 'For Verification' => $forVerification,
-                'For Pickup Scheduling' => $forPickupScheduling,
-                'Ready for Release' => $readyForRelease,
-                'For Return Check' => $forReturnCheck,
-                'Laundry Operations' => $laundryOperations,
+                'For Release' => $forRelease,
+                'For Return' => $forReturn,
+                'Accountability Actions' => $accountabilityActions,
             ];
 
             $queue = BorrowingRequest::query()
@@ -307,23 +253,24 @@ class DashboardController extends Controller
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->count();
 
-            $approvedToday = BorrowingRequest::query()
-                ->whereDate('final_approved_at', today())
+            $activeCustodies = CustodyTransaction::query()
+                ->whereNotNull('released_at')
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
                 ->count();
 
-            $activeBorrowings = CustodyTransaction::query()
-                ->whereNotIn('status', ['CLOSED', 'PREPARING_RELEASE'])
+            $openAccountabilityCases = Incident::query()
+                ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
                 ->count();
 
-            $issues = CustodyTransaction::query()
-                ->whereIn('status', ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN', 'RETURN_PROCESSING'])
+            $activeRestrictions = BorrowerRestriction::query()
+                ->where('status', 'ACTIVE')
                 ->count();
 
             $statistics = [
                 'For Approval' => $forApproval,
-                'Approved Today' => $approvedToday,
-                'Active Borrowings' => $activeBorrowings,
-                'Overdue / Issues' => $issues,
+                'Active Custodies' => $activeCustodies,
+                'Open Accountability Cases' => $openAccountabilityCases,
+                'Active Restrictions' => $activeRestrictions,
             ];
 
             $queue = BorrowingRequest::query()
