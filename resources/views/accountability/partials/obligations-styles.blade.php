@@ -46,72 +46,97 @@
     gap: 12px;
 }
 
+/* Universal KPI card: matches Admin/AO/Borrower dashboard and the SPMU
+   accountability summary cards in size, spacing, border and hover rhythm. */
 .ob-summary-card {
-    --ob-accent: var(--border);
-    --ob-tint: var(--surface-subtle);
-    --ob-ink: var(--text-muted);
+    --ob-accent: var(--info);
+    --ob-hover: rgba(23, 105, 224, .045);
+    --ob-tint: #edf5fd;
+    --ob-ink: #1d6fb8;
 
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    position: relative;
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    column-gap: 12px;
+    row-gap: 2px;
     min-width: 0;
-    padding: 14px 16px;
-    background: var(--surface-elevated);
+    min-height: 122px;
+    padding: 16px 18px;
     border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: var(--shadow-sm);
+    border-top: 3px solid var(--ob-accent);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(7, 27, 53, .05);
+    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
 }
 
-.ob-summary-card.is-danger  { --ob-accent:#dc3545; --ob-tint:#fdecee; --ob-ink:#b82938; }
-.ob-summary-card.is-warning { --ob-accent:#d99b16; --ob-tint:#fdf3dd; --ob-ink:#926307; }
-.ob-summary-card.is-info    { --ob-accent:#1769e0; --ob-tint:#e8f1fd; --ob-ink:#1157bd; }
-.ob-summary-card.is-orange  { --ob-accent:#ef7a29; --ob-tint:#fdeee2; --ob-ink:#bd5815; }
+.ob-summary-card.is-danger  { --ob-accent:#dc3545; --ob-hover:rgba(220,53,69,.04); --ob-tint:#fff1ef; --ob-ink:#c4493d; }
+.ob-summary-card.is-warning { --ob-accent:#d99b16; --ob-hover:rgba(217,155,22,.05); --ob-tint:#fff8e9; --ob-ink:#a66a06; }
+.ob-summary-card.is-info    { --ob-accent:#1769e0; --ob-hover:rgba(23,105,224,.045); --ob-tint:#edf5fd; --ob-ink:#1d6fb8; }
+.ob-summary-card.is-orange  { --ob-accent:#ef7a29; --ob-hover:rgba(239,122,41,.05); --ob-tint:#fff3e9; --ob-ink:#bd5815; }
+.ob-summary-card.is-success { --ob-accent:#159447; --ob-hover:rgba(21,148,71,.070); --ob-tint:#eefaf3; --ob-ink:#159447; }
 
-html[data-theme="dark"] .ob-summary-card.is-danger  { --ob-tint:#351b1d; --ob-ink:#ff9b93; }
-html[data-theme="dark"] .ob-summary-card.is-warning { --ob-tint:#332711; --ob-ink:#f3c56a; }
-html[data-theme="dark"] .ob-summary-card.is-info    { --ob-tint:#14293d; --ob-ink:#86c6fb; }
-html[data-theme="dark"] .ob-summary-card.is-orange  { --ob-tint:#33210f; --ob-ink:#f7ad6f; }
+.ob-summary-card:hover {
+    transform: translateY(-1px);
+    background: linear-gradient(var(--ob-hover), var(--ob-hover)), var(--surface);
+    border-color: var(--border-strong);
+    border-top-color: var(--ob-accent);
+    box-shadow: 0 10px 24px rgba(7, 27, 53, .08);
+}
 
 .ob-summary-icon {
+    grid-column: 1;
+    grid-row: 1 / span 3;
     display: grid;
+    width: 44px;
+    height: 44px;
     place-items: center;
-    flex: 0 0 auto;
-    width: 40px;
-    height: 40px;
+    align-self: center;
     color: var(--ob-ink);
     background: var(--ob-tint);
-    border-radius: 10px;
-}
-
-.ob-summary-copy { min-width: 0; }
-
-.ob-summary-value {
-    display: block;
-    color: var(--heading);
-    font-size: 22px;
-    font-weight: 800;
-    line-height: 1;
+    border: 1px solid color-mix(in srgb, var(--ob-accent) 28%, var(--border));
+    border-radius: 50%;
 }
 
 .ob-summary-label {
-    display: block;
-    margin-top: 3px;
-    color: var(--heading);
-    font-size: 12px;
-    font-weight: 750;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 800;
     line-height: 1.25;
+}
+
+.ob-summary-value {
+    grid-column: 2;
+    grid-row: 2;
+    display: block;
+    color: var(--heading);
+    font-size: 25px;
+    font-weight: 800;
+    line-height: 1.15;
 }
 
 .ob-summary-note {
+    grid-column: 2;
+    grid-row: 3;
     display: block;
-    margin-top: 2px;
     color: var(--text-muted);
-    font-size: 10.5px;
-    line-height: 1.25;
+    font-size: 10px;
+    line-height: 1.35;
 }
 
-.ob-summary-card.is-empty {
-    opacity: .78;
+.ob-summary-card.is-empty { opacity: 1; }
+
+html[data-theme="dark"] .ob-summary-card:hover { background: var(--surface-hover); }
+html[data-theme="dark"] .ob-summary-card.is-danger,
+html[data-theme="dark"] .ob-summary-card.is-warning,
+html[data-theme="dark"] .ob-summary-card.is-info,
+html[data-theme="dark"] .ob-summary-card.is-orange,
+html[data-theme="dark"] .ob-summary-card.is-success {
+    --ob-tint: var(--surface-subtle);
 }
 
 /* Current obligations heading ------------------------------------------- */
@@ -455,4 +480,136 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
 
     .ob-detail-grid { grid-template-columns: 1fr; }
 }
+
+/* Borrower summary cards use the same KPI language as the dashboards and
+   AO/Admin accountability summary: white body, colored top accent, tinted icon. */
+.ob-summary-card {
+    border-top:3px solid var(--ob-accent);
+    box-shadow:0 1px 2px rgba(7, 27, 53, .05);
+    transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.ob-summary-card:hover {
+    transform:translateY(-1px);
+    border-color:var(--border-strong);
+    border-top-color:var(--ob-accent);
+    background:linear-gradient(color-mix(in srgb, var(--ob-accent) 7%, transparent), color-mix(in srgb, var(--ob-accent) 7%, transparent)), var(--surface-elevated);
+    box-shadow:0 8px 20px rgba(7, 27, 53, .07);
+}
+.ob-summary-icon {
+    border:1px solid color-mix(in srgb, var(--ob-accent) 28%, transparent);
+    border-radius:8px;
+}
+.ob-summary-card.is-empty { opacity:1; }
+html[data-theme="dark"] .ob-summary-card:hover { background:var(--surface-hover); }
+
+
+/* -----------------------------------------------------------------------
+| My Obligations summary cards — exact dashboard KPI proportions
+| Matches the SPMU Head / Administrator dashboard card dimensions and
+| information hierarchy while remaining non-clickable summary content.
+| ------------------------------------------------------------------------ */
+.ob-summary-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    column-gap: 12px;
+    row-gap: 2px;
+    min-height: 122px;
+    padding: 16px 18px;
+    align-items: initial;
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--ob-accent);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(7, 27, 53, .05);
+}
+
+.ob-summary-copy {
+    display: contents;
+}
+
+.ob-summary-icon {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    display: grid;
+    place-items: center;
+    align-self: center;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    border: 1px solid color-mix(in srgb, var(--ob-accent) 28%, transparent);
+    border-radius: 50%;
+}
+
+.ob-summary-label {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.ob-summary-value {
+    grid-column: 2;
+    grid-row: 2;
+    display: block;
+    margin: 0;
+    color: var(--heading);
+    font-size: 25px;
+    font-weight: 800;
+    line-height: 1.15;
+}
+
+.ob-summary-note {
+    grid-column: 2;
+    grid-row: 3;
+    display: block;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.35;
+}
+
+@media (max-width: 1300px) {
+    .ob-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+    .ob-summary { grid-template-columns: 1fr; }
+}
+
+/* Resolved History disclosure --------------------------------------------
+   Kept out of the way by default so My Obligations stays one clean, active
+   workspace; the borrower's own resolved records remain one click away. */
+.ob-resolved-history-disclosure {
+    margin-top: 4px;
+    padding: 16px 18px;
+    background: var(--surface-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+.ob-resolved-history-disclosure > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    color: var(--heading);
+    font-size: 14px;
+    font-weight: 800;
+    list-style: none;
+}
+
+.ob-resolved-history-disclosure > summary::-webkit-details-marker { display: none; }
+
+.ob-resolved-history-disclosure[open] > summary { margin-bottom: 14px; }
+
+.ob-resolved-history-body { padding-top: 2px; }
+.ob-resolved-history-body > .content-area { margin: 0; }
+
 </style>

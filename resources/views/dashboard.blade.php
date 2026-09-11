@@ -160,30 +160,37 @@
     @endforeach
 </section>
 
-@if($dashboardMode === 'BORROWER' && $borrowerObligationOverview)
+@if($dashboardMode === 'BORROWER' && ! empty($borrowerObligationOverview) && (int) ($borrowerObligationOverview['count'] ?? 0) > 0)
     @php
         $dashboardObligationCount = (int) ($borrowerObligationOverview['count'] ?? 0);
-        $dashboardBillingCount = (int) ($borrowerObligationOverview['billings'] ?? 0);
-        $dashboardBillingTotal = (float) ($borrowerObligationOverview['billing_total'] ?? 0);
+        $dashboardNeedsAction = (int) ($borrowerObligationOverview['needs_action'] ?? 0);
         $dashboardRestrictionCount = (int) ($borrowerObligationOverview['restrictions'] ?? 0);
 
-        $dashboardObligationCopy = match (true) {
-            $dashboardBillingCount > 0 => $dashboardBillingCount === 1
-                ? 'Billing pending'.($dashboardBillingTotal > 0 ? ' · PHP '.number_format($dashboardBillingTotal, 2) : '')
-                : $dashboardBillingCount.' billings pending'.($dashboardBillingTotal > 0 ? ' · PHP '.number_format($dashboardBillingTotal, 2).' total' : ''),
-            ($borrowerObligationOverview['property_cases'] ?? 0) > 0 => 'Property accountability requires resolution.',
-            ($borrowerObligationOverview['late_returns'] ?? 0) > 0 => 'Late-return accountability requires resolution.',
-            default => 'A borrowing restriction requires resolution.',
-        };
+        /*
+         * The eyebrow and message must never make a borrower feel they owe an
+         * action when every current obligation is merely under SPMU
+         * processing - only needs_action drives "Action required".
+         */
+        $dashboardAlertNeedsAction = $dashboardNeedsAction > 0;
+
+        $dashboardObligationCopy = $dashboardAlertNeedsAction
+            ? ($dashboardNeedsAction === 1
+                ? '1 obligation needs your attention.'
+                : $dashboardNeedsAction.' obligations need your attention.')
+            : 'Your accountability matter is currently being processed. No action is required from you at this time.';
+
+        if ($dashboardRestrictionCount > 0) {
+            $dashboardObligationCopy .= ' Borrowing access is currently restricted.';
+        }
     @endphp
 
-    <article class="borrower-dash-card borrower-obligation-card" aria-labelledby="borrower-obligation-title">
+    <article class="borrower-dash-card borrower-obligation-card {{ $dashboardAlertNeedsAction ? '' : 'is-info' }}" aria-labelledby="borrower-obligation-title">
         <div class="borrower-obligation-summary">
-            <span class="borrower-obligation-icon" aria-hidden="true"><x-icon name="warning" size="22" /></span>
+            <span class="borrower-obligation-icon" aria-hidden="true"><x-icon name="{{ $dashboardAlertNeedsAction ? 'warning' : 'information' }}" size="22" /></span>
             <div class="borrower-obligation-copy">
-                <p class="eyebrow">Action required</p>
+                <p class="eyebrow">{{ $dashboardAlertNeedsAction ? 'Action required' : 'Under SPMU processing' }}</p>
                 <h2 id="borrower-obligation-title">{{ $dashboardObligationCount }} outstanding {{ $dashboardObligationCount === 1 ? 'obligation' : 'obligations' }}</h2>
-                <p>{{ $dashboardObligationCopy }}{{ $dashboardRestrictionCount > 0 ? ' Borrowing is restricted until the applicable obligation is resolved.' : '' }}</p>
+                <p>{{ $dashboardObligationCopy }}</p>
             </div>
             <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}">View My Obligations</a>
         </div>

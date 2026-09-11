@@ -107,6 +107,12 @@
 .borrower-active-obligation { display: block; margin-top: 4px; color: var(--warning); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
 @media (max-width: 680px) { .borrower-obligation-summary { grid-template-columns: 40px minmax(0, 1fr); } .borrower-obligation-summary .button { grid-column: 1 / -1; width: 100%; } }
 
+/* Under-processing tone: an obligation exists, but nothing is asked of the
+   borrower right now, so the alert reads as informational, not urgent. */
+.borrower-obligation-card.is-info { border-color: var(--info-border); }
+.borrower-obligation-card.is-info .borrower-obligation-icon { background: var(--info-bg); color: var(--info); }
+.borrower-obligation-card.is-info .borrower-obligation-copy .eyebrow { color: var(--info); }
+
 /* 3. Active requests table ------------------------------------------------ */
 
 .borrower-active-scroll {

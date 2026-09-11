@@ -17,6 +17,7 @@ use App\Models\Penalty;
 use App\Models\Sanction;
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\BorrowerObligationService;
 use App\Services\LateReturnService;
 use App\Services\CustodyService;
 use App\Services\DocumentService;
@@ -105,82 +106,17 @@ class AccountabilityController extends Controller
      * Outcomes are kept distinct. A settled billing is Paid; a waived or voided
      * one is not, and is never relabelled as such.
      *
+     * Moved to BorrowerObligationService so the borrower dashboard's
+     * resolved_count and this workspace's Resolved History always agree -
+     * both now read the one implementation there.
+     *
      * @param  \Illuminate\Support\Collection<int, BillingStatement>  $billings
      * @param  \Illuminate\Support\Collection<int, OverdueCase>  $overdueCases
      * @return \Illuminate\Support\Collection<int, array<string, mixed>>
      */
     private function resolvedHistory(Collection $billings, Collection $overdueCases): Collection
     {
-        $casesById = $overdueCases->keyBy('id');
-        $billedCaseIds = [];
-
-        $rows = $billings
-            ->whereIn('status', ['SETTLED', 'WAIVED', 'VOID'])
-            ->map(function (BillingStatement $billing) use ($casesById, &$billedCaseIds): array {
-                /* Only a verified payment proves a case was paid. A stored
-                   receipt file on its own never counts as settlement. */
-                $payment = $billing->payments
-                    ->where('status', 'VERIFIED')
-                    ->sortByDesc('verified_at')
-                    ->first();
-
-                $caseId = $billing->lines
-                    ->pluck('penalty.overdue_case_id')
-                    ->filter()
-                    ->first();
-
-                $case = $caseId ? $casesById->get($caseId) : null;
-
-                if ($case) {
-                    $billedCaseIds[] = $case->id;
-                }
-
-                return [
-                    'key' => 'billing-'.$billing->id,
-                    'outcome' => match ($billing->status) {
-                        'SETTLED' => 'Resolved - Paid',
-                        'WAIVED' => 'Waived',
-                        default => 'Void',
-                    },
-                    'tone' => $billing->status === 'SETTLED' ? 'success' : 'neutral',
-                    'borrower' => $billing->borrower,
-                    'reference' => $case?->custody?->custody_no
-                        ?? $case?->custody?->request?->request_no
-                        ?? $billing->billing_no,
-                    'billing' => $billing,
-                    'case' => $case,
-                    'payment' => $billing->status === 'SETTLED' ? $payment : null,
-                    'resolved_at' => $billing->status === 'SETTLED'
-                        ? $payment?->verified_at
-                        : $billing->updated_at,
-                ];
-            })
-            ->values();
-
-        /*
-         * A case can resolve without ever being billed - an on-time return
-         * closing an overdue case, for example - and still belongs in history.
-         */
-        $unbilled = $overdueCases
-            ->where('status', LateReturnService::STATUS_RESOLVED)
-            ->reject(fn (OverdueCase $case): bool => in_array($case->id, $billedCaseIds, true))
-            ->map(fn (OverdueCase $case): array => [
-                'key' => 'case-'.$case->id,
-                'outcome' => 'Resolved - No Charge',
-                'tone' => 'success',
-                'borrower' => $case->borrower,
-                'reference' => $case->custody?->custody_no ?? $case->custody?->request?->request_no ?? '-',
-                'billing' => null,
-                'case' => $case,
-                'payment' => null,
-                'resolved_at' => $case->updated_at,
-            ])
-            ->values();
-
-        return $rows
-            ->concat($unbilled)
-            ->sortByDesc(fn (array $row) => $row['resolved_at'])
-            ->values();
+        return app(BorrowerObligationService::class)->resolvedHistory($billings, $overdueCases);
     }
 
     /**
