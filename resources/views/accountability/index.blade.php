@@ -10,8 +10,22 @@
 
     $activeRestrictions = $restrictions->where('status', 'ACTIVE');
     $openOverdueCases = $overdueCases->whereNotIn('status', ['RESOLVED']);
-    $currentlyOverdueCases = $openOverdueCases->where('status', 'OVERDUE');
-    $returnedLateCases = $openOverdueCases->whereIn('status', ['RETURNED_PENDING_SETTLEMENT', 'BILLED']);
+
+    /* Only an AO-confirmed late-return assessment is waiting on the SPMU Head. */
+    $headReviewOverdueCases = $overdueCases->where(
+        'status',
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL
+    );
+    $currentlyOverdueCases = $openOverdueCases->where(
+        'status',
+        App\Services\LateReturnService::STATUS_OVERDUE
+    );
+    /* Every stage after the physical return counts as returned late. */
+    $returnedLateCases = $openOverdueCases->whereIn('status', [
+        App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION,
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL,
+        App\Services\LateReturnService::STATUS_AWAITING_PAYMENT,
+    ]);
     $openIncidents = $incidents->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
     $openBillings = $billings->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
     $propertyCustodyIds = $openIncidents
@@ -27,33 +41,48 @@
     $headReviewIncidents = $isHead
         ? $openIncidents->whereNotIn('status', ['BILLING_PENDING', 'FOR_BILLING', 'COMPLIANCE_REQUIRED'])
         : collect();
-    $headReviewCount = $pendingViolations->count() + $headReviewIncidents->count();
-    $headView = $isHead ? request('view', $headReviewCount > 0 ? 'head_review' : 'cases') : null;
-    if ($isHead && ! in_array($headView, ['head_review', 'cases', 'billings', 'restrictions'], true)) {
+    $headReviewCount = $pendingViolations->count()
+        + $headReviewIncidents->count()
+        + $headReviewOverdueCases->count();
+    /*
+     * Keep the Accountability workspace simple: broad queues here, detailed
+     * progression inside each case's numbered stepper. Legacy view parameters
+     * are normalized so old links continue to open the correct workspace.
+     */
+    $headView = $isHead ? request('view', 'cases') : null;
+    if ($isHead && in_array($headView, ['head_review', 'billings'], true)) {
+        $headView = 'cases';
+    }
+    if ($isHead && ! in_array($headView, ['cases', 'restrictions', 'resolved'], true)) {
         $headView = 'cases';
     }
 
-    $officerView = $isOfficer ? request('view', 'all') : null;
-    if ($isOfficer && ! in_array($officerView, ['all', 'overdue', 'property', 'billings', 'restrictions'], true)) {
-        $officerView = 'all';
+    $officerView = $isOfficer ? request('view', 'cases') : null;
+    if ($isOfficer && in_array($officerView, ['all', 'property', 'billings'], true)) {
+        $officerView = 'cases';
+    }
+    if ($isOfficer && ! in_array($officerView, ['cases', 'overdue', 'restrictions', 'resolved'], true)) {
+        $officerView = 'cases';
     }
 
     $officerSelectedCount = $isOfficer
         ? match ($officerView) {
             'overdue' => $openOverdueCases->count(),
-            'property' => $openIncidents->count(),
-            'billings' => $openBillings->count(),
             'restrictions' => $activeRestrictions->count(),
-            default => $openOverdueCases->count() + $openIncidents->count() + $openBillings->count() + $activeRestrictions->count(),
+            'cases' => $openOverdueCases->count() + $openIncidents->count() + $openBillings->count(),
+            default => 0,
         }
         : 0;
 
+    /* Resolved history remains a separate destination from all active queues. */
+    $showResolvedHistory = ($isHead && $headView === 'resolved')
+        || ($isOfficer && $officerView === 'resolved');
+
     $officerViewLabel = match ($officerView) {
         'overdue' => 'Overdue / Late Returns',
-        'property' => 'Property Cases',
-        'billings' => 'Open Billings',
         'restrictions' => 'Active Restrictions',
-        default => 'All Matters',
+        'resolved' => 'Resolved History',
+        default => 'Cases',
     };
 
     $openCaseCount = $openOverdueCases->count() + $openIncidents->count();
@@ -312,6 +341,253 @@
 
 @media (max-width: 900px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr 1fr; } }
 @media (max-width: 560px) { .head-case-summary, .head-offense-preview { grid-template-columns:1fr; } }
+
+</style>
+@include('accountability.partials.oversight-styles')
+<style>
+/* Universal accountability visual language --------------------------------
+   Shares its metrics with the dashboard KPI card (.dashboard-kpi-card) and
+   the borrower summary card (.ob-summary-card): 46px icon column, 122px
+   min-height, 12px radius, 3px top accent, 25/11/10px value/label/note
+   type. Keep this the single definition - a second pass here previously
+   re-declared the same rules to layer the accent on top, which just made
+   the source harder to trust as the story of what renders. */
+.accountability-overview {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:12px;
+    margin-bottom:16px;
+}
+.accountability-overview-card {
+    --accountability-card-accent: var(--info);
+    --accountability-card-hover: rgba(23, 105, 224, .035);
+
+    position:relative;
+    display:grid;
+    grid-template-columns:46px minmax(0,1fr);
+    grid-template-rows:auto auto auto;
+    column-gap:12px;
+    row-gap:2px;
+    min-height:122px;
+    padding:16px 18px;
+    border:1px solid var(--border);
+    border-top:3px solid var(--accountability-card-accent);
+    border-radius:12px;
+    background:var(--surface);
+    color:inherit;
+    text-decoration:none;
+    box-shadow:0 1px 2px rgba(7, 27, 53, .05);
+    transition:border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease;
+}
+.accountability-overview-card.tone-open {
+    --accountability-card-accent:var(--info);
+    --accountability-card-hover:rgba(23, 105, 224, .075);
+}
+.accountability-overview-card.tone-overdue {
+    --accountability-card-accent:var(--danger);
+    --accountability-card-hover:rgba(220, 53, 69, .070);
+}
+.accountability-overview-card.tone-balance {
+    --accountability-card-accent:var(--warning);
+    --accountability-card-hover:rgba(217, 155, 22, .085);
+}
+.accountability-overview-card.tone-resolved {
+    --accountability-card-accent:var(--success);
+    --accountability-card-hover:rgba(21, 148, 71, .070);
+}
+.accountability-overview-card:hover,
+.accountability-overview-card:focus-visible {
+    transform:translateY(-1px);
+    background:linear-gradient(var(--accountability-card-hover), var(--accountability-card-hover)), var(--surface);
+    border-color:var(--border-strong);
+    border-top-color:var(--accountability-card-accent);
+    box-shadow:0 10px 24px rgba(7, 27, 53, .08);
+}
+.accountability-overview-card:focus-visible {
+    outline:none;
+    box-shadow:var(--focus-ring), 0 10px 24px rgba(7, 27, 53, .08);
+}
+html[data-theme="dark"] .accountability-overview-card:hover,
+html[data-theme="dark"] .accountability-overview-card:focus-visible {
+    background:var(--surface-hover);
+}
+/* No real destination for this role: same card language, no click affordance. */
+.accountability-overview-card.is-static { cursor:default; }
+.accountability-overview-card.is-static:hover,
+.accountability-overview-card.is-static:focus-visible {
+    transform:none;
+    background:var(--surface);
+    border-color:var(--border);
+    border-top-color:var(--accountability-card-accent);
+    box-shadow:0 1px 2px rgba(7, 27, 53, .05);
+}
+.accountability-overview-icon {
+    grid-column:1;
+    grid-row:1 / span 3;
+    display:grid;
+    width:44px;
+    height:44px;
+    place-items:center;
+    align-self:center;
+    border:1px solid var(--border);
+    border-radius:50%;
+    background:var(--surface-subtle);
+    color:var(--text-secondary);
+}
+.accountability-overview-label {
+    grid-column:2;
+    grid-row:1;
+    align-self:end;
+    color:var(--text-secondary);
+    font-size:11px;
+    font-weight:800;
+}
+.accountability-overview-value {
+    grid-column:2;
+    grid-row:2;
+    color:var(--heading);
+    font-size:25px;
+    line-height:1.15;
+}
+.accountability-overview-note {
+    grid-column:2;
+    grid-row:3;
+    color:var(--text-muted);
+    font-size:10px;
+    line-height:1.35;
+}
+.accountability-overview-arrow {
+    position:absolute;
+    top:14px;
+    right:14px;
+    color:var(--text-soft);
+    transition:opacity .16s ease, transform .16s ease;
+}
+.accountability-overview-card:hover .accountability-overview-arrow,
+.accountability-overview-card:focus-visible .accountability-overview-arrow {
+    opacity:.9;
+    transform:translateX(2px);
+}
+.accountability-overview-card.tone-open .accountability-overview-icon {
+    border-color:#cfe0f3;
+    background:#edf5fd;
+    color:#1d6fb8;
+}
+.accountability-overview-card.tone-overdue .accountability-overview-icon {
+    border-color:#f1c6c2;
+    background:#fff1ef;
+    color:#c4493d;
+}
+.accountability-overview-card.tone-balance .accountability-overview-icon {
+    border-color:#ead5ab;
+    background:#fff8e9;
+    color:#b9770e;
+}
+.accountability-overview-card.tone-resolved .accountability-overview-icon {
+    border-color:#c3e5d0;
+    background:#eefaf3;
+    color:#159447;
+}
+
+/* Tabs are navigation, not primary buttons. */
+.accountability-tabs {
+    display:grid;
+    grid-auto-flow:column;
+    grid-auto-columns:minmax(max-content,1fr);
+    gap:0;
+    margin-bottom:20px;
+    padding:0 8px;
+    overflow-x:auto;
+    border:1px solid var(--border);
+    border-radius:11px;
+    background:var(--surface);
+}
+.accountability-tab {
+    position:relative;
+    display:inline-flex;
+    min-height:48px;
+    align-items:center;
+    justify-content:center;
+    gap:7px;
+    padding:0 14px;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    color:var(--text-secondary);
+    font-size:11px;
+    font-weight:800;
+    text-decoration:none;
+    white-space:nowrap;
+    box-shadow:none;
+}
+.accountability-tab:hover { color:var(--interactive); background:var(--surface-hover); }
+.accountability-tab.is-active {
+    color:var(--interactive);
+    background:transparent;
+    box-shadow:inset 0 -3px 0 var(--interactive);
+}
+.accountability-tab.is-active::after { content:none; }
+
+/* Case identity: make borrower/reference/status scannable instead of one bold line. */
+.accountability-case-ref {
+    align-items:center;
+    gap:5px 0;
+    margin-top:8px;
+    font-size:10.5px;
+}
+.accountability-case-ref > span:not(:last-child)::after {
+    content:'·';
+    margin:0 8px;
+    color:var(--text-soft);
+}
+.accountability-case-ref__borrower strong { color:var(--heading); }
+.accountability-case-ref__restriction {
+    display:inline-flex;
+    align-items:center;
+    min-height:22px;
+    padding:0 8px;
+    border:1px solid #ead5ab;
+    border-radius:999px;
+    background:#fff8e9;
+    color:#8a5a08;
+    font-size:9.5px;
+    font-weight:800;
+}
+.accountability-case-ref > .accountability-case-ref__restriction::after { content:none; }
+
+:root[data-theme="dark"] .accountability-overview-card.tone-open .accountability-overview-icon,
+html[data-theme="dark"] .accountability-overview-card.tone-open .accountability-overview-icon,
+:root[data-theme="dark"] .accountability-overview-card.tone-overdue .accountability-overview-icon,
+html[data-theme="dark"] .accountability-overview-card.tone-overdue .accountability-overview-icon,
+:root[data-theme="dark"] .accountability-overview-card.tone-balance .accountability-overview-icon,
+html[data-theme="dark"] .accountability-overview-card.tone-balance .accountability-overview-icon,
+:root[data-theme="dark"] .accountability-overview-card.tone-resolved .accountability-overview-icon,
+html[data-theme="dark"] .accountability-overview-card.tone-resolved .accountability-overview-icon,
+:root[data-theme="dark"] .accountability-case-ref__restriction,
+html[data-theme="dark"] .accountability-case-ref__restriction {
+    background:var(--surface-subtle);
+}
+
+/* A current action exposes one true CTA. The billing form does not need a
+   second disclosure button repeating the same action name. */
+.accountability-action-body--direct {
+    margin-top:10px;
+    padding-top:12px;
+    border-top:1px solid var(--border);
+}
+.accountability-action-body--direct .button.primary {
+    width:auto;
+    justify-self:start;
+}
+
+@media (max-width:1180px) {
+    .accountability-overview { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width:760px) {
+    .accountability-overview { grid-template-columns:1fr; }
+    .accountability-tabs { grid-auto-columns:max-content; justify-content:start; }
+}
 </style>
 @endonce
 
@@ -323,12 +599,12 @@
             {{ $workspace === 'BORROWER'
                 ? 'See unresolved obligations that affect your borrowing eligibility and what you need to resolve next.'
                 : ($isHead
-                    ? 'Focus on matters that need Head-level oversight or a formal administrative decision.'
-                    : 'Process return/accountability follow-up and record confirmed CSPC Cashier payment evidence. Head/Admin decisions and Billing Statement issuance remain under Accountability Oversight.') }}
+                    ? 'Review accountability cases, decisions, billing, and restrictions.'
+                    : 'Process returns, accountability follow-up, and confirmed Cashier payments.') }}
         </p>
-        @if($isOfficer && $officerView !== 'all')
+        @if($isOfficer && $officerView !== 'cases')
             <div class="actions officer-view-actions">
-                <a class="button secondary small" href="{{ route('accountability.index') }}">View All Accountability Matters</a>
+                <a class="button secondary small" href="{{ route('accountability.index') }}">View Accountability Cases</a>
             </div>
         @endif
     </div>
@@ -339,9 +615,9 @@
     /*
      | The summary row and the tab row answer two different questions.
      |
-     | The tabs are the working queues: Head Review, Billing, Restrictions are
-     | places to go and their counts belong on them. The cards above are the
-     | state of accountability as a whole, so none of them repeats a tab.
+     | Tabs are broad record workspaces only. Detailed processing stages such as
+     | Head Decision and Billing stay inside each case's numbered workflow.
+     | This avoids showing the same stage as both a tab and a stepper step.
      |
      | Nothing here queries. Every figure is a re-read of collections the
      | controller already loaded.
@@ -412,11 +688,8 @@
         ->count();
 
     /*
-     | Where each card goes. The first three open the Active Cases queue; the
-     | two that describe a subset of it carry a focus hint the queue's own
-     | client-side status filter reads, so the reader lands on the rows the
-     | number was counted from. The hint narrows what is already on the page
-     | and never changes which records the view returned.
+     | Summary cards are shortcuts into the broad workspaces below. Processing
+     | stages remain inside the numbered case stepper.
      */
     /*
      | The four summary cards read across the workflow; the tabs below navigate
@@ -431,7 +704,7 @@
             'value' => $openAccountabilities,
             'note' => 'Unresolved cases',
             'meta' => 'Counted once per matter',
-            'href' => route('accountability.index', ['view' => $isHead ? 'cases' : 'all']),
+            'href' => route('accountability.index', ['view' => 'cases']),
         ],
         [
             'tone' => 'overdue',
@@ -440,7 +713,16 @@
             'value' => $currentlyOverdueCases->count(),
             'note' => 'Awaiting return',
             'meta' => 'Not yet returned, as of today',
-            'href' => route('accountability.index', ['view' => $isHead ? 'cases' : 'overdue', 'focus' => 'overdue']),
+            'emphasis' => $currentlyOverdueCases->count() > 0,
+            /*
+             * The Officer workspace has a genuinely filtered "Overdue / Late
+             * Returns" tab (hides property cases and billings). The Head
+             * workspace has no equivalent dedicated destination - "Cases" is
+             * one unified queue - so linking there would just be a scroll
+             * inside the same mixed list, not a distinct result. Left
+             * non-clickable for Head rather than faking a destination.
+             */
+            'href' => $isHead ? null : route('accountability.index', ['view' => 'overdue']),
         ],
         [
             'tone' => 'balance',
@@ -449,7 +731,8 @@
             'value' => 'PHP '.number_format($outstandingBalance, 2),
             'note' => 'Unpaid obligations',
             'meta' => 'Not covered by a verified payment',
-            'href' => route('accountability.index', ['view' => 'billings']),
+            'emphasis' => $outstandingBalance > 0,
+            'href' => route('accountability.index', ['view' => 'cases']).'#open-billing-statements',
         ],
         [
             'tone' => 'resolved',
@@ -464,17 +747,13 @@
 
     $accountabilityTabs = $isHead
         ? [
-            ['view' => 'cases', 'label' => 'Active Cases', 'count' => $openCaseCount],
-            ['view' => 'head_review', 'label' => 'Head Review', 'count' => $headReviewCount],
-            ['view' => 'billings', 'label' => 'Billing', 'count' => $openBillings->count()],
+            ['view' => 'cases', 'label' => 'Cases', 'count' => $openCaseCount],
             ['view' => 'restrictions', 'label' => 'Restrictions', 'count' => $activeRestrictions->count()],
             ['view' => 'resolved', 'label' => 'Resolved History', 'count' => $resolvedHistory->count()],
         ]
         : [
-            ['view' => 'all', 'label' => 'All Matters', 'count' => $borrowerRecordCount],
+            ['view' => 'cases', 'label' => 'Cases', 'count' => $openCaseCount + $openBillings->count()],
             ['view' => 'overdue', 'label' => 'Overdue / Late Returns', 'count' => $openOverdueCases->count()],
-            ['view' => 'property', 'label' => 'Property Cases', 'count' => $openIncidents->count()],
-            ['view' => 'billings', 'label' => 'Billing', 'count' => $openBillings->count()],
             ['view' => 'restrictions', 'label' => 'Restrictions', 'count' => $activeRestrictions->count()],
             ['view' => 'resolved', 'label' => 'Resolved History', 'count' => $resolvedHistory->count()],
         ];
@@ -482,29 +761,38 @@
 
 <section class="accountability-overview" aria-label="Accountability summary">
     @foreach($summaryCards as $card)
-        <a
-            class="accountability-overview-card tone-{{ $card['tone'] }}"
-            href="{{ $card['href'] }}"
-            aria-label="{{ $card['label'] }}: {{ $card['value'] }}. {{ $card['note'] }}"
-        >
-            <span class="accountability-overview-icon" aria-hidden="true"><x-icon :name="$card['icon']" size="22" /></span>
-            <span class="accountability-overview-label">{{ $card['label'] }}</span>
-            <strong class="accountability-overview-value">{{ $card['value'] }}</strong>
-            <span class="accountability-overview-note">{{ $card['note'] }}</span>
-            <x-icon name="chevron-right" size="15" class="accountability-overview-arrow" />
-        </a>
+        @if($card['href'])
+            <a
+                class="accountability-overview-card tone-{{ $card['tone'] }} has-emphasis"
+                href="{{ $card['href'] }}"
+                aria-label="{{ $card['label'] }}: {{ $card['value'] }}. {{ $card['note'] }}"
+            >
+                <span class="accountability-overview-icon" aria-hidden="true"><x-icon :name="$card['icon']" size="22" /></span>
+                <span class="accountability-overview-label">{{ $card['label'] }}</span>
+                <strong class="accountability-overview-value">{{ $card['value'] }}</strong>
+                <span class="accountability-overview-note">{{ $card['note'] }}</span>
+                <x-icon name="chevron-right" size="15" class="accountability-overview-arrow" />
+            </a>
+        @else
+            {{-- No distinct destination exists for this card in this role, so it is informational only: no href, no chevron, no hover/click affordance. --}}
+            <div
+                class="accountability-overview-card tone-{{ $card['tone'] }} has-emphasis is-static"
+                aria-label="{{ $card['label'] }}: {{ $card['value'] }}. {{ $card['note'] }}"
+            >
+                <span class="accountability-overview-icon" aria-hidden="true"><x-icon :name="$card['icon']" size="22" /></span>
+                <span class="accountability-overview-label">{{ $card['label'] }}</span>
+                <strong class="accountability-overview-value">{{ $card['value'] }}</strong>
+                <span class="accountability-overview-note">{{ $card['note'] }}</span>
+            </div>
+        @endif
     @endforeach
 </section>
 
 @php
     /* One icon per destination. */
     $accountabilityTabIcons = [
-        'all' => 'clipboard-check',
-        'cases' => 'plus-circle',
+        'cases' => 'clipboard-check',
         'overdue' => 'calendar-clock',
-        'property' => 'accountability',
-        'head_review' => 'warning',
-        'billings' => 'requests',
         'restrictions' => 'lock',
         'resolved' => 'clipboard-check',
     ];
@@ -524,11 +812,15 @@
 </nav>
 @endunless
 
+@if(! $isBorrower && $showResolvedHistory)
+    @include('accountability.partials.resolved-history')
+@endif
+
 @if($isBorrower)
 @include('accountability.partials.obligations-workspace')
 @endif
 
-@if(! $isBorrower && ! $hasOpenMatters)
+@if(! $isBorrower && ! $hasOpenMatters && ! $showResolvedHistory)
 <section class="content-area">
     <article class="card">
         <div class="empty-state">
@@ -543,7 +835,7 @@
 </section>
 @endif
 
-@if($isOfficer && $hasOpenMatters && $officerView !== 'all' && $officerSelectedCount === 0)
+@if($isOfficer && $hasOpenMatters && $officerView !== 'cases' && $officerSelectedCount === 0)
 <section class="content-area">
     <article class="card">
         <div class="empty-state">
@@ -556,7 +848,7 @@
 </section>
 @endif
 
-@if($isHead && $headView === 'head_review' && $pendingViolations->isNotEmpty())
+@if($isHead && $headView === 'cases' && $pendingViolations->isNotEmpty())
 <section class="content-area">
     <div class="section-heading">
         <div>
@@ -663,8 +955,20 @@
 </section>
 @endif
 
-@if(! $isBorrower && $openOverdueCases->isNotEmpty() && (! $isHead || $headView === 'cases') && (! $isOfficer || in_array($officerView, ['all', 'overdue'], true)))
-<section class="content-area">
+@php
+    /* Cases is the single Head workspace; the current status/step identifies what needs review. */
+    $visibleOverdueCases = $openOverdueCases;
+
+    /* Compact labels for the status column; processing still uses LateReturnService constants. */
+    $caseShortLabels = [
+        App\Services\LateReturnService::STATUS_OVERDUE => 'Overdue',
+        App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION => 'Late Return',
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL => 'For Head Approval',
+        App\Services\LateReturnService::STATUS_AWAITING_PAYMENT => 'Awaiting Payment',
+    ];
+@endphp
+@if(! $isBorrower && $visibleOverdueCases->isNotEmpty() && (! $isHead || $headView === 'cases') && (! $isOfficer || in_array($officerView, ['cases', 'overdue'], true)))
+<section class="content-area" id="accountability-cases-section">
     <article class="card accountability-cases-card">
         <div class="accountability-cases-head">
             <h2>
@@ -834,7 +1138,7 @@
                                         <div>
                                             <strong>Awaiting Head approval.</strong>
                                             <p>
-                                                Confirmed by {{ $overdue->confirmedBy?->full_name ?? 'the Action Officer' }}
+                                                Action by: SPMU Head/Admin. Confirmed by {{ $overdue->confirmedBy?->full_name ?? 'the Action Officer' }}
                                                 on {{ $overdue->ao_confirmed_at?->format('d M Y, h:i A') }}.
                                                 Approving generates the Late Return Fee Form for the recorded amount.
                                             </p>
@@ -896,145 +1200,25 @@
     <article class="card accountability-scope-note">
         <x-icon name="information" size="17" />
         <div>
-            <p class="eyebrow">Date-based lateness</p>
-            <h2>Overdue / Late Return Cases</h2>
-            <p>Overdue cases wait for the physical return. Returned-late cases move from Action Officer confirmation to SPMU Head/Admin approval.</p>
+            <strong>Only active cases are shown here.</strong>
+            <p>View completed cases in Resolved History.</p>
+            <small>Overdue means the item is not yet returned. Returned Late means the return is recorded and the final fee can be processed.</small>
         </div>
-    </div>
-
-    @foreach($openOverdueCases as $overdue)
-        @php
-            $isStillOverdue = $overdue->status === App\Services\LateReturnService::STATUS_OVERDUE;
-            $forOfficerConfirmation = $overdue->status === App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION;
-            $forHeadApproval = $overdue->status === App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL;
-            $hasBilling = $overdue->status === App\Services\LateReturnService::STATUS_AWAITING_PAYMENT;
-            $isReturnedLate = $forOfficerConfirmation || $forHeadApproval || $hasBilling;
-            $actualReturnAt = $isReturnedLate
-                ? $overdue->custody->returns->pluck('received_at')->filter()->sort()->last()
-                : null;
-            $lateThrough = $isStillOverdue
-                ? now()->startOfDay()
-                : ($actualReturnAt?->copy()->startOfDay());
-            $effectiveDueDay = $overdue->custody->due_at?->copy()->startOfDay();
-            $lateDays = $effectiveDueDay && $lateThrough && $lateThrough->gt($effectiveDueDay)
-                ? (int) $effectiveDueDay->diffInDays($lateThrough)
-                : 0;
-        @endphp
-
-        <article class="card top-gap">
-            <div class="card-header">
-                <div>
-                    <strong>{{ $overdue->custody->custody_no }}</strong>
-                    <h3>{{ $overdue->borrower->full_name }}</h3>
-                </div>
-                <x-status-badge
-                    :status="$overdue->status"
-                    :label="$isStillOverdue
-                        ? 'Overdue · Item Not Returned'
-                        : ($forOfficerConfirmation
-                            ? 'Returned Late · AO Confirmation'
-                            : ($forHeadApproval
-                                ? 'Returned Late · Head Approval'
-                                : ($hasBilling ? 'Returned Late · Billing Issued' : null)))"
-                />
-            </div>
-
-            <dl class="summary-grid compact">
-                <div>
-                    <dt>Expected Return Date</dt>
-                    <dd>{{ $overdue->custody->due_at->format('d M Y') }}</dd>
-                </div>
-                <div>
-                    <dt>Actual Physical Return</dt>
-                    <dd>{{ $actualReturnAt ? $actualReturnAt->format('d M Y') : 'Not yet completed' }}</dd>
-                </div>
-                <div>
-                    <dt>{{ $isStillOverdue ? 'Late Days So Far' : 'Final Late Days' }}</dt>
-                    <dd>{{ $lateDays }} {{ $lateDays === 1 ? 'day' : 'days' }}</dd>
-                </div>
-                <div>
-                    <dt>Late Fee Rate</dt>
-                    <dd>{{ $overdue->rate_snapshot === null ? 'Not configured' : 'PHP '.number_format((float) $overdue->rate_snapshot, 2).' per late day' }}</dd>
-                </div>
-                <div>
-                    <dt>{{ $isStillOverdue ? 'Estimated Fee So Far' : 'Final Late Return Fee' }}</dt>
-                    <dd>{{ $overdue->rate_snapshot === null ? 'Not determined' : 'PHP '.number_format((float) $overdue->accrued_amount, 2) }}</dd>
-                </div>
-            </dl>
-
-            @if($isStillOverdue)
-                <div class="callout warning top-gap">
-                    <strong>Awaiting physical return.</strong>
-                    <p>The displayed fee is still an estimate.</p>
-                </div>
-            @elseif($forOfficerConfirmation)
-                <div class="callout info top-gap">
-                    <strong>Returned late — AO confirmation required.</strong>
-                    <p>Confirm the recorded return date and final late-return assessment.</p>
-                </div>
-
-                @if($isOfficer)
-                    <form method="post" action="{{ route('overdue.confirm-late-return', $overdue) }}" class="top-gap">
-                        @csrf
-                        <button class="button primary">Confirm Late Return</button>
-                    </form>
-                @endif
-            @elseif($forHeadApproval)
-                <div class="callout info top-gap">
-                    <strong>Awaiting SPMU Head/Admin approval.</strong>
-                    <p>The Action Officer has confirmed the late-return assessment.</p>
-                </div>
-
-                @if($isHead)
-                    <div class="form-columns top-gap">
-                        <form method="post" action="{{ route('overdue.bill', $overdue) }}" class="form-grid">
-                            @csrf
-                            <label>
-                                Approval Basis
-                                <textarea name="basis" rows="2" required placeholder="e.g., {{ $lateDays }} late day(s) × configured daily fee"></textarea>
-                            </label>
-                            <label>
-                                Payment Due Date
-                                <input type="date" name="due_at">
-                            </label>
-                            <button class="button primary">Approve & Issue Billing Statement</button>
-                        </form>
-
-                        <form method="post" action="{{ route('overdue.return-for-correction', $overdue) }}" class="form-grid">
-                            @csrf
-                            <label>
-                                Correction Note
-                                <textarea name="remarks" rows="2" required placeholder="State what the Action Officer must recheck."></textarea>
-                            </label>
-                            <button class="button secondary">Return for Correction</button>
-                        </form>
-                    </div>
-                @endif
-            @elseif($hasBilling)
-                <div class="callout info top-gap">
-                    <strong>Billing Statement issued.</strong>
-                    <p>Continue payment processing under Open Billings.</p>
-                </div>
-            @endif
-
-            <p class="meta">Fee = final late days × configured daily rate. Administrative offense review is separate.</p>
-        </article>
-    @endforeach
+    </article>
+    @endunless
 </section>
 @endif
 
 @php
-    $displayIncidents = $isHead && $headView === 'head_review'
-        ? $headReviewIncidents
-        : $openIncidents;
+    $displayIncidents = $openIncidents;
 
     // Prevent one underlying property-case billing from rendering two editable
     // payment workflows in the Action Officer's combined "All" view.
     // The numbered property-case stepper owns the action whenever that case is visible.
     $propertyCaseSectionVisible = ! $isBorrower
         && $displayIncidents->isNotEmpty()
-        && (! $isHead || in_array($headView, ['head_review', 'cases'], true))
-        && (! $isOfficer || in_array($officerView, ['all', 'property'], true));
+        && (! $isHead || $headView === 'cases')
+        && (! $isOfficer || $officerView === 'cases');
 
     $visibleIncidentIds = collect();
     $visiblePropertyBillingIds = collect();
@@ -1050,27 +1234,23 @@
         }
     }
 
-    // In the combined AO view, linked billing/restriction records stay inside
-    // their property-case workflow instead of appearing as separate duplicate tasks.
-    // Dedicated Billing/Restrictions tabs still show the full record lists.
-    $standaloneOpenBillings = ($isOfficer && $officerView === 'all')
+    // Linked billing records stay inside the visible property-case stepper so
+    // the same action is never rendered twice. Any standalone billing remains
+    // in Cases. Restrictions keep their own broad queue.
+    $standaloneOpenBillings = (($isOfficer && $officerView === 'cases') || ($isHead && $headView === 'cases'))
         ? $openBillings->reject(fn ($billing) => $visiblePropertyBillingIds->contains($billing->id))->values()
         : $openBillings;
-    $standaloneActiveRestrictions = ($isOfficer && $officerView === 'all')
-        ? $activeRestrictions->reject(fn ($restriction) => $restriction->incident_id && $visibleIncidentIds->contains($restriction->incident_id))->values()
-        : $activeRestrictions;
+    $standaloneActiveRestrictions = $activeRestrictions;
 @endphp
 @if($propertyCaseSectionVisible)
 <section class="content-area">
     <div class="section-heading head-control-heading">
         <div>
             <p class="eyebrow">Property accountability</p>
-            <h2>{{ $isHead && $headView === 'head_review' ? 'Cases Awaiting Head Decision' : 'Property Accountability Cases' }}</h2>
-            <p>{{ $isHead && $headView === 'head_review'
-                ? 'Review the recorded physical findings and enter the formal SPMU Head decision. Cases already routed to billing or compliance are shown under Open Cases.'
-                : ($isOfficer
-                    ? 'Each case shows its current step and the next action.'
-                    : 'Review each case and complete only the active step.') }}</p>
+            <h2>Property Accountability Cases</h2>
+            <p>{{ $isOfficer
+                ? 'Each case shows its current step and the next action.'
+                : 'Review each case and complete only the active step.' }}</p>
         </div>
     </div>
 
@@ -1130,13 +1310,13 @@
                     <strong>{{ $incident->incident_no }}</strong>
                     <h3>{{ str($incident->incident_type)->replace('_',' ')->title() }}</h3>
                     <div class="accountability-case-ref">
-                        <span><strong>{{ $incident->borrower?->full_name ?: '—' }}</strong></span>
+                        <span class="accountability-case-ref__borrower"><strong>{{ $incident->borrower?->full_name ?: '—' }}</strong></span>
                         <span>{{ $requestNo }}</span>
                         <span>{{ $custodyNo }}</span>
-                        @if($incidentRestriction)<span>Restriction active</span>@endif
+                        @if($incidentRestriction)<span class="accountability-case-ref__restriction">Restriction Active</span>@endif
                     </div>
                 </div>
-                <x-status-badge :status="$incident->status" :label="$isOfficer && $statusKey === 'OPEN' ? 'Awaiting Head Decision' : null" />
+                <x-status-badge :status="$incident->status" :label="$isOfficer ? ($statusKey === 'OPEN' ? 'Awaiting Head Decision' : ($statusKey === 'FOR_BILLING' ? 'Waiting for Billing' : null)) : null" />
             </div>
 
             <div class="accountability-stepper" aria-label="Accountability case progress">
@@ -1174,9 +1354,9 @@
                 <div class="accountability-current-step">
                     <div class="accountability-current-step__heading">
                         <div>
-                            <small>Current step</small>
-                            <strong>Awaiting Head Decision</strong>
-                            <p>No Action Officer decision is required at this stage.</p>
+                            <small>Current status</small>
+                            <strong>Waiting for Head Decision</strong>
+                            <p>Action by: SPMU Head/Admin. No Action Officer action is required until the Head records a decision.</p>
                         </div>
                     </div>
                 </div>
@@ -1184,7 +1364,7 @@
                 <div class="accountability-current-step">
                     <div class="accountability-current-step__heading">
                         <div>
-                            <small>Step 2 · Current</small>
+                            <small>Your current action</small>
                             <strong>Head Decision</strong>
                             <p>Select the required resolution. Administrative offense is optional and separate.</p>
                         </div>
@@ -1240,35 +1420,38 @@
                 <div class="accountability-current-step">
                     <div class="accountability-current-step__heading">
                         <div>
-                            <small>Step 3 · Current</small>
-                            <strong>{{ $isHead ? 'Issue Billing Statement' : 'Awaiting Billing Statement' }}</strong>
-                            <p>Head decision: Billing / Payment Required.</p>
+                            @if($isHead)
+                                <small>Your current action</small>
+                                <strong>Issue Billing Statement</strong>
+                                <p>The Head decision requires payment. Prepare and issue the Billing Statement.</p>
+                            @else
+                                <small>Current status</small>
+                                <strong>Waiting for Billing Statement</strong>
+                                <p>Action by: SPMU Head/Admin. The SPMU Head/Admin decision requires billing. No Action Officer action is required until the Billing Statement is issued.</p>
+                            @endif
                         </div>
                     </div>
                     @if($isHead)
-                        <details class="accountability-action-disclosure">
-                            <summary>Issue Billing Statement</summary>
-                            <div class="accountability-action-body">
-                                <form method="post" action="{{ route('incidents.bill',$incident) }}" class="form-grid">
-                                    @csrf
-                                    <div class="form-columns">
-                                        <label>Assessment Amount<input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00"></label>
-                                        <label>Payment Due Date<input type="date" name="due_at"></label>
-                                    </div>
-                                    <label>Assessment Basis<textarea name="basis" rows="3" maxlength="2000" required placeholder="State the approved assessment basis."></textarea></label>
-                                    <button class="button primary">Issue Billing Statement</button>
-                                </form>
-                            </div>
-                        </details>
+                        <div class="accountability-action-body accountability-action-body--direct">
+                            <form method="post" action="{{ route('incidents.bill',$incident) }}" class="form-grid">
+                                @csrf
+                                <div class="form-columns">
+                                    <label>Assessment Amount<input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00"></label>
+                                    <label>Payment Due Date<input type="date" name="due_at"></label>
+                                </div>
+                                <label>Assessment Basis<textarea name="basis" rows="3" maxlength="2000" required placeholder="State the approved assessment basis."></textarea></label>
+                                <button class="button primary">Issue Billing Statement</button>
+                            </form>
+                        </div>
                     @endif
                 </div>
             @elseif($isComplianceRequired)
                 <div class="accountability-current-step">
                     <div class="accountability-current-step__heading">
                         <div>
-                            <small>Step 3 · Current</small>
+                            <small>{{ $isHead ? 'Your current action' : 'Current status' }}</small>
                             <strong>Compliance Required</strong>
-                            <p>Repair, replacement, or required compliance is still open.</p>
+                            <p>{{ $isHead ? 'Repair, replacement, or required compliance is still open. Verify and resolve once the borrower completes it.' : 'Action by: Borrower, verified by SPMU Head/Admin. Repair, replacement, or required compliance is still open.' }}</p>
                         </div>
                         @if($complianceDocument)
                             <div class="actions">
@@ -1294,9 +1477,9 @@
                 <div class="accountability-current-step">
                     <div class="accountability-current-step__heading">
                         <div>
-                            <small>Step 3 · Current</small>
-                            <strong>{{ $isOfficer ? 'Cashier Payment' : 'Awaiting Cashier Payment' }}</strong>
-                            <p>{{ $isOfficer ? 'Record the official Cashier receipt once, then confirm the payment.' : 'Billing Statement issued. The Action Officer records the official Cashier receipt after the borrower pays.' }}</p>
+                            <small>{{ $isOfficer ? 'Your current action' : 'Current status' }}</small>
+                            <strong>{{ $isOfficer ? 'Record Cashier Payment' : 'Waiting for Cashier Payment' }}</strong>
+                            <p>{{ $isOfficer ? 'Record the official Cashier receipt once, then confirm the payment.' : 'Action by: SPMU Action Officer. Billing Statement issued. The Action Officer records the official Cashier receipt after the borrower pays.' }}</p>
                         </div>
                     </div>
                     @if($incidentBilling)
@@ -1398,21 +1581,21 @@
         </article>
     @endforeach
 </section>
-@elseif($isHead && in_array($headView, ['head_review', 'cases'], true))
+@elseif($isHead && $headView === 'cases')
 <section class="content-area">
     <article class="card">
         <div class="empty-state">
             <div>
-                <strong>{{ $headView === 'head_review' ? 'No property cases are waiting for a Head decision.' : 'No open property accountability cases.' }}</strong>
-                <p>{{ $headView === 'head_review' ? 'Cases already routed to billing or compliance remain under Open Cases.' : 'There are no unresolved property cases in this view.' }}</p>
+                <strong>No open property accountability cases.</strong>
+                <p>There are no unresolved property cases in this workspace.</p>
             </div>
         </div>
     </article>
 </section>
 @endif
 
-@if(! $isBorrower && $standaloneOpenBillings->isNotEmpty() && (! $isHead || $headView === 'billings') && (! $isOfficer || in_array($officerView, ['all', 'billings'], true)))
-<section class="content-area">
+@if(! $isBorrower && $standaloneOpenBillings->isNotEmpty() && (! $isHead || $headView === 'cases') && (! $isOfficer || $officerView === 'cases'))
+<section class="content-area" id="open-billing-statements">
     <div class="section-heading">
         <div>
             <p class="eyebrow">Cashier payment evidence</p>
@@ -1441,26 +1624,14 @@
 </section>
 @endif
 
-@if($isHead && $headView === 'billings' && $openBillings->isEmpty())
-<section class="content-area">
-    <article class="card">
-        <div class="empty-state">
-            <div>
-                <strong>No open Billing Statements.</strong>
-                <p>Property cases routed for payment will appear here after the Action Officer records the approved charge and generates the Billing Statement.</p>
-            </div>
-        </div>
-    </article>
-</section>
-@endif
-
-@if(! $isBorrower && $standaloneActiveRestrictions->isNotEmpty() && (! $isHead || $headView === 'restrictions') && (! $isOfficer || in_array($officerView, ['all', 'restrictions'], true)))
+@if(! $isBorrower && $standaloneActiveRestrictions->isNotEmpty() && (! $isHead || $headView === 'restrictions') && (! $isOfficer || $officerView === 'restrictions'))
 <section class="content-area">
     <article class="card">
         <div class="card-header">
             <div>
                 <p class="eyebrow">Borrowing eligibility</p>
                 <h2>Active Restrictions</h2>
+                <p class="meta">Restrictions are borrowing controls linked to accountability cases. They are not separate accountability cases.</p>
                 @if($isOfficer)
                     <p class="meta">Reference only. Action Officers can see active restrictions but cannot create, extend, lift, or override them.</p>
                 @endif
@@ -1469,7 +1640,7 @@
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Restriction</th>@if($isHead)<th>Linked Case</th>@endif<th>Reason</th><th>Effective</th><th>Status</th></tr>
+                    <tr><th>Restriction</th><th>Linked Case</th><th>Reason</th><th>Effective</th><th>Status</th></tr>
                 </thead>
                 <tbody>
                     @foreach($standaloneActiveRestrictions as $restriction)
@@ -1478,15 +1649,13 @@
                         @endphp
                         <tr>
                             <td>{{ str($restriction->restriction_type)->replace('_',' ')->title() }}</td>
-                            @if($isHead)
-                                <td>
-                                    @if($linkedIncident)
-                                        <a class="head-linked-case" href="{{ route('accountability.index', ['view' => 'cases']).'#incident-'.$linkedIncident->id }}">{{ $linkedIncident->incident_no }}</a>
-                                    @else
-                                        —
-                                    @endif
-                                </td>
-                            @endif
+                            <td>
+                                @if($linkedIncident)
+                                    <a class="head-linked-case" href="{{ route('accountability.index', ['view' => 'cases']).'#incident-'.$linkedIncident->id }}">{{ $linkedIncident->incident_no }}</a>
+                                @else
+                                    —
+                                @endif
+                            </td>
                             <td>{{ $restriction->reason }}</td>
                             <td>{{ optional($restriction->effective_from)->format('d M Y') }}{{ $restriction->effective_to ? ' – '.$restriction->effective_to->format('d M Y') : ' until resolved' }}</td>
                             <td><x-status-badge :status="$restriction->status" /></td>
@@ -1512,7 +1681,7 @@
 </section>
 @endif
 
-@if((($isHead && $headView === 'head_review') || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
+@if((($isHead && $headView === 'resolved') || $workspace === 'BORROWER') && $sanctions->isNotEmpty())
 <section class="content-area">
     <article class="card">
         <div class="card-header">
