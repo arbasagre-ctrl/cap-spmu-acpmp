@@ -533,26 +533,44 @@
                         $activeAccountability = $activeCustody?->activeAccountabilityIndicator();
                         $activeWorkflow = $activeCustody?->workflowStatus();
 
-                        [$activeStateLabel, $activeStateTone] = $activeWorkflow
-                            ? [
-                                $activeWorkflow['label'],
-                                match ($activeWorkflow['group']) {
-                                    'attention' => 'warning',
-                                    'return' => 'warning',
-                                    'completed' => 'success',
-                                    'cancelled' => 'neutral',
-                                    'custody' => 'success',
-                                    default => 'info',
-                                },
-                            ]
-                            : match (true) {
-                                $activeRequest->status === App\Enums\RequestStatus::ReturnedForRevision => ['Revision Required', 'warning'],
-                                in_array($activeRequest->status, [App\Enums\RequestStatus::FinalApprovedAwaitingDownload, App\Enums\RequestStatus::ApprovedReadyForRelease], true) => ['Approved', 'success'],
-                                $activeRequest->status === App\Enums\RequestStatus::UnderSpmu => ['Under SPMU Review', 'info'],
-                                in_array($activeRequest->status, [App\Enums\RequestStatus::Submitted, App\Enums\RequestStatus::Signed], true) => ['Submitted', 'info'],
-                                $activeRequest->status === App\Enums\RequestStatus::Draft => ['Draft', 'neutral'],
-                                default => [$activeRequest->status?->label() ?? 'In Progress', 'neutral'],
+                        /*
+                         * Same key/label resolution as My Requests
+                         * (requests/partials/my-requests-row.blade.php), so a
+                         * request in a given state never reads differently on
+                         * the two pages.
+                         */
+                        if ($activeWorkflow) {
+                            [$activeStateKey, $activeStateLabel] = match ($activeWorkflow['key']) {
+                                'BORROWED' => ['BORROWED', 'Released / On Custody'],
+                                'RETURN_PROCESSING' => ['RETURN_PROCESSING', 'Return Processing'],
+                                'OVERDUE' => ['OVERDUE', 'Overdue'],
+                                'INCIDENT_OPEN' => ['ACCOUNTABILITY_PENDING', 'Accountability Pending'],
+                                'OBLIGATION_OPEN' => ['OBLIGATION_OPEN', 'Accountability Pending'],
+                                'COMPLETED' => ['COMPLETED', 'Completed'],
+                                'BORROWER_CLEARED' => ['BORROWER_CLEARED', 'Borrower Cleared'],
+                                'CANCELLED' => ['CANCELLED', 'Cancelled'],
+                                'READY_FOR_RELEASE' => ['READY_FOR_RELEASE', 'Ready for Release'],
+                                'PICKUP_SCHEDULED' => ['PICKUP_SCHEDULED', 'Pickup Scheduled'],
+                                'ITEM_PREPARATION' => ['ITEM_PREPARATION', 'For Item Preparation'],
+                                'PICKUP_SCHEDULING' => ['PICKUP_SCHEDULING', 'For Pickup Scheduling'],
+                                'PICKUP_EXPIRED' => ['PICKUP_EXPIRED', 'Pickup Missed'],
+                                default => [$activeWorkflow['key'], $activeWorkflow['label']],
                             };
+                        } else {
+                            [$activeStateKey, $activeStateLabel] = match ($activeRequest->status) {
+                                App\Enums\RequestStatus::Draft => ['DRAFT', 'Draft'],
+                                App\Enums\RequestStatus::ReturnedForRevision => ['RETURNED_FOR_REVISION', 'Returned for Revision'],
+                                App\Enums\RequestStatus::UnderSpmu,
+                                App\Enums\RequestStatus::UnderGsu,
+                                App\Enums\RequestStatus::UnderVpaf => ['UNDER_SPMU', 'Under SPMU Review'],
+                                App\Enums\RequestStatus::ApprovedReadyForRelease => ['APPROVED_READY_FOR_RELEASE', 'Ready for Release'],
+                                App\Enums\RequestStatus::FinalApprovedAwaitingDownload => ['FINAL_APPROVED_AWAITING_DOWNLOAD', 'Approved'],
+                                App\Enums\RequestStatus::Rejected => ['REJECTED', 'Rejected'],
+                                App\Enums\RequestStatus::Cancelled => ['CANCELLED', 'Cancelled'],
+                                App\Enums\RequestStatus::Expired => ['INACTIVE', 'Inactive'],
+                                default => ['SUBMITTED', 'In Progress'],
+                            };
+                        }
 
                         [$activeDateLabel, $activeDateValue] = match (true) {
                             $activeCustody?->released_at !== null && $activeCustody?->due_at !== null => ['Return due', $activeCustody->due_at->format('d M Y')],
@@ -576,7 +594,7 @@
                         </td>
 
                         <td data-label="Status">
-                            <span class="status-badge status-{{ $activeStateTone }}">{{ $activeStateLabel }}</span>
+                            <x-status-badge :status="$activeStateKey" :label="$activeStateLabel" />
                             @if($activeAccountability)
                                 <small class="borrower-active-obligation">{{ $activeAccountability['label'] }}</small>
                             @endif

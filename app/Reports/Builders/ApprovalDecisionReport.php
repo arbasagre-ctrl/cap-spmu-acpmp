@@ -164,8 +164,8 @@ class ApprovalDecisionReport implements ReportBuilder
             columns: [
                 ['key' => 'request_no', 'label' => 'Request No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Division'],
-                ['key' => 'office_unit', 'label' => 'Office / Unit'],
+                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'version_no', 'label' => 'Version', 'align' => 'numeric'],
                 ['key' => 'submitted_at', 'label' => 'Submitted'],
                 ['key' => 'verification', 'label' => 'AO Verification', 'badge' => true],

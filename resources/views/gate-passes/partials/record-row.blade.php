@@ -32,10 +32,10 @@
             <span title="Physical release has not been recorded">—</span>
         @endif
     </td>
-    <td><span class="status-badge status-{{ $statusTone }}" title="{{ $statusLabel }}">{{ $statusLabel }}</span></td>
+    <td><x-status-badge :status="$statusKey" :label="$statusLabel" title="{{ $statusLabel }}" /></td>
     <td>
         <div class="gate-pass-row-actions">
-            <a class="button secondary small gate-pass-view" href="{{ route('gate-passes.show', $gatePass) }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a>
+            <a class="button secondary small gate-pass-view" href="{{ route('gate-passes.show', $gatePass) }}"><span>View Record</span><x-icon name="arrow-right" size="14" /></a>
             @if($hasMoreActions)
                 <details class="gate-pass-more" name="gate-pass-record-actions">
                     <summary aria-label="More actions for {{ $requestRecord?->request_no ?: 'Gate Pass #'.$gatePass->id }}">
@@ -43,10 +43,10 @@
                     </summary>
                     <div class="gate-pass-more-links">
                         @if($hasFinalDocument)
-                            <a href="{{ route('documents.download', $gatePass->passDocument) }}" target="_blank" rel="noopener">View final Gate Pass</a>
+                            <a href="{{ route('documents.download', $gatePass->passDocument) }}" target="_blank" rel="noopener">Open Final Gate Pass</a>
                         @endif
                         @if($gatePass->accomplishedFile)
-                            <a href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View accomplished scan</a>
+                            <a href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">Open Accomplished Scan</a>
                         @endif
                     </div>
                 </details>

@@ -27,6 +27,7 @@ use App\Services\PolicyService;
 use App\Services\SignatureService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -248,7 +249,8 @@ class AccountabilityController extends Controller
             ]);
         }
 
-        $billing = DB::transaction(function () use ($overdue, $request, $data, $documents, $audit, $notifications, $signatures): BillingStatement {
+        try {
+            $billing = DB::transaction(function () use ($overdue, $request, $data, $documents, $audit, $notifications, $signatures): BillingStatement {
             $penalty = Penalty::query()->create([
                 'borrower_user_id' => $overdue->borrower_user_id,
                 'custody_transaction_id' => $overdue->custody_transaction_id,
@@ -276,6 +278,7 @@ class AccountabilityController extends Controller
 
             $billing->lines()->create([
                 'penalty_id' => $penalty->id,
+                'source_key' => 'OVERDUE_CASE:'.$overdue->id,
                 'line_type' => 'LATE_RETURN_FEE',
                 'description' => 'Date-based late-return fee',
                 'basis' => $data['basis'],
@@ -350,7 +353,16 @@ class AccountabilityController extends Controller
             }
 
             return $billing;
-        }, 3);
+            }, 3);
+        } catch (QueryException $exception) {
+            if (! $this->isDuplicateBillingAttempt($exception)) {
+                throw $exception;
+            }
+
+            return back()->withErrors([
+                'overdue' => 'This overdue case already has a Billing Statement.',
+            ]);
+        }
 
         return back()->with('status', "Late Return Notice and Billing Statement {$billing->billing_no} were issued by the SPMU Head/Admin. The borrower was notified to pay through the CSPC Cashier and present the official receipt to the SPMU Action Officer afterward.");
     }
@@ -387,7 +399,8 @@ class AccountabilityController extends Controller
             ]);
         }
 
-        $billing = DB::transaction(function () use ($incident, $request, $data, $documents, $audit): BillingStatement {
+        try {
+            $billing = DB::transaction(function () use ($incident, $request, $data, $documents, $audit): BillingStatement {
             $billing = BillingStatement::query()->create([
                 'billing_no' => 'BILL-'.now()->format('YmdHis').'-'.$incident->id,
                 'borrower_user_id' => $incident->borrower_user_id,
@@ -401,6 +414,7 @@ class AccountabilityController extends Controller
 
             $billing->lines()->create([
                 'incident_id' => $incident->id,
+                'source_key' => 'INCIDENT:'.$incident->id,
                 'line_type' => 'PROPERTY_ACCOUNTABILITY_CHARGE',
                 'description' => $incident->incident_type.' accountability charge',
                 'basis' => $data['basis'],
@@ -441,7 +455,16 @@ class AccountabilityController extends Controller
             );
 
             return $billing;
-        }, 3);
+            }, 3);
+        } catch (QueryException $exception) {
+            if (! $this->isDuplicateBillingAttempt($exception)) {
+                throw $exception;
+            }
+
+            return back()->withErrors([
+                'incident' => 'This accountability case already has a Billing Statement.',
+            ]);
+        }
 
         $incident->loadMissing('borrower');
         if ($incident->borrower) {
@@ -1400,6 +1423,16 @@ class AccountabilityController extends Controller
         if ($custody) {
             app(CustodyService::class)->reconcileTransactionStatus($custody);
         }
+    }
+
+    private function isDuplicateBillingAttempt(QueryException $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'billing_lines_source_key_unique')
+            || str_contains($message, 'billing_lines.source_key')
+            || str_contains($message, 'billing_statements_billing_no_unique')
+            || str_contains($message, 'billing_statements.billing_no');
     }
 
     private function authorizeSpmu(Request $request): void

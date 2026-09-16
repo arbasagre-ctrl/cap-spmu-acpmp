@@ -9,6 +9,7 @@
     */
     $meta = $dataset->meta;
     $appliedFilters = $meta['applied_filters'] ?? [];
+    $scopeSummary = implode(' · ', array_column(App\Reports\ReportScopeFormatter::rows($appliedFilters), 'value'));
     $margins = $exportOptions->marginsInPoints();
     $periodMode = App\Reports\ReportCatalogue::periodMode($dataset->reportKey);
     $fontSize = $exportOptions->fontSize ?: 7.5;
@@ -107,14 +108,8 @@
 
     <div><span>Date Generated</span>: {{ $meta['generated_long'] ?? '' }}</div>
 
-    @if(($options['filters'] ?? true) && ! empty($appliedFilters))
-        <div><span>Applied Filters</span>:
-            {{ implode('; ', array_map(
-                fn ($label, $value): string => $label.': '.$value,
-                array_keys($appliedFilters),
-                array_values($appliedFilters)
-            )) }}
-        </div>
+    @if(($options['filters'] ?? true) && $scopeSummary !== '')
+        <div><span>Report Scope</span>: {{ $scopeSummary }}</div>
     @endif
 </div>
 

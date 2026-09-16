@@ -7,8 +7,8 @@ namespace App\Reports;
  *
  * Report builders continue to own filtering. This class only converts the
  * already-authorized applied_filters metadata into formal document rows so
- * web preview, PDF/print, Word and Excel describe the exact same scope without a generic
- * "Applied Filters" sentence.
+ * web preview, PDF/print, Word and Excel describe the exact same scope under
+ * one "Report Scope" line of values, instead of a per-filter label list.
  */
 final class ReportScopeFormatter
 {

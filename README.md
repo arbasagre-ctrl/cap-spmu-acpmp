@@ -46,10 +46,10 @@ Use Docker rather than XAMPP for the project runtime. From PowerShell in the pro
 
 ```powershell
 docker compose up -d --build
-docker compose exec -T app php artisan migrate --force
-docker compose exec -T app php artisan db:seed --force
-docker compose exec -T app php artisan optimize:clear
+docker compose ps
 ```
+
+With `RUN_MIGRATIONS=true`, the container entrypoint applies migrations and idempotent reference seeders, then refreshes configuration, route, and view caches. Do not repeat those commands after a normal start.
 
 Open:
 
@@ -75,6 +75,10 @@ docker compose -p spmu-acpmp-test -f .\docker-compose.test.yml build --no-cache 
 
 docker compose -p spmu-acpmp-test -f .\docker-compose.test.yml run --rm test php vendor/bin/phpunit --testdox
 ```
+
+## Production turnover
+
+Production configuration, first ICTU account creation, scheduler/storage operations, Google OAuth, update steps, and the environment-variable register are in [docs/DEPLOYMENT-ICTU.md](docs/DEPLOYMENT-ICTU.md). The manual database/protected-storage backup, verification, and isolated restore-rehearsal procedure is in [docs/BACKUP-RESTORE-RUNBOOK.md](docs/BACKUP-RESTORE-RUNBOOK.md). Do not use local demo settings or the SQLite download backup action for production.
 
 ## Source map
 

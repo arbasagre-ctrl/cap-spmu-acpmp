@@ -124,7 +124,7 @@
 
 <p class="analytics-inventory-scope-note" role="note">
     <x-icon name="information" size="14" aria-hidden="true" />
-    <span><strong>Current stock scope:</strong> inventory totals are institution-wide and do not change with Division, Office / Unit, or Borrower. Utilization and Stock Coverage below still use the selected reporting period.</span>
+    <span><strong>Current stock scope:</strong> inventory totals are institution-wide and do not change with Organizational Classification, Office / College / Unit, or Borrower. Utilization and Stock Coverage below still use the selected reporting period.</span>
 </p>
 
 {{-- Availability and composition ---------------------------------------- --}}
@@ -160,7 +160,7 @@
                                     ['Availability', $row['share'].'%'],
                                     ['Status', $row['status']],
                                 ]) }}"
-                                aria-label="View details for {{ $row['name'] }}: {{ $num($row['available']) }} of {{ $num($row['stock']) }} units available, {{ $row['share'] }} percent, {{ $row['status'] }}"
+                                aria-label="View Details for {{ $row['name'] }}: {{ $num($row['available']) }} of {{ $num($row['stock']) }} units available, {{ $row['share'] }} percent, {{ $row['status'] }}"
                             >
                                 <span class="analytics-avail-name">{{ $row['name'] }}</span>
 
@@ -298,7 +298,7 @@
                         <li>
                             <a
                                 href="{{ AnalyticsDetailLink::to('equipment', 'inventory', $periodSelection, null, null, ['item' => $row['item_id']]) }}"
-                                aria-label="View details for {{ $row['name'] }}"
+                                aria-label="View Details for {{ $row['name'] }}"
                             >
                                 <span class="analytics-watch-main">
                                     <span class="analytics-watch-name">{{ $row['name'] }}</span>
@@ -349,7 +349,7 @@
                                 data-tip-rows="{{ json_encode([
                                     ['Physically released', $num($row['released'])],
                                 ]) }}"
-                                aria-label="View details for {{ $row['name'] }}: {{ $num($row['released']) }} released"
+                                aria-label="View Details for {{ $row['name'] }}: {{ $num($row['released']) }} released"
                             >
                                 <span class="analytics-rank-no">{{ $index + 1 }}</span>
                                 <span class="analytics-rank-main">

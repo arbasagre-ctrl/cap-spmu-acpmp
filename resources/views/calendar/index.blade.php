@@ -167,14 +167,14 @@
                 <dl class="calendar-preview-summary">
                     <div><dt>Borrowing period</dt><dd>{{ $event['start_at']->format('d M Y') }} <span aria-hidden="true">→</span> {{ $event['due_at']->format('d M Y') }}</dd></div>
                     <div><dt>Items</dt><dd>{{ $event['item_count'] }} item {{ \Illuminate\Support\Str::plural('type', $event['item_count']) }}</dd></div>
-                    @if($event['office'])<div><dt>Office / Department</dt><dd>{{ $event['office'] }}</dd></div>@endif
+                    @if($event['office'])<div><dt>Office / College / Unit</dt><dd>{{ $event['office'] }}</dd></div>@endif
                 </dl>
                 <div class="calendar-preview-status {{ $event['is_overdue'] || $event['status'] === 'OBLIGATION_OPEN' ? 'warning' : '' }}">
                     <strong>{{ $event['own_record'] && str_starts_with($event['next_action'], 'Action required') ? 'Action required' : 'Current status' }}</strong>
                     <p>{{ $event['next_action'] }}</p>
                 </div>
                 @if($event['request_url'])
-                    <a class="button primary ui-pressable full" href="{{ $event['request_url'] }}"><span>View details</span><x-icon name="arrow-right" size="15" /></a>
+                    <a class="button primary ui-pressable full" href="{{ $event['request_url'] }}"><span>View Request</span><x-icon name="arrow-right" size="15" /></a>
                 @endif
             </article>
         </template>

@@ -140,7 +140,7 @@
             <summary>Version History ({{ $historical->count() }})</summary>
             <div class="template-history-list">
                 @foreach($historical as $version)
-                    <div><span><strong>{{ $version->version_label ?: 'v'.$version->template_version.'.0' }}</strong> · {{ str($version->status)->replace('_', ' ')->title() }}</span><small>{{ $version->file?->original_name ?: 'Built-in system layout' }}{{ $version->activated_at ? ' · '.$version->activated_at->format('d M Y') : '' }}</small></div>
+                    <div><span><strong>{{ $version->version_label ?: 'v'.$version->template_version.'.0' }}</strong> · <x-status-badge :status="$version->status" /></span><small>{{ $version->file?->original_name ?: 'Built-in system layout' }}{{ $version->activated_at ? ' · '.$version->activated_at->format('d M Y') : '' }}</small></div>
                 @endforeach
             </div>
         </details>

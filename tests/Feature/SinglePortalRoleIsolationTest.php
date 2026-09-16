@@ -146,14 +146,15 @@ class SinglePortalRoleIsolationTest extends TestCase
                 /*
                  * UserAdministrationController::validated() requires
                  * division_code (must match the selected Office/Unit's own
-                 * division - SPMU is an ADMINISTRATIVE_UNIT) and
-                 * employment_status.
+                 * division - SPMU is an ADMINISTRATIVE_UNIT), employment_status,
+                 * and a real designation. The seeded borrower fixture carries no
+                 * designation, so it must be supplied explicitly here.
                  */
                 'division_code' => 'ADMINISTRATION',
                 'organizational_unit_id' => $spmuUnit->id,
                 'employee_no' => $user->employee_no,
                 'full_name' => $user->full_name,
-                'designation' => $user->designation,
+                'designation' => 'SPMU Action Officer',
                 'employment_type' => $user->employment_type->value,
                 'employment_status' => 'FULL_TIME',
                 'email' => $user->email,

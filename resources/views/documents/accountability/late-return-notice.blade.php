@@ -29,7 +29,7 @@
     <table class="info-grid" role="presentation">
         <tr>
             <td><span class="field-label">Borrower</span><span class="field-value">{{ $borrowerName ?: '—' }}</span></td>
-            <td><span class="field-label">Office / Unit</span><span class="field-value">{{ $officeUnit ?: '—' }}</span></td>
+            <td><span class="field-label">Office / College / Unit</span><span class="field-value">{{ $officeUnit ?: '—' }}</span></td>
         </tr>
         <tr>
             <td><span class="field-label">Request No.</span><span class="field-value">{{ $requestNo ?: '—' }}</span></td>
@@ -102,7 +102,7 @@
     <table class="signature-table" role="presentation">
         <tr>
             <td colspan="2" style="width: 100%; padding-left: 25%; padding-right: 25%;">
-                <div class="signature-label">Approved By — SPMU Head/Admin</div>
+                <div class="signature-label">Confirmed By — SPMU Head</div>
                 <div class="signature-space">{!! $headSignatureHtml ?: '' !!}</div>
                 <div class="signature-name">{{ $headName }}</div>
                 <div class="signature-role">{{ $headDesignation }}</div>

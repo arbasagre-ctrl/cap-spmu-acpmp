@@ -350,6 +350,12 @@ class OperationalTransactionScheduleTest extends TestCase
             'allows_return' => true,
         ]);
 
+        /*
+         * OperationalCalendarService::assertOpenFor() uses one unified
+         * message for PICKUP regardless of before/after the window (unlike
+         * REQUEST/RETURN, which distinguish "available from"/"window has
+         * ended") - see OperationalCalendarService.php:343-348.
+         */
         try {
             $this->calendar->assertOpenFor(
                 OperationalCalendarService::PICKUP,
@@ -359,7 +365,7 @@ class OperationalTransactionScheduleTest extends TestCase
             $this->fail('Pickup before 1:00 PM must be rejected.');
         } catch (ValidationException $exception) {
             $this->assertStringContainsString(
-                'available from 1:00 PM to 4:00 PM',
+                'Please choose a pickup time between 1:00 PM and 4:00 PM',
                 $exception->validator->errors()->first('release')
             );
         }
@@ -380,6 +386,11 @@ class OperationalTransactionScheduleTest extends TestCase
             'allows_return' => true,
         ]);
 
+        /*
+         * See test_before_the_window_reports_the_available_hours(): PICKUP
+         * uses the same unified "choose a time between X and Y" message
+         * whether the attempt is before or after the window.
+         */
         try {
             $this->calendar->assertOpenFor(
                 OperationalCalendarService::PICKUP,
@@ -389,8 +400,7 @@ class OperationalTransactionScheduleTest extends TestCase
             $this->fail('Pickup after 4:00 PM must be rejected.');
         } catch (ValidationException $exception) {
             $message = $exception->validator->errors()->first('release');
-            $this->assertStringContainsString("Today's", $message);
-            $this->assertStringContainsString('window has ended', $message);
+            $this->assertStringContainsString('Please choose a pickup time between 1:00 PM and 4:00 PM', $message);
         }
 
         OperationalWeeklySchedule::query()->updateOrCreate(

@@ -64,6 +64,7 @@ function mount({ paginated = false, withRecords = true } = {}) {
 }
 
 test('completed laundry has separate empty and populated states matching the reference', () => {
+    assert.match(back, /<span>Back<\/span>/);
     assert.match(page, /<p class="eyebrow">Laundry Operations<\/p>/);
     assert.match(page, /Review completed laundry cases and their final disposition\./);
     assert.match(page, /@if\(\$jobs->total\(\) === 0\)\s+<section class="card completed-laundry-empty"/);
@@ -73,7 +74,6 @@ test('completed laundry has separate empty and populated states matching the ref
     assert.match(page, /@else\s+<section class="card completed-laundry-card"/);
     assert.equal(page.split("@include('laundry.partials.completed-back-link')").length - 1, 2);
     assert.match(back, /route\('laundry\.index'\)/);
-    assert.match(back, /Back to Active Laundry/);
     assert.match(page, /Completed cases are archived for record keeping and inventory management\./);
     assert.doesNotMatch(page, /SCREEN 1|SCREEN 2|No completed internal Laundry/);
 });

@@ -137,7 +137,7 @@
                                             </small>
                                         </div>
                                         <span class="status-badge {{ $laundryFormMissing ? 'status-warning' : 'status-info' }}">
-                                            {{ $laundryFormMissing ? 'Form pending' : 'Form ready' }}
+                                            {{ $laundryFormMissing ? 'Laundry Form Required' : 'Form ready' }}
                                         </span>
                                     </div>
                                 </td>

@@ -411,7 +411,7 @@
                             :status="$operationalStatusKey"
                             :label="$operationalLabel"
                         />
-                        <strong>View<x-icon name="arrow-right" size="16" /></strong>
+                        <strong>View Record<x-icon name="arrow-right" size="16" /></strong>
                     </span>
                 </a>
             @empty

@@ -83,7 +83,7 @@
 
     <a class="button secondary ui-pressable" href="{{ route('inventory.index') }}">
         <x-icon name="arrow-left" size="16" />
-        <span>Back to Inventory</span>
+        <span>Back</span>
     </a>
 </section>
 
@@ -559,7 +559,7 @@
                             <tr>
                                 <td data-label="Borrower / Office">
                                     <strong>{{ $row['borrower']?->full_name ?: 'Unknown borrower' }}</strong>
-                                    <small>{{ $row['office'] ?: 'No office / department recorded' }}</small>
+                                    <small>{{ $row['office'] ?: 'No Office / College / Unit recorded' }}</small>
                                 </td>
 
                                 <td data-label="Request / Custody">

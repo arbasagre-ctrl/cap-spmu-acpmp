@@ -19,7 +19,7 @@
         <a
             class="analytics-trend-col"
             href="{{ AnalyticsDetailLink::to('trend', $trendSection, $periodSelection, $trendDivision, $trendUnit, ['bucket' => $index]) }}"
-            aria-label="View details for {{ $point['label'] }}: {{ $point['count'] }} {{ $point['count'] === 1 ? 'request' : 'requests' }}"
+            aria-label="View Details for {{ $point['label'] }}: {{ $point['count'] }} {{ $point['count'] === 1 ? 'request' : 'requests' }}"
         >
             <span class="analytics-trend-bar" style="height: {{ max(2, $point['share']) }}%">
                 <span class="analytics-trend-count">{{ $point['count'] }}</span>

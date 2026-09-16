@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BillingLine extends Model
 {
-    protected $fillable = ['billing_statement_id', 'penalty_id', 'incident_id', 'line_type', 'description', 'basis', 'amount'];
+    protected $fillable = ['billing_statement_id', 'penalty_id', 'incident_id', 'source_key', 'line_type', 'description', 'basis', 'amount'];
 
     protected function casts(): array
     {

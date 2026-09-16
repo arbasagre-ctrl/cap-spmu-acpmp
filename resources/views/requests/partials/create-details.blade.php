@@ -52,20 +52,20 @@
             @endphp
 
             <label>
-                Division
+                Organizational Classification
                 <input
                     id="division-display"
                     value="{{ $selectedRequestingOption['division_label'] ?? '' }}"
                     readonly
                     tabindex="-1"
                     aria-readonly="true"
-                    placeholder="No division assigned"
+                    placeholder="No organizational classification assigned"
                 >
                 <input id="division_code" type="hidden" name="division_code" value="{{ $effectiveDivisionCode }}">
             </label>
 
             <label>
-                Requesting Office / Unit
+                Requesting Office / College / Unit
                 @if($hasMultipleRequestingUnits)
                     <select
                         id="requesting_organizational_unit_id"
@@ -86,7 +86,7 @@
                         @endforeach
                     </select>
                     <small class="field-help" id="requesting-unit-help">
-                        Select the Office / Unit you are officially representing for this request.
+                        Select the Office / College / Unit you are officially representing for this request.
                     </small>
                 @elseif(count($requestingUnitOptions) === 1)
                     <input
@@ -110,7 +110,7 @@
                         readonly
                         tabindex="-1"
                         aria-readonly="true"
-                        placeholder="No authorized Office / Unit"
+                        placeholder="No authorized Office / College / Unit"
                     >
                     <input
                         id="requesting_organizational_unit_id"
@@ -119,7 +119,7 @@
                         value=""
                         required
                     >
-                    <small class="field-error">No borrowing Office / Unit is authorized for this account. Contact ICTU.</small>
+                    <small class="field-error">{{ $requestingUnitNotice ?? 'No borrowing Office / College / Unit is authorized for this account. Contact ICTU.' }}</small>
                 @endif
 
                 <input id="office_unit" type="hidden" name="office_unit" value="{{ $effectiveOfficeUnit }}">

@@ -112,7 +112,7 @@ class AnalyticsCardDetailService
     private function inventoryCurrentNote(): string
     {
         return 'Institution-wide current inventory snapshot: measured as of today. '
-            .'Reporting Period, Division, Office / Unit, and Borrower filters do not change physical stock totals.';
+            .'Reporting Period, Organizational Classification, Office / College / Unit, and Borrower filters do not change physical stock totals.';
     }
 
     /** @return array<string, mixed> */
@@ -526,12 +526,12 @@ class AnalyticsCardDetailService
         );
 
         return [
-            'title' => 'Demand by Division',
+            'title' => 'Demand by Organizational Classification',
             'value' => $groups['total'],
             'value_label' => $groups['total'] === 1 ? 'request filed' : 'requests filed',
             'context' => 'Share of filed borrowing demand',
             'note' => $this->periodNote($scope)
-                .' A division with no activity is left out of the comparison rather than shown '
+                .' An organizational classification with no activity is left out of the comparison rather than shown '
                 .'as a zero share.',
             'bars' => $groups['groups']->isEmpty() ? null : $groups['groups']->map(
                 static fn (array $group): array => [
@@ -1143,7 +1143,7 @@ class AnalyticsCardDetailService
             $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
 
-        return $this->forecastBreakdown($scope, $forecast, 'Demand by Division', 'division');
+        return $this->forecastBreakdown($scope, $forecast, 'Demand by Organizational Classification', 'division');
     }
 
     /** @return array<string, mixed> */

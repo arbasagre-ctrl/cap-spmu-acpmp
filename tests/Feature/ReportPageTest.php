@@ -228,7 +228,50 @@ class ReportPageTest extends TestCase
             ->assertOk()
             ->assertSee('Audit Trail', false)
             ->assertSee('System administration', false)
-            ->assertDontSee('ICTU system administration', false);
+            ->assertDontSee('ICTU system administration', false)
+            /* Under the 500-row display cap, no "latest N of total" caveat is shown. */
+            ->assertDontSee('Showing latest', false);
+    }
+
+    public function test_audit_trail_past_the_display_cap_states_it_is_showing_only_the_latest_records(): void
+    {
+        $ictu = User::factory()->create([
+            'access_classification' => AccessClassification::IctuMaintainer,
+            'full_name' => 'ICTU Maintainer',
+        ]);
+
+        $now = now();
+
+        $rows = [];
+
+        foreach (range(1, 510) as $index) {
+            $rows[] = [
+                'actor_user_id' => $ictu->id,
+                'action_code' => 'audit_cap_fixture.recorded',
+                'record_type' => User::class,
+                'record_id' => $ictu->id,
+                'occurred_at' => $now->copy()->subMinutes($index),
+                'reason' => 'Audit trail 500-row display cap fixture.',
+                'correlation_id' => (string) \Illuminate\Support\Str::uuid(),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        \Illuminate\Support\Facades\DB::table('audit_events')->insert($rows);
+
+        /*
+         * The display cap only ever hides rows, it never deletes or
+         * rewrites them: every one of the 510 rows inserted above is still
+         * in audit_events after the page renders.
+         */
+        $this->actingAs($ictu)
+            ->withSession(['active_workspace' => 'ICTU'])
+            ->get(route('reports.audit'))
+            ->assertOk()
+            ->assertSee('Showing latest 500 of 510 total records.', false);
+
+        $this->assertSame(510, \App\Models\AuditEvent::query()->count());
     }
 
     public function test_spmu_administration_page_does_not_link_to_the_ictu_audit_trail(): void
@@ -370,7 +413,7 @@ class ReportPageTest extends TestCase
         $response->assertSee('Include report summary', false);
         $response->assertSee('Automatic (Recommended)', false);
         $response->assertSee('Advanced Print Settings', false);
-        $response->assertSee('Included automatically in formal reports', false);
+        $response->assertSee('Included automatically in printed and exported reports', false);
         $response->assertSee('Export PDF', false);
         $response->assertSee('Export Word', false);
         $response->assertSee('Export Excel', false);
@@ -524,6 +567,48 @@ class ReportPageTest extends TestCase
     /* ------------------------------------------------------------------ */
     /* Print and export                                                    */
     /* ------------------------------------------------------------------ */
+
+    public function test_formal_document_shows_a_single_compact_report_scope_line(): void
+    {
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.print', [
+                'type' => 'borrowing',
+                'academic_period' => 'month',
+                'division' => 'ACADEMIC',
+                'unit' => 'College of Computer Studies',
+            ]));
+
+        $response->assertOk();
+        $response->assertSee('Report Scope', false);
+        $response->assertSee('Academic · College of Computer Studies', false);
+
+        /*
+         * One compact value list, not the old per-filter label sentence. The
+         * report's own "Organizational Classification" table column is
+         * unrelated and expected to still appear.
+         */
+        $response->assertDontSee('Applied Filters', false);
+        $response->assertDontSee('All classifications', false);
+        $response->assertDontSee('All units', false);
+    }
+
+    public function test_formal_document_omits_report_scope_entirely_without_a_meaningful_filter(): void
+    {
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.print', [
+                'type' => 'borrowing',
+                'academic_period' => 'month',
+            ]));
+
+        $response->assertOk();
+        $response->assertDontSee('Report Scope', false);
+    }
 
     public function test_print_view_renders_the_whole_record_set_with_metadata(): void
     {

@@ -308,6 +308,18 @@ class BorrowerObligationGroupingTest extends TestCase
         $borrower = $this->borrower();
         $custody = $this->custody($borrower, now()->subDays(5));
 
+        /*
+         * BorrowerObligationService::buildRows() derives $isPhysicallyOutstanding
+         * from the custody's own lines (returned_quantity vs
+         * actual_released_quantity), not from the OverdueCase status word -
+         * the custody() fixture leaves returned_quantity at 0 by default, so
+         * it must be marked fully returned here to reproduce "the physical
+         * return is already recorded; only SPMU processing remains."
+         */
+        foreach ($custody->lines as $line) {
+            $line->update(['returned_quantity' => $line->actual_released_quantity]);
+        }
+
         OverdueCase::query()->create([
             'custody_transaction_id' => $custody->id,
             'borrower_user_id' => $borrower->id,

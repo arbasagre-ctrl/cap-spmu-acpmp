@@ -40,7 +40,11 @@ class AnalyticsService
      * Research, Innovation and Collaboration is reported as its own division;
      * no rule folds it into Academic or Administrative.
      */
-    public const DIVISIONS = OrganizationalStructure::SHORT_LABELS;
+    /** @return array<string, string> */
+    public static function divisions(): array
+    {
+        return OrganizationalStructure::divisions();
+    }
 
     /**
      * At or below this share of serviceable stock, an equipment type is
@@ -248,7 +252,7 @@ class AnalyticsService
             ->groupBy('request_versions.division_code')
             ->pluck('total', 'division_code');
 
-        $groups = collect(self::DIVISIONS)
+        $groups = collect(self::divisions())
             ->map(fn (string $label, string $code): array => [
                 'code' => $code,
                 'label' => $label,
@@ -266,7 +270,7 @@ class AnalyticsService
             ->groupBy('request_versions.division_code', 'request_versions.office_unit')
             ->get();
 
-        $columns = collect(self::DIVISIONS)
+        $columns = collect(self::divisions())
             ->map(function (string $label, string $code) use ($unitRows): array {
                 $units = $unitRows
                     ->where('division_code', $code)
@@ -672,7 +676,7 @@ class AnalyticsService
 
         $total = (int) $counts->sum();
 
-        $groups = collect(self::DIVISIONS)
+        $groups = collect(self::divisions())
             ->map(fn (string $label, string $code): array => [
                 'code' => $code,
                 'label' => $label,
@@ -727,7 +731,7 @@ class AnalyticsService
             ->groupBy('request_versions.division_code', 'request_versions.office_unit')
             ->get();
 
-        $columns = collect(self::DIVISIONS)
+        $columns = collect(self::divisions())
             ->map(function (string $label, string $code) use ($rows, $limit): array {
                 $units = $rows
                     ->where('division_code', $code)
@@ -2278,19 +2282,19 @@ class AnalyticsService
     /* ------------------------------------------------------------------ */
 
     /**
-     * Units that actually appear on filed requests, grouped by division, so
-     * the Unit filter never offers a value with no records behind it.
+     * Units offered in the Unit filter, grouped by division.
+     *
+     * Sourced from the same authoritative organizational master Reports and
+     * Requests use (OrganizationalStructure::unitsByDivision()), not from
+     * filed-request activity: a current active unit must stay selectable
+     * even with zero requests in the selected period. Reporting Period /
+     * Division / Unit still narrow the RESULTS elsewhere in this class; they
+     * must never narrow which units exist to choose from.
      *
      * @return Collection<string, list<string>>
      */
     public function unitOptions(CarbonInterface $from, CarbonInterface $to): Collection
     {
-        return $this->requestScope($from, $to)
-            ->select('request_versions.division_code', 'request_versions.office_unit')
-            ->distinct()
-            ->get()
-            ->filter(fn ($row): bool => filled($row->office_unit) && filled($row->division_code))
-            ->groupBy('division_code')
-            ->map(fn (Collection $rows): array => $rows->pluck('office_unit')->unique()->sort()->values()->all());
+        return collect(OrganizationalStructure::unitsByDivision());
     }
 }

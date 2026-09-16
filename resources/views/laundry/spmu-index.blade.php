@@ -25,7 +25,7 @@
                         <span>{{ $job->custody->borrower->full_name }} · {{ $job->custody->custody_no }}</span>
                         <small>{{ $statusText }}</small>
                     </div>
-                    <div class="inline-actions"><x-status-badge :status="$job->status" /><a class="button primary small ui-pressable" href="{{ route('laundry.spmu.show', $job) }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a></div>
+                    <div class="inline-actions"><x-status-badge :status="$job->status" /><a class="button primary small ui-pressable" href="{{ route('laundry.spmu.show', $job) }}"><span>View Record</span><x-icon name="arrow-right" size="14" /></a></div>
                 </article>
             @empty
                 <div class="empty-state"><strong>No Laundry final-acceptance cases need action.</strong></div>

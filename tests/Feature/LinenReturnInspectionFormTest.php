@@ -396,10 +396,25 @@ class LinenReturnInspectionFormTest extends TestCase
         ['custody' => $custody, 'lines' => $lines] = $this->outstandingCustody(linen: false);
 
         $version = $custody->request->currentVersion;
+
+        /*
+         * inventoryItem(false) deterministically returns the same item
+         * outstandingCustody() already used for $lines['non_linen']; a
+         * second, genuinely distinct item type is required here so
+         * request_items' (request_version_id, inventory_item_id) unique
+         * constraint isn't violated.
+         */
+        $secondItem = InventoryItem::query()
+            ->where('active', true)
+            ->where('borrowable', true)
+            ->where('laundry_required', false)
+            ->whereKeyNot($this->inventoryItem(false)->id)
+            ->firstOrFail();
+
         $secondLine = $this->custodyLine(
             $custody,
             $version,
-            $this->inventoryItem(false),
+            $secondItem,
             1
         );
 
@@ -505,6 +520,17 @@ class LinenReturnInspectionFormTest extends TestCase
 
     public function test_mixed_custody_lateness_uses_the_later_authoritative_physical_return_date(): void
     {
+        /*
+         * setUp() pins "now" to a Monday. CustodyService::receiveReturn()
+         * runs synchronizeCustodyDueDate() first, which pushes a due_at
+         * falling on a closed day forward to the next open day - so
+         * "yesterday" (Sunday, closed) would silently collapse back onto
+         * this same Monday, making the return look on-time instead of one
+         * day late. Move to a Wednesday so "yesterday" (Tuesday) is a
+         * genuinely open day and the intended one-day gap survives sync.
+         */
+        $this->travelTo(Carbon::now()->next(Carbon::WEDNESDAY)->setTime(10, 0));
+
         ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
             linen: true,
             nonLinen: true
@@ -622,6 +648,16 @@ class LinenReturnInspectionFormTest extends TestCase
 
     public function test_action_officer_can_encode_a_much_later_actual_linen_return_date_and_accountability_uses_all_late_days(): void
     {
+        /*
+         * setUp() pins "now" to a Monday, and 15 days before a Monday is
+         * also a Sunday - a closed day that synchronizeCustodyDueDate()
+         * would push forward to the next open day (this same Monday),
+         * quietly shrinking the intended 12-day gap to 11. Move to a
+         * Wednesday so "15 days ago" lands on a Tuesday, a genuinely open
+         * weekday, and the full 12-day gap survives the due-date sync.
+         */
+        $this->travelTo(Carbon::now()->next(Carbon::WEDNESDAY)->setTime(10, 0));
+
         ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(linen: true);
 
         // The expected return was 15 days ago, but the Laundry Worker actually

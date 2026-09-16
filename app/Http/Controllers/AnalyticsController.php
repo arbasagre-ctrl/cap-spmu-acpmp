@@ -102,7 +102,7 @@ class AnalyticsController extends Controller
 
         $division = (string) $request->input('group', 'all');
 
-        if (! array_key_exists($division, AnalyticsService::DIVISIONS)) {
+        if (! array_key_exists($division, AnalyticsService::divisions())) {
             $division = 'all';
         }
 
@@ -181,7 +181,7 @@ class AnalyticsController extends Controller
             'activeAcademicPeriod' => $activeAcademicPeriod,
             'selectedAcademicPeriod' => $selectedAcademicPeriod,
 
-            'divisions' => AnalyticsService::DIVISIONS,
+            'divisions' => AnalyticsService::divisions(),
             'selectedDivision' => $division,
             'selectedUnit' => $unit,
             'unitOptions' => $unitOptions,

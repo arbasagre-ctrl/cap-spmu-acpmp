@@ -91,6 +91,16 @@
 
     <div class="ictu-audit-result-row">
         <span id="audit-result-count">{{ $events->count() }} recorded event{{ $events->count() === 1 ? '' : 's' }}</span>
+        @if($totalEventCount > $events->count())
+            {{--
+                The 500-row limit below is a display cap only, not a record
+                limit: the audit table itself keeps every row. This note is a
+                separate, static element so the client-side filters above
+                (which only ever narrow within the loaded 500) can never
+                overwrite or hide it.
+            --}}
+            <span class="ictu-audit-limit-note">Showing latest {{ number_format($events->count()) }} of {{ number_format($totalEventCount) }} total records.</span>
+        @endif
         <span class="ictu-audit-append-only">Append-only record</span>
     </div>
 
@@ -216,7 +226,7 @@
                                 @endif
 
                                 <details class="ictu-audit-details">
-                                    <summary>View details</summary>
+                                    <summary>View Details</summary>
 
                                     <div class="ictu-audit-details-panel">
                                         <dl class="ictu-audit-detail-grid">
@@ -343,6 +353,11 @@
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--surface, #fff);
+    font-weight: 700;
+}
+
+.ictu-audit-limit-note {
+    color: var(--warning, #9a6700);
     font-weight: 700;
 }
 

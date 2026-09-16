@@ -47,7 +47,9 @@ class DemoUserSeeder extends Seeder
     private function accounts(): array
     {
         return [
-            [AccessClassification::BorrowerOnly, 'borrower@spmu.test', 'DEMO-BORROWER', 'Borrower Demo', 'CSPC', EmploymentType::Faculty],
+            // Borrowers must have a selectable leaf assignment; CSPC is the
+            // institution root and deliberately has no classification.
+            [AccessClassification::BorrowerOnly, 'borrower@spmu.test', 'DEMO-BORROWER', 'Borrower Demo', 'CCS', EmploymentType::Faculty],
             [AccessClassification::SpmuOfficer, 'spmu@spmu.test', 'DEMO-SPMU', 'SPMU Action Officer Demo', 'SPMU', EmploymentType::Staff],
             [AccessClassification::SpmuHead, 'spmu-head@spmu.test', 'DEMO-SPMU-HEAD', 'SPMU Head Demo', 'SPMU', EmploymentType::Employee],
             [AccessClassification::IctuMaintainer, 'ictu@spmu.test', 'DEMO-ICTU', 'ICTU Maintainer Demo', 'ICTU', EmploymentType::Staff],

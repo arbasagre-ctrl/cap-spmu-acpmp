@@ -80,7 +80,7 @@
 
                 @if($reportCount > 0)
                     <div class="report-preview-sheet report-preview-sheet--{{ App\Reports\ReportCatalogue::orientation($selectedReport) }}">
-                        @include('reports.document.sheet', ['rows' => $records])
+                        @include('reports.document.sheet', ['rows' => $records, 'options' => ['interactive' => true]])
                     </div>
 
                     @if($records->hasPages())

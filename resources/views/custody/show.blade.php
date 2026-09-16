@@ -473,7 +473,7 @@
                         class="button secondary small ui-pressable borrower-custody-status-action"
                         href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
                     >
-                        {{ $accountabilityIndicator ? 'View obligation' : ($pickupMissed ? 'Open Request Actions' : 'View request') }}
+                        {{ $accountabilityIndicator ? 'View Obligation' : ($pickupMissed ? 'Open Request Actions' : 'View Request') }}
                         <x-icon name="arrow-right" size="15" />
                     </a>
                 </div>

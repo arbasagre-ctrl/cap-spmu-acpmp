@@ -437,14 +437,14 @@ class AnalyticsDetailService
     /** @param array<string, mixed> $scope */
     private function division(array $scope, string $code): ?array
     {
-        if (! array_key_exists($code, OrganizationalStructure::DIVISIONS)) {
+        if (! array_key_exists($code, OrganizationalStructure::divisions())) {
             return null;
         }
 
         return $this->organisation(
             $scope,
             OrganizationalStructure::label($code),
-            'Division detail',
+            'Organizational Classification detail',
             $code,
             null
         );
@@ -529,7 +529,7 @@ class AnalyticsDetailService
             'context' => 'Borrower detail',
             'note' => 'Requests filed by this borrower in the selected period.',
             'table' => $requests->isEmpty() ? null : [
-                'columns' => ['Request No.', 'Purpose', 'Office / Unit', 'Filed', 'Status'],
+                'columns' => ['Request No.', 'Purpose', 'Office / College / Unit', 'Filed', 'Status'],
                 'rows' => $requests->map(fn (BorrowingRequest $row): array => [
                     (string) $row->request_no,
                     (string) ($row->currentVersion?->purpose_event ?? ''),

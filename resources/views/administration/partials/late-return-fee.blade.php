@@ -69,7 +69,7 @@
                     Save change
                 </button>
 
-                <a class="button secondary ui-pressable" href="{{ route('policies.index') }}">Back</a>
+                <a class="button secondary ui-pressable" href="{{ route('policies.index') }}"><x-icon name="arrow-left" size="17" /> Back</a>
             </div>
         </div>
     </form>

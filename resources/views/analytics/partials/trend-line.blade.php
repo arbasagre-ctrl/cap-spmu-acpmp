@@ -113,7 +113,7 @@
                         $coord['count'] === 1 ? 'Request filed' : 'Requests filed',
                         (string) $coord['count'],
                     ]]) }}"
-                    aria-label="View details for {{ $coord['label'] }}: {{ $coord['count'] }} {{ $coord['count'] === 1 ? 'request' : 'requests' }}"
+                    aria-label="View Details for {{ $coord['label'] }}: {{ $coord['count'] }} {{ $coord['count'] === 1 ? 'request' : 'requests' }}"
                 >
                     <span class="analytics-line-dot" aria-hidden="true"></span>
                     <span class="analytics-line-tip" aria-hidden="true">{{ $coord['count'] }}</span>

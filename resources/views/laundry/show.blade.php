@@ -59,7 +59,7 @@
         <h1>{{ $job->custody->custody_no }}</h1>
         <p>{{ $job->custody->borrower->full_name }} · Request {{ $job->custody->request->request_no }}</p>
     </div>
-    <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-summary"><x-icon name="arrow-left" size="16" /><span>Back to Return</span></a>
+    <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}#return-summary"><x-icon name="arrow-left" size="16" /><span>Back</span></a>
 </section>
 
 <section class="content-area laundry-detail-tracker">
@@ -80,9 +80,9 @@
 
             <div class="inline-actions laundry-form-actions">
                 @if($job->latestEvidence?->file)
-                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">View Accomplished Form</a>
+                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">Open Accomplished Form</a>
                 @elseif($job->document)
-                    <a class="button secondary ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">View Laundry Form</a>
+                    <a class="button secondary ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">Open Laundry Form</a>
                 @endif
             </div>
 
@@ -128,8 +128,8 @@
         <x-icon name="requests" size="36" />
         <div>
             @if(! $formArchived)
-                <h2>Laundry processing / completed form pending</h2>
-                <p>The borrower returns the linen and form to the Laundry Area first. Laundry Personnel record <strong>Received by</strong> and the actual receipt date, finish the laundry process, then deliver the accomplished form to SPMU. Even if SPMU receives it later, the Received by date controls borrower lateness.</p>
+                <h2>Next: Complete the Laundry Form</h2>
+                <p>Return the linen and printed form to the Laundry Area. Laundry Personnel record <strong>Received by</strong> and the receipt date, complete processing, then deliver the accomplished form to SPMU. The Received by date controls return timeliness.</p>
             @else
                 <h2>Encode the completed Laundry Form in SPMU Return</h2>
                 <p>The completed form is already on file. Record the full received quantity as Fine / Good when no issue was reported; otherwise encode the applicable adverse quantity exactly as written on the Laundry Form. The accomplished Laundry Form is the authoritative evidence for linen; extra photos/files are optional. Serviceable linen becomes Available automatically after encoding. No second linen inspection is required.</p>

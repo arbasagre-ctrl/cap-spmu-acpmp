@@ -32,10 +32,10 @@ final class ReportCatalogue
     {
         return [
             'division' => [
-                'label' => 'Division',
+                'label' => 'Organizational Classification',
                 'type' => 'select',
-                'placeholder' => 'All divisions',
-                'options' => fn (): array => OrganizationalStructure::DIVISIONS,
+                'placeholder' => 'All organizational classifications',
+                'options' => fn (): array => OrganizationalStructure::divisions(),
             ],
 
             /*
@@ -64,7 +64,7 @@ final class ReportCatalogue
              * rejected by validation rather than silently returning nothing.
              */
             'unit' => [
-                'label' => 'Office / Unit',
+                'label' => 'Office / College / Unit',
                 'type' => 'select',
                 'placeholder' => 'All units',
                 'depends_on' => 'division',

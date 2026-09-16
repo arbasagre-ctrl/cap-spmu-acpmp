@@ -2,12 +2,15 @@
     /*
     | Document metadata as institutional text, not cards.
     |
-    | Applied Filters is omitted entirely when the report was generated
-    | without filters, rather than printing an empty label.
+    | Report Scope is omitted entirely when the report was generated without
+    | a meaningful filter (a default such as "All classifications" is never a
+    | scope value in applied_filters to begin with), rather than printing an
+    | empty label.
     */
     $meta = $dataset->meta;
     $appliedFilters = $meta['applied_filters'] ?? [];
     $scopeRows = \App\Reports\ReportScopeFormatter::rows($appliedFilters);
+    $scopeSummary = implode(' · ', array_column($scopeRows, 'value'));
     $options = $options ?? [];
 @endphp
 
@@ -24,12 +27,10 @@
         <dd>{{ $meta['generated_long'] ?? ($meta['generated_at'] ?? '') }}</dd>
     </div>
 
-    @if(($options['filters'] ?? true) && ! empty($scopeRows))
-        @foreach($scopeRows as $scope)
-            <div>
-                <dt>{{ $scope['label'] }}</dt>
-                <dd>{{ $scope['value'] }}</dd>
-            </div>
-        @endforeach
+    @if(($options['filters'] ?? true) && $scopeSummary !== '')
+        <div>
+            <dt>Report Scope</dt>
+            <dd>{{ $scopeSummary }}</dd>
+        </div>
     @endif
 </dl>

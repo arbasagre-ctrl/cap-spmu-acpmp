@@ -41,7 +41,7 @@ class BorrowingRequestController extends Controller
             ->values();
 
         return OrganizationalUnit::query()
-            ->where('active', true)
+            ->activeSelectable()
             ->whereIn('id', $unitIds)
             ->orderBy('unit_name')
             ->get();
@@ -72,6 +72,31 @@ class BorrowingRequestController extends Controller
             ->filter()
             ->values()
             ->all();
+    }
+
+    private function requestingUnitNotice(User $user): string
+    {
+        if ($this->authorizedRequestingUnits($user)->isNotEmpty()) {
+            return 'Choose one of the Office / College / Unit assignments authorized for your account by ICTU.';
+        }
+
+        $assignedUnitIds = $user->authorizedOrganizationalUnits()
+            ->pluck('organizational_units.id')
+            ->push($user->organizational_unit_id)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $hasHistoricalAssignment = $assignedUnitIds->isNotEmpty()
+            && OrganizationalUnit::query()
+                ->whereIn('id', $assignedUnitIds)
+                ->get()
+                ->contains(fn (OrganizationalUnit $unit) => ! $unit->isSelectable());
+
+        return $hasHistoricalAssignment
+            ? 'Your organizational assignment is historical or inactive. Contact ICTU to assign an active Office / College / Unit before filing a new request.'
+            : 'No borrowing Office / College / Unit is authorized for this account. Contact ICTU.';
     }
 
     public function index(Request $request): View
@@ -256,6 +281,7 @@ class BorrowingRequestController extends Controller
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
+                'requestingUnitNotice' => $this->requestingUnitNotice($borrower),
                 'prefillRequestingUnitId' => $prefillRequestingUnitId,
                 'prefillDivisionCode' => $prefillDivisionCode,
                 'prefillOfficeUnit' => $prefillOfficeUnit,
@@ -512,6 +538,7 @@ class BorrowingRequestController extends Controller
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
+                'requestingUnitNotice' => $this->requestingUnitNotice($borrower),
                 'prefillRequestingUnitId' => $prefillRequestingUnitId,
                 'prefillDivisionCode' => null,
                 'prefillOfficeUnit' => null,
@@ -1024,7 +1051,7 @@ class BorrowingRequestController extends Controller
         if (! $authorizedUnit) {
             throw ValidationException::withMessages([
                 'requesting_organizational_unit_id' =>
-                    'Choose one of the Office / Unit assignments authorized for your account by ICTU.',
+                    $this->requestingUnitNotice($borrower),
             ]);
         }
 
@@ -1034,7 +1061,7 @@ class BorrowingRequestController extends Controller
         if (! $divisionCode) {
             throw ValidationException::withMessages([
                 'requesting_organizational_unit_id' =>
-                    'The selected Office / Unit does not have a valid Division classification. Contact ICTU.',
+                    'The selected Office / College / Unit does not have a valid Organizational Classification. Contact ICTU.',
             ]);
         }
 

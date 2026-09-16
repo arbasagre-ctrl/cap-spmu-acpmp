@@ -7,7 +7,7 @@
         <dl class="detail-list request-information-list">
             <dt>Borrower</dt>
             <dd>{{ $borrowingRequest->borrower->full_name }}</dd>
-            <dt>Office / Department</dt>
+            <dt>Office / College / Unit</dt>
             <dd>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</dd>
             <dt>Event</dt>
             <dd>{{ $v->purpose_event }}</dd>
@@ -62,8 +62,8 @@
                     <a class="button secondary small ui-pressable request-document-link"
                         href="{{ route('files.show', $doc->file, false) }}"
                         target="_blank" rel="noopener"
-                        aria-label="View {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER ? 'Approved Borrowing Request Letter' : 'Permission to Conduct Letter' }}">
-                        View
+                        aria-label="Open {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER ? 'Approved Borrowing Request Letter' : 'Permission to Conduct Letter' }}">
+                        Open Document
                     </a>
                 </div>
             @empty
@@ -82,7 +82,7 @@
                         <div class="request-document-actions">
                             <a class="button secondary small ui-pressable request-document-link"
                                 href="{{ route('documents.view', $borrowerSlipDocument) }}"
-                                target="_blank" rel="noopener">View</a>
+                                target="_blank" rel="noopener">Open Borrower Slip</a>
                             <a class="button secondary small ui-pressable request-document-link"
                                 href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
                         </div>
@@ -101,7 +101,7 @@
                             <div class="request-document-actions">
                                 <a class="button secondary small ui-pressable request-document-link"
                                     href="{{ route('documents.view', $laundryFormDocument) }}"
-                                    target="_blank" rel="noopener">View</a>
+                                    target="_blank" rel="noopener">Open Laundry Form</a>
                                 <a class="button secondary small ui-pressable request-document-link"
                                     href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
                             </div>
@@ -124,7 +124,7 @@
                         @if($laundryAccomplishedFile)
                             <a class="button secondary small ui-pressable request-document-link"
                                 href="{{ route('files.show', $laundryAccomplishedFile, false) }}"
-                                target="_blank" rel="noopener">View</a>
+                                target="_blank" rel="noopener">Open Accomplished Laundry Form</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif
@@ -141,7 +141,7 @@
                             <div class="request-document-actions">
                                 <a class="button secondary small ui-pressable request-document-link"
                                     href="{{ route('documents.view', $gatePassDocument) }}"
-                                    target="_blank" rel="noopener">View</a>
+                                    target="_blank" rel="noopener">Open Gate Pass</a>
                                 <a class="button secondary small ui-pressable request-document-link"
                                     href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
                             </div>
@@ -164,7 +164,7 @@
                         @if($gatePassAccomplishedFile)
                             <a class="button secondary small ui-pressable request-document-link"
                                 href="{{ route('files.show', $gatePassAccomplishedFile, false) }}"
-                                target="_blank" rel="noopener">View</a>
+                                target="_blank" rel="noopener">Open Accomplished Gate Pass</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif

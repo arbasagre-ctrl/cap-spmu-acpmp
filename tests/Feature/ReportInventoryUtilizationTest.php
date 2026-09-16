@@ -271,7 +271,7 @@ class ReportInventoryUtilizationTest extends TestCase
         $this->assertSame('60', $row['released_quantity']);
 
         /* Research is reported on its own, never folded into another column. */
-        $this->assertContains('Research & Innovation', $dataset->columnLabels());
+        $this->assertContains('Research, Innovation, & Collaboration', $dataset->columnLabels());
     }
 
     public function test_utilization_ranks_by_released_quantity(): void

@@ -567,7 +567,7 @@ HTML;
 
             $unit = $source->accountableUnit?->unit_name ?: $source->borrower?->organizationalUnit?->unit_name;
             if ($unit) {
-                $data['details']['Office / Department'] = (string) $unit;
+                $data['details']['Office / College / Unit'] = (string) $unit;
             }
 
             if ($version?->represents_student_activity) {

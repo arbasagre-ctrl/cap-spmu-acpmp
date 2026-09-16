@@ -79,7 +79,7 @@
                         <small>{{ $typeLabel }}</small>
                     </div>
 
-                    <span class="status-badge status-{{ $row['tone'] }}">{{ $row['outcome'] }}</span>
+                    <x-status-badge :status="$row['tone'] === 'success' ? 'COMPLETED' : 'CANCELLED'" :label="$row['outcome']" />
                 </div>
 
                 <div class="resolved-history-summary">
@@ -90,7 +90,7 @@
                 </div>
 
                 <details class="accountability-case-details">
-                    <summary class="resolved-history-detail-toggle"><span>View details</span><x-icon name="chevron-down" size="14" class="resolved-history-chevron" /></summary>
+                    <summary class="resolved-history-detail-toggle"><span>View Details</span><x-icon name="chevron-down" size="14" class="resolved-history-chevron" /></summary>
 
                     @if($incident)
                         <dl class="accountability-case-facts top-gap">
@@ -108,7 +108,7 @@
                             </div>
                             <div>
                                 <dt>Final Status</dt>
-                                <dd>{{ str($incident->status)->replace('_', ' ')->title() }}</dd>
+                                <dd><x-status-badge :status="$incident->status" /></dd>
                             </div>
                         </dl>
                     @endif
@@ -153,7 +153,7 @@
                                     &middot; {{ optional($billing->issued_at)->format('d M Y, h:i A') }}
                                 </p>
                                 <p class="resolved-history-note">
-                                    Billing {{ $billing->billing_no }} &middot; {{ $billing->status }}
+                                    Billing {{ $billing->billing_no }} &middot; <x-status-badge :status="$billing->status" />
                                 </p>
                             </section>
                         @endif
@@ -202,21 +202,21 @@
                             @if($lateReturnNotice)
                                 <a href="{{ route('documents.view', $lateReturnNotice) }}" target="_blank" rel="noopener">
                                     <x-icon name="external-link" size="15" />
-                                    View Late Return Notice
+                                    Open Late Return Notice
                                 </a>
                             @endif
 
                             @foreach(($billing?->documents ?? collect())->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']) as $document)
                                 <a href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
                                     <x-icon name="external-link" size="15" />
-                                    View Billing Statement
+                                    Open Billing Statement
                                 </a>
                             @endforeach
 
                             @if($payment?->evidence_file_id)
                                 <a href="{{ route('files.show', $payment->evidence_file_id, false) }}" target="_blank" rel="noopener">
                                     <x-icon name="external-link" size="15" />
-                                    View Receipt
+                                    Open Receipt
                                 </a>
                             @endif
                         </div>
@@ -230,7 +230,7 @@
 <style>
 .resolved-history-card .accountability-case-facts { margin-top: 12px; }
 
-/* Always-visible compact summary; everything else lives behind "View details". */
+/* Always-visible compact summary; everything else lives behind "View Details". */
 .resolved-history-summary {
     display: flex;
     flex-wrap: wrap;

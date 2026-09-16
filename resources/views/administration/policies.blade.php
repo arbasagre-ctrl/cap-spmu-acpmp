@@ -176,7 +176,7 @@
     @if($configurationSection)
         <a class="button secondary ui-pressable config-back-button" href="{{ route('policies.index') }}">
             <x-icon name="arrow-left" size="17" />
-            Back to Operational Configuration
+            Back
         </a>
     @endif
 </section>

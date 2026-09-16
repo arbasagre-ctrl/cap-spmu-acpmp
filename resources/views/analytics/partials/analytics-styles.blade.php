@@ -1143,6 +1143,22 @@ a.analytics-trend-col:hover .analytics-trend-bar { background: var(--interactive
     line-height: 1.35;
 }
 
+.analytics-page .analytics-reset-filters {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: -2px 0 0;
+    padding-left: 2px;
+    color: var(--interactive, #1769e0);
+    font-size: 11.5px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.analytics-page .analytics-reset-filters:hover,
+.analytics-page .analytics-reset-filters:focus-visible {
+    text-decoration: underline;
+}
+
 /* KPI row ---------------------------------------------------------------- */
 
 .analytics-kpis {

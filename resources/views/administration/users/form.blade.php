@@ -77,6 +77,8 @@
                 $selectedUnitId = old('organizational_unit_id', $user->organizational_unit_id);
                 $newUnitName = old('new_organizational_unit_name', '');
                 $addingNewUnit = filled($newUnitName) || old('organizational_unit_id') === '__NEW__';
+                $historicalPrimaryUnit = $historicalPrimaryUnit ?? null;
+                $historicalAdditionalUnits = $historicalAdditionalUnits ?? collect();
                 $selectedAdditionalUnitIds = collect(
                     old('additional_organizational_unit_ids', $additionalUnitIds ?? [])
                 )
@@ -87,9 +89,9 @@
 
             <div class="form-columns">
                 <label>
-                    Division
-                    <select name="division_code" id="ictu-division" required>
-                        <option value="">Select division</option>
+                    Organizational Classification
+                    <select name="division_code" id="ictu-division" @required(!$historicalPrimaryUnit)>
+                        <option value="">Select organizational classification</option>
                         @foreach($divisionOptions as $code => $label)
                             <option value="{{ $code }}" @selected(old('division_code', $selectedDivisionCode) === $code)>
                                 {{ $label }}
@@ -102,9 +104,18 @@
                 </label>
 
                 <label>
-                    Office / Unit
+                    Office / College / Unit
                     <select name="organizational_unit_id" id="ictu-organizational-unit" required>
-                        <option value="">Select Office / Unit</option>
+                        <option value="">Select Office / College / Unit</option>
+                        @if($historicalPrimaryUnit)
+                            <option
+                                value="{{ $historicalPrimaryUnit->id }}"
+                                data-division="{{ $historicalPrimaryUnit->divisionCode() }}"
+                                @selected(!$addingNewUnit && (string) $selectedUnitId === (string) $historicalPrimaryUnit->id)
+                            >
+                                {{ $historicalPrimaryUnit->unit_name }} — Historical / inactive assignment
+                            </option>
+                        @endif
                         @foreach($units as $unit)
                             @php
                                 $unitDivision = $unit->divisionCode();
@@ -125,21 +136,24 @@
                     @error('organizational_unit_id')
                         <small class="field-error">{{ $message }}</small>
                     @enderror
+                    @if($historicalPrimaryUnit)
+                        <small class="field-note">This historical / inactive assignment is retained for this account. Select an active Office / College / Unit only when making an intentional reassignment.</small>
+                    @endif
                 </label>
             </div>
 
             <div class="admin-new-unit-field" id="ictu-new-unit-field" @if(!$addingNewUnit) hidden @endif>
                 <label>
-                    Add Office / Unit
+                    Add Office / College / Unit
                     <input
                         type="text"
                         name="new_organizational_unit_name"
                         id="ictu-new-unit-name"
                         value="{{ $newUnitName }}"
                         maxlength="255"
-                        placeholder="Enter the official Office / Unit name"
+                        placeholder="Enter the official Office / College / Unit name"
                     >
-                    <small class="field-note">The new Office / Unit will be saved under the selected Division.</small>
+                    <small class="field-note">The new Office / College / Unit will be saved under the selected Organizational Classification.</small>
                     @error('new_organizational_unit_name')
                         <small class="field-error">{{ $message }}</small>
                     @enderror
@@ -159,7 +173,7 @@
                 <div class="admin-additional-assignment-content">
                     <div class="admin-additional-assignment-picker">
                     <select id="ictu-additional-unit-picker">
-                        <option value="">Select another Office / Unit</option>
+                        <option value="">Select another Office / College / Unit</option>
                         @foreach($divisionOptions as $additionalDivisionCode => $additionalDivisionLabel)
                             <optgroup label="{{ $additionalDivisionLabel }}">
                                 @foreach($units as $additionalUnit)
@@ -199,6 +213,24 @@
                                 >
                             </div>
                         @endif
+                    @endforeach
+                    @foreach($historicalAdditionalUnits as $historicalAdditionalUnit)
+                        <div
+                            class="admin-additional-unit-item"
+                            data-additional-unit-item
+                            data-unit-id="{{ $historicalAdditionalUnit->id }}"
+                        >
+                            <div>
+                                <strong>{{ $historicalAdditionalUnit->unit_name }}</strong>
+                                <small>{{ $historicalAdditionalUnit->divisionLabel() }} — Historical / inactive assignment</small>
+                            </div>
+                            <button type="button" class="button secondary" data-remove-additional-unit>Remove</button>
+                            <input
+                                type="hidden"
+                                name="additional_organizational_unit_ids[]"
+                                value="{{ $historicalAdditionalUnit->id }}"
+                            >
+                        </div>
                     @endforeach
                 </div>
 

@@ -393,7 +393,7 @@
         </tr>
         <tr>
             <td class="half">
-                <span class="field-label">Office / Department</span>
+                <span class="field-label">Office / College / Unit</span>
                 <span class="field-value">{{ $borrowingRequest->accountableUnit->unit_name }}</span>
             </td>
             <td class="half">

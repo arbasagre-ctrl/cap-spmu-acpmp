@@ -58,10 +58,10 @@
 
             <label for="analytics-group">
                 <span class="analytics-filter-label">
-                    Division
+                    Organizational Classification
                 </span>
                 <select id="analytics-group" name="group" onchange="this.form.submit()">
-                    <option value="all" @selected($selectedDivision === 'all')>All divisions</option>
+                    <option value="all" @selected($selectedDivision === 'all')>All organizational classifications</option>
                     @foreach($divisions as $code => $label)
                         <option value="{{ $code }}" @selected($selectedDivision === $code)>{{ $label }}</option>
                     @endforeach
@@ -70,7 +70,7 @@
 
             <label for="analytics-unit">
                 <span class="analytics-filter-label">
-                    Office / Unit
+                    Office / College / Unit
                 </span>
                 <select id="analytics-unit" name="unit" onchange="this.form.submit()">
                     <option value="all" @selected($selectedUnit === 'all')>All units</option>
@@ -88,6 +88,8 @@
                     Academic period: {{ $selectedAcademicPeriod->term_label ?? $selectedAcademicPeriod->academic_year }}.
                 @endif
             </p>
+
+            <a class="analytics-reset-filters" href="{{ route('analytics.index', ['section' => $section]) }}">Reset filters</a>
         </form>
 
         {{--

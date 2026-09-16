@@ -603,8 +603,12 @@ class ReportController extends Controller
             $request->user()?->access_classification === AccessClassification::IctuMaintainer,
             403
         );
+
+        $totalEventCount = AuditEvent::query()->count();
+
         return view('reports.audit', [
             'events' => AuditEvent::query()->with('actor')->latest('occurred_at')->limit(500)->get(),
+            'totalEventCount' => $totalEventCount,
         ]);
     }
 

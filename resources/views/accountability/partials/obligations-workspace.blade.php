@@ -146,7 +146,7 @@
                         @endforeach
 
                         <details class="ob-details">
-                            <summary><span>View details</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
+                            <summary><span>View Details</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
                             <div class="ob-detail-grid">
                                 @foreach($row['facts'] as [$factLabel, $factValue])
                                     <div>

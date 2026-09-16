@@ -95,8 +95,8 @@
             <div class="report-options-auto-note" data-paginated-inclusions>
                 <x-icon name="information" size="17" />
                 <div>
-                    <strong>Included automatically in formal reports</strong>
-                    <span>Generated-by information, applied filters, the system-generated footer, and repeating table headers.</span>
+                    <strong>Included automatically in printed and exported reports</strong>
+                    <span>Report title, reporting period, prepared-by information, date generated, applicable report scope, page footer, and repeating table headers.</span>
                 </div>
             </div>
 
@@ -104,7 +104,7 @@
                 <x-icon name="information" size="17" />
                 <div>
                     <strong>Excel keeps the report context automatically</strong>
-                    <span>Report title, period, generated-by information, applied filters, and a frozen table header are included.</span>
+                    <span>Report title, period, generated-by information, applicable report scope, and a frozen table header are included.</span>
                 </div>
             </div>
 

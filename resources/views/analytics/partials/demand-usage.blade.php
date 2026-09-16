@@ -47,7 +47,7 @@
      */
     $groupCounts = collect($groups['groups'])->keyBy(fn (array $row): string => $row['code'] ?? '__unspecified');
 
-    $divisionLegend = collect(AnalyticsService::DIVISIONS)
+    $divisionLegend = collect(AnalyticsService::divisions())
         ->map(fn (string $label, string $code): array => [
             'code' => $code,
             'label' => $label,
@@ -239,7 +239,7 @@
                     <a
                         class="analytics-trend-single-figure"
                         href="{{ AnalyticsDetailLink::to('trend', 'demand', $periodSelection, $division, $unit, ['bucket' => 0]) }}"
-                        aria-label="View details for {{ $onlyPoint['label'] }}: {{ $onlyPoint['count'] }} {{ $onlyPoint['count'] === 1 ? 'request' : 'requests' }}"
+                        aria-label="View Details for {{ $onlyPoint['label'] }}: {{ $onlyPoint['count'] }} {{ $onlyPoint['count'] === 1 ? 'request' : 'requests' }}"
                     >
                         <span class="analytics-trend-single-value">
                             <strong>{{ $onlyPoint['count'] }}</strong>
@@ -268,22 +268,22 @@
         <header class="analytics-card-head">
             <span class="analytics-card-mark" aria-hidden="true"><x-icon name="users" size="15" /></span>
             <div>
-                <h2>Demand by Division</h2>
-                <p>Share of borrowing requests filed by each division.</p>
+                <h2>Demand by Organizational Classification</h2>
+                <p>Share of borrowing requests filed by each organizational classification.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'demand', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'demand.division']) }}" aria-label="View Demand by Division details"><x-icon name="arrow-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'demand', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'demand.division']) }}" aria-label="View Demand by Organizational Classification details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         @if($donutTotal === 0)
             <div class="analytics-card-body">
                 <p class="analytics-blank">
                     <span class="analytics-blank-mark" aria-hidden="true"><x-icon name="users" size="19" /></span>
-                    No borrowing activity by division during this period.
+                    No borrowing activity by organizational classification during this period.
                 </p>
             </div>
         @else
             <div class="analytics-card-body analytics-donut-body">
-                <div class="analytics-donut" role="img" aria-label="Borrowing requests by division: {{ $donutTotal }} in total">
+                <div class="analytics-donut" role="img" aria-label="Borrowing requests by organizational classification: {{ $donutTotal }} in total">
                     <svg viewBox="0 0 42 42" aria-hidden="true" focusable="false">
                         <circle class="analytics-donut-rail" cx="21" cy="21" r="15.9155" />
                         @foreach($donutSegments as $segment)
@@ -391,7 +391,7 @@
                                     [$row['requests'] === 1 ? 'Request' : 'Requests', (string) $row['requests']],
                                     ['Requested quantity', $qty($row['quantity'])],
                                 ]) }}"
-                                aria-label="View details for {{ $row['name'] }}"
+                                aria-label="View Details for {{ $row['name'] }}"
                             >
                                 <span class="analytics-rank-no">{{ $index + 1 }}</span>
                                 <span class="analytics-rank-main">
@@ -450,10 +450,10 @@
                                 data-chart-tip
                                 data-tip-title="{{ $row['name'] }}"
                                 data-tip-rows="{{ json_encode([
-                                    ['Division', $row['division_label']],
+                                    ['Organizational Classification', $row['division_label']],
                                     [$row['count'] === 1 ? 'Request filed' : 'Requests filed', (string) $row['count']],
                                 ]) }}"
-                                aria-label="View details for {{ $row['name'] }}"
+                                aria-label="View Details for {{ $row['name'] }}"
                             >
                                 <span class="analytics-rank-no">{{ $index + 1 }}</span>
                                 <span class="analytics-rank-main">
@@ -513,7 +513,7 @@
                                 data-tip-rows="{{ json_encode([
                                     ['Physically released', $qty($row['released']).' '.$row['unit']],
                                 ]) }}"
-                                aria-label="View details for {{ $row['name'] }}"
+                                aria-label="View Details for {{ $row['name'] }}"
                             >
                                 <span class="analytics-rank-no">{{ $index + 1 }}</span>
                                 <span class="analytics-rank-main">

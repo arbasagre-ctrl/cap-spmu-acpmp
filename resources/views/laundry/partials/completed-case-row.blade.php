@@ -90,5 +90,5 @@
             @endif
         </div>
     </td>
-    <td><a class="button secondary small ui-pressable completed-laundry-view" href="{{ route('laundry.show', $job) }}" aria-label="View details for {{ $caseId }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a></td>
+    <td><a class="button secondary small ui-pressable completed-laundry-view" href="{{ route('laundry.show', $job) }}" aria-label="View Record for {{ $caseId }}"><span>View Record</span><x-icon name="arrow-right" size="14" /></a></td>
 </tr>

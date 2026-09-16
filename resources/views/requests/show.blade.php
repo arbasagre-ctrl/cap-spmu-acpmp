@@ -651,7 +651,7 @@
                 </div>
 
                 <div class="spmu-left-borrowing-cell">
-                    <span>Office / Department</span>
+                    <span>Office / College / Unit</span>
                     <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</strong>
                 </div>
 
@@ -716,7 +716,7 @@
 
             <div class="borrower-fact-grid">
                 <div>
-                    <span>Office / Department</span>
+                    <span>Office / College / Unit</span>
                     <strong>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '&mdash;' }}</strong>
                 </div>
                 <div>
@@ -843,7 +843,7 @@
                                         target="_blank"
                                         rel="noopener"
                                     >
-                                        View
+                                        Open Document
                                     </a>
                                 </td>
                             </tr>
@@ -876,7 +876,7 @@
                     <div class="borrower-item-quantity">
                         @if($borrowerSlipDocument)
                             <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $borrowerSlipDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $borrowerSlipDocument) }}" target="_blank" rel="noopener">Open Borrower Slip</a>
                                 <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
                             </span>
                         @else
@@ -895,7 +895,7 @@
                             <span class="status-badge status-neutral">Not applicable</span>
                         @elseif($laundryFormDocument)
                             <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $laundryFormDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $laundryFormDocument) }}" target="_blank" rel="noopener">Open Laundry Form</a>
                                 <a class="button primary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
                             </span>
                         @else
@@ -922,7 +922,7 @@
                             <span class="status-badge status-neutral">Not applicable</span>
                         @elseif($gatePassFinalized)
                             <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $gatePassDocument) }}" target="_blank" rel="noopener">View</a>
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $gatePassDocument) }}" target="_blank" rel="noopener">Open Gate Pass</a>
                                 <a class="button primary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
                             </span>
                         @else
@@ -950,7 +950,7 @@
             <dt>Borrower</dt>
             <dd>{{ $borrowingRequest->borrower->full_name }}</dd>
 
-            <dt>Office / Department</dt>
+            <dt>Office / College / Unit</dt>
             <dd>{{ $borrowingRequest->borrower->organizationalUnit?->unit_name ?: '—' }}</dd>
 
             <dt>Event Details</dt>
@@ -1974,4 +1974,3 @@ dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
     </div>
 @endif
 @endsection
-

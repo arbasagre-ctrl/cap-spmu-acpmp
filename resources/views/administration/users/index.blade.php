@@ -90,7 +90,7 @@
                 <tr>
                     <th>User</th>
                     <th>Employee No.</th>
-                    <th>Office / Unit</th>
+                    <th>Office / College / Unit</th>
                     <th>Access</th>
                     <th>Status</th>
                     <th class="ictu-users-action-heading">Action</th>
@@ -170,7 +170,7 @@
                             @if($isRestricted)
                                 <x-status-badge status="BORROWING_RESTRICTED" />
                             @else
-                                <span class="status-badge status-neutral">Not restricted</span>
+                                <x-status-badge status="NOT_APPLICABLE" label="Not restricted" />
                             @endif
                         </td>
 

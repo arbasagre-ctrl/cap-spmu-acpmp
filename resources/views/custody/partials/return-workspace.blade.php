@@ -184,7 +184,7 @@
                                         @if($laundryJob?->latestEvidence?->file)
                                             Accomplished form recorded.
                                         @else
-                                            Accomplished form pending.
+                                            Required before SPMU encoding.
                                         @endif
                                     </small>
                                 </div>
@@ -196,7 +196,7 @@
                                     href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
                                     target="_blank"
                                     rel="noopener"
-                                >View Form</a>
+                                >Open Form</a>
                             @elseif($laundryJob)
                                 <details
                                     class="return-laundry-disclosure"
@@ -254,7 +254,7 @@
                                     </form>
                                 </details>
                             @else
-                                <span class="status-badge status-warning">Pending Form</span>
+                                <span class="status-badge status-warning">Form Pending</span>
                             @endif
                         </div>
                     @endif
@@ -277,7 +277,7 @@
 
                             @if($custody->gatePass?->accomplishedFile)
                                 <a class="button secondary small ui-pressable return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
-                                    <span>View Gate Pass</span>
+                                    <span>Open Gate Pass</span>
                                     <span aria-hidden="true">→</span>
                                 </a>
                             @elseif($custody->gatePass)
@@ -383,7 +383,7 @@
                         target="_blank"
                         rel="noopener"
                     >
-                        View Laundry Form
+                        Open Laundry Form
                     </a>
                 @endif
             @endif

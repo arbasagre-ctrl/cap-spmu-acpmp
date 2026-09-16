@@ -19,10 +19,10 @@ client-workflow-update
 
 ```powershell
 docker compose up -d --build
-docker compose exec -T app php artisan migrate --force
-docker compose exec -T app php artisan db:seed --force
-docker compose exec -T app php artisan optimize:clear
+docker compose ps
 ```
+
+With `RUN_MIGRATIONS=true`, the container entrypoint applies migrations and idempotent reference seeders, then refreshes configuration, route, and view caches. Do not repeat those commands after a normal start.
 
 Open:
 

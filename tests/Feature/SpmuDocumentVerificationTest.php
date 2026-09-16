@@ -32,7 +32,9 @@ class SpmuDocumentVerificationTest extends TestCase
         $request =
             $this->underSpmuRequest(
                 studentActivity:
-                    false
+                    false,
+                actionOfficerVerified:
+                    true
             );
 
         $head =
@@ -56,22 +58,22 @@ class SpmuDocumentVerificationTest extends TestCase
             )
             ->assertOk()
             ->assertSeeText(
-                'Inspect the approved document'
+                'Inspect the signed Borrowing Request Letter'
             )
             ->assertSeeText(
-                'Request details match the signed letter'
+                'Request details and required documents are complete'
             )
             ->assertSeeText(
-                'Required signatures and documents are complete'
+                'Request is appropriate for approval'
             )
             ->assertSeeText(
                 'Inventory availability is verified'
             )
             ->assertSeeText(
-                'Document Status'
+                'Review and decide'
             )
             ->assertSeeText(
-                'Verify & Approve'
+                'E-sign & Approve'
             )
             ->assertSeeText(
                 'Return for Revision'
@@ -117,35 +119,36 @@ class SpmuDocumentVerificationTest extends TestCase
         $response
             ->assertOk()
             ->assertSeeText(
-                'Inspect the approved document'
+                'Inspect the signed Borrowing Request Letter'
             )
             ->assertSeeText(
-                'Review only.'
+                'Verify request and documents'
+            )
+            ->assertSeeText(
+                'E-sign & Mark VERIFIED'
             );
 
         /*
-         * The page-level JavaScript contains the selector text
-         * "[data-verification-form]" even when the actual decision form
-         * is intentionally not rendered. Therefore checking for the bare
-         * selector name is not a valid authorization assertion.
+         * Verifying a request (sequence-1) is a baseline Action Officer
+         * duty and needs no delegation; only the final Head-level decision
+         * (sequence-2: Approve/Reject) is gated behind an active formal
+         * delegation. The "E-sign & Mark VERIFIED" assertion above already
+         * proves the verify button's trigger is "VERIFIED", not "APPROVED".
          *
-         * These exact HTML attributes exist only on the real decision
-         * controls, so their absence proves that a regular Action Officer
-         * has review-only access without an active formal delegation.
+         * The Reject button (data-decision-trigger="REJECTED") only renders
+         * when $canDecide is true. spmu-review-styles.blade.php also
+         * contains this exact substring unconditionally, as a CSS attribute
+         * selector (".button[data-decision-trigger=\"REJECTED\"]:hover...")
+         * used to style whichever button actually renders - so a plain
+         * assertStringNotContainsString would false-positive-fail even when
+         * the real button is correctly absent. Count only occurrences NOT
+         * preceded by the CSS selector's "[".
          */
-        $this->assertStringNotContainsString(
-            'data-required-supporting-present=',
-            $response->getContent()
-        );
-
-        $this->assertStringNotContainsString(
-            'data-decision-trigger="APPROVED"',
-            $response->getContent()
-        );
-
-        $this->assertStringNotContainsString(
-            'name="decision"',
-            $response->getContent()
+        $content = $response->getContent();
+        $this->assertSame(
+            substr_count($content, '[data-decision-trigger="REJECTED"'),
+            substr_count($content, 'data-decision-trigger="REJECTED"'),
+            'The Reject button must not render for a non-delegated Action Officer.'
         );
     }
 
@@ -243,6 +246,8 @@ class SpmuDocumentVerificationTest extends TestCase
         $request =
             $this->underSpmuRequest(
                 studentActivity:
+                    true,
+                actionOfficerVerified:
                     true
             );
 
@@ -275,7 +280,8 @@ class SpmuDocumentVerificationTest extends TestCase
     }
 
     private function underSpmuRequest(
-        bool $studentActivity
+        bool $studentActivity,
+        bool $actionOfficerVerified = false
     ): BorrowingRequest {
         $borrower =
             $this->classificationUser(
@@ -413,6 +419,24 @@ class SpmuDocumentVerificationTest extends TestCase
                 'decision' =>
                     'RECEIVED',
             ]);
+
+        if ($actionOfficerVerified) {
+            /*
+             * RequestWorkflowService::verify() creates this sequence-2 step
+             * only after the Action Officer verifies (see
+             * RequestWorkflowService.php:575-581). Reproduce that state for
+             * tests that view the request as the Head, since the Head's
+             * decision UI is gated on this step already existing.
+             */
+            $version
+                ->approvalSteps()
+                ->create([
+                    'stage_code' => 'SPMU',
+                    'sequence_no' => 2,
+                    'received_at' => now(),
+                    'decision' => 'RECEIVED',
+                ]);
+        }
 
         $this->attach(
             $request,

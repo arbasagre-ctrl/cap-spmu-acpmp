@@ -172,7 +172,7 @@ class RevisionControlsTest extends TestCase
         $this->assertDatabaseHas('generated_documents', ['subject_id' => $custody->id, 'document_type' => 'LAUNDRY_FORM', 'status' => 'FINAL']);
         $this->withSession(['active_workspace' => 'BORROWER'])->actingAs($borrower)->get(route('custody.show', $custody))->assertOk()->assertSee('Approved items for pickup');
         $spmuOfficer = User::where('access_classification', AccessClassification::SpmuOfficer->value)->firstOrFail();
-        $this->withSession(['active_workspace' => 'SPMU'])->actingAs($spmuOfficer)->get(route('custody.release.show', $custody))->assertOk()->assertSee('Schedule pickup and notify the borrower');
+        $this->withSession(['active_workspace' => 'SPMU'])->actingAs($spmuOfficer)->get(route('custody.release.show', $custody))->assertOk()->assertSee('Pickup & Issuance Schedule');
 
         [$ordinaryRequest, $ordinaryLetter] = $this->approvedRequestWithItems(false, false, 'BR-ORDINARY-001');
         app(RequestWorkflowService::class)->recordApprovedLetterDownload($ordinaryRequest, $ordinaryLetter, $ordinaryRequest->borrower, '127.0.0.1', 'test');

@@ -9,6 +9,7 @@ use App\Models\OrganizationalUnit;
 use App\Models\User;
 use App\Services\AuditService;
 use App\Services\UserRoleAssignmentService;
+use App\Support\OrganizationalStructure;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +56,8 @@ class UserAdministrationController extends Controller
         AuditService $audit,
         UserRoleAssignmentService $roleAssignments,
     ): RedirectResponse {
+        $this->authorizeIctu($request);
+
         $data = $this->validated($request);
 
         $user = DB::transaction(function () use ($data, $audit, $roleAssignments, $request): User {
@@ -122,12 +125,27 @@ class UserAdministrationController extends Controller
         AuditService $audit,
         UserRoleAssignmentService $roleAssignments,
     ): RedirectResponse {
+        $this->authorizeIctu($request);
+
         $data = $this->validated($request, $user);
+
+        /*
+         * The form disables these two controls and submits hidden inputs
+         * when ICTU is editing their own account, but a disabled control is
+         * a client-side convenience only. The server must not trust the
+         * submitted value for the acting user's own account_status or
+         * access_classification; it always keeps what is already stored,
+         * regardless of what a crafted request sends.
+         */
+        if ($request->user()->id === $user->id) {
+            $data['account_status'] = $user->account_status->value;
+            $data['access_classification'] = $user->access_classification->value;
+        }
 
         DB::transaction(function () use ($data, $user, $audit, $roleAssignments, $request): void {
             $before = $user->load(['roles', 'organizationalUnit', 'authorizedOrganizationalUnits'])->toArray();
             $classification = AccessClassification::from($data['access_classification']);
-            $unit = $this->resolveOrganizationalUnit($data, $classification);
+            $unit = $this->resolveOrganizationalUnit($data, $classification, $user);
 
             $updates = collect($data)
                 ->except([
@@ -176,28 +194,37 @@ class UserAdministrationController extends Controller
     private function form(User $user): View
     {
         $units = OrganizationalUnit::query()
-            ->where('active', true)
-            ->where('unit_code', '!=', 'LAUNDRY')
-            ->whereIn('unit_type', [
-                'ADMINISTRATIVE_UNIT',
-                'ACADEMIC_UNIT',
-                'RESEARCH_UNIT',
-            ])
+            ->activeSelectable()
             ->orderBy('unit_name')
             ->get();
 
-        $additionalUnitIds = $user->exists
+        $historicalPrimaryUnit = $user->exists
+            && $user->organizationalUnit
+            && ! $user->organizationalUnit->isSelectable()
+                ? $user->organizationalUnit
+                : null;
+
+        $additionalUnits = $user->exists
             ? $user->authorizedOrganizationalUnits()
                 ->where('organizational_units.id', '!=', $user->organizational_unit_id)
-                ->pluck('organizational_units.id')
-                ->map(fn ($id) => (int) $id)
-                ->all()
-            : [];
+                ->get()
+            : collect();
+
+        $additionalUnitIds = $additionalUnits
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $historicalAdditionalUnits = $additionalUnits
+            ->reject(fn (OrganizationalUnit $unit) => $unit->isSelectable())
+            ->values();
 
         return view('administration.users.form', [
             'user' => $user,
             'units' => $units,
             'additionalUnitIds' => $additionalUnitIds,
+            'historicalPrimaryUnit' => $historicalPrimaryUnit,
+            'historicalAdditionalUnits' => $historicalAdditionalUnits,
             'divisionOptions' => $this->divisionOptions(),
             'selectedDivisionCode' => old(
                 'division_code',
@@ -216,9 +243,17 @@ class UserAdministrationController extends Controller
             AccessClassification::assignableCases(),
         );
 
+        $retainsHistoricalPrimary = $this->retainsHistoricalPrimary(
+            $user,
+            $request->input('organizational_unit_id'),
+            $request->input('new_organizational_unit_name'),
+            $request->input('access_classification'),
+        );
+        $historicalAdditionalUnitIds = $this->historicalAdditionalUnitIds($user);
+
         $data = $request->validate([
             'division_code' => [
-                'required',
+                $retainsHistoricalPrimary ? 'nullable' : 'required',
                 Rule::in(array_keys($this->divisionOptions())),
             ],
             'organizational_unit_id' => ['nullable'],
@@ -228,14 +263,17 @@ class UserAdministrationController extends Controller
                 'integer',
                 'distinct',
                 Rule::exists('organizational_units', 'id')
-                    ->where(fn ($query) => $query
-                        ->where('active', true)
-                        ->where('unit_code', '!=', 'LAUNDRY')
-                        ->whereIn('unit_type', [
-                            'ADMINISTRATIVE_UNIT',
-                            'ACADEMIC_UNIT',
-                            'RESEARCH_UNIT',
-                        ])),
+                    ->where(function ($query) use ($historicalAdditionalUnitIds): void {
+                        $query->where(function ($activeSelectable): void {
+                            $activeSelectable
+                                ->where('active', true)
+                                ->whereIn('unit_type', OrganizationalUnit::selectableUnitTypes());
+                        });
+
+                        if ($historicalAdditionalUnitIds !== []) {
+                            $query->orWhereIn('id', $historicalAdditionalUnitIds);
+                        }
+                    }),
             ],
             'employee_no' => [
                 'required',
@@ -273,14 +311,14 @@ class UserAdministrationController extends Controller
         if ($classification !== AccessClassification::BorrowerOnly
             && filled($data['new_organizational_unit_name'] ?? null)) {
             throw ValidationException::withMessages([
-                'new_organizational_unit_name' => 'New Office / Unit entries may be added only for borrower organizational assignments.',
+                'new_organizational_unit_name' => 'New Office / College / Unit entries may be added only for borrower organizational assignments.',
             ]);
         }
 
         if (! filled($data['new_organizational_unit_name'] ?? null)
             && ! ctype_digit((string) ($data['organizational_unit_id'] ?? ''))) {
             throw ValidationException::withMessages([
-                'organizational_unit_id' => 'Select an Office / Unit or choose Other / Not listed to add one.',
+                'organizational_unit_id' => 'Select an Office / College / Unit or choose Other / Not listed to add one.',
             ]);
         }
 
@@ -315,31 +353,43 @@ class UserAdministrationController extends Controller
     private function resolveOrganizationalUnit(
         array $data,
         AccessClassification $classification,
+        ?User $existingUser = null,
     ): OrganizationalUnit {
+        if ($this->retainsHistoricalPrimary(
+            $existingUser,
+            $data['organizational_unit_id'] ?? null,
+            $data['new_organizational_unit_name'] ?? null,
+            $classification->value,
+        )) {
+            return $existingUser->organizationalUnit;
+        }
+
         $divisionCode = strtoupper((string) $data['division_code']);
         $newName = trim((string) ($data['new_organizational_unit_name'] ?? ''));
 
         if ($newName !== '') {
             $existing = OrganizationalUnit::query()
-                ->where('active', true)
+                ->activeSelectable()
                 ->whereRaw('LOWER(unit_name) = ?', [mb_strtolower($newName)])
                 ->first();
 
             if ($existing) {
                 if ($existing->divisionCode() !== $divisionCode) {
                     throw ValidationException::withMessages([
-                        'new_organizational_unit_name' => 'That Office / Unit already exists under a different division.',
+                        'new_organizational_unit_name' => 'That Office / College / Unit already exists under a different organizational classification.',
                     ]);
                 }
 
                 $unit = $existing;
             } else {
-                $institutionId = OrganizationalUnit::query()
-                    ->where('unit_code', 'CSPC')
+                $classificationId = OrganizationalUnit::query()
+                    ->where('unit_code', $divisionCode)
+                    ->where('unit_type', OrganizationalUnit::TYPE_CLASSIFICATION)
+                    ->where('active', true)
                     ->value('id');
 
                 $unit = OrganizationalUnit::query()->create([
-                    'parent_unit_id' => $institutionId,
+                    'parent_unit_id' => $classificationId,
                     'unit_code' => $this->uniqueUnitCode($newName),
                     'unit_name' => $newName,
                     'unit_type' => OrganizationalUnit::unitTypeForDivision($divisionCode),
@@ -348,19 +398,18 @@ class UserAdministrationController extends Controller
             }
         } else {
             $unit = OrganizationalUnit::query()
-                ->where('active', true)
-                ->where('unit_code', '!=', 'LAUNDRY')
+                ->activeSelectable()
                 ->find((int) $data['organizational_unit_id']);
 
             if (! $unit) {
                 throw ValidationException::withMessages([
-                    'organizational_unit_id' => 'Select a valid active Office / Unit.',
+                    'organizational_unit_id' => 'Select a valid active Office / College / Unit.',
                 ]);
             }
 
             if ($unit->divisionCode() !== $divisionCode) {
                 throw ValidationException::withMessages([
-                    'organizational_unit_id' => 'The selected Office / Unit does not belong to the selected Division.',
+                    'organizational_unit_id' => 'The selected Office / College / Unit does not belong to the selected Organizational Classification.',
                 ]);
             }
         }
@@ -380,6 +429,51 @@ class UserAdministrationController extends Controller
         }
 
         return $unit;
+    }
+
+    /** @return list<int> */
+    private function historicalAdditionalUnitIds(?User $user): array
+    {
+        if (! $user?->exists) {
+            return [];
+        }
+
+        return $user->authorizedOrganizationalUnits()
+            ->where('organizational_units.id', '!=', $user->organizational_unit_id)
+            ->get()
+            ->reject(fn (OrganizationalUnit $unit) => $unit->isSelectable())
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function retainsHistoricalPrimary(
+        ?User $user,
+        mixed $selectedUnitId,
+        mixed $newUnitName,
+        mixed $classification,
+    ): bool {
+        if (! $user?->exists || filled($newUnitName)) {
+            return false;
+        }
+
+        $user->loadMissing('organizationalUnit');
+        $currentUnit = $user->organizationalUnit;
+
+        return $currentUnit !== null
+            && ! $currentUnit->isSelectable()
+            && ctype_digit((string) $selectedUnitId)
+            && (int) $selectedUnitId === (int) $currentUnit->id
+            && (string) $classification === $user->access_classification?->value;
+    }
+
+    private function authorizeIctu(Request $request): void
+    {
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::IctuMaintainer,
+            403,
+            'Only ICTU may administer user accounts.'
+        );
     }
 
     /**
@@ -433,11 +527,7 @@ class UserAdministrationController extends Controller
     /** @return array<string, string> */
     private function divisionOptions(): array
     {
-        return [
-            OrganizationalUnit::DIVISION_ADMINISTRATION => 'Administrative',
-            OrganizationalUnit::DIVISION_ACADEMIC => 'Academic',
-            OrganizationalUnit::DIVISION_RIC => 'Research, Innovation and Collaboration',
-        ];
+        return OrganizationalStructure::divisions();
     }
 
     private function uniqueUnitCode(string $name): string

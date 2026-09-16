@@ -38,11 +38,7 @@
     );
 
 
-    $divisionOptions = [
-        'ADMINISTRATION' => 'Administrative',
-        'ACADEMIC' => 'Academic',
-        'RESEARCH_INNOVATION_COLLABORATION' => 'Research, Innovation and Collaboration',
-    ];
+    $divisionOptions = App\Support\OrganizationalStructure::divisions();
 
     /*
      * Canonical Office/Academic/Research Unit list comes from the
@@ -1242,7 +1238,7 @@
                     <strong id="summary-location">&mdash;</strong>
                 </div>
                 <div class="review-summary-field">
-                    <span>Division</span>
+                    <span>Organizational Classification</span>
                     <strong id="summary-division">&mdash;</strong>
                 </div>
                 <div class="review-summary-field">

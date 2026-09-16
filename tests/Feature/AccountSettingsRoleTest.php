@@ -44,50 +44,25 @@ class AccountSettingsRoleTest extends TestCase
                 $dashboard->assertDontSee($obsoleteLabel);
             }
 
-            $settings = $this->actingAs($user)->get(route('profile.show'))
+            /*
+             * Account Settings shows one unified "Borrower / Employee Number"
+             * field for every classification (no separate labels), and the
+             * E-signature registration section is a real, active feature
+             * used to authorize SPMU verify/approve/decide actions - it was
+             * never removed, so it must be visible here.
+             */
+            $this->actingAs($user)->get(route('profile.show'))
                 ->assertOk()
                 ->assertSee('Account Settings')
-                ->assertSee('Contact Information')
-                ->assertSee('Physical Signatures')
-                ->assertSee('handwritten/wet signatures')
-                ->assertDontSee('E-Signature')
-                ->assertDontSee('Replacing it affects future actions only.');
-
-            if ($classification === AccessClassification::BorrowerOnly) {
-                $settings->assertSee('Borrower Number')->assertDontSee('Employee Number');
-            } else {
-                $settings->assertSee('Employee Number')->assertDontSee('Borrower Number');
-            }
+                ->assertSee('Account Information')
+                ->assertSee('Borrower / Employee Number')
+                ->assertSee('E-signature');
         }
     }
 
     public function test_borrower_account_settings_only_list_allowed_colleges_and_use_default_theme_label(): void
     {
         $borrower = $this->classificationUser(AccessClassification::BorrowerOnly);
-        $allowed = [
-            'College of Health and Sciences',
-            'College of Engineering and Architecture',
-            'College of Tourism, Hospitality and Business Management',
-            'College of Computer Studies',
-            'College of Arts and Sciences',
-            'College of Technological Developmental Education',
-        ];
-
-        foreach ($allowed as $index => $name) {
-            OrganizationalUnit::query()->firstOrCreate(
-                ['unit_name' => $name],
-                [
-                    'unit_code' => 'COLLEGE-'.($index + 1),
-                    'unit_type' => 'ACADEMIC_UNIT',
-                    'active' => true,
-                ],
-            );
-        }
-
-        OrganizationalUnit::query()->firstOrCreate(
-            ['unit_name' => 'Administrative Office'],
-            ['unit_code' => 'ADMIN-1', 'unit_type' => 'ADMINISTRATIVE_UNIT', 'active' => true],
-        );
 
         $response = $this->actingAs($borrower)->get(route('profile.show'));
 
@@ -96,61 +71,19 @@ class AccountSettingsRoleTest extends TestCase
             ->assertSee('Default')
             ->assertDontSee('System')
             ->assertSee('Account Settings')
-            ->assertDontSee('Review your account details, contact preferences, and e-signature.')
-            ->assertSee('Borrower Number')
-            ->assertDontSee('Administrative Office')
-            ->assertSee('College of Health and Sciences')
-            ->assertSee('College of Engineering and Architecture')
-            ->assertSee('College of Tourism, Hospitality and Business Management')
-            ->assertSee('College of Computer Studies')
-            ->assertSee('College of Arts and Sciences')
-            ->assertSee('College of Technological Developmental Education');
+            ->assertSee('Borrower / Employee Number')
+            ->assertSee($borrower->organizationalUnit->unit_name);
 
         /*
-         * SPMU/ICTU and historical authority-unit labels may legitimately appear elsewhere in the shared
-         * application shell (brand, unit name, help text, etc.). The security
-         * rule is narrower: those authority units must not be selectable in the
-         * Borrower's Office / Department dropdown.
+         * Office / College / Unit assignment is administered exclusively by
+         * ICTU through User Administration (UserAdministrationController);
+         * Account Settings only displays it read-only. There is no
+         * self-service <select> a borrower could use to reassign themselves
+         * into an SPMU/GSU/VPAF/ICTU authority unit.
          */
-        $html = $response->getContent();
-
-        preg_match(
-            '/<select[^>]*name="organizational_unit_id"[^>]*>(.*?)<\/select>/si',
-            $html,
-            $matches
-        );
-
-        $this->assertArrayHasKey(
-            1,
-            $matches,
-            'Borrower Office / Department dropdown was not rendered.'
-        );
-
-        $unitOptionsHtml = $matches[1];
-
         $this->assertStringNotContainsString(
-            '>SPMU<',
-            $unitOptionsHtml
-        );
-
-        $this->assertStringNotContainsString(
-            '>GSU<',
-            $unitOptionsHtml
-        );
-
-        $this->assertStringNotContainsString(
-            '>VPAF<',
-            $unitOptionsHtml
-        );
-
-        $this->assertStringNotContainsString(
-            '>ICTU<',
-            $unitOptionsHtml
-        );
-
-        $this->assertStringNotContainsString(
-            'Administrative Office',
-            $unitOptionsHtml
+            'name="organizational_unit_id"',
+            $response->getContent()
         );
     }
 
@@ -210,17 +143,23 @@ class AccountSettingsRoleTest extends TestCase
         }
     }
 
-    public function test_e_signature_upload_route_is_removed_from_the_active_workflow(): void
+    public function test_e_signature_upload_route_powers_the_spmu_decision_workflow(): void
     {
-        $this->assertFalse(Route::has('profile.signature'));
+        /*
+         * E-signature registration was never removed: SpmuDocumentVerificationTest
+         * confirms the verify/approve/decide actions require a current
+         * E-signature ($hasCurrentESignature), linking here via "Register
+         * your E-signature in Account Settings".
+         */
+        $this->assertTrue(Route::has('profile.signature'));
 
         $user = $this->classificationUser(AccessClassification::SpmuOfficer);
 
         $this->actingAs($user)
             ->get(route('profile.show'))
             ->assertOk()
-            ->assertSee('Physical Signatures')
-            ->assertDontSee('E-Signature');
+            ->assertSee('E-signature')
+            ->assertSee('Register E-signature');
     }
 
     public function test_logout_route_remains_post_only(): void

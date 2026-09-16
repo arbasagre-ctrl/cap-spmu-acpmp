@@ -31,7 +31,7 @@
                             <small>{{ $documentDisplayStatus }}</small>
                         </div>
                         <a class="button secondary small ui-pressable release-outline" href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
-                            View
+                            Open Document
                         </a>
                     </div>
                 @empty

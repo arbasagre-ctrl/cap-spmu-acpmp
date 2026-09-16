@@ -107,6 +107,12 @@ class AnalyticsSectionsTest extends TestCase
     {
         $this->request('ACADEMIC', 'College of Computer Studies', Carbon::create(2026, 4, 5, 10));
 
+        /*
+         * "Top Borrowing Units" now belongs to the separate "demand" section
+         * (AnalyticsController::SECTION_PARTIALS maps it to
+         * demand-usage.blade.php); "overview" itself moved on to
+         * "Priority Insights" as its other headline block.
+         */
         $this->actingAs($this->spmuHead())
             ->get(route('analytics.index', ['section' => 'overview', 'academic_period' => 'month']))
             ->assertOk()
@@ -115,7 +121,7 @@ class AnalyticsSectionsTest extends TestCase
             ->assertSee('Currently Overdue')
             ->assertSee('Low Availability')
             ->assertSee('Borrowing Demand Trend')
-            ->assertSee('Top Borrowing Units');
+            ->assertSee('Priority Insights');
     }
 
     public function test_borrowers_reports_the_three_canonical_divisions(): void
@@ -133,7 +139,7 @@ class AnalyticsSectionsTest extends TestCase
             ->assertOk()
             ->assertSee('Academic')
             ->assertSee('Administrative')
-            ->assertSee('Research &amp; Innovation', false)
+            ->assertSee('Research, Innovation, &amp; Collaboration', false)
             ->assertSee('College of Computer Studies')
             ->assertSee('Student Affairs and Services')
             ->assertSee('Research and Development Services Office (RDSO)');

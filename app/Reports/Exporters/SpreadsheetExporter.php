@@ -55,9 +55,11 @@ class SpreadsheetExporter
 
         $sheet->setCellValue([1, $row++], 'Date Generated: '.($meta['generated_long'] ?? ''));
 
-        if ($options->includeFilters && ! empty($meta['applied_filters'])) {
-            foreach (ReportScopeFormatter::rows($meta['applied_filters']) as $scope) {
-                $sheet->setCellValue([1, $row++], $scope['label'].': '.$scope['value']);
+        if ($options->includeFilters) {
+            $scopeSummary = implode(' · ', array_column(ReportScopeFormatter::rows($meta['applied_filters'] ?? []), 'value'));
+
+            if ($scopeSummary !== '') {
+                $sheet->setCellValue([1, $row++], 'Report Scope: '.$scopeSummary);
             }
         }
 

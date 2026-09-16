@@ -35,6 +35,8 @@ Thumbs.db
 
 # Local development backups / temporary patches
 *.bak-*
+*.before-*
+BACKUP-*/
 install-item-borrowing-history.ps1
 item-borrowing-history.patch
 

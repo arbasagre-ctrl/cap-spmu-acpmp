@@ -10,7 +10,7 @@
         <h1>{{ $job->custody->custody_no }}</h1>
         <p>{{ $job->custody->borrower->full_name }} · Request {{ $job->custody->request->request_no }}</p>
     </div>
-    <a class="button secondary ui-pressable" href="{{ route('laundry.spmu.index') }}"><x-icon name="arrow-left" size="16" /><span>Back to Laundry cases</span></a>
+    <a class="button secondary ui-pressable" href="{{ route('laundry.spmu.index') }}"><x-icon name="arrow-left" size="16" /><span>Back</span></a>
 </section>
 @if(session('status'))
 <section class="content-area"><div class="callout success">{{ session('status') }}</div></section>
@@ -50,14 +50,14 @@
 
             @if($job->latestEvidence?->file)
                 <div class="top-gap">
-                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">View uploaded final form</a>
+                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">Open Uploaded Final Form</a>
                 </div>
             @endif
 
             @if($job->document)
                 <div class="top-gap">
                     <p class="meta">Generated borrower-printable Laundry Form</p>
-                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">View generated form</a>
+                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">Open Generated Form</a>
                 </div>
             @endif
         </article>
@@ -65,7 +65,7 @@
         <article class="card">
             <div class="card-header"><div><p class="eyebrow">Processing record</p><h2>Laundry details</h2></div></div>
             <dl class="detail-list">
-                <dt>Recorded by SPMU Action Officer</dt><dd>{{ $job->worker_name ?: 'Not recorded' }}</dd>
+                <dt>Laundry Personnel</dt><dd>{{ $job->worker_name ?: 'Not recorded' }}</dd>
                 <dt>Date received</dt><dd>{{ optional($job->worker_received_at)->format('d M Y, g:i A') ?: 'Not recorded' }}</dd>
                 <dt>Total items received</dt><dd>{{ $totalReceived + 0 }}</dd>
             </dl>

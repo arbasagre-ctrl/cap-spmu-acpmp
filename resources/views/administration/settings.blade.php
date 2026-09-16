@@ -110,7 +110,7 @@
     @if(!$isIctu && $configurationSection)
         <a class="button secondary ui-pressable config-back-button" href="{{ route('policies.index') }}">
             <x-icon name="arrow-left" size="17" />
-            Back to Operational Configuration
+            Back
         </a>
     @endif
 </section>
@@ -482,7 +482,7 @@
 
                 <div class="settings-actions">
                     <button class="button primary ui-pressable" data-save-button type="submit" disabled>Save change</button>
-                    <a class="button secondary ui-pressable" href="{{ route('administration.index') }}">Back</a>
+                    <a class="button secondary ui-pressable" href="{{ route('administration.index') }}"><x-icon name="arrow-left" size="17" /> Back</a>
                 </div>
 
                 <small class="audit-note">Changes are recorded in the audit trail.</small>

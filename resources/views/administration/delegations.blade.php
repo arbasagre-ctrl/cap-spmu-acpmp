@@ -1,6 +1,6 @@
 @extends('layouts.app', ['title' => 'Temporary Delegations'])
 @section('content')
-<section class="page-heading"><div><p class="eyebrow">ICTU controlled authority</p><h1>Temporary delegated approvers</h1><p>A delegate uses their own CSPC account. Only SPMU approval authority may be delegated in the active borrowing workflow; authority is time-bound, documented, and fully auditable.</p></div><a class="button secondary" href="{{ route('administration.index') }}">Back to administration</a></section>
+<section class="page-heading"><div><p class="eyebrow">ICTU controlled authority</p><h1>Temporary delegated approvers</h1><p>A delegate uses their own CSPC account. Only SPMU approval authority may be delegated in the active borrowing workflow; authority is time-bound, documented, and fully auditable.</p></div><a class="button secondary ui-pressable" href="{{ route('administration.index') }}"><x-icon name="arrow-left" size="17" /> Back</a></section>
 <section class="content-grid">
     <form class="card form-grid" method="post" action="{{ route('administration.delegations.store') }}">@csrf
         <div><p class="eyebrow">New authority record</p><h2>Record a delegation</h2></div>

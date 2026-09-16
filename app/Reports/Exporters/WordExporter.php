@@ -122,10 +122,12 @@ class WordExporter
             ['spaceAfter' => 0]
         );
 
-        if ($options->includeFilters && ! empty($meta['applied_filters'])) {
-            foreach (ReportScopeFormatter::rows($meta['applied_filters']) as $scope) {
+        if ($options->includeFilters) {
+            $scopeSummary = implode(' · ', array_column(ReportScopeFormatter::rows($meta['applied_filters'] ?? []), 'value'));
+
+            if ($scopeSummary !== '') {
                 $section->addText(
-                    $scope['label'].' : '.$scope['value'],
+                    'Report Scope    : '.$scopeSummary,
                     ['size' => 9],
                     ['spaceAfter' => 0]
                 );

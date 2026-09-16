@@ -57,7 +57,7 @@ class BatchOneReliabilityTest extends TestCase
     }
 
 
-    public function test_draft_request_survives_supporting_document_storage_failure(): void
+    public function test_supporting_document_storage_failure_leaves_no_orphaned_draft_request(): void
     {
         $borrower =
             $this->borrower();
@@ -75,9 +75,13 @@ class BatchOneReliabilityTest extends TestCase
                 ->firstOrFail();
 
         /*
-         * The current create flow saves the Draft first, then stores
-         * optional supporting documents. A storage failure must not erase
-         * the already-created Draft/request items.
+         * BorrowingRequestController::store() wraps request creation,
+         * supporting-document upload, and submission in ONE DB transaction
+         * (see BorrowingRequestController.php:296-309). This deliberately
+         * replaced an earlier design where a failed supporting-document
+         * write left an orphaned Draft behind - retrying then created a
+         * second, duplicate request. A storage failure must now roll back
+         * the whole unit, leaving no request at all.
          */
         $this->mock(
             ProtectedFileService::class,
@@ -167,53 +171,21 @@ class BatchOneReliabilityTest extends TestCase
                 500
             );
 
-        $request =
+        $this->assertFalse(
             BorrowingRequest::query()
                 ->where(
                     'borrower_user_id',
                     $borrower->id
                 )
-                ->firstOrFail();
-
-        $this->assertSame(
-            RequestStatus::Draft,
-            $request->status
-        );
-
-        $this->assertDatabaseHas(
-            'request_versions',
-            [
-                'request_id' =>
-                    $request->id,
-
-                'version_no' =>
-                    1,
-            ]
-        );
-
-        $this->assertDatabaseHas(
-            'request_items',
-            [
-                'request_version_id' =>
-                    $request
-                        ->currentVersion
-                        ->id,
-
-                'inventory_item_id' =>
-                    $item->id,
-            ]
+                ->exists(),
+            'A failed supporting-document write must roll back the whole request, not leave an orphaned Draft.'
         );
 
         $this->assertDatabaseMissing(
-            'request_supporting_documents',
+            'request_items',
             [
-                'request_version_id' =>
-                    $request
-                        ->currentVersion
-                        ->id,
-
-                'document_type' =>
-                    'BORROWING_REQUEST_LETTER',
+                'inventory_item_id' =>
+                    $item->id,
             ]
         );
     }
@@ -342,11 +314,15 @@ class BatchOneReliabilityTest extends TestCase
         );
 
         /*
-         * The current physical-signature workflow keeps a printable Draft
-         * Borrowing Request Letter. The borrower prints it, obtains the
-         * required wet signatures, then uploads the accomplished scan.
+         * DocumentService::requestLetter()/recoverMissingDraftRequestLetter()
+         * are dead code with no remaining caller anywhere in the app: the
+         * current workflow never auto-generates a system Draft Borrowing
+         * Request Letter. The borrower obtains and signs their own letter
+         * externally, then uploads the scan directly as a
+         * request_supporting_documents row (asserted above) - no
+         * generated_documents row is created for it.
          */
-        $this->assertDatabaseHas(
+        $this->assertDatabaseMissing(
             'generated_documents',
             [
                 'request_version_id' =>
@@ -356,9 +332,6 @@ class BatchOneReliabilityTest extends TestCase
 
                 'document_type' =>
                     'REQUEST_LETTER',
-
-                'status' =>
-                    'DRAFT',
             ]
         );
     }
@@ -378,23 +351,20 @@ class BatchOneReliabilityTest extends TestCase
             'classification' => 'INCIDENT_EVIDENCE',
         ]);
 
+        /*
+         * CustodyService::receiveReturn() now requires every still-outstanding
+         * non-linen item type to be accounted together in one call (see
+         * CustodyService.php:1500-1566): "Non-linen return must be recorded
+         * as one complete return branch." Splitting line 0 and line 1 across
+         * two separate calls - as this test previously did - is rejected.
+         */
         app(CustodyService::class)->receiveReturn(
             $custody,
             $officer,
-            [$lines[0]->id => 1],
-            [$lines[0]->id => 'DAMAGED'],
-            'Damage found while fully accounting for the first issued item.',
+            [$lines[0]->id => 1, $lines[1]->id => 1],
+            [$lines[0]->id => 'DAMAGED', $lines[1]->id => 'FINE'],
+            'Damage found on the first item; the second item returned serviceable.',
             evidenceFileIds: [$lines[0]->id => $evidence->id],
-        );
-        $this->assertSame('RETURN_PROCESSING', $custody->fresh()->status);
-        $this->travel(1)->seconds();
-
-        app(CustodyService::class)->receiveReturn(
-            $custody->fresh(),
-            $officer,
-            [$lines[1]->id => 1],
-            [$lines[1]->id => 'FINE'],
-            'Final serviceable item returned.',
         );
 
         $this->assertDatabaseHas('incidents', ['custody_transaction_id' => $custody->id, 'status' => 'OPEN']);
@@ -414,6 +384,23 @@ class BatchOneReliabilityTest extends TestCase
 
         $officer =
             $this->spmuOfficer();
+
+        /*
+         * ConditionalProcessingController::verify() requires a physical
+         * return inspection to already be recorded (custody.returns with
+         * received_at set) before the Guard's accomplished Gate Pass may be
+         * recorded - see ConditionalProcessingController.php:92-136. This
+         * fixture must reproduce that state directly since gatePassCustody()
+         * does not create a return by itself.
+         */
+        \App\Models\ReturnTransaction::query()->create([
+            'return_no' => 'RET-GATE-'.uniqid(),
+            'custody_transaction_id' => $custody->id,
+            'received_by_user_id' => $officer->id,
+            'return_type' => 'NORMAL',
+            'received_at' => now(),
+            'status' => 'INSPECTED',
+        ]);
 
         $first =
             $this
@@ -567,11 +554,29 @@ class BatchOneReliabilityTest extends TestCase
         $officer =
             $this->spmuOfficer();
 
+        /*
+         * ConditionalProcessingController::verify() requires the guard's
+         * signed-at time to fall on/after the SPMU physical release time and
+         * on/before the recorded physical return time, and requires a
+         * physical return (custody.returns with received_at) to already
+         * exist - see ConditionalProcessingController.php:92-136. Reproduce
+         * that chronology: released (gatePassCustody, "now") -> guard signs
+         * the off-campus exit (+5 min) -> item physically returns (+10 min).
+         */
         $signedAt =
             now()
-                ->subMinutes(
+                ->addMinutes(
                     5
                 );
+
+        \App\Models\ReturnTransaction::query()->create([
+            'return_no' => 'RET-GATE-'.uniqid(),
+            'custody_transaction_id' => $custody->id,
+            'received_by_user_id' => $officer->id,
+            'return_type' => 'NORMAL',
+            'received_at' => now()->addMinutes(10),
+            'status' => 'INSPECTED',
+        ]);
 
         $this
             ->withSession([
@@ -749,6 +754,18 @@ class BatchOneReliabilityTest extends TestCase
                 [
                     ...$basePayload,
 
+                    /*
+                     * PreventDuplicateSubmission fingerprints a request by
+                     * its payload/files when no _action_token is present.
+                     * A real browser always attaches a fresh UUID per submit
+                     * (layouts/app.blade.php); a raw test PUT does not, so
+                     * two edits of the same request in one test must supply
+                     * distinct tokens themselves or the second, legitimate
+                     * edit is wrongly rejected as a duplicate of the first.
+                     */
+                    '_action_token' =>
+                        'test-replace-letter-v1',
+
                     'approved_request_letter' =>
                         UploadedFile::fake()
                             ->create(
@@ -800,6 +817,9 @@ class BatchOneReliabilityTest extends TestCase
                 ),
                 [
                     ...$basePayload,
+
+                    '_action_token' =>
+                        'test-replace-letter-v2',
 
                     'approved_request_letter' =>
                         UploadedFile::fake()

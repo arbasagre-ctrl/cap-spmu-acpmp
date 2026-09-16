@@ -42,7 +42,7 @@
         <span class="kpi-label">Open configuration values</span>
         <strong class="kpi-value">{{ $openSettings }}</strong>
         @if($mayViewAuditTrail && Route::has('reports.audit'))
-            <a class="dashboard-view-all" href="{{ route('reports.audit') }}">Open audit trail <x-icon name="arrow-right" size="12" /></a>
+            <a class="dashboard-view-all" href="{{ route('reports.audit') }}">Open Audit Trail <x-icon name="arrow-right" size="12" /></a>
         @endif
     </article>
 </section>
@@ -56,7 +56,7 @@
                 <h2>Recent attributable actions</h2>
             </div>
             @if(Route::has('reports.audit'))
-                <a class="button secondary small ui-pressable" href="{{ route('reports.audit') }}"><span>Full audit</span><x-icon name="arrow-right" size="14" /></a>
+                <a class="button secondary small ui-pressable" href="{{ route('reports.audit') }}"><span>Open Audit Trail</span><x-icon name="arrow-right" size="14" /></a>
             @endif
         </div>
         <div class="timeline">

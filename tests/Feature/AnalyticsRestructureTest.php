@@ -827,7 +827,7 @@ class AnalyticsRestructureTest extends TestCase
         ]));
 
         $division->assertOk();
-        $division->assertSee('Division detail', false);
+        $division->assertSee('Organizational Classification detail', false);
     }
 
     public function test_each_return_kpi_opens_its_own_detail(): void

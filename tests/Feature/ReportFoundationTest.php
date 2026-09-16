@@ -197,10 +197,10 @@ class ReportFoundationTest extends TestCase
     {
         $filters = $this->filters('borrowing', [
             'division' => 'ACADEMIC',
-            'unit' => 'College of Computer Studies',
+            'unit' => 'College of Computer Studies (CCS)',
         ]);
 
-        $this->assertSame('College of Computer Studies', $filters->get('unit'));
+        $this->assertSame('College of Computer Studies (CCS)', $filters->get('unit'));
         $this->assertSame([], $filters->rejected());
     }
 
@@ -217,14 +217,14 @@ class ReportFoundationTest extends TestCase
     {
         $filters = $this->filters('borrowing', [
             'division' => 'ACADEMIC',
-            'unit' => 'College of Computer Studies',
+            'unit' => 'College of Computer Studies (CCS)',
             'status' => 'UNDER_SPMU',
         ]);
 
         $this->assertSame(
             [
-                'Division' => 'Academic',
-                'Office / Unit' => 'College of Computer Studies',
+                'Organizational Classification' => 'Academic',
+                'Office / College / Unit' => 'College of Computer Studies (CCS)',
                 'Status' => 'Under SPMU Review',
             ],
             $filters->describe()
@@ -278,7 +278,7 @@ class ReportFoundationTest extends TestCase
 
         $this->assertSame('Borrowing Activity Report', $meta['report_name']);
         $this->assertSame('01 Apr 2026 – 30 Apr 2026', $meta['period_label']);
-        $this->assertSame(['Division' => 'Academic'], $meta['applied_filters']);
+        $this->assertSame(['Organizational Classification' => 'Academic'], $meta['applied_filters']);
         $this->assertSame('Head Of SPMU', $meta['generated_by']);
         $this->assertSame(1, $dataset->count());
         $this->assertNotEmpty($meta['generated_at']);
@@ -479,6 +479,39 @@ class ReportFoundationTest extends TestCase
 
         $this->assertSame($screenRecords, $csvRecords);
         $this->assertCount($dataset->count(), $csvRecords);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Web preview record links                                           */
+    /* ------------------------------------------------------------------ */
+
+    public function test_web_preview_shows_a_record_link_but_print_does_not(): void
+    {
+        $head = User::factory()->create([
+            'access_classification' => AccessClassification::SpmuHead,
+        ]);
+
+        $sourceRequest = $this->request('ACADEMIC', 'College of Computer Studies', $this->from->copy()->addDay());
+        $expectedHref = route('requests.show', $sourceRequest);
+
+        $this->actingAs($head)
+            ->get(route('reports.index', [
+                'report' => 'borrowing',
+                'generated' => 1,
+                'academic_period' => 'month',
+            ]))
+            ->assertOk()
+            ->assertSee('View Record')
+            ->assertSee($expectedHref, false);
+
+        $this->actingAs($head)
+            ->get(route('reports.print', [
+                'type' => 'borrowing',
+                'academic_period' => 'month',
+            ]))
+            ->assertOk()
+            ->assertDontSee('View Record')
+            ->assertDontSee($expectedHref, false);
     }
 
     /* ------------------------------------------------------------------ */

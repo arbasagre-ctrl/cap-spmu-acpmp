@@ -368,7 +368,7 @@ class ForecastServiceTest extends TestCase
 
         $this->assertTrue($divisions['available']);
         $this->assertSame(
-            ['ACADEMIC', 'ADMINISTRATION', 'RESEARCH_INNOVATION_COLLABORATION'],
+            ['ADMINISTRATION', 'ACADEMIC', 'RESEARCH_INNOVATION_COLLABORATION'],
             array_column($divisions['groups'], 'code')
         );
 

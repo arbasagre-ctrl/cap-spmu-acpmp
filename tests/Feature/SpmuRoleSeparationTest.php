@@ -85,7 +85,7 @@ class SpmuRoleSeparationTest extends TestCase
             )
             ->get(
                 route(
-                    'custody.show',
+                    'custody.release.show',
                     $custody
                 )
             )

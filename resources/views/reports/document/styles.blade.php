@@ -51,6 +51,9 @@
 .doc-table td { padding: 5px 7px; border: 1px solid #bbb; vertical-align: top; color: #111; }
 .doc-table td.numeric, .doc-table th.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .doc-table-empty { text-align: center; color: #555; padding: 18px 8px; }
+.doc-table-action-column { width: 1%; white-space: nowrap; text-align: right; }
+.doc-table-record-link { color: #1a5fb4; font-weight: 700; text-decoration: none; }
+.doc-table-record-link:hover, .doc-table-record-link:focus-visible { text-decoration: underline; }
 
 .doc-summary { margin: 16px 0 0; }
 .doc-summary-heading { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #111; }
@@ -69,6 +72,9 @@
 @media print {
     .doc-sheet { max-width: none; margin: 0; padding: 0; }
     .doc-table-scroll { overflow: visible; }
+
+    /* An on-screen record link is not usable on paper. */
+    .doc-table-action-column { display: none; }
 
 /* Universal print table fitting */
 .doc-table {

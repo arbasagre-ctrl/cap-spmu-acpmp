@@ -194,7 +194,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('laundry.show', $job))
             ->assertOk()
-            ->assertSeeText('Laundry processing / completed form pending')
+            ->assertSeeText('Next: Complete the Laundry Form')
             ->assertSeeText('complete the offline laundry process')
             ->assertSeeText('Open SPMU Return')
             ->assertDontSeeText('Archive accomplished Laundry Form')
@@ -204,9 +204,9 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('custody.return.show', $custody))
             ->assertOk()
-            ->assertSeeText('Upload Completed Form')
+            ->assertSeeText('Record Accomplished Form')
             ->assertDontSeeText('I confirm the signed form is complete.')
-            ->assertSeeText('Use the RECEIVED BY date on the signed form.');
+            ->assertSeeText('Use the RECEIVED BY date on the form.');
     }
 
     private function recordReturn(

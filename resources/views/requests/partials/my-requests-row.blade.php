@@ -169,6 +169,6 @@
             :status="$statusKey"
             :label="$statusLabel"
         />
-        <strong>View request<x-icon name="arrow-right" size="16" /></strong>
+        <strong>View Request<x-icon name="arrow-right" size="16" /></strong>
     </span>
 </a>

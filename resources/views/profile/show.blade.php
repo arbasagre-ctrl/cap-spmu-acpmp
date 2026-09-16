@@ -487,7 +487,8 @@
                         }}
                     </strong>
                 </div>
-                <div class="account-settings-readonly"><span>Office / Unit</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
+                <div class="account-settings-readonly"><span>Organizational Classification</span><strong>{{ $user->organizationalUnit?->divisionLabel() ?: 'Not recorded' }}</strong></div>
+                <div class="account-settings-readonly"><span>Office / College / Unit</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
 
                 @php
                     $additionalRequestingUnits = $user->authorizedOrganizationalUnits

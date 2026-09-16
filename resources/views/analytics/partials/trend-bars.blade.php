@@ -47,7 +47,7 @@
                     $point['count'] === 1 ? 'Request' : 'Requests',
                     (string) $point['count'],
                 ]]) }}"
-                aria-label="View details for {{ $point['label'] }}: {{ $point['count'] }} {{ $point['count'] === 1 ? 'request' : 'requests' }}"
+                aria-label="View Details for {{ $point['label'] }}: {{ $point['count'] }} {{ $point['count'] === 1 ? 'request' : 'requests' }}"
             >
                 <span class="analytics-bars-track">
                     <span class="analytics-bars-value">{{ $point['count'] }}</span>

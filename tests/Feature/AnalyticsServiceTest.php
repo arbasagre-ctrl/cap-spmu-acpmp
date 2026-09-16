@@ -308,12 +308,12 @@ class AnalyticsServiceTest extends TestCase
 
         $this->assertSame(10, $byLabel['Academic']['count']);
         $this->assertSame(5, $byLabel['Administrative']['count']);
-        $this->assertSame(3, $byLabel['Research & Innovation']['count']);
+        $this->assertSame(3, $byLabel['Research, Innovation, & Collaboration']['count']);
 
         /* 10/18 = 55.6 -> 56, 5/18 = 27.8 -> 28, 3/18 = 16.7 -> 17. */
         $this->assertSame(56.0, (float) $byLabel['Academic']['percentage']);
         $this->assertSame(28.0, (float) $byLabel['Administrative']['percentage']);
-        $this->assertSame(17.0, (float) $byLabel['Research & Innovation']['percentage']);
+        $this->assertSame(17.0, (float) $byLabel['Research, Innovation, & Collaboration']['percentage']);
 
         $this->assertStringContainsString('Academic', $groups['summary']);
     }
@@ -410,10 +410,25 @@ class AnalyticsServiceTest extends TestCase
 
         $options = $this->analytics->unitOptions($this->from, $this->to);
 
-        $this->assertCount(4, $options['ACADEMIC']);
-        $this->assertCount(3, $options['ADMINISTRATION']);
-        $this->assertCount(2, $options['RESEARCH_INNOVATION_COLLABORATION']);
-        $this->assertNotContains('Student Affairs and Services', $options['ACADEMIC']);
+        /*
+         * The full active organizational master is offered regardless of
+         * activity in the selected period: a current unit with zero filed
+         * requests must still be selectable, not just units that happen to
+         * appear on a request filed inside this window.
+         */
+        $this->assertContains('College of Technological and Developmental Education (CTDE)', $options['ACADEMIC']);
+        $this->assertContains('Board Secretary', $options['ADMINISTRATION']);
+        $this->assertContains('AI Research Center for Community Development (AIRCoDe)', $options['RESEARCH_INNOVATION_COLLABORATION']);
+
+        /* A unit never appears outside its own division. */
+        $this->assertNotContains('Board Secretary', $options['ACADEMIC']);
+
+        /*
+         * Historical request-version wording (filed under an office name
+         * that predates a later master-data rename) stays filterable too,
+         * alongside the current master spelling.
+         */
+        $this->assertContains('Student Affairs and Services', $options['ADMINISTRATION']);
     }
 
     /* ------------------------------------------------------------------ */

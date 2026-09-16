@@ -164,7 +164,7 @@
                                 $statusCode === 'SENT' && $channelCode === 'SYSTEM' => 'Stored in the in-system notification record.',
                                 $statusCode === 'SENT' && $channelCode === 'EMAIL' => 'Accepted by the configured mail transport.',
                                 $statusCode === 'SENT' && $channelCode === 'SMS' => 'Accepted by the configured SMS provider.',
-                                in_array($statusCode, ['FAILED', 'ERROR'], true) => 'Delivery attempt failed. Open details for the provider response.',
+                                in_array($statusCode, ['FAILED', 'ERROR'], true) => 'Delivery attempt failed. Select View Details to review the provider response.',
                                 $providerResponse !== '' => \Illuminate\Support\Str::limit($providerResponse, 72),
                                 default => 'No provider response recorded.',
                             };
@@ -233,7 +233,7 @@
                                     aria-expanded="false"
                                     aria-controls="{{ $deliveryDetailsId }}"
                                 >
-                                    View details
+                                    View Details
                                     <span aria-hidden="true">⌄</span>
                                 </button>
                             </td>
@@ -431,25 +431,35 @@
 .notification-delivery-view-button {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     margin-top: 7px;
     padding: 0;
     border: 0;
     background: transparent;
     color: var(--interactive, #1769e0);
     font: inherit;
-    font-size: .82rem;
+    font-size: .84rem;
     font-weight: 700;
+    line-height: 1.2;
     cursor: pointer;
 }
 
-.notification-delivery-view-button span {
-    display: inline-block;
-    transition: transform .15s ease;
+.notification-delivery-view-button:hover {
+    text-decoration: underline;
 }
 
-.notification-delivery-view-button[aria-expanded="true"] span {
-    transform: rotate(180deg);
+/* A small static chevron glyph, not a rotating indicator. */
+.notification-delivery-view-button span {
+    position: relative;
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin: -3px 0 0 1px;
+    font-size: 0;
+    line-height: 0;
+    border-right: 1.7px solid currentColor;
+    border-bottom: 1.7px solid currentColor;
+    transform: rotate(45deg);
 }
 
 .notification-delivery-detail-row > td {
@@ -716,178 +726,5 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFilters();
 });
 </script>
-
-{{-- INLINE_DELIVERY_DETAILS_OVERRIDE --}}
-<style>
-/* Do not use the modal version. */
-.notification-delivery-modal {
-    display: none !important;
-}
-
-/* Keep View details as simple blue text. */
-.notification-delivery-view-button {
-    appearance: none !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 5px !important;
-    margin-top: 7px !important;
-    padding: 0 !important;
-    border: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    color: var(--interactive, #1769e0) !important;
-    font: inherit !important;
-    font-size: .84rem !important;
-    font-weight: 700 !important;
-    cursor: pointer !important;
-}
-
-.notification-delivery-view-button:hover {
-    text-decoration: underline;
-}
-
-.notification-delivery-view-button span {
-    display: inline-block;
-    transition: transform .15s ease;
-}
-
-.notification-delivery-view-button[aria-expanded="true"] span {
-    transform: rotate(180deg);
-}
-
-/* Details open as one full-width row below the delivery. */
-.notification-delivery-detail-row[hidden] {
-    display: none !important;
-}
-
-.notification-delivery-detail-row:not([hidden]) {
-    display: table-row !important;
-}
-
-.notification-delivery-detail-row > td {
-    padding: 0 !important;
-    border-top: 0 !important;
-}
-
-.notification-delivery-detail-row .notification-delivery-details-panel {
-    width: 100% !important;
-    max-width: none !important;
-    box-sizing: border-box !important;
-    padding: 20px 24px !important;
-    border: 0 !important;
-    border-top: 1px solid var(--border) !important;
-    border-bottom: 1px solid var(--border) !important;
-    border-radius: 0 !important;
-    background: var(--surface-subtle, #f7f9fc) !important;
-}
-
-.notification-delivery-detail-row .notification-delivery-detail-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-}
-
-.notification-delivery-detail-row .notification-delivery-detail-wide {
-    grid-column: 1 / -1 !important;
-}
-
-@media (max-width: 1050px) {
-    .notification-delivery-detail-row .notification-delivery-detail-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    }
-}
-
-@media (max-width: 650px) {
-    .notification-delivery-detail-row .notification-delivery-detail-grid {
-        grid-template-columns: 1fr !important;
-    }
-
-    .notification-delivery-detail-row .notification-delivery-detail-wide {
-        grid-column: auto !important;
-    }
-}
-</style>
-
-<script>
-document.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-delivery-details-toggle]');
-    if (!button) return;
-
-    /*
-     * Override the previous modal handler.
-     * Details must expand inline under the selected row.
-     */
-    event.preventDefault();
-    event.stopImmediatePropagation();
-
-    const targetId = button.getAttribute('aria-controls');
-    const target = targetId ? document.getElementById(targetId) : null;
-
-    if (!target) return;
-
-    const willOpen = target.hidden;
-
-    document.querySelectorAll('[data-delivery-details-row]').forEach((row) => {
-        row.hidden = true;
-    });
-
-    document.querySelectorAll('[data-delivery-details-toggle]').forEach((toggle) => {
-        toggle.setAttribute('aria-expanded', 'false');
-    });
-
-    document.querySelectorAll('.notification-delivery-modal').forEach((modal) => {
-        modal.hidden = true;
-    });
-
-    document.body.classList.remove('notification-delivery-modal-open');
-
-    if (willOpen) {
-        target.hidden = false;
-        button.setAttribute('aria-expanded', 'true');
-    }
-}, true);
-</script>
-
-
-{{-- VIEW_DETAILS_FIXED_CHEVRON --}}
-<style>
-.notification-delivery-view-button {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: flex-start !important;
-    gap: 7px !important;
-    padding: 0 !important;
-    border: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    color: var(--interactive, #1769e0) !important;
-    font: inherit !important;
-    font-size: .84rem !important;
-    font-weight: 700 !important;
-    line-height: 1.2 !important;
-    cursor: pointer !important;
-}
-
-.notification-delivery-view-button span {
-    position: relative !important;
-    display: inline-block !important;
-    width: 7px !important;
-    height: 7px !important;
-    margin: -3px 0 0 1px !important;
-    font-size: 0 !important;
-    line-height: 0 !important;
-    border-right: 1.7px solid currentColor !important;
-    border-bottom: 1.7px solid currentColor !important;
-    transform: rotate(45deg) !important;
-    transition: none !important;
-}
-
-/* Keep the chevron fixed even while details are open. */
-.notification-delivery-view-button[aria-expanded="true"] span {
-    transform: rotate(45deg) !important;
-}
-
-.notification-delivery-view-button:hover {
-    text-decoration: underline;
-}
-</style>
 
 @endsection

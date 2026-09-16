@@ -33,9 +33,9 @@
         <p>Request {{ $custody?->request?->request_no ?: '—' }} · Custody {{ $custody?->custody_no ?: '—' }} · {{ $custody?->borrower?->full_name ?: '—' }}</p>
     </div>
     @if($custody?->released_at)
-        <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $custody) }}#return-summary">← Back to Return</a>
+        <a class="button secondary ui-pressable" href="{{ route('custody.return.show', $custody) }}#return-summary">← Back</a>
     @else
-        <a class="button secondary ui-pressable" href="{{ route('gate-passes.index') }}">← Back to Gate Pass</a>
+        <a class="button secondary ui-pressable" href="{{ route('gate-passes.index') }}">← Back</a>
     @endif
 </section>
 
@@ -72,7 +72,7 @@
                     </h2>
                 </div>
                 @if($gatePassRecording)
-                    <span class="status-badge status-warning">Pending Copy</span>
+                    <x-status-badge :status="$gatePassStatus['key']" label="Pending Copy" />
                 @else
                     <x-status-badge :status="$gatePassStatus['key']" :label="$gatePassStatus['label']" />
                 @endif
@@ -94,7 +94,7 @@
                         <strong>Ready for printing.</strong>
                         <p>The Guard on Duty completes the printed Gate Pass at campus exit.</p>
                         <div class="inline-actions top-gap">
-                            <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">View</a>
+                            <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">Open Gate Pass</a>
                             <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download / Print</a>
                         </div>
                     </div>
@@ -143,7 +143,7 @@
                     <p>The accomplished Gate Pass has been received and recorded by SPMU.</p>
                     @if($gatePass->accomplishedFile)
                         <div class="inline-actions top-gap">
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Accomplished Gate Pass</a>
+                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">Open Accomplished Gate Pass</a>
                         </div>
                     @endif
                 </div>

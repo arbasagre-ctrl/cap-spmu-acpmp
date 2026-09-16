@@ -11,8 +11,8 @@
         </div>
 
         <a class="inventory-form-back" href="{{ route('inventory.index') }}">
-            <x-icon name="chevron-right" size="16" />
-            Back to inventory
+            <x-icon name="arrow-left" size="16" />
+            Back
         </a>
     </section>
 

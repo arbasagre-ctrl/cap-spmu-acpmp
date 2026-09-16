@@ -346,7 +346,7 @@ class ForecastService
 
         $groups = [];
 
-        foreach (OrganizationalStructure::DIVISIONS as $code => $label) {
+        foreach (OrganizationalStructure::divisions() as $code => $label) {
             if ($division !== null && $code !== $division) {
                 continue;
             }

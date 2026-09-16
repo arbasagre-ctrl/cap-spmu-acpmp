@@ -1627,7 +1627,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                         </div>
                         @if($complianceDocument)
                             <div class="actions">
-                                <a class="button secondary small" href="{{ route('documents.view', $complianceDocument) }}" target="_blank">View Compliance Notice</a>
+                                <a class="button secondary small" href="{{ route('documents.view', $complianceDocument) }}" target="_blank">Open Compliance Notice</a>
                             </div>
                         @endif
                     </div>
@@ -1715,7 +1715,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                         <div class="accountability-billing-brief">
                             <span><strong>{{ $incidentBilling->billing_no }}</strong></span>
                             <span>PHP {{ number_format((float) $incidentBilling->total_amount, 2) }}</span>
-                            <span>{{ str($incidentBilling->status)->replace('_',' ')->title() }}</span>
+                            <x-status-badge :status="$incidentBilling->status" />
                             @if($incidentBilling->due_at)<span>Due {{ optional($incidentBilling->due_at)->format('d M Y') }}</span>@endif
                         </div>
                         <div class="actions">
@@ -1844,7 +1844,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
 @endif
 <div class="top-gap">
 @forelse($billing->payments as $payment)
-<div class="evidence-row"><div><x-status-badge :status="$payment->status" /><strong>{{ $payment->official_receipt_no }}</strong><small>{{ optional($payment->receipt_date)->format('d M Y') }} · PHP {{ number_format((float)$payment->amount,2) }}</small>@if($payment->evidence_file_id)<a class="table-action" href="{{ route('files.show', $payment->evidence_file_id, false) }}" target="_blank">View scanned Cashier receipt</a>@endif</div>
+<div class="evidence-row"><div><x-status-badge :status="$payment->status" /><strong>{{ $payment->official_receipt_no }}</strong><small>{{ optional($payment->receipt_date)->format('d M Y') }} · PHP {{ number_format((float)$payment->amount,2) }}</small>@if($payment->evidence_file_id)<a class="table-action" href="{{ route('files.show', $payment->evidence_file_id, false) }}" target="_blank">Open Scanned Cashier Receipt</a>@endif</div>
 @if($payment->status==='PENDING_VERIFICATION')<small class="meta">Legacy payment record from the previous two-step workflow.</small>@endif</div>
 @empty<p class="meta">No paid Cashier receipt uploaded.</p>@endforelse
 </div>
@@ -1979,7 +1979,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                                         ->first();
                                 @endphp
                                 @if($sanctionNotice)
-                                    <a class="table-action" href="{{ route('documents.view', $sanctionNotice) }}" target="_blank">View</a>
+                                    <a class="table-action" href="{{ route('documents.view', $sanctionNotice) }}" target="_blank">Open Notice</a>
                                     <a class="table-action" href="{{ route('documents.download', $sanctionNotice) }}">Download</a>
                                 @else
                                     <span class="meta">—</span>
