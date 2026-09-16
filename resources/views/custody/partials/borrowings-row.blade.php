@@ -11,7 +11,6 @@
     $returnDate = $version?->return_date ?: $version?->return_due_at ?: $custody->due_at;
 
     $workflowStatus = $custody->workflowStatus();
-    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $operationalStatusKey = $workflowStatus['key'];
     $workflowGroup = $workflowStatus['group'];
@@ -24,6 +23,9 @@
     href="{{ route('custody.show', $custody) }}"
     data-borrowings-record
     data-borrowings-group="{{ $workflowGroup }}"
+    data-borrowings-status="{{ $operationalStatusKey }}"
+    data-borrowings-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
+    data-borrowings-search="{{ strtolower(trim(($custody->custody_no ?? '').' '.($custody->request?->request_no ?? '').' '.($version?->purpose_event ?? ''))) }}"
 >
     <span class="operational-record-primary">
         <strong>{{ $custody->custody_no }}</strong>
@@ -61,9 +63,6 @@
             :status="$operationalStatusKey"
             :label="$operationalLabel"
         />
-        @if($accountabilityIndicator)
-            <small class="borrowings-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
-        @endif
-        <strong>View<x-icon name="chevron-right" size="16" /></strong>
+        <strong>View<x-icon name="arrow-right" size="16" /></strong>
     </span>
 </a>

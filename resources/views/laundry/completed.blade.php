@@ -22,36 +22,43 @@
             </div>
         </section>
     @else
-        <section class="card completed-laundry-card" aria-labelledby="completed-laundry-cases-title">
-            <div class="completed-laundry-toolbar">
-                <h2 id="completed-laundry-cases-title">
-                    <span class="completed-laundry-list-icon" aria-hidden="true"><svg class="ui-icon" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 5h1v2H4zM4 11h1v2H4zM4 17h1v2H4z" /></svg></span>
-                    Completed Laundry Cases
-                </h2>
-                <div class="completed-laundry-filters">
-                    <label class="search-input-shell completed-laundry-search">
-                        <span class="visually-hidden">Search completed laundry cases</span>
-                        <input type="search" placeholder="Search case / borrower / items..." data-completed-search autocomplete="off">
-                        <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="17" /></span>
-                    </label>
-                    <label class="completed-laundry-outcome-filter">
-                        <span class="visually-hidden">Filter by final outcome</span>
-                        <svg class="ui-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18l-7 8v8l-4-2v-6L3 4Z" /></svg>
-                        <select data-completed-outcome>
-                            <option value="">All Outcomes</option>
-                            <option value="available">Available</option>
-                            <option value="accountability">Accountability Required</option>
-                        </select>
-                    </label>
-                </div>
-            </div>
+        <section class="card completed-laundry-filter-card" aria-label="Completed laundry filters">
+            <label>
+                <span>Search</span>
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="18" /></span>
+                    <input type="search" placeholder="Search case, borrower, or items..." data-completed-search autocomplete="off">
+                </span>
+            </label>
+            <label>
+                <span>Outcome</span>
+                <select data-completed-outcome>
+                    <option value="">All outcomes</option>
+                    <option value="available">Available</option>
+                    <option value="accountability">Accountability required</option>
+                </select>
+            </label>
+            <label>
+                <span>Sort</span>
+                <select data-completed-sort>
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                </select>
+            </label>
             @if($jobs->hasPages())
-                <p class="completed-laundry-filter-scope">Search and outcome filters apply to this page.</p>
+                <p class="completed-laundry-filter-scope">Search, outcome, and sort apply to the cases on this page.</p>
             @endif
+        </section>
+
+        <section class="card completed-laundry-card" aria-labelledby="completed-laundry-cases-title">
+            <div class="completed-laundry-cases-heading">
+                <h2 id="completed-laundry-cases-title">Completed Laundry Cases</h2>
+                <p data-completed-count data-total="{{ $jobs->total() }}" data-first="{{ $jobs->firstItem() ?? 0 }}" data-last="{{ $jobs->lastItem() ?? 0 }}" data-paginated="{{ $jobs->hasPages() ? 'true' : 'false' }}" role="status" aria-live="polite">Showing {{ $jobs->firstItem() ?? 0 }} to {{ $jobs->lastItem() ?? 0 }} of {{ $jobs->total() }} completed cases</p>
+            </div>
 
             <div class="completed-laundry-table-wrap">
                 <table class="completed-laundry-table">
-                    <thead><tr><th scope="col">Case ID</th><th scope="col">Borrower</th><th scope="col">Items</th><th scope="col">Completed Date</th><th scope="col">Outcome</th><th scope="col">Action</th></tr></thead>
+                    <thead><tr><th scope="col">Case ID</th><th scope="col">Borrower</th><th scope="col">Items</th><th scope="col">Completed Date</th><th scope="col">Outcome</th><th scope="col">Actions</th></tr></thead>
                     <tbody>
                         @foreach($jobs as $job)
                             @include('laundry.partials.completed-case-row')
@@ -66,10 +73,11 @@
                 </div>
             </div>
 
-            <div class="completed-laundry-footer">
-                <p data-completed-count data-total="{{ $jobs->total() }}" data-first="{{ $jobs->firstItem() ?? 0 }}" data-last="{{ $jobs->lastItem() ?? 0 }}" data-paginated="{{ $jobs->hasPages() ? 'true' : 'false' }}" role="status" aria-live="polite">Showing {{ $jobs->firstItem() ?? 0 }} to {{ $jobs->lastItem() ?? 0 }} of {{ $jobs->total() }} completed cases</p>
-                {{ $jobs->onEachSide(1)->links('laundry.partials.completed-pagination') }}
-            </div>
+            @if($jobs->hasPages())
+                <div class="completed-laundry-footer">
+                    {{ $jobs->onEachSide(1)->links('laundry.partials.completed-pagination') }}
+                </div>
+            @endif
         </section>
     @endif
 

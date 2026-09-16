@@ -48,7 +48,7 @@ class TempDashboardInstructionsTest extends TestCase
         }
 
         // Operational content is untouched.
-        $this->assertStringContainsString('Requests needing your approval decision', $html);
+        $this->assertStringContainsString('Requests Awaiting Final Approval', $html);
         $this->assertStringContainsString('For Approval', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
         $this->assertStringContainsString('Open Approval Queue', $html);
@@ -69,7 +69,7 @@ class TempDashboardInstructionsTest extends TestCase
             $this->assertStringNotContainsString($instruction, $html);
         }
 
-        $this->assertStringContainsString('Requests requiring verification', $html);
+        $this->assertStringContainsString('Requests Awaiting SPMU Verification', $html);
         $this->assertStringContainsString('Open Verification Queue', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
     }
@@ -89,8 +89,8 @@ class TempDashboardInstructionsTest extends TestCase
             $this->assertStringNotContainsString($instruction, $html);
         }
 
-        $this->assertStringContainsString('Recent account activity', $html);
-        $this->assertStringContainsString('Manage Accounts', $html);
+        $this->assertStringContainsString('Recent Account Activity', $html);
+        $this->assertStringContainsString('Manage User Accounts', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
     }
 
@@ -105,7 +105,7 @@ class TempDashboardInstructionsTest extends TestCase
 
             // The queue is the only panel and the grid is a single column.
             $this->assertStringContainsString('dashboard-single-panel', $html);
-            $this->assertStringContainsString('.dashboard-balanced-grid.dashboard-single-panel { grid-template-columns: minmax(0, 1fr); }', $html);
+            $this->assertStringContainsString('.dashboard-balanced-grid.dashboard-single-panel { grid-template-columns:minmax(0,1fr); }', $html);
             $this->assertSame(1, substr_count($html, 'class="card queue-card dashboard-panel-equal'));
             $this->assertStringNotContainsString('workflow-mini-list', $html);
         }
@@ -115,7 +115,7 @@ class TempDashboardInstructionsTest extends TestCase
     {
         $html = $this->dashboardHtml(AccessClassification::BorrowerOnly, 'BORROWER');
 
-        $this->assertStringContainsString('Your next actions', $html);
+        $this->assertStringContainsString('Actions Requiring Your Attention', $html);
         $this->assertStringContainsString('Active requests', $html);
         $this->assertStringContainsString('is-borrower-dashboard', $html);
         $this->assertStringNotContainsString('workflow-mini-list', $html);

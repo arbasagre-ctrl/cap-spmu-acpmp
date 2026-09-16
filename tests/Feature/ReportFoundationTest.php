@@ -69,7 +69,7 @@ class ReportFoundationTest extends TestCase
     /* Catalogue                                                           */
     /* ------------------------------------------------------------------ */
 
-    public function test_catalogue_offers_the_eight_formal_report_types(): void
+    public function test_catalogue_offers_the_ten_formal_report_types(): void
     {
         $this->assertSame(
             [
@@ -77,6 +77,8 @@ class ReportFoundationTest extends TestCase
                 'approval',
                 'custody',
                 'returns',
+                'accountability-cases',
+                'billing-settlement',
                 'inventory',
                 'utilization',
                 'laundry',
@@ -89,7 +91,7 @@ class ReportFoundationTest extends TestCase
     public function test_report_types_are_grouped_for_the_builder(): void
     {
         $this->assertSame(
-            ['Borrowing', 'Custody & Return', 'Assets', 'Special Operations'],
+            ['Borrowing', 'Custody & Return', 'Accountability', 'Assets', 'Special Operations'],
             array_keys(ReportCatalogue::grouped())
         );
     }
@@ -97,7 +99,7 @@ class ReportFoundationTest extends TestCase
     public function test_every_consolidated_report_key_still_resolves_to_its_destination(): void
     {
         /*
-         * The reports these keys named were merged into the formal eight,
+         * The reports these keys named were consolidated into the formal set,
          * not discarded. An old bookmark must still open the report that now
          * carries that information rather than failing.
          */
@@ -105,8 +107,8 @@ class ReportFoundationTest extends TestCase
             'requests' => 'borrowing',
             'review-turnaround' => 'approval',
             'overdue' => 'returns',
-            'accountability' => 'returns',
-            'compliance' => 'returns',
+            'accountability' => 'accountability-cases',
+            'compliance' => 'accountability-cases',
             'borrowers' => 'borrowing',
         ];
 

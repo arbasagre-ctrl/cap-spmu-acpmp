@@ -7,18 +7,21 @@ use App\Enums\ApprovalStage;
 use App\Enums\RequestStatus;
 use App\Enums\UserRole;
 use App\Models\ApprovalStep;
+use App\Models\AuditEvent;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
 use App\Models\DownloadEvent;
 use App\Models\GatePass;
 use App\Models\Incident;
+use App\Models\NotificationEvent;
 use App\Models\OverdueCase;
 use App\Models\GeneratedDocument;
 use App\Models\RequestCancellation;
 use App\Models\RequestStatusHistory;
 use App\Models\RequestSupportingDocument;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -955,8 +958,24 @@ class RequestWorkflowService
                     );
 
                 if (! $automaticPickupWindow) {
+                    $neededFrom = CarbonImmutable::parse(
+                        $version->needed_from,
+                        config('app.timezone') ?: 'Asia/Manila'
+                    )->startOfDay();
+                    $requiredPickupDate = $neededFrom->subDay();
+                    $requiredPickupLabel = $requiredPickupDate->format('d M Y');
+                    $neededFromLabel = $neededFrom->format('d M Y');
+
+                    $pickupMessage = $this->operationalCalendar->isOpenFor(
+                        OperationalCalendarService::PICKUP,
+                        $requiredPickupDate,
+                        false
+                    )
+                        ? "The required pickup date ({$requiredPickupLabel}) no longer has a valid SPMU Pickup / Issuance operating window. SPMU pickup and issuance must occur one day before the Items Needed From date ({$neededFromLabel}). Please return the request for revision."
+                        : "The required pickup date ({$requiredPickupLabel}) falls on a non-operating day. SPMU pickup and issuance must occur one day before the Items Needed From date ({$neededFromLabel}). Please return the request for revision.";
+
                     throw ValidationException::withMessages([
-                        'pickup' => 'No valid SPMU Pickup / Issuance operating window remains before the approved Items Needed From date. Revise the borrowing schedule before approval.',
+                        'pickup' => $pickupMessage,
                     ]);
                 }
 
@@ -1322,6 +1341,239 @@ class RequestWorkflowService
             },
             3
         );
+    }
+
+    /**
+     * Automatically cancel an approved but unreleased request only after the
+     * missed-pickup branch has reached its final cutoff.
+     *
+     * Normal, still-valid pickup windows are never touched.
+     *
+     * Initial missed pickup:
+     * - keep the same request/reservation during a short borrower response period;
+     * - if the borrower requests rescheduling, keep the reservation for AO action;
+     * - if the borrower gives no response by the end of the next valid SPMU
+     *   Pickup / Release operating window, cancel and restore the reservation.
+     *
+     * Rescheduled pickup:
+     * - one reschedule opportunity is retained;
+     * - if the borrower misses the rescheduled pickup window, cancel
+     *   automatically and restore the reservation.
+     */
+    public function autoCancelUnclaimedMissedPickups(): int
+    {
+        $timezone = config('app.timezone') ?: 'Asia/Manila';
+        $now = CarbonImmutable::now($timezone);
+        $cancelled = 0;
+
+        CustodyTransaction::query()
+            ->where('status', 'PREPARING_RELEASE')
+            ->whereNull('released_at')
+            ->whereNotNull('pickup_expires_at')
+            ->where('pickup_expires_at', '<', $now)
+            ->orderBy('id')
+            ->each(function (CustodyTransaction $custody) use ($now, $timezone, &$cancelled): void {
+                DB::transaction(function () use ($custody, $now, $timezone, &$cancelled): void {
+                    $locked = CustodyTransaction::query()
+                        ->with([
+                            'request.borrower',
+                            'request.currentVersion.items.allocation',
+                            'request.custody.gatePass',
+                        ])
+                        ->lockForUpdate()
+                        ->find($custody->id);
+
+                    if (
+                        ! $locked
+                        || $locked->status !== 'PREPARING_RELEASE'
+                        || $locked->released_at
+                        || ! $locked->pickup_expires_at
+                        || $locked->pickup_expires_at->gte($now)
+                    ) {
+                        return;
+                    }
+
+                    $request = $locked->request;
+
+                    if (! $request || in_array($request->status, [
+                        RequestStatus::Cancelled,
+                        RequestStatus::Expired,
+                        RequestStatus::Rejected,
+                    ], true)) {
+                        return;
+                    }
+
+                    /*
+                     * A PICKUP_RESCHEDULED audit event identifies a replacement
+                     * pickup window. Missing that replacement window is the final
+                     * unclaimed-pickup outcome, so no second reschedule cycle is
+                     * opened.
+                     */
+                    $rescheduledPickup = AuditEvent::query()
+                        ->where('record_type', CustodyTransaction::class)
+                        ->where('record_id', $locked->id)
+                        ->where('action_code', 'PICKUP_RESCHEDULED')
+                        ->exists();
+
+                    if ($rescheduledPickup) {
+                        $this->finalizeAutomaticUnclaimedPickupCancellation(
+                            $locked,
+                            'Automatically cancelled because the borrower did not claim the items within the rescheduled pickup window.'
+                        );
+                        $cancelled++;
+
+                        return;
+                    }
+
+                    /*
+                     * On the first missed pickup, a borrower response protects the
+                     * reservation while SPMU processes the requested reschedule.
+                     */
+                    $rescheduleRequested = NotificationEvent::query()
+                        ->where('source_type', $locked->getMorphClass())
+                        ->where('source_id', $locked->id)
+                        ->where('event_code', 'PICKUP_RESCHEDULE_REQUESTED')
+                        ->when(
+                            $locked->pickup_scheduled_at,
+                            fn ($query) => $query->where('occurred_at', '>', $locked->pickup_scheduled_at)
+                        )
+                        ->exists();
+
+                    if ($rescheduleRequested) {
+                        return;
+                    }
+
+                    $expiredAt = CarbonImmutable::parse(
+                        $locked->pickup_expired_at ?: $locked->pickup_expires_at,
+                        $timezone
+                    );
+
+                    $dueAt = $locked->original_due_at ?: $locked->due_at;
+                    $nextPickup = $this->operationalCalendar->nextPickupWindow(
+                        $expiredAt->addSecond()
+                    );
+
+                    $noUsableReschedule = ! $dueAt || ! $nextPickup;
+
+                    if (! $noUsableReschedule) {
+                        $dueDay = CarbonImmutable::parse($dueAt, $timezone)->startOfDay();
+                        $noUsableReschedule = $nextPickup->startOfDay()->gte($dueDay);
+                    }
+
+                    if ($noUsableReschedule) {
+                        $this->finalizeAutomaticUnclaimedPickupCancellation(
+                            $locked,
+                            'Automatically cancelled because the pickup window was missed and no valid replacement pickup remains before the approved Expected Return Date.'
+                        );
+                        $cancelled++;
+
+                        return;
+                    }
+
+                    [, $responseDeadline] = $this->operationalCalendar->operatingWindow(
+                        OperationalCalendarService::PICKUP,
+                        $nextPickup
+                    );
+
+                    /*
+                     * The response period lasts through the next valid physical
+                     * Pickup / Release operating window. Until that cutoff the
+                     * original approved reservation remains untouched.
+                     */
+                    if (! $responseDeadline || $now->lte($responseDeadline)) {
+                        return;
+                    }
+
+                    $this->finalizeAutomaticUnclaimedPickupCancellation(
+                        $locked,
+                        'Automatically cancelled because no reschedule or cancellation response was received after the missed pickup within the allowed response period.'
+                    );
+                    $cancelled++;
+                }, 3);
+            });
+
+        return $cancelled;
+    }
+
+    private function finalizeAutomaticUnclaimedPickupCancellation(
+        CustodyTransaction $custody,
+        string $reason
+    ): void {
+        $request = $custody->request;
+
+        if (! $request) {
+            return;
+        }
+
+        $request->loadMissing([
+            'borrower',
+            'currentVersion.items.allocation',
+            'custody.gatePass',
+        ]);
+
+        /*
+         * Nothing was physically issued, so return the entire remaining
+         * reservation to Available inventory.
+         */
+        $this->inventory->restore(
+            $request,
+            'CANCELLED',
+            $reason
+        );
+
+        GeneratedDocument::query()
+            ->where('request_version_id', $request->currentVersion?->id)
+            ->whereIn('status', ['DRAFT', 'FINAL'])
+            ->update([
+                'status' => 'INVALIDATED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Request automatically cancelled: '.$reason,
+            ]);
+
+        GatePass::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->where('status', '!=', 'VERIFIED')
+            ->update([
+                'status' => 'VOID',
+                'verification_remarks' => 'Voided because the unreleased request was automatically cancelled after missed pickup.',
+            ]);
+
+        $custody->update([
+            'status' => 'CANCELLED',
+            'pickup_expired_at' => $custody->pickup_expired_at ?: now(),
+            'closed_at' => now(),
+        ]);
+
+        $this->transition(
+            $request,
+            RequestStatus::Cancelled,
+            null,
+            $reason
+        );
+
+        $this->audit->record(
+            'PICKUP_AUTO_CANCELLED_UNCLAIMED',
+            $custody,
+            reason: $reason,
+            after: [
+                'request_no' => $request->request_no,
+                'reservation_released' => true,
+                'physical_release_occurred' => false,
+                'custody_status' => 'CANCELLED',
+                'request_status' => RequestStatus::Cancelled->value,
+            ]
+        );
+
+        if ($request->borrower) {
+            $this->notifications->send(
+                'REQUEST_CANCELLED',
+                collect([$request->borrower]),
+                "Request {$request->request_no} was automatically cancelled because the approved items were not claimed within the allowed pickup period. The reserved quantity has been returned to available SPMU inventory.",
+                $request,
+                ['SYSTEM', 'EMAIL'],
+                ['SYSTEM', 'EMAIL']
+            );
+        }
     }
 
     /**

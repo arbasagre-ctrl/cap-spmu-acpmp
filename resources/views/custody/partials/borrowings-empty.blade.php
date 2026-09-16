@@ -54,7 +54,8 @@
 
         <a class="button secondary ui-pressable borrowings-empty-action" href="{{ route('requests.index') }}">
             <x-icon name="requests" size="18" />
-            View My Requests
+            <span>View My Requests</span>
+            <x-icon name="arrow-right" size="14" />
         </a>
     </div>
 </div>

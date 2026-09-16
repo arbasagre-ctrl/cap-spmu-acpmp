@@ -49,7 +49,7 @@ class FoundationTest extends TestCase
                 ->where('active', true)
                 ->exists()
         );
-        $this->assertSame('6.000', InventoryItem::query()->where('unique_description', 'Barricade')->value('total_quantity'));
+        $this->assertSame(6.0, (float) InventoryItem::query()->where('unique_description', 'Barricade')->value('total_quantity'));
         $this->assertTrue(InventoryItem::query()->where('unique_description', 'Barricade')->value('provisional'));
     }
 }

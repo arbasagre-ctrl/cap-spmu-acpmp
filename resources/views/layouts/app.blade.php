@@ -510,7 +510,7 @@
         <div class="app-stage">
             <header class="app-topbar">
                 <button class="icon-button menu-toggle" type="button" aria-label="Open main menu" title="Open main menu" aria-controls="primary-sidebar" aria-expanded="false" data-sidebar-toggle><x-icon name="menu" /></button>
-                <div class="topbar-title"><strong>{{ isset($title) ? $title : 'Dashboard' }}</strong></div>
+                <div class="topbar-title"><strong>{{ isset($topbarTitle) ? $topbarTitle : (isset($title) ? $title : 'Dashboard') }}</strong></div>
                 <nav class="account-nav" aria-label="Account navigation">
                     <a class="icon-button interactive notification-control" href="{{ route('notifications.index') }}" aria-label="Notifications{{ $unread ? ': '.$unread.' unread' : '' }}" title="Notifications">
                         <x-icon name="notifications" />

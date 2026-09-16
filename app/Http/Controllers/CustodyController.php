@@ -63,6 +63,8 @@ class CustodyController extends Controller
         $custodies = CustodyTransaction::with($relations)
             ->whereNotNull('released_at')
             ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+            ->whereHas('lines', fn ($line) => $line
+                ->whereColumn('returned_quantity', '<', 'actual_released_quantity'))
             ->latest()
             ->get();
 
@@ -205,7 +207,7 @@ class CustodyController extends Controller
             ->sortByDesc(fn ($payment) => $payment->submitted_at?->timestamp ?? 0)
             ->first();
 
-        $pickupNotificationEvents = NotificationEvent::query()
+        $pickupNotificationEventGroups = NotificationEvent::query()
             ->with(['deliveries' => fn ($query) => $query
                 ->where('recipient_user_id', $custody->borrower_user_id)
                 ->orderByDesc('attempted_at')])
@@ -214,8 +216,14 @@ class CustodyController extends Controller
             ->whereIn('event_code', ['PICKUP_SCHEDULED', 'PICKUP_EXPIRED', 'PICKUP_RESCHEDULE_REQUESTED'])
             ->latest('occurred_at')
             ->get()
-            ->groupBy('event_code')
+            ->groupBy('event_code');
+
+        $pickupNotificationEvents = $pickupNotificationEventGroups
             ->map(fn ($events) => $events->first());
+
+        $pickupMissedDeliveries = $pickupNotificationEventGroups
+            ->get('PICKUP_EXPIRED', collect())
+            ->flatMap(fn ($event) => $event->deliveries);
 
         /*
          * A missed/unusable pickup can stay on the same approved request only
@@ -251,6 +259,7 @@ class CustodyController extends Controller
             'latestReceipt' => $latestReceipt,
             'pickupScheduleNotification' => $pickupNotificationEvents->get('PICKUP_SCHEDULED'),
             'pickupMissedNotification' => $pickupNotificationEvents->get('PICKUP_EXPIRED'),
+            'pickupMissedDeliveries' => $pickupMissedDeliveries,
             'pickupRescheduleRequestEvent' => $pickupRescheduleRequestEvent,
             'pickupRescheduleRequested' => $pickupRescheduleRequested,
             'pickupRescheduleAvailable' => $pickupRescheduleAvailable,

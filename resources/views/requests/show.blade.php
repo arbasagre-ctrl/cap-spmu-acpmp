@@ -1,4 +1,7 @@
-@extends('layouts.app', ['title' => 'Request '.$borrowingRequest->request_no])
+@extends('layouts.app', [
+    'title' => 'Request '.$borrowingRequest->request_no,
+    'topbarTitle' => session('active_workspace') === 'BORROWER' ? 'My Requests' : 'Request Records',
+])
 @section('content')
 @php
     $v = $borrowingRequest->currentVersion;
@@ -102,7 +105,7 @@
 
         $custodyWorkflowStatus ??= $custody->workflowStatus();
         $detailStatus = $custodyWorkflowStatus['key'];
-        $detailStatusLabel = $custodyWorkflowStatus['label'];
+        $detailStatusLabel = $obligationSummary['label'] ?? $custodyWorkflowStatus['label'];
     }
 @endphp
 
@@ -136,7 +139,8 @@
                 class="button primary ui-pressable"
                 href="{{ route('custody.show', $borrowingRequest->custody) }}"
             >
-                View Borrowing
+                <span>View Borrowing</span>
+                <x-icon name="arrow-right" size="15" />
             </a>
         @endif
     </div>
@@ -157,7 +161,7 @@
 @endif
 
 @if($isBorrowerDraftWorkflow)
-<section class="content-area" id="borrower-next-action">
+<section class="content-area borrower-current-action-area" id="borrower-next-action">
     <div class="action-panel action-neutral">
         <div>
             <p class="eyebrow">Current action</p>
@@ -166,11 +170,10 @@
                 <h2>Create the corrected request version</h2>
                 <p>Open the returned request, apply the required corrections, and save a new version before E-signing and resubmitting. The prior signed version remains unchanged.</p>
             @elseif(!$submissionReady)
-                <h2>Complete the required request documents</h2>
-                <p>
-                    Your draft is saved. Upload the already approved and fully signed Borrowing Request Letter
-                    {{ $ptcRequired ? 'and the Permission to Conduct Letter' : '' }} before submitting to SPMU.
-                    The system does not generate or re-print the Borrowing Request Letter.
+                <h2>Upload the required documents</h2>
+                <p class="borrower-current-action-copy">
+                    Upload the approved, fully signed Borrowing Request Letter
+                    {{ $ptcRequired ? 'and Permission to Conduct Letter' : '' }} before submitting to SPMU.
                 </p>
             @else
                 <h2>Ready to submit to SPMU</h2>
@@ -184,7 +187,8 @@
                     class="button secondary ui-pressable"
                     href="{{ route('requests.edit', $borrowingRequest) }}"
                 >
-                    {{ $requiresNewRevisionVersion ? 'Create Corrected Version' : ($submissionReady ? 'Review / Edit Draft' : 'Edit Draft & Upload Documents') }}
+                    <span>{{ $requiresNewRevisionVersion ? 'Create Corrected Version' : ($submissionReady ? 'Review / Edit Draft' : 'Edit Draft & Upload Documents') }}</span>
+                    <x-icon name="arrow-right" size="15" />
                 </a>
 
                 @if($submissionReady && !$requiresNewRevisionVersion)
@@ -209,9 +213,8 @@
             </div>
 
             @if(!$submissionReady)
-                <p class="meta top-gap">
-                    Submit to SPMU becomes available after the fully signed Borrowing Request Letter
-                    {{ $ptcRequired ? 'and Permission to Conduct Letter are' : 'is' }} uploaded.
+                <p class="meta top-gap borrower-current-action-note">
+                    Submit to SPMU will be enabled after the required signed document{{ $ptcRequired ? 's are' : ' is' }} uploaded.
                 </p>
             @endif
         </div>
@@ -220,13 +223,28 @@
 @endif
 
 @unless($isBorrower)
-    @if($detailStatus !== 'OBLIGATION_OPEN')
+    @if(!$obligationSummary)
         <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" :compact="$isOperationalRequestLayout" />
     @endif
 @endunless
 
 @if($isBorrower)
 <style>
+/* Keep the borrower action and progress cards visually separate and concise. */
+.borrower-current-action-area {
+    margin-bottom: 24px;
+}
+
+.borrower-current-action-copy {
+    max-width: 980px;
+    margin-bottom: 0;
+    line-height: 1.55;
+}
+
+.borrower-current-action-note {
+    margin-bottom: 0;
+}
+
 .request-tracker-card {
     margin-top: 14px;
 }
@@ -674,16 +692,16 @@
 
 @if($isBorrower)
 @include('requests.partials.borrower-detail-styles')
-@if($detailStatus !== 'OBLIGATION_OPEN')
+@if(!$obligationSummary)
 <div class="borrower-progress-always" aria-label="Current request progress">
     <x-request-progress-tracker :request="$borrowingRequest" :show-current-status="false" />
 </div>
 @elseif($obligationSummary)
 <div class="content-area">
     <div class="callout warning">
-        <strong>{{ $obligationSummary['label'] }} — {{ $obligationSummary['title'] }}</strong>
+        <strong>{{ $obligationSummary['title'] }}</strong>
         <p>{{ $obligationSummary['copy'] }}</p>
-        <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}">View My Obligations</a>
+        <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}"><span>View My Obligations</span><x-icon name="arrow-right" size="14" /></a>
     </div>
 </div>
 @endif
@@ -1046,7 +1064,8 @@
             class="button primary ui-pressable"
             href="{{ route('custody.show', $borrowingRequest->custody) }}"
         >
-            View Custody Record
+            <span>View Custody Record</span>
+            <x-icon name="arrow-right" size="15" />
         </a>
     </div>
 </section>
@@ -1934,8 +1953,7 @@ dialog[data-request-cancel-dialog] .spmu-confirm-dialog__actions .button {
 }
 
 .borrower-progress-always .request-tracker__hint {
-    margin-top: 0;
-    padding-top: 9px;
+    display: none;
 }
 
 .borrower-document-list article {

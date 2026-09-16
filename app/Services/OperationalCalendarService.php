@@ -430,7 +430,7 @@ class OperationalCalendarService
                     }
 
                     BorrowerRestriction::query()
-                        ->where('borrower_user_id', $custody->borrower_user_id)
+                        ->forCustody($custody)
                         ->whereIn('restriction_type', ['PENDING_RETURN', 'OVERDUE_RETURN'])
                         ->where('status', 'ACTIVE')
                         ->update([

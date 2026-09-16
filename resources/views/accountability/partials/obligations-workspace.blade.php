@@ -146,7 +146,7 @@
                         @endforeach
 
                         <details class="ob-details">
-                            <summary>View details</summary>
+                            <summary><span>View details</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
                             <div class="ob-detail-grid">
                                 @foreach($row['facts'] as [$factLabel, $factValue])
                                     <div>
@@ -177,7 +177,10 @@
     <details class="ob-resolved-history-disclosure">
         <summary>
             <span>Resolved History</span>
-            <span class="ob-badge is-neutral">{{ $resolvedCount }} {{ $resolvedCount === 1 ? 'record' : 'records' }}</span>
+            <span class="ob-resolved-history-meta">
+                <span class="ob-badge is-neutral">{{ $resolvedCount }} {{ $resolvedCount === 1 ? 'record' : 'records' }}</span>
+                <x-icon name="chevron-down" size="16" class="ob-disclosure-chevron" />
+            </span>
         </summary>
         <div class="ob-resolved-history-body">
             @include('accountability.partials.resolved-history')

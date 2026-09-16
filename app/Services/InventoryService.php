@@ -384,10 +384,15 @@ class InventoryService
         | multi-arg MAX()) so it runs identically on MariaDB/MySQL
         | (production) and SQLite (the automated test suite).
         |
-        | legacyLaundry and this query can never double-count the same
-        | return line: a laundry_records row only exists when no LaundryJob
-        | was created for that return, and a laundry_job_lines row only
-        | exists when one was - the two are mutually exclusive per line.
+        | legacyLaundry and this query must never double-count the same
+        | return line. A return line already counted by legacyLaundry above
+        | (it has a laundry_records row) is excluded here via the left join
+        | to laundry_records plus whereNull below. A return line with
+        | NEITHER a laundry_job_lines row NOR a laundry_records row is
+        | genuinely untracked by either workflow (not legacy-tracked) and
+        | must still count as unavailable here, via the left join's zero
+        | default for laundry_job_lines.completed_quantity - it would
+        | otherwise silently become available to nobody's tracking.
         */
 
         $currentLaundry = (float) DB::table('return_lines')
@@ -409,6 +414,12 @@ class InventoryService
                 '=',
                 'custody_lines.id'
             )
+            ->leftJoin(
+                'laundry_records',
+                'laundry_records.return_line_id',
+                '=',
+                'return_lines.id'
+            )
             ->where(
                 'request_items.inventory_item_id',
                 $item->id
@@ -417,6 +428,7 @@ class InventoryService
                 'return_lines.disposition_state',
                 'LAUNDRY'
             )
+            ->whereNull('laundry_records.id')
             ->selectRaw(
                 '
                 COALESCE(
@@ -867,8 +879,24 @@ class InventoryService
                 '=',
                 'custody_lines.id'
             )
+            /*
+             * A return line already counted by $legacy below (it has a
+             * laundry_records row) must not also be counted here - see
+             * availability()'s matching laundryTotals-equivalent query for
+             * the full explanation. A return line with neither a
+             * laundry_job_lines row nor a laundry_records row is genuinely
+             * untracked (not legacy-tracked), so it must still count here
+             * via the left join's zero default, same as before.
+             */
+            ->leftJoin(
+                'laundry_records',
+                'laundry_records.return_line_id',
+                '=',
+                'return_lines.id'
+            )
             ->whereIn('request_items.inventory_item_id', $ids)
             ->where('return_lines.disposition_state', 'LAUNDRY')
+            ->whereNull('laundry_records.id')
             ->groupBy('request_items.inventory_item_id')
             ->select('request_items.inventory_item_id AS item_id')
             ->selectRaw(

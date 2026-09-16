@@ -154,32 +154,40 @@ class AccountSettingsRoleTest extends TestCase
         );
     }
 
-    public function test_borrower_can_update_only_the_explicit_borrower_identity_fields(): void
+    public function test_account_settings_updates_contact_preferences_without_changing_borrower_identity_or_authority_fields(): void
     {
         $borrower = $this->classificationUser(AccessClassification::BorrowerOnly);
-        $academicUnit = OrganizationalUnit::query()
-            ->where('unit_code', 'CCS')
-            ->firstOrFail();
+        $authorityUnit = OrganizationalUnit::query()->where('unit_code', 'SPMU')->firstOrFail();
+        $beforeIdentity = $borrower->only([
+            'employee_no',
+            'organizational_unit_id',
+            'access_classification',
+            'account_status',
+            'full_name',
+            'designation',
+            'email',
+            'employment_type',
+        ]);
 
-        $this->actingAs($borrower)->put(route('profile.update'), $this->profilePayload($borrower) + [
+        $this->actingAs($borrower)->put(route('profile.update'), [
+            'mobile_no' => '09171234567',
+            'system_notifications' => '0',
+            'email_notifications' => '1',
+            'sms_notifications' => '1',
             'employee_no' => 'BORROWER-2026-001',
-            'organizational_unit_id' => $academicUnit->id,
+            'organizational_unit_id' => $authorityUnit->id,
             'access_classification' => AccessClassification::IctuMaintainer->value,
             'account_status' => AccountStatus::Inactive->value,
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $borrower->refresh();
-        $this->assertSame('BORROWER-2026-001', $borrower->employee_no);
-        $this->assertSame($academicUnit->id, $borrower->organizational_unit_id);
-        $this->assertSame(AccessClassification::BorrowerOnly, $borrower->access_classification);
-        $this->assertSame(AccountStatus::Active, $borrower->account_status);
-
-        $authorityUnit = OrganizationalUnit::query()->where('unit_code', 'SPMU')->firstOrFail();
-        $this->actingAs($borrower)->put(route('profile.update'), $this->profilePayload($borrower) + [
-            'employee_no' => $borrower->employee_no,
-            'organizational_unit_id' => $authorityUnit->id,
-        ])->assertSessionHasErrors('organizational_unit_id');
-        $this->assertSame($academicUnit->id, $borrower->fresh()->organizational_unit_id);
+        $this->assertSame($beforeIdentity, $borrower->only(array_keys($beforeIdentity)));
+        $this->assertSame('09171234567', $borrower->mobile_no);
+        $this->assertSame([
+            'system' => false,
+            'email' => true,
+            'sms' => true,
+        ], $borrower->notification_preferences);
     }
 
     public function test_staff_cannot_self_modify_authority_sensitive_account_fields(): void
@@ -224,11 +232,10 @@ class AccountSettingsRoleTest extends TestCase
     private function profilePayload(User $user): array
     {
         return [
-            'full_name' => $user->full_name,
-            'designation' => $user->designation,
             'mobile_no' => $user->mobile_no,
             'system_notifications' => '1',
             'email_notifications' => '1',
+            'sms_notifications' => '0',
         ];
     }
 

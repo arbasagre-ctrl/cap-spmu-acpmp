@@ -1,8 +1,8 @@
 <nav class="completed-laundry-pagination" aria-label="Completed laundry pagination">
     @if($paginator->onFirstPage())
-        <span class="completed-page-link" aria-disabled="true" aria-label="Previous page"><x-icon name="chevron-right" class="completed-page-previous" size="16" /></span>
+        <span class="completed-page-link" aria-disabled="true" aria-label="Previous page"><x-icon name="arrow-left" size="16" /></span>
     @else
-        <a class="completed-page-link" href="{{ $paginator->previousPageUrl() }}" rel="prev" aria-label="Previous page"><x-icon name="chevron-right" class="completed-page-previous" size="16" /></a>
+        <a class="completed-page-link" href="{{ $paginator->previousPageUrl() }}" rel="prev" aria-label="Previous page"><x-icon name="arrow-left" size="16" /></a>
     @endif
     @foreach($elements as $element)
         @if(is_string($element))
@@ -19,8 +19,8 @@
         @endif
     @endforeach
     @if($paginator->hasMorePages())
-        <a class="completed-page-link" href="{{ $paginator->nextPageUrl() }}" rel="next" aria-label="Next page"><x-icon name="chevron-right" size="16" /></a>
+        <a class="completed-page-link" href="{{ $paginator->nextPageUrl() }}" rel="next" aria-label="Next page"><x-icon name="arrow-right" size="16" /></a>
     @else
-        <span class="completed-page-link" aria-disabled="true" aria-label="Next page"><x-icon name="chevron-right" size="16" /></span>
+        <span class="completed-page-link" aria-disabled="true" aria-label="Next page"><x-icon name="arrow-right" size="16" /></span>
     @endif
 </nav>

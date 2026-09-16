@@ -1,10 +1,13 @@
-@extends('layouts.app', ['title' => $item->unique_description])
+@extends('layouts.app', [
+    'title' => $item->unique_description,
+    'topbarTitle' => 'Inventory Overview',
+])
 
 @section('content')
 
 @php
     $total = (float) ($balance['total'] ?? 0);
-    $available = (float) ($balance['borrower_available'] ?? 0);
+    $available = (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? $balance['available'] ?? 0);
     $reserved = (float) ($balance['reserved'] ?? 0);
     $issued = (float) ($balance['borrowed'] ?? 0);
     $laundry = (float) ($balance['laundry'] ?? 0);
@@ -33,7 +36,9 @@
     // Inventory modification belongs to the SPMU Head / Administrator only.
     // The Action Officer may inspect all operational details, stock-card
     // movements, and borrowing history but must remain read-only.
-    $canEditInventory = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
+    $isInventoryAdmin = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
+    $isActionOfficer = auth()->user()?->access_classification?->value === 'SPMU_OFFICER';
+    $canEditInventory = $isInventoryAdmin;
 
     $requestedInventoryTab = (string) request('tab', 'overview');
     $activeInventoryTab = in_array($requestedInventoryTab, [
@@ -42,17 +47,43 @@
         'borrowing-history',
         'item-information',
     ], true) ? $requestedInventoryTab : 'overview';
+
+    // Reuse the read-only Stock Card as the provenance source for the detail
+    // page. This adds context without inventing another inventory audit trail.
+    $lastStockEntry = collect($stockCard)->first();
+    $lastStockReference = $lastStockEntry
+        ? ($stockCardReferences[(int) $lastStockEntry->id] ?? null)
+        : null;
+
+    $currentSources = collect($currentInventorySources ?? []);
+    $currentSourceGroups = $currentSources->groupBy('group');
+    $currentSourceOrder = [
+        'RESERVED' => 'Reserved',
+        'CUSTODY' => 'On custody',
+        'LAUNDRY' => 'Laundry',
+        'ISSUE' => 'Inventory exceptions',
+        'CONDITION' => 'Item condition',
+    ];
 @endphp
 
 <section class="page-heading inventory-detail-heading">
     <div>
-        <p class="eyebrow">{{ $isBorrower ? 'Inventory reference' : 'Inventory details' }}</p>
+        <p class="eyebrow">
+            @if($isBorrower)
+                Borrowable item
+            @elseif($isInventoryAdmin)
+                Inventory management
+            @else
+                Inventory operations
+            @endif
+        </p>
         <h1>{{ $item->unique_description }}</h1>
         <p>{{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }} &middot; {{ $item->category->category_name }} &middot; {{ $item->unit->unit_name }}</p>
     </div>
 
     <a class="button secondary ui-pressable" href="{{ route('inventory.index') }}">
-        Back to Inventory
+        <x-icon name="arrow-left" size="16" />
+        <span>Back to Inventory</span>
     </a>
 </section>
 
@@ -132,35 +163,35 @@
         </div>
     @else
         <section class="inventory-admin-summary" aria-label="Current inventory summary">
-            <div class="inventory-admin-summary-item is-total">
+            <div class="inventory-admin-summary-item is-total" title="Recorded physical quantity for this inventory item.">
                 <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="box" size="18" /></span>
                 <div class="inventory-summary-copy">
                     <span>Total Stock</span>
                     <strong>{{ $total + 0 }}</strong>
                 </div>
             </div>
-            <div class="inventory-admin-summary-item is-available">
+            <div class="inventory-admin-summary-item is-available" title="Serviceable units currently free for a new allocation; approved reservations are already excluded.">
                 <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="success" size="18" /></span>
                 <div class="inventory-summary-copy">
                     <span>Available</span>
                     <strong>{{ $available + 0 }}</strong>
                 </div>
             </div>
-            <div class="inventory-admin-summary-item is-reserved">
+            <div class="inventory-admin-summary-item is-reserved" title="Units allocated to approved requests and awaiting physical release.">
                 <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="bookmark" size="18" /></span>
                 <div class="inventory-summary-copy">
                     <span>Reserved</span>
                     <strong>{{ $reserved + 0 }}</strong>
                 </div>
             </div>
-            <div class="inventory-admin-summary-item is-custody">
+            <div class="inventory-admin-summary-item is-custody" title="Units physically released to borrowers and not yet returned.">
                 <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="profile" size="18" /></span>
                 <div class="inventory-summary-copy">
                     <span>On Custody</span>
                     <strong>{{ $issued + 0 }}</strong>
                 </div>
             </div>
-            <div class="inventory-admin-summary-item is-unavailable">
+            <div class="inventory-admin-summary-item is-unavailable" title="Units excluded from allocation by laundry, incident, or physical-condition state.">
                 <span class="inventory-summary-icon" aria-hidden="true"><x-icon name="warning" size="18" /></span>
                 <div class="inventory-summary-copy">
                     <span>Unavailable</span>
@@ -168,6 +199,32 @@
                 </div>
             </div>
         </section>
+
+        <div class="inventory-last-movement" role="note" aria-label="Last stock movement">
+            <span class="inventory-last-movement-icon" aria-hidden="true"><x-icon name="box" size="17" /></span>
+            <div class="inventory-last-movement-copy">
+                <span>Last stock movement</span>
+                @if($lastStockEntry)
+                    <strong>
+                        {{ str((string) $lastStockEntry->transaction_type)->replace('_', ' ')->title() }}
+                        &middot; {{ (float) $lastStockEntry->quantity + 0 }} {{ \Illuminate\Support\Str::plural($item->unit->unit_name, (int) $lastStockEntry->quantity) }}
+                    </strong>
+                    <small>
+                        {{ \Illuminate\Support\Carbon::parse($lastStockEntry->occurred_at)->format('d M Y, g:i A') }}
+                        @if($lastStockReference)
+                            &middot;
+                            @if(filled($lastStockReference['url'] ?? null))
+                                <a class="inventory-inline-reference" href="{{ $lastStockReference['url'] }}">{{ $lastStockReference['label'] }}</a>
+                            @else
+                                {{ $lastStockReference['label'] }}
+                            @endif
+                        @endif
+                    </small>
+                @else
+                    <strong>No stock movement recorded</strong>
+                @endif
+            </div>
+        </div>
 
         <nav class="inventory-detail-tabs" aria-label="Inventory detail sections" role="tablist">
             <button type="button" class="inventory-detail-tab {{ $activeInventoryTab === 'overview' ? 'is-active' : '' }}" data-inventory-tab="overview" role="tab" aria-selected="{{ $activeInventoryTab === 'overview' ? 'true' : 'false' }}">Overview</button>
@@ -177,91 +234,140 @@
         </nav>
 
         <section class="inventory-tab-panel inventory-tab-overview" data-inventory-panel="overview" role="tabpanel" @if($activeInventoryTab !== 'overview') hidden @endif>
-        <div class="inventory-detail-grid">
-            <article class="card">
-                <div class="card-header">
+            <div class="inventory-detail-grid inventory-overview-grid">
+                <article class="card inventory-overview-card">
+                    <div class="card-header">
+                        <div>
+                            <p class="eyebrow">Stock exceptions</p>
+                            <h2>Unavailable breakdown</h2>
+                            <p class="meta">Why {{ $unavailable + 0 }} {{ \Illuminate\Support\Str::plural('unit', (int) $unavailable) }} cannot be allocated right now.</p>
+                        </div>
+                    </div>
+
+                    <div class="inventory-ops-list" role="list">
+                        <div class="inventory-ops-row" role="listitem">
+                            <span>In laundry</span>
+                            <strong>{{ $laundry + 0 }}</strong>
+                        </div>
+                        <div class="inventory-ops-row" role="listitem">
+                            <span>Incident / condition hold</span>
+                            <strong>{{ $incident + 0 }}</strong>
+                        </div>
+                    </div>
+
+                    @if($unavailable <= 0)
+                        <p class="inventory-overview-empty">No stock is currently unavailable.</p>
+                    @endif
+                </article>
+
+                <article class="card inventory-overview-card">
+                    <div class="card-header">
+                        <div>
+                            <p class="eyebrow">Condition breakdown</p>
+                            <h2>Physical condition</h2>
+                            <p class="meta">Recorded condition of the {{ $total + 0 }} {{ \Illuminate\Support\Str::plural('unit', (int) $total) }} in stock.</p>
+                        </div>
+                    </div>
+
+                    <div class="inventory-ops-list" role="list">
+                        <div class="inventory-ops-row" role="listitem">
+                            <span>Good / serviceable</span>
+                            <strong>{{ $recordedGood + 0 }}</strong>
+                        </div>
+                        @if($damagedMaintenance > 0)
+                            <div class="inventory-ops-row" role="listitem"><span>Damaged / under repair</span><strong>{{ $damagedMaintenance + 0 }}</strong></div>
+                        @endif
+                        @if($lost > 0)
+                            <div class="inventory-ops-row" role="listitem"><span>Lost</span><strong>{{ $lost + 0 }}</strong></div>
+                        @endif
+                        @if($stolen > 0)
+                            <div class="inventory-ops-row" role="listitem"><span>Stolen</span><strong>{{ $stolen + 0 }}</strong></div>
+                        @endif
+                        @if($destroyed > 0)
+                            <div class="inventory-ops-row" role="listitem"><span>Destroyed</span><strong>{{ $destroyed + 0 }}</strong></div>
+                        @endif
+                        @if($condemned > 0)
+                            <div class="inventory-ops-row" role="listitem"><span>Condemned</span><strong>{{ $condemned + 0 }}</strong></div>
+                        @endif
+                    </div>
+
+                    @if($knownNonGood <= 0)
+                        <p class="inventory-overview-empty">No condition issue is recorded for this item.</p>
+                    @endif
+                </article>
+            </div>
+
+            <article class="card inventory-source-records-card">
+                <div class="card-header inventory-source-header">
                     <div>
-                        <p class="eyebrow">Stock Status</p>
+                        <p class="eyebrow">Current stock source records</p>
+                        <h2>Records behind the current counts</h2>
+                        <p class="meta">Active reservations, custody, laundry, and inventory exceptions that explain the summary above.</p>
+                    </div>
+                    <div class="inventory-source-header-actions">
+                        <span class="inventory-source-live">Current</span>
+                        <a
+                            class="button secondary small ui-pressable"
+                            href="{{ route('reports.index', ['report' => 'inventory', 'equipment' => $item->id, 'generated' => 1]) }}"
+                        >
+                            <span>View source report</span>
+                            <x-icon name="arrow-right" size="14" />
+                        </a>
                     </div>
                 </div>
 
-                <div class="inventory-ops-list" role="list">
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>Total inventory</span>
-                        <strong>{{ $total + 0 }}</strong>
+                @if($currentSources->isEmpty())
+                    <div class="inventory-source-empty-state">
+                        <strong>No active stock hold or custody record.</strong>
+                        <span>All current non-available states are clear for this item.</span>
                     </div>
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>Available</span>
-                        <strong>{{ $available + 0 }}</strong>
-                    </div>
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>Reserved</span>
-                        <strong>{{ $reserved + 0 }}</strong>
-                    </div>
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>On custody</span>
-                        <strong>{{ $issued + 0 }}</strong>
-                    </div>
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>In laundry</span>
-                        <strong>{{ $laundry + 0 }}</strong>
-                    </div>
-                    <div class="inventory-ops-row" role="listitem">
-                        <span>Incident</span>
-                        <strong>{{ $incident + 0 }}</strong>
-                    </div>
-                    <div class="inventory-ops-row is-total" role="listitem">
-                        <span>Unavailable total</span>
-                        <strong>{{ $unavailable + 0 }}</strong>
-                    </div>
-                </div>
+                @else
+                    <div class="inventory-source-groups">
+                        @foreach($currentSourceOrder as $groupKey => $groupLabel)
+                            @php($groupRows = $currentSourceGroups->get($groupKey, collect()))
+                            @continue($groupRows->isEmpty())
 
-                <p class="inventory-ops-footnote">Items not currently available for allocation.</p>
+                            <section class="inventory-source-group" aria-label="{{ $groupLabel }} source records">
+                                <div class="inventory-source-group-head">
+                                    <div>
+                                        <span>{{ $groupLabel }}</span>
+                                        <strong>{{ (float) $groupRows->sum('quantity') + 0 }} {{ \Illuminate\Support\Str::plural($item->unit->unit_name, (int) $groupRows->sum('quantity')) }}</strong>
+                                    </div>
+                                    <small>{{ $groupRows->count() }} {{ \Illuminate\Support\Str::plural('record', $groupRows->count()) }}</small>
+                                </div>
+
+                                <div class="inventory-source-records" role="list">
+                                    @foreach($groupRows as $record)
+                                        <div class="inventory-source-record" role="listitem">
+                                            <div class="inventory-source-record-main">
+                                                <span class="inventory-source-kind">{{ $record['group_label'] }}</span>
+                                                <strong>{{ $record['reference'] }}</strong>
+                                                <small>{{ $record['primary'] }}</small>
+                                                @if(filled($record['secondary']))
+                                                    <small>{{ $record['secondary'] }}</small>
+                                                @endif
+                                            </div>
+
+                                            <div class="inventory-source-record-state">
+                                                <strong>{{ (float) $record['quantity'] + 0 }} {{ \Illuminate\Support\Str::plural($item->unit->unit_name, (int) $record['quantity']) }}</strong>
+                                                <span>{{ $record['status'] }}</span>
+                                            </div>
+
+                                            @if(filled($record['url']))
+                                                <a class="button secondary small ui-pressable inventory-source-open" href="{{ $record['url'] }}"><span>{{ $record['action_label'] ?? 'View Record' }}</span><x-icon name="arrow-right" size="14" /></a>
+                                            @endif
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </section>
+                        @endforeach
+                    </div>
+
+                    <p class="inventory-source-note">
+                        A resolved accountability case can remain listed here when the physical unit is still damaged, lost, or otherwise unavailable. Accountability resolution does not automatically restore inventory.
+                    </p>
+                @endif
             </article>
-
-            <article class="card">
-                <div class="card-header">
-                    <div>
-                        <p class="eyebrow">Physical Condition</p>
-                    </div>
-                    <x-status-badge :status="$item->condition_code" />
-                </div>
-
-                <dl class="detail-list compact inventory-breakdown-list">
-                    <dt>Good / serviceable</dt>
-                    <dd><strong>{{ $recordedGood + 0 }}</strong></dd>
-
-                    <dt>Damaged / under repair</dt>
-                    <dd><strong>{{ $damagedMaintenance + 0 }}</strong></dd>
-
-                    @if($lost > 0)
-                        <dt>Lost</dt>
-                        <dd><strong>{{ $lost + 0 }}</strong></dd>
-                    @endif
-
-                    @if($stolen > 0)
-                        <dt>Stolen</dt>
-                        <dd><strong>{{ $stolen + 0 }}</strong></dd>
-                    @endif
-
-                    @if($destroyed > 0)
-                        <dt>Destroyed</dt>
-                        <dd><strong>{{ $destroyed + 0 }}</strong></dd>
-                    @endif
-
-                    <dt>Condemned</dt>
-                    <dd><strong>{{ $condemned + 0 }}</strong></dd>
-                </dl>
-
-                <div class="inventory-condition-guide" role="note">
-                    <x-icon name="information" size="16" />
-                    <div>
-                        <strong>Condition guide</strong>
-                        <p>Items marked as damaged or condemned are not available for allocation.</p>
-                    </div>
-                </div>
-            </article>
-        </div>
         </section>
 
         <section class="inventory-tab-panel" data-inventory-panel="stock-card" role="tabpanel" @if($activeInventoryTab !== 'stock-card') hidden @endif>
@@ -270,22 +376,40 @@
                 <div>
                     <p class="eyebrow">Read-only inventory ledger</p>
                     <h2>Stock Card</h2>
-                    <p class="meta">Latest recorded inventory movements for {{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }}. This view is read-only.</p>
+                    <p class="meta">System-generated inventory movement history for {{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }}. Records cannot be edited from this page. The latest up to 100 movements are shown.</p>
                 </div>
             </div>
             <div class="table-wrap inventory-history-table-wrap">
-                <table class="inventory-history-table">
-                    <thead><tr><th>Date</th><th>Transaction</th><th>From</th><th>To</th><th>Quantity</th><th>Balance change</th><th>Reason / Actor</th></tr></thead>
+                <table class="inventory-history-table inventory-ledger-table">
+                    <thead>
+                        <tr><th>Date</th><th>Transaction</th><th>From</th><th>To</th><th>Quantity</th><th>Reference</th><th>Actor / Reason</th></tr>
+                    </thead>
                     <tbody>
                     @forelse($stockCard as $entry)
+                        @php($sourceReference = $stockCardReferences[(int) $entry->id] ?? null)
                         <tr>
                             <td>{{ \Illuminate\Support\Carbon::parse($entry->occurred_at)->format('d M Y, g:i A') }}</td>
                             <td>{{ str($entry->transaction_type)->replace('_',' ')->title() }}</td>
                             <td>{{ $entry->from_state ?: '—' }}</td>
                             <td>{{ $entry->to_state ?: '—' }}</td>
                             <td><strong>{{ (float) $entry->quantity + 0 }}</strong></td>
-                            <td>{{ $entry->before_quantity !== null ? ((float)$entry->before_quantity + 0) : '—' }} → {{ $entry->after_quantity !== null ? ((float)$entry->after_quantity + 0) : '—' }}</td>
-                            <td><strong>{{ $entry->reason ?: 'Recorded inventory movement' }}</strong><small>{{ $entry->actor_email ?: 'System' }}</small></td>
+                            <td class="inventory-ledger-reference">
+                                @if($sourceReference)
+                                    @if(filled($sourceReference['url'] ?? null))
+                                        <a class="inventory-ledger-reference-link" href="{{ $sourceReference['url'] }}">{{ $sourceReference['label'] }}</a>
+                                    @else
+                                        <strong>{{ $sourceReference['label'] }}</strong>
+                                    @endif
+                                    <small>{{ $sourceReference['kind'] }}</small>
+                                @else
+                                    <span>System movement</span>
+                                @endif
+                            </td>
+                            <td class="inventory-ledger-actor">
+                                <strong>{{ $entry->actor_name ?: 'System' }}</strong>
+                                @if($entry->actor_email)<small>{{ $entry->actor_email }}</small>@endif
+                                <small class="inventory-ledger-reason" title="{{ $entry->reason ?: 'Recorded inventory movement' }}">{{ \Illuminate\Support\Str::limit($entry->reason ?: 'Recorded inventory movement', 92) }}</small>
+                            </td>
                         </tr>
                     @empty
                         <tr><td colspan="7" class="empty-state">No stock-card movements have been recorded for this item yet.</td></tr>
@@ -338,9 +462,13 @@
                     Status
                     <select name="history_status">
                         <option value="ALL" @selected($historyStatus === 'ALL')>All</option>
-                        <option value="OPEN" @selected($historyStatus === 'OPEN')>On custody / outstanding</option>
-                        <option value="RETURNED" @selected($historyStatus === 'RETURNED')>Returned</option>
+                        <option value="ON_CUSTODY" @selected($historyStatus === 'ON_CUSTODY')>On Custody</option>
                         <option value="OVERDUE" @selected($historyStatus === 'OVERDUE')>Overdue</option>
+                        <option value="RETURNED_ON_TIME" @selected($historyStatus === 'RETURNED_ON_TIME')>Returned On Time</option>
+                        <option value="RETURNED_LATE" @selected($historyStatus === 'RETURNED_LATE')>Returned Late</option>
+                        @if($item->laundry_required)
+                            <option value="IN_LAUNDRY" @selected($historyStatus === 'IN_LAUNDRY')>In Laundry</option>
+                        @endif
                     </select>
                 </label>
 
@@ -479,15 +607,24 @@
                                     <strong>{{ $row['outstanding_quantity'] + 0 }}</strong>
                                 </td>
 
-                                <td data-label="Status">
-                                    @if($row['item_status'] === 'RETURNED')
-                                        <x-status-badge status="CLOSED" label="Returned" />
+                                <td data-label="Status" class="inventory-history-status-cell">
+                                    @if($row['item_status'] === 'RETURNED_ON_TIME')
+                                        <x-status-badge status="CLOSED" label="Returned On Time" />
+                                    @elseif($row['item_status'] === 'RETURNED_LATE')
+                                        <x-status-badge status="OVERDUE" label="Returned Late" />
                                     @elseif($row['item_status'] === 'OVERDUE')
                                         <x-status-badge status="OVERDUE" label="Overdue" />
+                                    @elseif($row['item_status'] === 'IN_LAUNDRY')
+                                        <x-status-badge status="PENDING" label="In Laundry" />
                                     @else
                                         <x-status-badge status="ACTIVE" label="On Custody" />
                                     @endif
 
+                                    @if(filled($row['accountability_label'] ?? null))
+                                        <small class="inventory-history-accountability {{ ($row['accountability_active'] ?? false) ? 'is-active' : 'is-resolved' }}">
+                                            {{ $row['accountability_label'] }}
+                                        </small>
+                                    @endif
                                 </td>
 
                                 <td data-label="Action">
@@ -495,7 +632,8 @@
                                         class="button secondary small ui-pressable"
                                         href="{{ route('custody.show', $row['custody']) }}"
                                     >
-                                        View Borrowing
+                                        <span>View Custody</span>
+                                        <x-icon name="arrow-right" size="14" />
                                     </a>
                                 </td>
                             </tr>
@@ -535,6 +673,9 @@
             </div>
 
             <dl class="detail-list compact">
+                <dt>Item ID</dt>
+                <dd>{{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }}</dd>
+
                 <dt>Description</dt>
                 <dd>{{ $item->specification ?: 'No additional description.' }}</dd>
 
@@ -552,6 +693,12 @@
 
                 <dt>Laundry requirement</dt>
                 <dd><span class="inventory-info-pill {{ $item->laundry_required ? 'is-positive' : 'is-neutral' }}">{{ $item->laundry_required ? 'Required after use' : 'Not required' }}</span></dd>
+
+                <dt>Date added</dt>
+                <dd>{{ optional($item->created_at)->format('d M Y, g:i A') ?: '—' }}</dd>
+
+                <dt>Last updated</dt>
+                <dd>{{ optional($item->updated_at)->format('d M Y, g:i A') ?: '—' }}</dd>
             </dl>
         </article>
         </section>
@@ -563,25 +710,29 @@
 .inventory-admin-summary {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    overflow: hidden;
-    margin-bottom: 14px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface, #fff);
+    gap: 14px;
+    margin-bottom: 18px;
 }
 
 .inventory-admin-summary-item {
+    --inventory-summary-accent: var(--border-strong);
     display: flex;
     align-items: center;
     gap: 12px;
     min-width: 0;
-    padding: 13px 16px;
-    border-right: 1px solid var(--border);
+    min-height: 96px;
+    padding: 15px 16px;
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--inventory-summary-accent);
+    border-radius: 12px;
+    background: var(--surface, #fff);
+    box-shadow: 0 1px 2px rgba(7, 27, 53, .05);
 }
-
-.inventory-admin-summary-item:last-child {
-    border-right: 0;
-}
+.inventory-admin-summary-item.is-total { --inventory-summary-accent: #2f80ed; }
+.inventory-admin-summary-item.is-available { --inventory-summary-accent: var(--success); }
+.inventory-admin-summary-item.is-reserved { --inventory-summary-accent: var(--warning); }
+.inventory-admin-summary-item.is-custody { --inventory-summary-accent: #6d5ce7; }
+.inventory-admin-summary-item.is-unavailable { --inventory-summary-accent: var(--danger); }
 
 .inventory-summary-icon {
     display: inline-flex;
@@ -644,11 +795,280 @@
     color: #157f3f;
 }
 
+.inventory-last-movement {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 20px;
+    padding: 13px 15px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface-subtle, #f7f9fc);
+}
+.inventory-last-movement-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: #eaf3ff;
+    color: #1769c2;
+}
+.inventory-last-movement-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+.inventory-last-movement-copy > span {
+    color: var(--text-muted);
+    font-size: .71rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.inventory-last-movement-copy strong {
+    color: var(--heading);
+    font-size: .88rem;
+}
+.inventory-last-movement-copy small {
+    color: var(--text-muted);
+    font-size: .76rem;
+}
+.inventory-inline-reference,
+.inventory-ledger-reference-link {
+    color: var(--interactive, #1769c2);
+    font-weight: 750;
+    text-decoration: none;
+}
+.inventory-inline-reference:hover,
+.inventory-inline-reference:focus-visible,
+.inventory-ledger-reference-link:hover,
+.inventory-ledger-reference-link:focus-visible {
+    text-decoration: underline;
+}
+
+.inventory-overview-grid { align-items: stretch; }
+.inventory-overview-card { min-width: 0; height: 100%; overflow: hidden; }
+.inventory-overview-card .card-header { min-height: 98px; padding: 20px 22px 16px; }
+.inventory-overview-card .card-header .meta { margin: 5px 0 0; max-width: 620px; line-height: 1.45; }
+.inventory-overview-card .inventory-ops-list { padding: 6px 22px 20px; }
+.inventory-overview-empty { margin: -2px 22px 20px; color: var(--text-muted); font-size: .83rem; }
+
+.inventory-source-records-card {
+    margin-top: 24px;
+    overflow: hidden;
+}
+.inventory-source-records-card .card-header {
+    padding: 20px 22px 18px;
+}
+.inventory-source-records-card .card-header .meta {
+    margin: 5px 0 0;
+    max-width: 850px;
+    line-height: 1.45;
+}
+.inventory-source-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+.inventory-source-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.inventory-source-live {
+    flex: 0 0 auto;
+    padding: 5px 9px;
+    border: 1px solid #bfe1cf;
+    border-radius: 999px;
+    background: #eef9f3;
+    color: #177246;
+    font-size: .7rem;
+    font-weight: 800;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+}
+.inventory-source-groups {
+    display: grid;
+    gap: 16px;
+    padding: 18px 22px 16px;
+}
+.inventory-source-group {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--surface, #fff);
+}
+.inventory-source-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-subtle, #f8fafc);
+}
+.inventory-source-group-head > div {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+}
+.inventory-source-group-head span {
+    color: var(--text-secondary);
+    font-size: .76rem;
+    font-weight: 800;
+    letter-spacing: .025em;
+    text-transform: uppercase;
+}
+.inventory-source-group-head strong {
+    color: var(--heading);
+    font-size: .86rem;
+}
+.inventory-source-group-head small {
+    color: var(--text-muted);
+    font-size: .74rem;
+    white-space: nowrap;
+}
+.inventory-source-records {
+    display: grid;
+}
+.inventory-source-record {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(140px, .42fr) auto;
+    align-items: center;
+    gap: 20px;
+    min-width: 0;
+    padding: 15px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.inventory-source-record:last-child {
+    border-bottom: 0;
+}
+.inventory-source-record-main,
+.inventory-source-record-state {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+.inventory-source-kind {
+    color: var(--text-muted);
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+}
+.inventory-source-record-main strong {
+    color: var(--heading);
+    font-size: .86rem;
+    overflow-wrap: anywhere;
+}
+.inventory-source-record-main small {
+    color: var(--text-muted);
+    font-size: .75rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.inventory-source-record-state {
+    text-align: right;
+}
+.inventory-source-record-state strong {
+    color: var(--heading);
+    font-size: .86rem;
+}
+.inventory-source-record-state span {
+    color: var(--text-secondary);
+    font-size: .75rem;
+    font-weight: 700;
+}
+.inventory-source-open {
+    min-width: 64px;
+    justify-content: center;
+}
+.inventory-source-note {
+    margin: 0;
+    padding: 0 22px 20px;
+    color: var(--text-muted);
+    font-size: .8rem;
+    line-height: 1.45;
+}
+.inventory-source-empty-state {
+    display: grid;
+    gap: 4px;
+    margin: 18px 22px 22px;
+    padding: 15px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-subtle, #f8fafc);
+}
+.inventory-source-empty-state strong {
+    color: var(--heading);
+    font-size: .88rem;
+}
+.inventory-source-empty-state span {
+    color: var(--text-muted);
+    font-size: .8rem;
+}
+
+.inventory-history-status-cell {
+    min-width: 148px;
+}
+.inventory-history-accountability {
+    display: block;
+    margin-top: 6px;
+    color: var(--text-muted);
+    font-size: .7rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
+.inventory-history-accountability.is-active { color: var(--warning); }
+.inventory-history-accountability.is-resolved { color: var(--success); }
+
+@media (max-width: 900px) {
+    .inventory-source-record {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px 16px;
+    }
+    .inventory-source-record-state {
+        text-align: right;
+    }
+    .inventory-source-open {
+        grid-column: 1 / -1;
+        width: 100%;
+    }
+}
+
+@media (max-width: 620px) {
+    .inventory-source-header,
+    .inventory-source-header-actions,
+    .inventory-source-group-head,
+    .inventory-source-group-head > div {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+    .inventory-source-record {
+        grid-template-columns: 1fr;
+    }
+    .inventory-source-record-state {
+        text-align: left;
+    }
+}
+
+.inventory-ledger-table { min-width: 1180px; }
+.inventory-ledger-reference strong, .inventory-ledger-actor strong { display: block; color: var(--heading); font-size: .82rem; }
+.inventory-ledger-reference small, .inventory-ledger-actor small { display: block; margin-top: 3px; color: var(--text-muted); font-size: .75rem; }
+.inventory-ledger-reason { max-width: 330px; line-height: 1.35; }
+
 .inventory-detail-tabs {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 12px;
+    margin: 18px 0 22px;
     padding: 0;
     border: 0;
     background: transparent;
@@ -730,15 +1150,16 @@
 
 .inventory-tab-panel > .card,
 .inventory-tab-panel > .inventory-detail-grid {
-    margin-top: 0;
+    margin-top: 12px;
 }
 
 .inventory-tab-overview .inventory-detail-grid {
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr);
-    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 26px;
 }
 
 .inventory-detail-grid {
+    display: grid;
     align-items: stretch;
 }
 
@@ -751,8 +1172,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 18px;
-    min-height: 42px;
-    padding: 9px 0;
+    min-height: 52px;
+    padding: 13px 0;
     border-bottom: 1px solid var(--border);
 }
 
@@ -778,39 +1199,6 @@
     font-weight: 700;
 }
 
-.inventory-ops-footnote {
-    margin: 8px 0 0;
-    color: var(--text-muted);
-    font-size: .83rem;
-}
-
-.inventory-condition-guide {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-    margin-top: 16px;
-    padding: 12px 14px;
-    border-radius: 10px;
-    background: #eef4ff;
-    color: #1f3a66;
-}
-
-.inventory-condition-guide svg {
-    flex: 0 0 auto;
-    margin-top: 2px;
-}
-
-.inventory-condition-guide strong {
-    display: block;
-    font-size: .88rem;
-}
-
-.inventory-condition-guide p {
-    margin: 2px 0 0;
-    font-size: .83rem;
-    color: #3a5a8c;
-    line-height: 1.4;
-}
 
 .inventory-info-pill {
     display: inline-block;
@@ -832,7 +1220,14 @@
 
 .inventory-borrowing-history-card {
     display: grid;
-    gap: 18px;
+    gap: 20px;
+    overflow: hidden;
+}
+.inventory-borrowing-history-card > .inventory-history-filter,
+.inventory-borrowing-history-card > .inventory-history-period-note,
+.inventory-borrowing-history-card > .inventory-history-summary {
+    margin-left: 18px;
+    margin-right: 18px;
 }
 
 .inventory-history-header .meta {
@@ -910,8 +1305,11 @@
 
 .inventory-history-table-wrap {
     max-height: 560px;
+    margin: 0 18px 18px;
     overflow: auto;
     overscroll-behavior: contain;
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
 .inventory-history-table {
@@ -926,7 +1324,13 @@
 }
 
 .inventory-history-table td {
+    padding-top: 15px;
+    padding-bottom: 15px;
     vertical-align: top;
+}
+.inventory-history-table thead th {
+    padding-top: 13px;
+    padding-bottom: 13px;
 }
 
 .inventory-history-table td > small,
@@ -969,18 +1373,6 @@
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
-    .inventory-admin-summary-item {
-        border-bottom: 1px solid var(--border);
-    }
-
-    .inventory-admin-summary-item:nth-child(3n) {
-        border-right: 0;
-    }
-
-    .inventory-tab-overview .inventory-detail-grid {
-        grid-template-columns: 1fr;
-    }
-
     .inventory-history-filter {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -995,18 +1387,18 @@
     }
 }
 
+/* Keep Unavailable Breakdown and Physical Condition on one desktop row.
+   Stack only when the content area is genuinely narrow. */
+@media (max-width: 860px) {
+    .inventory-tab-overview .inventory-detail-grid {
+        grid-template-columns: 1fr;
+        gap: 18px;
+    }
+}
+
 @media (max-width: 700px) {
     .inventory-admin-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .inventory-admin-summary-item,
-    .inventory-admin-summary-item:nth-child(3n) {
-        border-right: 1px solid var(--border);
-    }
-
-    .inventory-admin-summary-item:nth-child(2n) {
-        border-right: 0;
     }
 
     .inventory-detail-tab {
@@ -1016,6 +1408,12 @@
 
     .inventory-ops-row {
         gap: 4px 12px;
+    }
+
+    .inventory-last-activity {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
     }
 
     .inventory-history-filter,

@@ -1,5 +1,7 @@
 @php
     $routeType = strtolower(str_replace('_', '-', $type));
+    $activeConfiguration = $activeTemplate ? (json_decode((string) $activeTemplate->content_template, true) ?: []) : [];
+    $activeFormat = $activeConfiguration['format'] ?? 'SOURCE';
     $drafts = $history->filter(fn ($template) => $template->source_mode === 'OFFICIAL_LAYOUT'
         && $template->stored_file_id !== null
         && $template->activated_at === null
@@ -31,6 +33,9 @@
         <div class="official-template-actions">
             <a class="button secondary small ui-pressable" href="{{ route('administration.document-templates.review', ['type' => $routeType, 'template' => $activeTemplate]) }}" target="_blank" rel="noopener">Review Current Layout</a>
             <a class="button secondary small ui-pressable" href="{{ route('administration.document-templates.download', ['type' => $routeType, 'template' => $activeTemplate]) }}">Download</a>
+            @if(in_array($activeFormat, ['DOCX', 'XLSX'], true))
+                <a class="button secondary small ui-pressable" href="{{ route('administration.document-templates.minor-edit', ['type' => $routeType, 'template' => $activeTemplate]) }}">Edit Template</a>
+            @endif
         </div>
     @endif
 
@@ -100,6 +105,9 @@
                 </div>
                 <div class="official-template-actions">
                     <a class="button secondary ui-pressable" href="{{ route('administration.document-templates.preview', ['type' => $routeType, 'template' => $draft]) }}" target="_blank" rel="noopener">Preview Generated Sample</a>
+                    @if(in_array($format, ['DOCX', 'XLSX'], true))
+                        <a class="button secondary ui-pressable" href="{{ route('administration.document-templates.minor-edit', ['type' => $routeType, 'template' => $draft]) }}">Edit Template</a>
+                    @endif
                 </div>
                 <form method="post" action="{{ route('administration.document-templates.activate', ['type' => $routeType, 'template' => $draft]) }}" class="official-template-activate" onsubmit="return confirm('Activate {{ $label }} {{ $draft->version_label }}? Future documents will use this official layout. Previously generated documents will not change.');">
                     @csrf

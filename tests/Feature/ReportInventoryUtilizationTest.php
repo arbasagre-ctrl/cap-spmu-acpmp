@@ -187,6 +187,21 @@ class ReportInventoryUtilizationTest extends TestCase
         $this->assertSame(1, $this->inventory(['availability_status' => 'AVAILABLE'])->count());
     }
 
+
+    public function test_inventory_report_can_filter_the_same_low_availability_rule_used_by_analytics(): void
+    {
+        $limited = $this->item('Limited Chair', 200);
+        $this->item('Healthy Table', 100);
+
+        /* 40 / 200 usable = 20%, below the Analytics 25% threshold. */
+        $this->release([['item' => $limited, 'released' => 160, 'returned' => 0]]);
+
+        $dataset = $this->inventory(['availability_status' => 'LOW_AVAILABILITY']);
+
+        $this->assertSame(1, $dataset->count());
+        $this->assertSame('Limited Chair', $dataset->rows->first()['item']);
+    }
+
     /* ------------------------------------------------------------------ */
     /* Equipment Utilization                                               */
     /* ------------------------------------------------------------------ */

@@ -2,8 +2,10 @@
 
 namespace App\Reports\Exporters;
 
+use App\Reports\ReportScopeFormatter;
 use App\Reports\ReportDataset;
 use App\Reports\ReportExportOptions;
+use App\Reports\ReportSummaryFormatter;
 use Carbon\Carbon;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -54,12 +56,35 @@ class SpreadsheetExporter
         $sheet->setCellValue([1, $row++], 'Date Generated: '.($meta['generated_long'] ?? ''));
 
         if ($options->includeFilters && ! empty($meta['applied_filters'])) {
-            $filters = [];
-            foreach ($meta['applied_filters'] as $label => $value) {
-                $filters[] = $label.': '.$value;
+            foreach (ReportScopeFormatter::rows($meta['applied_filters']) as $scope) {
+                $sheet->setCellValue([1, $row++], $scope['label'].': '.$scope['value']);
             }
+        }
 
-            $sheet->setCellValue([1, $row++], 'Applied Filters: '.implode('; ', $filters));
+        if ($options->includeSummary && ! empty($dataset->summary)) {
+            $row++;
+            $sheet->setCellValue([1, $row], 'Report Summary');
+            $sheet->getStyle([1, $row, 1, $row])->getFont()->setBold(true);
+            $row++;
+
+            foreach ($dataset->summary as $label => $value) {
+                $sheet->setCellValue([1, $row], $label);
+                $numeric = ReportSummaryFormatter::numeric($value);
+
+                if ($numeric !== null) {
+                    $sheet->setCellValueExplicit([2, $row], $numeric, DataType::TYPE_NUMERIC);
+
+                    if (ReportSummaryFormatter::isCurrencyLabel((string) $label)) {
+                        $sheet->getStyle([2, $row, 2, $row])
+                            ->getNumberFormat()
+                            ->setFormatCode('₱#,##0.00');
+                    }
+                } else {
+                    $sheet->setCellValue([2, $row], $value);
+                }
+
+                $row++;
+            }
         }
 
         $row++;
@@ -104,25 +129,6 @@ class SpreadsheetExporter
 
         foreach (range(1, $lastColumn) as $column) {
             $sheet->getColumnDimensionByColumn($column)->setAutoSize(true);
-        }
-
-        if ($options->includeSummary && ! empty($dataset->summary)) {
-            $row++;
-            $sheet->setCellValue([1, $row], 'Summary');
-            $sheet->getStyle([1, $row, 1, $row])->getFont()->setBold(true);
-            $row++;
-
-            foreach ($dataset->summary as $label => $value) {
-                $sheet->setCellValue([1, $row], $label);
-
-                if (is_numeric($value)) {
-                    $sheet->setCellValueExplicit([2, $row], (float) $value, DataType::TYPE_NUMERIC);
-                } else {
-                    $sheet->setCellValue([2, $row], $value);
-                }
-
-                $row++;
-            }
         }
 
         $sheet->getStyle([1, 1, $lastColumn, $row])

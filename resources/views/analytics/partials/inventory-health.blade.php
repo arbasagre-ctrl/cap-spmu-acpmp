@@ -11,22 +11,17 @@
     | same authoritative availability rule the Inventory module and Reports
     | use. Nothing is computed from records here.
     |
-    | WHY THERE IS NO DONUT
-    | ---------------------
-    | A donut states parts of one whole, so it is only honest when the parts do
-    | not overlap. These do:
+    | CURRENT STOCK PARTITION
+    | -----------------------
+    | Available means available to allocate: approved reservations are already
+    | removed from that figure. The serviceable stock partition is therefore:
     |
-    |   current_available = serviceable_total - borrowed - laundry - incident
+    |   Available + Reserved + On Custody + In Laundry + Incident
     |
-    | Reserved / Allocated is NOT subtracted, so every reserved unit is already
-    | counted inside Available. Drawing both as slices would count those units
-    | twice. Maintenance sits outside the ring for the opposite reason: a
-    | damaged item has no serviceable total at all.
-    |
-    | What does partition exactly is Available + On Custody + In Laundry +
-    | Incident, which sums to serviceable stock by construction. That is what
-    | the composition bar below shows, with Reserved stated underneath as the
-    | subset of Available that it actually is.
+    | Maintenance sits outside this partition because an item whose catalogue
+    | condition is DAMAGED_MAINTENANCE carries no serviceable total until it is
+    | restored. This keeps the same physical unit from appearing in two KPI
+    | states at once.
     */
     use App\Support\AnalyticsDetailLink;
 
@@ -38,15 +33,16 @@
      | sentence already calls unavailable. Laundry is a normal step in the linen
      | cycle, not a fault, so it is reported separately and never added here.
      */
-    $attention = (float) $totals['maintenance'] + (float) $totals['problem'];
+    $attention = (float) ($totals['attention'] ?? $totals['problem'] ?? 0);
 
     $thresholdPercent = (int) round(($inventory['threshold'] ?? 0.25) * 100);
 
     $num = static fn (float $value): string => rtrim(rtrim(number_format($value, 2), '0'), '.');
 
-    /* The four states that partition serviceable stock, in operational order. */
+    /* The five non-overlapping states that partition serviceable stock. */
     $composition = [
         ['key' => 'available', 'label' => 'Available', 'value' => (float) $totals['available']],
+        ['key' => 'reserved', 'label' => 'Reserved', 'value' => (float) $totals['allocated']],
         ['key' => 'custody', 'label' => 'On Custody', 'value' => (float) $totals['on_custody']],
         ['key' => 'laundry', 'label' => 'In Laundry', 'value' => (float) $totals['laundry']],
         ['key' => 'incident', 'label' => 'Incident / Unavailable', 'value' => (float) $totals['incident']],
@@ -88,8 +84,8 @@
         <span class="analytics-kpi-card-icon" aria-hidden="true"><x-icon name="check-circle" size="19" /></span>
         <span class="analytics-kpi-card-label">Available Units</span>
         <strong class="analytics-kpi-card-value">{{ $num((float) $totals['available']) }}</strong>
-        <span class="analytics-kpi-card-note">Units currently ready for release</span>
-            <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <span class="analytics-kpi-card-note">Usable units not already reserved</span>
+            <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -99,8 +95,8 @@
         <span class="analytics-kpi-card-icon" aria-hidden="true"><x-icon name="bookmark" size="19" /></span>
         <span class="analytics-kpi-card-label">Reserved / Allocated</span>
         <strong class="analytics-kpi-card-value">{{ $num((float) $totals['allocated']) }}</strong>
-        <span class="analytics-kpi-card-note">Allocated to upcoming requests, inside Available</span>
-            <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <span class="analytics-kpi-card-note">Committed to approved requests and not available to allocate</span>
+            <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -111,7 +107,7 @@
         <span class="analytics-kpi-card-label">On Custody</span>
         <strong class="analytics-kpi-card-value">{{ $num((float) $totals['on_custody']) }}</strong>
         <span class="analytics-kpi-card-note">Units currently released to borrowers</span>
-            <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+            <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -122,9 +118,14 @@
         <span class="analytics-kpi-card-label">Attention Needed</span>
         <strong class="analytics-kpi-card-value">{{ $num($attention) }}</strong>
         <span class="analytics-kpi-card-note">Maintenance or incident follow-up, not laundry</span>
-            <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+            <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 </div>
+
+<p class="analytics-inventory-scope-note" role="note">
+    <x-icon name="information" size="14" aria-hidden="true" />
+    <span><strong>Current stock scope:</strong> inventory totals are institution-wide and do not change with Division, Office / Unit, or Borrower. Utilization and Stock Coverage below still use the selected reporting period.</span>
+</p>
 
 {{-- Availability and composition ---------------------------------------- --}}
 <div class="analytics-inventory-main">
@@ -137,7 +138,7 @@
                 <h2>Inventory Availability</h2>
                 <p>Usable share of each item's serviceable stock, tightest first.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.availability']) }}" aria-label="View Inventory Availability details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.availability']) }}" aria-label="View Inventory Availability details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -208,7 +209,7 @@
             <div>
                 <h2>Current Inventory Distribution</h2>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.distribution']) }}" aria-label="View Current Inventory Distribution details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.distribution']) }}" aria-label="View Current Inventory Distribution details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         @if($serviceable <= 0)
@@ -255,15 +256,8 @@
                     @endforeach
                 </ul>
 
-                {{--
-                    Stated rather than drawn: these two do not belong in the bar
-                    above, and saying why is more use than leaving them out.
-                --}}
+                {{-- Maintenance is the one condition bucket outside serviceable stock. --}}
                 <dl class="analytics-dist-aside">
-                    <div>
-                        <dt>Of which reserved</dt>
-                        <dd>{{ $num((float) $totals['allocated']) }} units allocated to upcoming requests, counted inside Available until they are released.</dd>
-                    </div>
                     @if($totals['maintenance'] > 0)
                         <div>
                             <dt>Outside serviceable stock</dt>
@@ -289,7 +283,7 @@
             @if($lowAvailability['count'] > 0)
                 <span class="analytics-count-pill">{{ $lowAvailability['count'] }}</span>
             @endif
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.low-availability']) }}" aria-label="View Low Availability Watch details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.low-availability']) }}" aria-label="View Low Availability Watch details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -331,7 +325,7 @@
                 <h2>Utilization</h2>
                 <p>Quantity of equipment physically released during this period.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.utilization']) }}" aria-label="View Utilization details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.utilization']) }}" aria-label="View Utilization details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -387,7 +381,7 @@
             <div>
                 <h2>Operational Inventory Status</h2>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.operational']) }}" aria-label="View Operational Inventory Status details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.operational']) }}" aria-label="View Operational Inventory Status details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -418,7 +412,7 @@
                 <h2>Stock Coverage &amp; Risk</h2>
                 <p>Estimated coverage from current stock and release history in this period.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.coverage']) }}" aria-label="View Stock Coverage and Risk details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'inventory', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'inventory.coverage']) }}" aria-label="View Stock Coverage and Risk details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">

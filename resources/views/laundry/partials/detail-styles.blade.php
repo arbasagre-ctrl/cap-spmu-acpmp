@@ -3,7 +3,7 @@
     --laundry-detail-blue: #0866df;
     --laundry-detail-soft: #edf5ff;
     display: grid;
-    gap: 20px;
+    gap: 24px;
     min-width: 0;
     color: var(--text);
     font-size: 13px;
@@ -17,21 +17,21 @@
 .laundry-detail .card-header { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-start; gap: 14px; margin: 0 0 18px; padding: 0; border: 0; border-radius: 0; background: transparent; }
 .laundry-detail h2 { margin: 0; color: var(--heading); font-size: 16px; font-weight: 700; line-height: 1.4; }
 .laundry-detail .eyebrow { font-size: 11px; }
-.laundry-detail .laundry-operation-grid { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: stretch; gap: 20px; }
+.laundry-detail .laundry-operation-grid { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: stretch; gap: 24px; }
 
-/* Four compact milestones show the return-to-available sequence. */
+/* Three equal milestones show the linen return sequence. */
 .laundry-detail .laundry-progress-card .card-header { align-items: flex-start; margin-bottom: 24px; }
 .laundry-detail .laundry-progress-card h2 { margin-top: 6px; font-size: 19px; }
 .laundry-detail .laundry-progress-status { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
-.laundry-detail .laundry-progress-rail { --laundry-step-gap: clamp(14px, 1.8vw, 34px); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--laundry-step-gap); margin: 0; padding: 0; list-style: none; }
-.laundry-detail .laundry-progress-step { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 16px; min-height: 76px; padding: 10px 14px; border: 1px solid transparent; border-radius: 10px; background: transparent; opacity: 1; }
+.laundry-detail .laundry-progress-rail { --laundry-step-gap: clamp(14px, 1.8vw, 34px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--laundry-step-gap); margin: 0; padding: 0; list-style: none; }
+.laundry-detail .laundry-progress-step { position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 14px; min-height: 72px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; opacity: 1; }
 .laundry-detail .laundry-progress-step:not(:last-child)::after { content: ""; position: absolute; top: 50%; left: calc(100% + 1px); width: calc(var(--laundry-step-gap) - 10px); height: 1px; background: var(--border-strong); }
 .laundry-detail .laundry-progress-marker { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--text-muted); background: var(--surface-elevated); }
 .laundry-detail .laundry-progress-marker .ui-icon { width: 25px; height: 25px; }
 .laundry-detail .laundry-progress-step strong { color: var(--text-secondary); font-size: 13px; font-weight: 700; line-height: 1.45; }
 .laundry-detail .laundry-progress-content .workflow-tracker__meta { margin-top: 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .025em; text-transform: uppercase; }
-.laundry-detail .laundry-progress-step.is-current { border-color: var(--laundry-detail-blue); background: var(--laundry-detail-soft); }
-.laundry-detail .laundry-progress-step.is-current .laundry-progress-marker { color: #fff; background: #0866df; border-color: #0866df; }
+.laundry-detail .laundry-progress-step.is-current { border: 0; background: transparent; }
+.laundry-detail .laundry-progress-step.is-current .laundry-progress-marker { color: #fff; background: #0866df; border-color: #0866df; box-shadow: 0 0 0 5px color-mix(in srgb, var(--laundry-detail-blue) 16%, transparent); }
 .laundry-detail .laundry-progress-step.is-current strong { color: var(--heading); }
 .laundry-detail .laundry-progress-step.is-current .workflow-tracker__meta { color: var(--laundry-detail-blue); }
 .laundry-detail .laundry-progress-step.is-current::after { background: var(--laundry-detail-blue); }
@@ -40,7 +40,7 @@
 
 .laundry-detail .laundry-detail-card-title { align-items: center; justify-content: flex-start; gap: 14px; margin-bottom: 16px; }
 .laundry-detail .laundry-detail-card-title > .ui-icon { flex-shrink: 0; color: var(--laundry-detail-blue); }
-.laundry-detail .laundry-form-description { margin: 0 0 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.laundry-detail .laundry-form-description { max-width: 860px; margin: 0 0 16px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 .laundry-detail .laundry-signature-list { display: grid; gap: 8px; margin: 0; }
 .laundry-detail .laundry-signature-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; }
 .laundry-detail .laundry-signature-list dt { display: flex; align-items: center; gap: 14px; margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 400; }
@@ -61,7 +61,7 @@
 .laundry-detail .button.secondary:hover { background: var(--laundry-detail-soft); }
 .laundry-detail .laundry-next-action { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 20px; padding-top: 24px; padding-bottom: 24px; }
 .laundry-detail .laundry-next-action > .ui-icon { width: 36px; height: 36px; color: var(--laundry-detail-blue); }
-.laundry-detail .laundry-next-action p { margin: 8px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.laundry-detail .laundry-next-action p { max-width: 820px; margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .laundry-detail .laundry-next-action .button { min-height: 46px; padding: 12px 20px; white-space: nowrap; }
 .laundry-detail .form-grid > .button { justify-self: start; }
 .laundry-detail .check-row { display: flex; align-items: flex-start; gap: 10px; }

@@ -193,12 +193,43 @@ class ReportExportTest extends TestCase
             ]))
             ->assertOk()
             ->assertSee('Export fixture activity', false)
-            ->assertSee('>Print<', false);
+            ->assertSee('window.print()', false);
     }
 
     /* ------------------------------------------------------------------ */
     /* Same dataset across every format                                    */
     /* ------------------------------------------------------------------ */
+
+    public function test_exports_are_not_limited_to_the_ten_row_web_preview_page(): void
+    {
+        foreach (range(1, 12) as $index) {
+            $this->request('ACADEMIC', 'College of Computer Studies');
+        }
+
+        $csvLines = array_values(array_filter(
+            explode("\n", trim($this->export('csv')->streamedContent()))
+        ));
+        $this->assertCount(13, $csvLines);
+
+        $wordFile = $this->save($this->export('docx')->getContent(), 'docx');
+        $this->assertSame(12, substr_count($this->wordText($wordFile), 'Export fixture activity'));
+        @unlink($wordFile);
+
+        $xlsxFile = $this->save($this->export('xlsx')->getContent(), 'xlsx');
+        $sheet = SpreadsheetReader::load($xlsxFile)->getActiveSheet();
+        $records = 0;
+
+        foreach ($sheet->getRowIterator() as $row) {
+            foreach ($row->getCellIterator() as $cell) {
+                if ($cell->getValue() === 'Export fixture activity') {
+                    $records++;
+                }
+            }
+        }
+
+        $this->assertSame(12, $records);
+        @unlink($xlsxFile);
+    }
 
     public function test_every_format_reports_the_same_record_count(): void
     {
@@ -273,16 +304,9 @@ class ReportExportTest extends TestCase
         $this->export('exe')->assertHeader('content-type', 'application/pdf');
     }
 
-    public function test_content_toggles_change_only_presentation(): void
+    public function test_formal_provenance_is_always_included_while_summary_remains_optional(): void
     {
         $this->request('ACADEMIC', 'College of Computer Studies');
-
-        $withFooter = $this->save($this->export('docx')->getContent(), 'docx');
-        $this->assertStringContainsString(
-            'No signature is required',
-            $this->wordText($withFooter)
-        );
-        @unlink($withFooter);
 
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
@@ -291,17 +315,31 @@ class ReportExportTest extends TestCase
                 'format' => 'docx',
                 'academic_period' => 'month',
                 'options_submitted' => '1',
-                /* include_footer deliberately absent: the box was unticked. */
+                /* include_summary deliberately absent: the optional box is off. */
             ]));
 
-        $withoutFooter = $this->save($response->getContent(), 'docx');
-        $text = $this->wordText($withoutFooter);
+        $file = $this->save($response->getContent(), 'docx');
+        $text = $this->wordText($file);
 
-        $this->assertStringNotContainsString('No signature is required', $text);
-        /* The records themselves are untouched by a presentation toggle. */
+        $this->assertStringContainsString('Prepared by', $text);
+        $this->assertStringContainsString('No signature is required', $text);
         $this->assertStringContainsString('Export fixture activity', $text);
+        $this->assertStringNotContainsString('Total requests', $text);
 
-        @unlink($withoutFooter);
+        @unlink($file);
+    }
+
+    public function test_automatic_orientation_resolves_to_the_report_catalogue_default(): void
+    {
+        $options = ReportExportOptions::fromRequest(
+            \Illuminate\Http\Request::create('/reports/export', 'GET', [
+                'format' => 'pdf',
+                'orientation' => 'automatic',
+            ]),
+            'borrowing'
+        );
+
+        $this->assertSame(\App\Reports\ReportCatalogue::orientation('borrowing'), $options->orientation);
     }
 
     public function test_export_requires_the_same_authorization_as_the_report_page(): void

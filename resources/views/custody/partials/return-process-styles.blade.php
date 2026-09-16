@@ -3,9 +3,10 @@
 .return-flow-page { --return-blue: #0863db; font-size: 13px; }
 .return-flow-page [hidden] { display: none !important; }
 .return-flow-page, .return-flow-page #return-primary { scroll-margin-top: 90px; }
-.return-flow-page .return-workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 25%); gap: 18px; align-items: stretch; }
-.return-flow-page .return-primary-stack { display: grid; align-content: start; gap: 16px; min-width: 0; }
+.return-flow-page .return-workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 25%); gap: 24px; align-items: stretch; }
+.return-flow-page .return-primary-stack { display: grid; align-content: start; gap: 24px; min-width: 0; }
 .return-flow-page .content-area, .return-flow-page .content-grid { margin: 0; }
+.return-flow-page .return-history-section { margin-top: 24px; }
 .return-flow-page .card { min-width: 0; padding: 18px 20px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); box-shadow: none; }
 /* Reset Bootstrap's gray header fill and inset padding within this workspace. */
 .return-flow-page .card-header { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 0; border: 0; border-radius: 0; background: transparent; }
@@ -16,7 +17,7 @@
 .return-flow-page .return-flash > div { flex: 1; min-width: 0; }
 .return-flow-page .return-flash-dismiss { flex: 0 0 26px; width: 26px; height: 26px; padding: 0; }
 .return-flow-page .return-flash-dismiss .ui-icon { display: block; width: 18px; height: 18px; }
-.return-flow-page .return-context-grid { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 18px; align-items: stretch; }
+.return-flow-page .return-context-grid { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 24px; align-items: stretch; }
 .return-flow-page .return-context-card .card-header { padding-bottom: 12px; border-bottom: 1px solid var(--row-border); }
 .return-flow-page .detail-list { display: grid; grid-template-columns: minmax(120px, .9fr) minmax(0, 1.15fr); gap: 0; margin: 0; }
 .return-flow-page .detail-list dt, .return-flow-page .detail-list dd { min-width: 0; margin: 0; padding: 9px 0; border-bottom: 1px solid var(--row-border); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -32,7 +33,7 @@
 .return-flow-page .return-document-copy > .ui-icon { flex-shrink: 0; margin-top: 2px; color: var(--return-blue); }
 .return-flow-page .return-document-copy strong, .return-flow-page .return-document-copy small { display: block; }
 .return-flow-page .return-document-copy strong { color: var(--heading); font-size: 13px; }
-.return-flow-page .return-document-copy small { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
+.return-flow-page .return-document-copy small { max-width: 760px; margin-top: 2px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .return-flow-page .return-document-row > .status-badge, .return-flow-page .return-document-row-main > .status-badge { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
 .return-flow-page .return-document-row > .button, .return-flow-page .return-document-row-main > .button { flex-shrink: 0; min-height: 28px; padding: 5px 9px; font-size: 11px; }
 /* The Gate Pass row alone can carry a subtle note under its copy/action line
@@ -46,7 +47,7 @@
 .return-flow-page .return-linen-note { display: flex; align-items: center; gap: 12px; margin: 0; padding: 10px 14px; border-left-color: var(--return-blue); }
 .return-flow-page .return-linen-note > .ui-icon { flex-shrink: 0; color: var(--return-blue); }
 .return-flow-page .return-linen-note strong { color: var(--return-blue); font-size: 12px; }
-.return-flow-page .return-linen-note p { margin: 2px 0 0; font-size: 13px; line-height: 1.5; }
+.return-flow-page .return-linen-note p { max-width: 860px; margin: 2px 0 0; font-size: 12px; line-height: 1.5; }
 .return-flow-page .return-inspection-scroll { min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: 7px; box-shadow: none; }
 .return-flow-page .return-inspection-scroll table { width: 100%; min-width: 700px; margin: 0; table-layout: fixed; border-collapse: collapse; }
 .return-flow-page .return-item-column { width: 29%; }

@@ -225,10 +225,6 @@ bottom: -35px;
                     Sign in
                 </span>
 
-                <span class="login-submit-arrow" aria-hidden="true">
-                    →
-                </span>
-
             </button>
 
 

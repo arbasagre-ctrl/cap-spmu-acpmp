@@ -10,6 +10,7 @@ use App\Models\ApprovalStep;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
+use App\Models\GeneratedDocument;
 use App\Models\InventoryItem;
 use App\Models\LaundryJob;
 use App\Models\RequestItem;
@@ -77,6 +78,14 @@ class RoleBasedSignatureTest extends TestCase
 
         // Move "now" into the fixture's own scheduled pickup window.
         $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
+
+        // preparedCustody() is a raw fixture that bypasses
+        // RequestWorkflowService::approve(), which in production always
+        // generates the approved Borrower Slip immediately after approval
+        // (before any custody ever reaches PREPARING_RELEASE). Reproduce
+        // that same real precondition here so release()'s approved-packet
+        // guard sees what it would see in production.
+        app(DocumentService::class)->borrowerSlip($custody);
 
         app(CustodyService::class)->release($custody, $officer, 'Physical handover completed.');
 
@@ -335,6 +344,11 @@ class RoleBasedSignatureTest extends TestCase
             // Move "now" into the fixture's own scheduled pickup window.
             $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
 
+            // See the comment in the physical-release test above: reproduce
+            // the approved Borrower Slip that production always generates
+            // before a custody can reach release.
+            app(DocumentService::class)->borrowerSlip($custody);
+
             app(CustodyService::class)->release($custody, $officer, 'Physical handover completed.');
 
             // No signature is captured for Return Inspection either -- the
@@ -399,15 +413,30 @@ class RoleBasedSignatureTest extends TestCase
 
         $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
 
+        // See the comment in the physical-release test above: reproduce
+        // the approved Borrower Slip that production always generates
+        // before a custody can reach release.
+        app(DocumentService::class)->borrowerSlip($custody);
+
         $service = app(CustodyService::class);
         $service->release($custody, $officer, 'Physical handover completed.');
 
         $custody = $custody->fresh(['lines']);
         $line = $custody->lines->firstOrFail();
 
-        // Return Inspection is permitted any day once released -- travel to
-        // the effective due date only for a deterministic NORMAL label.
-        $this->travelTo($custody->due_at);
+        /*
+         * Return Inspection is permitted any day once released -- travel to
+         * the effective due date only for a deterministic NORMAL label.
+         * due_at itself lands at 23:59:59 (production's own convention --
+         * see CustodyService::ensurePickupRecord()'s endOfDay() fallback),
+         * which is always past the RETURN operating window, so land on a
+         * business-hours moment on the next open RETURN date instead.
+         */
+        $this->travelTo(
+            app(OperationalCalendarService::class)
+                ->nextOpenDate(OperationalCalendarService::RETURN, $custody->due_at, true)
+                ->setTime(9, 0)
+        );
 
         $service->receiveReturn(
             $custody,
@@ -459,13 +488,25 @@ class RoleBasedSignatureTest extends TestCase
 
         $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
 
+        // See the comment in the physical-release test above: reproduce
+        // the approved Borrower Slip that production always generates
+        // before a custody can reach release.
+        app(DocumentService::class)->borrowerSlip($custody);
+
         $service = app(CustodyService::class);
         $service->release($custody, $officer, 'Physical handover completed.');
 
         $custody = $custody->fresh(['lines']);
         $line = $custody->lines->firstOrFail();
 
-        $this->travelTo($custody->due_at);
+        // due_at lands at 23:59:59 (production's own end-of-day convention),
+        // always past the RETURN operating window -- land on a business-hours
+        // moment on the next open RETURN date instead.
+        $this->travelTo(
+            app(OperationalCalendarService::class)
+                ->nextOpenDate(OperationalCalendarService::RETURN, $custody->due_at, true)
+                ->setTime(9, 0)
+        );
 
         $genericRemarks = 'All items returned in serviceable condition.';
 
@@ -618,6 +659,11 @@ class RoleBasedSignatureTest extends TestCase
         $this->actingAs($officer);
         $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
 
+        // See the comment in the physical-release test above: reproduce
+        // the approved Borrower Slip that production always generates
+        // before a custody can reach release.
+        app(DocumentService::class)->borrowerSlip($custody->fresh(['lines.requestItem.inventoryItem', 'request.currentVersion']));
+
         $service = app(CustodyService::class);
         $service->release(
             $custody->fresh(['lines.requestItem.inventoryItem', 'request.currentVersion']),
@@ -626,7 +672,15 @@ class RoleBasedSignatureTest extends TestCase
         );
 
         $custody = $custody->fresh(['lines']);
-        $this->travelTo($custody->due_at);
+
+        // due_at lands at 23:59:59 (production's own end-of-day convention),
+        // always past the RETURN operating window -- land on a business-hours
+        // moment on the next open RETURN date instead.
+        $this->travelTo(
+            app(OperationalCalendarService::class)
+                ->nextOpenDate(OperationalCalendarService::RETURN, $custody->due_at, true)
+                ->setTime(9, 0)
+        );
 
         $evidence = \App\Models\StoredFile::query()->create([
             'uploaded_by_user_id' => $officer->id,
@@ -699,6 +753,102 @@ class RoleBasedSignatureTest extends TestCase
             'custody_transaction_id' => $custody->id,
             'remarks' => $genericRemarks,
         ]);
+    }
+
+    /**
+     * Production (RequestWorkflowService::approve()) always generates the
+     * approved Borrower Slip immediately after SPMU approval, well before a
+     * custody can ever reach release -- see CustodyService::release() and
+     * CustodyService::prepare()'s shared validateApprovedReleaseDocuments()
+     * guard. If that document is genuinely absent (a corrupted/incomplete
+     * approval record), release must refuse to proceed rather than let
+     * property leave SPMU custody without its controlled paperwork.
+     */
+    public function test_release_is_blocked_when_the_approved_borrower_slip_is_genuinely_missing(): void
+    {
+        $this->travelTo(
+            app(OperationalCalendarService::class)
+                ->nextOpenDate(OperationalCalendarService::PICKUP, now(), true)
+                ->copy()->subDay()->setTime(9, 0)
+        );
+
+        $custody = $this->preparedCustody();
+        $officer = $this->spmuActionOfficer();
+        $this->actingAs($officer);
+        $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
+
+        // Deliberately do NOT generate a Borrower Slip -- this reproduces a
+        // genuinely broken approval record, not the earlier fixture gap.
+        $this->assertDatabaseMissing('generated_documents', [
+            'subject_type' => CustodyTransaction::class,
+            'subject_id' => $custody->id,
+            'document_type' => 'BORROWER_SLIP',
+        ]);
+
+        try {
+            app(CustodyService::class)->release($custody, $officer, 'Physical handover completed.');
+            $this->fail('Expected release() to refuse a custody with no approved Borrower Slip on file.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertStringContainsString(
+                'The approved Borrower Slip is missing or invalid',
+                $exception->validator->errors()->first('documents')
+            );
+        }
+
+        $this->assertSame(
+            'PREPARING_RELEASE',
+            $custody->fresh()->status,
+            'A blocked release must never transition custody to ACTIVE.'
+        );
+        $this->assertNull($custody->fresh()->released_at);
+    }
+
+    /**
+     * release() regenerates the Borrower Slip (CustodyService.php ~line
+     * 1206) so the controlled copy reflects the issued transaction state.
+     * DocumentService::supersede() must mark the pre-release copy SUPERSEDED
+     * rather than deleting or mutating it, and exactly one FINAL copy must
+     * exist afterward -- proving release never produces a duplicate active
+     * Borrower Slip, and that superseding a document leaves its historical
+     * content untouched.
+     */
+    public function test_release_regenerates_the_borrower_slip_without_leaving_a_duplicate_final_copy(): void
+    {
+        $this->travelTo(
+            app(OperationalCalendarService::class)
+                ->nextOpenDate(OperationalCalendarService::PICKUP, now(), true)
+                ->copy()->subDay()->setTime(9, 0)
+        );
+
+        $custody = $this->preparedCustody();
+        $officer = $this->spmuActionOfficer();
+        $this->actingAs($officer);
+        $this->travelTo($custody->scheduled_release_at->copy()->addMinutes(30));
+
+        $preRelease = app(DocumentService::class)->borrowerSlip($custody);
+        $preReleaseSha256 = $preRelease->fresh()->sha256;
+
+        app(CustodyService::class)->release($custody, $officer, 'Physical handover completed.');
+
+        $finalCopies = GeneratedDocument::query()
+            ->where('subject_type', CustodyTransaction::class)
+            ->where('subject_id', $custody->id)
+            ->where('document_type', 'BORROWER_SLIP')
+            ->where('status', 'FINAL')
+            ->get();
+
+        $this->assertCount(1, $finalCopies, 'Exactly one FINAL Borrower Slip must exist after release, never a duplicate.');
+        $this->assertNotSame($preRelease->id, $finalCopies->first()->id);
+
+        $superseded = $preRelease->fresh();
+        $this->assertSame('SUPERSEDED', $superseded->status);
+        $this->assertNotNull($superseded->invalidated_at);
+        $this->assertSame(
+            $preReleaseSha256,
+            $superseded->sha256,
+            'Superseding the pre-release copy must not delete or mutate its stored historical file.'
+        );
+        $this->assertDatabaseHas('stored_files', ['id' => $superseded->stored_file_id]);
     }
 
     /** The Gate Pass renders the earlier Action Officer verification signature. */

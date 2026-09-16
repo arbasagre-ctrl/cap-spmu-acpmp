@@ -32,7 +32,7 @@ class BorrowingRequestLetterPdfTest extends TestCase
         );
     }
 
-    public function test_borrower_can_regenerate_the_printable_draft_request_letter_for_physical_signatures(): void
+    public function test_draft_recovery_directs_the_borrower_to_upload_the_accomplished_scanned_request_letter_without_generating_a_new_document(): void
     {
         $this->assertTrue(
             app(Router::class)->has(
@@ -75,23 +75,16 @@ class BorrowingRequestLetterPdfTest extends TestCase
                 route('requests.recover-draft-document', $request)
             )
             ->assertRedirect()
-            ->assertSessionHasNoErrors();
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas(
+                'status',
+                'The current workflow does not generate a Borrowing Request Letter. Upload the already approved and fully signed scanned Borrowing Request Letter instead.'
+            );
 
-        $this->assertDatabaseHas('generated_documents', [
+        $this->assertDatabaseMissing('generated_documents', [
             'request_version_id' => $version->id,
             'document_type' => 'REQUEST_LETTER',
-            'status' => 'DRAFT',
         ]);
-
-        $html = app(DocumentService::class)->requestLetterHtml(
-            $request->fresh(),
-            false
-        );
-
-        $this->assertStringContainsString('Authorized GSU Signatory', $html);
-        $this->assertStringContainsString('Authorized VPAF Signatory / Noted By', $html);
-        $this->assertStringContainsString('physical signatories only', $html);
-        $this->assertStringContainsString('does not apply an electronic signature', strtolower($html));
     }
 
     public function test_current_workflow_generates_a_physical_borrower_slip_after_spmu_preparation(): void

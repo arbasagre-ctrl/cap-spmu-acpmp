@@ -17,6 +17,10 @@ use ZipArchive;
 class DocumentTemplateLayoutService
 {
     private const MAX_BYTES = 10 * 1024 * 1024;
+    private const MAX_ARCHIVE_ENTRIES = 2000;
+    private const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
+    private const MAX_SCHEMA_NODES = 10000;
+    private const SCHEMA_WARNING_SEVERITIES = ['INFO', 'WARNING', 'BLOCKING'];
 
     public function __construct(
         private GenericPdfLayoutReader $pdfReader,
@@ -265,17 +269,6 @@ class DocumentTemplateLayoutService
     }
 
     /**
-     * Inspect the PDF that production will import. Office layouts can be
-     * system-ready when their conversion preserves named form controls.
-     *
-     * @return array<string,mixed>
-     */
-    public function inspectProductionPdf(string $bytes, bool $withLayoutAnalysis = false): array
-    {
-        return $this->inspectPdf($bytes, $withLayoutAnalysis);
-    }
-
-    /**
      * Re-identify a preserved source before preparation. The stored metadata
      * is informative only: a valid PDF header must remain a PDF even if an
      * earlier draft did not persist its format value correctly.
@@ -285,6 +278,37 @@ class DocumentTemplateLayoutService
     public function inspectStoredSource(string $bytes, ?string $originalName = null, ?string $mimeType = null, ?string $declaredFormat = null, bool $withLayoutAnalysis = false): array
     {
         return $this->inspectSource($bytes, $originalName, $mimeType, $declaredFormat, $withLayoutAnalysis);
+    }
+
+    /**
+     * Phase 1 stores only the uploaded Office document's structure and
+     * diagnostics. Runtime values, generated output, and user data do not
+     * belong in this versioned schema.
+     *
+     * @param array<string,mixed> $review
+     * @return array<string,mixed>|null
+     */
+    public function schemaForStoredSource(string $format, array $review, string $sha256, int $storedFileId): ?array
+    {
+        if (! in_array($format, ['DOCX', 'XLSX'], true)) {
+            return null;
+        }
+
+        $schema = $review['dynamic_schema'] ?? null;
+        if (! is_array($schema)) {
+            throw ValidationException::withMessages([
+                'template_file' => 'The uploaded Office layout could not be read into a safe document schema.',
+            ]);
+        }
+
+        $schema['source'] = [
+            'format' => $format,
+            'sha256' => $sha256,
+            'stored_file_id' => $storedFileId,
+        ];
+        $this->assertValidDynamicSchema($schema, $format);
+
+        return $schema;
     }
 
     /** @return array{format:string,review:array<string,mixed>} */
@@ -327,7 +351,7 @@ class DocumentTemplateLayoutService
         return null;
     }
 
-    /** @return array{format:string,render_representation:string,review:array<string,mixed>,mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,mixed>>,analysis:array<string,mixed>} */
+    /** @return array{format:string,render_representation:string,review:array<string,mixed>,mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,mixed>>,analysis:array<string,mixed>,preparation:array<string,mixed>} */
     public function configuration(DocumentTemplate $template): array
     {
         $decoded = json_decode((string) $template->content_template, true);
@@ -343,51 +367,12 @@ class DocumentTemplateLayoutService
             'mappings' => $mappings,
             'table_layouts' => $tableLayouts,
             'analysis' => $analysis,
-        ];
-    }
-
-    /** @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array<string,mixed>>,analysis:array<string,mixed>} */
-    public function autoMap(string $type, string $format, array $review): array
-    {
-        $formMappings = is_array($review['fillable_widgets'] ?? null)
-            ? $this->automaticPdfFormFieldMappings($type, $review)
-            : ['mappings' => [], 'table_layouts' => []];
-        $layoutMappings = $format === 'PDF' || ! empty($review['layout_words'])
-            ? $this->automaticPdfLayoutMappings($type, $review, $formMappings['mappings'])
-            : ['mappings' => [], 'table_layouts' => []];
-        // The generic reader supplies a page-relative model; the semantic
-        // interpreter uses the type schema's aliases and relationships only.
-        // It contains no revision, filename, or copied-coordinate rules.
-        $semanticMappings = $this->interpreter->supplementalMappings(
-            $this->fieldDefinitions($type),
-            $review,
-            [...$layoutMappings['mappings'], ...$formMappings['mappings']],
-        );
-        $mappings = collect([...$layoutMappings['mappings'], ...$semanticMappings['mappings'], ...$formMappings['mappings']])
-            ->keyBy('field')
-            ->values()
-            ->all();
-        $tableLayouts = array_replace(
-            $layoutMappings['table_layouts'],
-            $semanticMappings['table_layouts'],
-            $formMappings['table_layouts'],
-        );
-        $mappedFields = collect($mappings)->pluck('field')->filter()->all();
-        $suggestions = [];
-        foreach ($this->fieldDefinitions($type) as $key => $definition) {
-            if ($definition['manual'] || in_array($key, $mappedFields, true)) {
-                continue;
-            }
-            $candidate = $this->detectField($key, $definition, $format, $review);
-            if ($candidate !== null) {
-                $suggestions[$key] = $candidate;
-            }
-        }
-
-        return [
-            'mappings' => $mappings,
-            'table_layouts' => $tableLayouts,
-            'analysis' => $this->analysis($type, $mappings, $suggestions, $tableLayouts),
+            // Consumed by DocumentTemplateController's preview()/sample() to
+            // gate an Office Draft's readiness (state/page_count) - present
+            // in the persisted content_template since prepareOfficeDraft(),
+            // but previously dropped here, which made Preview 422 for every
+            // Office Draft regardless of its actual preparation state.
+            'preparation' => is_array($decoded['preparation'] ?? null) ? $decoded['preparation'] : ['state' => 'PENDING'],
         ];
     }
 
@@ -685,344 +670,6 @@ class DocumentTemplateLayoutService
     }
 
     /**
-     * Build production positions from named PDF form widgets when present.
-     * Flat and scanned PDFs are mapped separately from visible labels and
-     * their detected geometry.
-     *
-     * @param array<string,mixed> $review
-     * @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array{row_height_percent:float,max_rows:int}>}
-     */
-    private function automaticPdfFormFieldMappings(string $type, array $review): array
-    {
-        $definitions = $this->fieldDefinitions($type);
-        $widgetsByField = [];
-
-        foreach ($review['fillable_widgets'] ?? [] as $widget) {
-            if (! is_array($widget)) {
-                continue;
-            }
-            $field = $this->fieldForSystemMarker((string) ($widget['name'] ?? ''), $definitions);
-            if ($field === null || ($definitions[$field]['manual'] ?? true)) {
-                continue;
-            }
-            if (! is_numeric($widget['page'] ?? null) || ! is_numeric($widget['x'] ?? null) || ! is_numeric($widget['y'] ?? null)) {
-                continue;
-            }
-            $widgetsByField[$field][] = $widget;
-        }
-
-        $mappings = [];
-        foreach ($widgetsByField as $field => $widgets) {
-            usort($widgets, fn (array $left, array $right): int => [(int) $left['page'], (float) $left['y'], (float) $left['x']] <=> [(int) $right['page'], (float) $right['y'], (float) $right['x']]);
-            $widget = $widgets[0];
-            $mappings[] = $this->mapping(
-                $field,
-                'click:automatic-pdf-form-field',
-                'PDF_FORM_FIELD',
-                1.0,
-                $definitions[$field]['label'],
-                str_starts_with($field, 'items.'),
-                (int) $widget['page'],
-                (float) $widget['x'],
-                (float) $widget['y'],
-            );
-        }
-
-        return [
-            'mappings' => $mappings,
-            'table_layouts' => $this->automaticPdfTableLayouts($definitions, $widgetsByField),
-        ];
-    }
-
-    /**
-     * Infer writable regions from visible labels and their page geometry. This
-     * intentionally runs before FPDI rendering and stores only internal
-     * percentages, never exposing implementation coordinates to an admin.
-     *
-     * @param list<array<string,mixed>> $existingMappings
-     * @return array{mappings:list<array<string,mixed>>,table_layouts:array<string,array{row_height_percent:float,max_rows:int}>}
-     */
-    private function automaticPdfLayoutMappings(string $type, array $review, array $existingMappings): array
-    {
-        $definitions = $this->fieldDefinitions($type);
-        $existing = collect($existingMappings)->pluck('field')->filter()->all();
-        $lines = is_array($review['layout_model']['phrases'] ?? null) && $review['layout_model']['phrases'] !== []
-            ? $review['layout_model']['phrases']
-            : array_values(array_filter($review['layout_lines'] ?? [], fn ($line): bool => is_array($line) && filled($line['text'] ?? null)));
-        if ($lines === []) {
-            return ['mappings' => [], 'table_layouts' => []];
-        }
-
-        $candidates = [];
-        foreach ($definitions as $field => $definition) {
-            // Keep wet-signature and approval areas out of automatic output.
-            // Optional fields that belong to a printed system table (such as
-            // release/return data and remarks) are mapped when clearly found.
-            if ($definition['manual']
-                || (! $definition['required'] && $definition['table'] === null)
-                || in_array($field, $existing, true)) {
-                continue;
-            }
-            $candidate = $this->bestLayoutLabel($field, $definition, $lines);
-            if ($candidate !== null) {
-                $candidates[$field] = $candidate;
-            }
-        }
-
-        $mappings = [];
-        foreach ($candidates as $field => $candidate) {
-            $fieldDefinition = $definitions[$field];
-            $maxWidth = null;
-            $sameHeaderLine = array_filter(
-                $candidates,
-                fn (array $other, string $otherField): bool => ($definitions[$otherField]['table'] ?? null) === $fieldDefinition['table']
-                    && (int) $other['page'] === (int) $candidate['page']
-                    && abs((float) $other['y'] - (float) $candidate['y']) <= 0.75,
-                ARRAY_FILTER_USE_BOTH,
-            );
-            if (! empty($candidate['is_value_marker'])) {
-                $x = (float) $candidate['x'];
-                $y = (float) $candidate['y'];
-                $method = 'PDF_VALUE_MARKER';
-            } elseif ($fieldDefinition['table'] !== null && count($sameHeaderLine) >= 2) {
-                $cell = $this->tableBodyCell($candidate, $review);
-                if ($cell !== null) {
-                    $x = (float) $cell['x'] + 0.35;
-                    $y = (float) $cell['y'] + 0.2;
-                    $maxWidth = max(1.0, (float) $cell['width'] - 0.7);
-                    $method = 'PDF_TABLE_CELL';
-                } else {
-                    $y = min(96.0, max(array_map(fn (array $other): float => (float) $other['y'] + (float) $other['height'], $sameHeaderLine)) + 1.4);
-                    $x = (float) $candidate['x'];
-                    $method = 'PDF_TABLE_HEADER';
-                }
-            } elseif ($field === 'remarks') {
-                $x = (float) $candidate['x'];
-                $y = min(96.0, (float) $candidate['y'] + (float) $candidate['height'] + 1.2);
-                $method = 'PDF_LABEL_BELOW';
-            } else {
-                $x = min(96.0, (float) $candidate['x'] + (float) $candidate['width'] + 1.8);
-                $y = (float) $candidate['y'];
-                $method = 'PDF_LABEL_VALUE_REGION';
-            }
-            $mapping = $this->mapping(
-                $field,
-                'click:automatic-layout-analysis',
-                $method,
-                (float) $candidate['confidence'],
-                (string) $candidate['text'],
-                str_starts_with($field, 'items.'),
-                (int) $candidate['page'],
-                round($x, 2),
-                round($y, 2),
-            );
-            if ($maxWidth !== null) {
-                $mapping['max_width_percent'] = round($maxWidth, 2);
-            }
-            $mappings[] = $mapping;
-        }
-
-        return [
-            'mappings' => $mappings,
-            'table_layouts' => $this->automaticLayoutTableLayouts($definitions, $mappings, $lines, $review),
-        ];
-    }
-
-    /**
-     * Return the first generic grid cell directly under a matched table
-     * header. The relationship is geometric; no document-type or revision
-     * coordinate is consulted.
-     *
-     * @param array<string,mixed> $header
-     * @param array<string,mixed> $review
-     * @return array<string,mixed>|null
-     */
-    private function tableBodyCell(array $header, array $review): ?array
-    {
-        $center = (float) $header['x'] + (float) $header['width'] / 2;
-        $minimumY = (float) $header['y'] + max(0.2, (float) $header['height'] * 0.55);
-        $cells = array_values(array_filter((array) ($review['layout_model']['cells'] ?? []), function ($cell) use ($header, $center, $minimumY): bool {
-            return is_array($cell)
-                && (int) ($cell['page'] ?? 0) === (int) $header['page']
-                && (float) ($cell['y'] ?? 0) >= $minimumY - 0.3
-                && $center >= (float) ($cell['x'] ?? 0) - 0.4
-                && $center <= (float) ($cell['x'] ?? 0) + (float) ($cell['width'] ?? 0) + 0.4;
-        }));
-        usort($cells, fn (array $left, array $right): int => (float) $left['y'] <=> (float) $right['y']);
-
-        return $cells[0] ?? null;
-    }
-
-    /**
-     * @param array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string} $definition
-     * @param list<array<string,mixed>> $lines
-     * @return array<string,mixed>|null
-     */
-    private function bestLayoutLabel(string $field, array $definition, array $lines): ?array
-    {
-        $best = null;
-        foreach ($lines as $line) {
-            $hasExplicitMarker = str_contains((string) $line['text'], '{{');
-            $markerField = $hasExplicitMarker
-                ? $this->fieldForSystemMarker((string) $line['text'], [$field => $definition])
-                : null;
-            if ($hasExplicitMarker && $markerField !== $field) {
-                continue;
-            }
-            $score = 0.0;
-            foreach ([$definition['label'], ...$definition['aliases']] as $index => $alias) {
-                $candidateScore = $this->labelConfidence((string) $line['text'], $alias);
-                // Prefer the complete schema label to a short alias when both
-                // appear on the same printed header line.
-                if ($index === 0 && $candidateScore >= 0.98) {
-                    $candidateScore += 0.01;
-                }
-                $score = max($score, $candidateScore);
-            }
-            $score *= max(0.5, (float) ($line['confidence'] ?? 1.0));
-            if ($score < 0.84 || ($best !== null && (
-                $score < (float) $best['confidence']
-                || (abs($score - (float) $best['confidence']) < 0.005 && (float) $line['y'] <= (float) $best['y'])
-            ))) {
-                continue;
-            }
-            $isValueMarker = $markerField === $field;
-            $best = [...$line, 'confidence' => round($score, 2), 'is_value_marker' => $isValueMarker];
-        }
-
-        return $best;
-    }
-
-    /**
-     * The writable table body begins beneath the detected column headers. Its
-     * lower boundary is the next visible section on the actual form, which
-     * gives a conservative row capacity without an administrator entering
-     * row geometry. If a lower boundary cannot be found, preparation must
-     * fail rather than allow generated rows to overlap the form.
-     *
-     * @param array<string,array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string}> $definitions
-     * @param list<array<string,mixed>> $mappings
-     * @param list<array<string,mixed>> $layoutLines
-     * @param array<string,mixed> $review
-     * @return array<string,array<string,mixed>>
-     */
-    private function automaticLayoutTableLayouts(array $definitions, array $mappings, array $layoutLines, array $review): array
-    {
-        $mappedByField = collect($mappings)->keyBy('field');
-        $layouts = [];
-        foreach (array_unique(array_filter(array_map(
-            fn (array $definition, string $field): ?string => str_starts_with($field, 'items.') ? $definition['table'] : null,
-            $definitions,
-            array_keys($definitions),
-        ))) as $table) {
-            $itemFields = array_keys(array_filter($definitions, fn (array $definition, string $field): bool => $definition['required'] && $definition['table'] === $table && str_starts_with($field, 'items.'), ARRAY_FILTER_USE_BOTH));
-            $itemMappings = array_values(array_filter(array_map(fn (string $field) => $mappedByField->get($field), $itemFields)));
-            if (count($itemMappings) !== count($itemFields)) {
-                continue;
-            }
-            $page = (int) $itemMappings[0]['page'];
-            $firstRowY = max(array_map(fn (array $mapping): float => (float) $mapping['y'], $itemMappings));
-            $grid = $this->pdfReader->tableGridForMappings(
-                $itemMappings,
-                is_array($review['layout_model'] ?? null) ? $review['layout_model'] : [],
-            );
-            $nextSectionY = $grid['body_bottom_percent'] ?? min(array_filter(array_map(
-                fn (array $line): ?float => (int) ($line['page'] ?? 0) === $page
-                    && filled($line['text'] ?? null)
-                    && (float) ($line['y'] ?? 0) > $firstRowY + 1.2
-                    ? (float) $line['y']
-                    : null,
-                $layoutLines,
-            )) ?: [0.0]);
-
-            // A detected grid has an exact approved bottom boundary.  When
-            // raster geometry is unavailable, keep a conservative clearance
-            // before the next visible section and never claim that grid rows
-            // can be redrawn.
-            $availableHeight = $grid !== null
-                ? (float) $grid['body_bottom_percent'] - (float) $grid['body_top_percent']
-                : (float) $nextSectionY - $firstRowY - 2.6;
-            if ($availableHeight < 2.2) {
-                continue;
-            }
-            $maxRows = $grid !== null
-                ? max(1, (int) $grid['row_capacity'])
-                : max(1, min(20, (int) floor($availableHeight / 1.8)));
-            $rowHeight = $grid !== null
-                ? (float) $grid['baseline_row_height_percent']
-                : min(6.0, max(1.8, $availableHeight / $maxRows));
-            $layouts[$table] = [
-                'row_height_percent' => round($rowHeight, 2),
-                'max_rows' => $maxRows,
-                'max_height_percent' => round($availableHeight, 2),
-            ];
-            if ($grid !== null) {
-                $layouts[$table]['grid'] = $grid;
-            }
-        }
-
-        return $layouts;
-    }
-
-    /**
-     * A repeating table is usable only when every required item column has at
-     * least two named rows on one page. This establishes both row spacing and
-     * safe visible capacity without an administrator entering either value.
-     *
-     * @param array<string,array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string}> $definitions
-     * @param array<string,list<array<string,mixed>>> $widgetsByField
-     * @return array<string,array{row_height_percent:float,max_rows:int}>
-     */
-    private function automaticPdfTableLayouts(array $definitions, array $widgetsByField): array
-    {
-        $layouts = [];
-        foreach (array_unique(array_filter(array_map(
-            fn (array $definition, string $field): ?string => str_starts_with($field, 'items.') ? $definition['table'] : null,
-            $definitions,
-            array_keys($definitions),
-        ))) as $table) {
-            $fields = array_keys(array_filter($definitions, fn (array $definition, string $field): bool => $definition['required'] && $definition['table'] === $table && str_starts_with($field, 'items.'), ARRAY_FILTER_USE_BOTH));
-            if ($fields === []) {
-                continue;
-            }
-
-            $rowsByField = [];
-            foreach ($fields as $field) {
-                $rows = array_values(array_filter($widgetsByField[$field] ?? [], fn (array $widget): bool => is_numeric($widget['page'] ?? null) && is_numeric($widget['y'] ?? null)));
-                usort($rows, fn (array $left, array $right): int => [(int) $left['page'], (float) $left['y']] <=> [(int) $right['page'], (float) $right['y']]);
-                if (count($rows) < 2 || (int) $rows[0]['page'] !== (int) $rows[1]['page']) {
-                    continue 2;
-                }
-                $rowsByField[$field] = $rows;
-            }
-
-            $firstFieldRows = reset($rowsByField);
-            $first = $firstFieldRows[0];
-            $second = $firstFieldRows[1];
-            $rowHeight = (float) $second['y'] - (float) $first['y'];
-            if ($rowHeight <= 0 || $rowHeight > 25) {
-                continue;
-            }
-
-            $samePageCounts = array_map(
-                fn (array $rows): int => count(array_filter($rows, fn (array $row): bool => (int) $row['page'] === (int) $first['page'])),
-                $rowsByField,
-            );
-            $maxRows = min($samePageCounts);
-            if ($maxRows < 2) {
-                continue;
-            }
-            $layouts[$table] = [
-                'row_height_percent' => round($rowHeight, 2),
-                'max_rows' => $maxRows,
-                'max_height_percent' => round($rowHeight * $maxRows, 2),
-            ];
-        }
-
-        return $layouts;
-    }
-
-    /**
      * Read enough uncompressed AcroForm metadata to make a deterministic
      * decision. PDFs using object streams remain valid uploads, but are not
      * treated as system-ready unless their field geometry is available.
@@ -1117,44 +764,14 @@ class DocumentTemplateLayoutService
         return null;
     }
 
-    /**
-     * @param array<string,array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string}> $definitions
-     */
-    private function fieldForSystemMarker(string $marker, array $definitions): ?string
-    {
-        $marker = trim($marker, " \t\n\r\0\x0B{}");
-        $candidates = [$marker];
-        $withoutRowNumber = preg_replace('/(?:[._\-\s]|\[)?(?:row)?\d+\]?$/i', '', $marker);
-        if (is_string($withoutRowNumber) && $withoutRowNumber !== $marker) {
-            $candidates[] = $withoutRowNumber;
-        }
-
-        foreach ($candidates as $candidate) {
-            $normalisedCandidate = $this->normalise($candidate);
-            foreach ($definitions as $field => $definition) {
-                $markers = [$field, $definition['label'], ...$definition['aliases']];
-                if ($definition['table'] !== null) {
-                    $markers[] = str_starts_with($field, 'items.') ? $field : 'items.'.$field;
-                    foreach ($definition['aliases'] as $alias) {
-                        $markers[] = 'items.'.$alias;
-                    }
-                }
-                foreach ($markers as $knownMarker) {
-                    if ($normalisedCandidate !== '' && $normalisedCandidate === $this->normalise($knownMarker)) {
-                        return $field;
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
     /** @return array<string,mixed> */
     private function inspectDocx(string $bytes): array
     {
         [$zip, $path] = $this->openZip($bytes, 'DOCX');
         try {
+            if ($zip->getFromName('[Content_Types].xml') === false) {
+                throw ValidationException::withMessages(['template_file' => 'The uploaded DOCX is missing its Office package manifest.']);
+            }
             $document = $zip->getFromName('word/document.xml');
             if ($document === false) {
                 throw ValidationException::withMessages(['template_file' => 'The uploaded DOCX is missing its Word document content.']);
@@ -1169,7 +786,14 @@ class DocumentTemplateLayoutService
             preg_match_all('/\{\{[a-z0-9_.]+\}\}/i', $xml, $matches);
             preg_match_all('/(?:w:tag|w:alias)\s+w:val="([^"]+)"/i', $xml, $controls);
             $text = trim(html_entity_decode(strip_tags(preg_replace('/<w:tab[^>]*\/>/i', ' ', $xml) ?? $xml)));
-            return ['placeholders' => array_values(array_unique($matches[0] ?? [])), 'content_controls' => array_values(array_unique($controls[1] ?? [])), 'has_tables' => str_contains($xml, '<w:tbl'), 'text' => $text, 'labels' => $this->labelsFromText($text)];
+            return [
+                'placeholders' => array_values(array_unique($matches[0] ?? [])),
+                'content_controls' => array_values(array_unique($controls[1] ?? [])),
+                'has_tables' => str_contains($xml, '<w:tbl'),
+                'text' => $text,
+                'labels' => $this->labelsFromText($text),
+                'dynamic_schema' => $this->docxDynamicSchema($zip),
+            ];
         } finally {
             $zip->close();
             @unlink($path);
@@ -1216,38 +840,17 @@ class DocumentTemplateLayoutService
             if ($worksheets === []) {
                 throw ValidationException::withMessages(['template_file' => 'The uploaded XLSX has no readable worksheets.']);
             }
-            return ['worksheets' => $worksheets, 'labels' => $labels, 'text' => implode("\n", array_column($labels, 'text')), 'tables' => array_values(array_unique($tableNames))];
+            return [
+                'worksheets' => $worksheets,
+                'labels' => $labels,
+                'text' => implode("\n", array_column($labels, 'text')),
+                'tables' => array_values(array_unique($tableNames)),
+                'dynamic_schema' => $this->xlsxDynamicSchema($zip),
+            ];
         } finally {
             $zip->close();
             @unlink($path);
         }
-    }
-
-    /** @param array{label:string,aliases:list<string>,required:bool,manual:bool,table:?string} $definition @param array<string,mixed> $review @return array{target:string,method:string,confidence:float,location_label:string}|null */
-    private function detectField(string $field, array $definition, string $format, array $review): ?array
-    {
-        $token = '{{'.$field.'}}';
-        if ($format === 'DOCX' && in_array($token, array_map('strval', $review['placeholders'] ?? []), true)) {
-            return ['target' => $token, 'method' => 'DOCX_PLACEHOLDER', 'confidence' => 1.0, 'location_label' => $definition['label']];
-        }
-        foreach ($review['labels'] ?? [] as $sourceLabel) {
-            $text = is_array($sourceLabel) ? (string) ($sourceLabel['text'] ?? '') : (string) $sourceLabel;
-            $location = is_array($sourceLabel) ? (string) ($sourceLabel['location'] ?? '') : '';
-            foreach ($definition['aliases'] as $alias) {
-                $score = $this->labelConfidence($text, $alias);
-                if ($score < 0.8) {
-                    continue;
-                }
-                return ['target' => $format === 'XLSX' && $location !== '' ? $location : 'anchor:'.$text, 'method' => $format.'_LABEL', 'confidence' => $score, 'location_label' => $text];
-            }
-        }
-        return null;
-    }
-
-    /** @return array<string,mixed> */
-    private function mapping(string $field, string $target, string $method, float $confidence, string $locationLabel, bool $repeating, ?int $page = null, ?float $x = null, ?float $y = null): array
-    {
-        return ['field' => $field, 'target' => $target, 'method' => $method, 'confidence' => round($confidence, 2), 'location_label' => $locationLabel, 'page' => $page, 'x' => $x, 'y' => $y, 'repeating' => $repeating];
     }
 
     /** @return list<array{text:string,location:string}> */
@@ -1262,24 +865,6 @@ class DocumentTemplateLayoutService
             }
         }
         return array_slice(array_values(array_unique($labels, SORT_REGULAR)), 0, 250);
-    }
-
-    private function labelConfidence(string $source, string $alias): float
-    {
-        $source = $this->normalise($source);
-        $alias = $this->normalise($alias);
-        if ($source === '' || $alias === '') {
-            return 0.0;
-        }
-        if ($source === $alias) {
-            return 0.98;
-        }
-        if (str_contains($source, $alias)) {
-            return 0.92;
-        }
-        $sourceWords = array_filter(explode(' ', $source));
-        $aliasWords = array_filter(explode(' ', $alias));
-        return count($aliasWords) > 0 && count(array_intersect($sourceWords, $aliasWords)) === count($aliasWords) ? 0.84 : 0.0;
     }
 
     private function normalise(string $value): string
@@ -1307,6 +892,546 @@ class DocumentTemplateLayoutService
         return preg_match('/<v>(.*?)<\/v>/is', $content, $match) === 1 ? trim(html_entity_decode(strip_tags($match[1]))) : '';
     }
 
+    /** @return array<string,mixed> */
+    private function docxDynamicSchema(ZipArchive $zip): array
+    {
+        $parts = [];
+        $controls = [];
+        $bookmarks = [];
+        $tables = [];
+        $sections = [];
+        $headersFooters = [];
+        $unsupported = [];
+        $partNames = [];
+        $truncations = [];
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (! is_string($name)) {
+                continue;
+            }
+            if ($name === 'word/document.xml' || preg_match('#^word/(?:header|footer)\d+\.xml$#', $name) === 1) {
+                $partNames[] = $name;
+            }
+            if (str_starts_with($name, 'word/embeddings/') || str_starts_with($name, 'word/activeX/')) {
+                $unsupported[] = ['part' => $name, 'kind' => 'embedded_office_object'];
+            }
+        }
+
+        foreach ($partNames as $part) {
+            $xml = $zip->getFromName($part);
+            if (! is_string($xml)) {
+                continue;
+            }
+            [$document, $xpath] = $this->officeXml($xml, 'DOCX', $part, ['w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'wp' => 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing']);
+            $isHeaderFooter = $part !== 'word/document.xml';
+            if ($isHeaderFooter) {
+                $headersFooters[] = ['part' => $part, 'paragraphs' => $xpath->query('//w:p')->length, 'tables' => $xpath->query('//w:tbl')->length];
+            }
+            $parts[] = ['part' => $part, 'paragraphs' => $xpath->query('//w:p')->length, 'tables' => $xpath->query('//w:tbl')->length];
+
+            foreach ($xpath->query('//w:sdt') as $index => $control) {
+                if (! $control instanceof \DOMElement) {
+                    continue;
+                }
+                $properties = $xpath->query('./w:sdtPr', $control)->item(0);
+                $tag = $this->officeAttribute($xpath->query('./w:tag', $properties)->item(0), 'val');
+                $alias = $this->officeAttribute($xpath->query('./w:alias', $properties)->item(0), 'val');
+                $id = $this->officeAttribute($xpath->query('./w:id', $properties)->item(0), 'val');
+                $binding = $xpath->query('./w:dataBinding', $properties)->item(0);
+                $locked = $xpath->query('./w:lock', $properties)->length > 0;
+                $classification = $locked
+                    ? 'LOCKED_UNSUPPORTED'
+                    : ($binding instanceof \DOMElement ? 'SYSTEM_CONTROLLED' : 'PENDING_RUNTIME_CLASSIFICATION');
+                $entry = [
+                    'part' => $part,
+                    'index' => $index + 1,
+                    'id' => $id,
+                    'tag' => $tag,
+                    'alias' => $alias,
+                    'data_binding' => $binding instanceof \DOMElement ? [
+                        'xpath' => $this->officeAttribute($binding, 'xpath'),
+                        'store_item_id' => $this->officeAttribute($binding, 'storeItemID'),
+                    ] : null,
+                    'classification' => $classification,
+                ];
+                $controls[] = $entry;
+            }
+
+            foreach ($xpath->query('//w:bookmarkStart') as $bookmark) {
+                if ($bookmark instanceof \DOMElement) {
+                    $bookmarks[] = ['part' => $part, 'id' => $this->officeAttribute($bookmark, 'id'), 'name' => $this->officeAttribute($bookmark, 'name')];
+                }
+            }
+
+            foreach ($xpath->query('//w:tbl') as $index => $table) {
+                if (! $table instanceof \DOMElement) {
+                    continue;
+                }
+                $rowCount = $xpath->query('./w:tr', $table)->length;
+                $cellCounts = [];
+                foreach ($xpath->query('./w:tr', $table) as $row) {
+                    $cellCounts[] = $xpath->query('./w:tc', $row)->length;
+                }
+                $tables[] = ['part' => $part, 'index' => $index + 1, 'rows' => $rowCount, 'cells_per_row' => $cellCounts];
+            }
+
+            if ($part === 'word/document.xml') {
+                foreach ($xpath->query('//w:sectPr') as $index => $section) {
+                    if (! $section instanceof \DOMElement) {
+                        continue;
+                    }
+                    $pageSize = $xpath->query('./w:pgSz', $section)->item(0);
+                    $margins = $xpath->query('./w:pgMar', $section)->item(0);
+                    $break = $xpath->query('./w:type', $section)->item(0);
+                    $sections[] = [
+                        'index' => $index + 1,
+                        'width_twips' => $this->officeAttribute($pageSize, 'w'),
+                        'height_twips' => $this->officeAttribute($pageSize, 'h'),
+                        'orientation' => $this->officeAttribute($pageSize, 'orient') ?: 'portrait',
+                        'margins_twips' => [
+                            'top' => $this->officeAttribute($margins, 'top'), 'right' => $this->officeAttribute($margins, 'right'),
+                            'bottom' => $this->officeAttribute($margins, 'bottom'), 'left' => $this->officeAttribute($margins, 'left'),
+                        ],
+                        'break_type' => $this->officeAttribute($break, 'val'),
+                    ];
+                }
+            }
+
+            if ($xpath->query('//wp:anchor | //w:txbxContent')->length > 0) {
+                $unsupported[] = ['part' => $part, 'kind' => 'floating_shape_or_textbox'];
+            }
+            unset($document);
+        }
+
+        $customProperties = $this->customProperties($zip);
+        $schema = $this->newDynamicSchema('DOCX');
+        $schema['office_identity']['content_controls'] = $this->boundedSchemaNodes($controls, $truncations, 'office_identity.content_controls');
+        $schema['office_identity']['bookmarks'] = $this->boundedSchemaNodes($bookmarks, $truncations, 'office_identity.bookmarks');
+        $schema['office_identity']['custom_properties'] = $this->boundedSchemaNodes($customProperties, $truncations, 'office_identity.custom_properties');
+        $schema['document_structure'] = [
+            'parts' => $this->boundedSchemaNodes($parts, $truncations, 'document_structure.parts'),
+            'sections' => $this->boundedSchemaNodes($sections, $truncations, 'document_structure.sections'),
+            'tables' => $this->boundedSchemaNodes($tables, $truncations, 'document_structure.tables'),
+            'headers_footers' => $this->boundedSchemaNodes($headersFooters, $truncations, 'document_structure.headers_footers'),
+            // DOCX is flow-based. Pagination is intentionally not inferred
+            // before LibreOffice renders the final working document.
+            'pre_render_page_coordinates' => false,
+        ];
+        $schema['regions'] = $this->docxRegions($controls);
+        $schema['style_edit_metadata'] = $this->docxStyleMetadata($zip, $truncations);
+        $schema['unsupported'] = $this->boundedSchemaNodes($unsupported, $truncations, 'unsupported');
+        $this->appendOfficeWarnings($schema, $controls, $unsupported);
+        $this->appendSchemaTruncationWarnings($schema, $truncations);
+
+        return $schema;
+    }
+
+    /** @return array<string,mixed> */
+    private function xlsxDynamicSchema(ZipArchive $zip): array
+    {
+        $workbookXml = $zip->getFromName('xl/workbook.xml');
+        if (! is_string($workbookXml)) {
+            throw ValidationException::withMessages(['template_file' => 'The uploaded XLSX is missing workbook metadata.']);
+        }
+        [, $workbookXpath] = $this->officeXml($workbookXml, 'XLSX', 'xl/workbook.xml', ['x' => 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', 'r' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships']);
+        $relationships = $this->xlsxRelationships($zip);
+        $worksheets = [];
+        $namedRanges = [];
+        $tables = [];
+        $unsupported = [];
+        $truncations = [];
+
+        foreach ($workbookXpath->query('//x:definedName') as $definedName) {
+            if ($definedName instanceof \DOMElement) {
+                $reference = $this->safeNamedRangeReference($definedName->textContent);
+                $namedRanges[] = [
+                    'name' => $this->officeAttribute($definedName, 'name'),
+                    'scope_sheet_id' => $this->officeAttribute($definedName, 'localSheetId'),
+                    // Persist only a safe cell/range reference. Arbitrary
+                    // defined-name formulas can contain source values.
+                    'reference' => $reference,
+                ];
+            }
+        }
+
+        foreach ($workbookXpath->query('//x:sheets/x:sheet') as $sheet) {
+            if (! $sheet instanceof \DOMElement) {
+                continue;
+            }
+            $name = $this->officeAttribute($sheet, 'name');
+            $relationshipId = $this->officeAttribute($sheet, 'id');
+            $target = $relationships[$relationshipId] ?? null;
+            $sheetPath = $target ? $this->xlsxTargetPath('xl/workbook.xml', $target) : null;
+            if (! $sheetPath || ! is_string($sheetXml = $zip->getFromName($sheetPath))) {
+                continue;
+            }
+            [, $sheetXpath] = $this->officeXml($sheetXml, 'XLSX', $sheetPath, ['x' => 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', 'r' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships']);
+            $rows = [];
+            foreach ($sheetXpath->query('//x:sheetData/x:row') as $row) {
+                if (! $row instanceof \DOMElement) {
+                    continue;
+                }
+                $rows[] = ['row' => $this->officeAttribute($row, 'r'), 'height' => $this->officeAttribute($row, 'ht'), 'custom_height' => $this->officeAttribute($row, 'customHeight') === '1'];
+            }
+            $occupiedCells = [];
+            foreach ($sheetXpath->query('//x:sheetData/x:row/x:c') as $cell) {
+                if (! $cell instanceof \DOMElement) {
+                    continue;
+                }
+                $reference = $this->officeAttribute($cell, 'r');
+                if ($reference !== '') {
+                    // A cell address is structural metadata; its contents
+                    // remain only in the immutable Office source.
+                    $occupiedCells[] = $reference;
+                }
+            }
+            $merges = [];
+            foreach ($sheetXpath->query('//x:mergeCells/x:mergeCell') as $merge) {
+                if ($merge instanceof \DOMElement) {
+                    $merges[] = $this->officeAttribute($merge, 'ref');
+                }
+            }
+            $columns = [];
+            foreach ($sheetXpath->query('//x:cols/x:col') as $column) {
+                if ($column instanceof \DOMElement) {
+                    $columns[] = ['min' => $this->officeAttribute($column, 'min'), 'max' => $this->officeAttribute($column, 'max'), 'width' => $this->officeAttribute($column, 'width'), 'hidden' => $this->officeAttribute($column, 'hidden') === '1'];
+                }
+            }
+            $pageSetup = $sheetXpath->query('//x:pageSetup')->item(0);
+            $pageMargins = $sheetXpath->query('//x:pageMargins')->item(0);
+            $worksheets[] = [
+                'name' => $name,
+                'part' => $sheetPath,
+                'rows' => $this->boundedSchemaNodes($rows, $truncations, 'document_structure.worksheets.'.$name.'.rows'),
+                'columns' => $this->boundedSchemaNodes($columns, $truncations, 'document_structure.worksheets.'.$name.'.columns'),
+                'occupied_cells' => $this->boundedSchemaNodes($occupiedCells, $truncations, 'document_structure.worksheets.'.$name.'.occupied_cells'),
+                'merged_cells' => $this->boundedSchemaNodes($merges, $truncations, 'document_structure.worksheets.'.$name.'.merged_cells'),
+                'print_area' => $this->namedRangeReference($namedRanges, '_xlnm.Print_Area', $name),
+                'page_setup' => [
+                    'orientation' => $this->officeAttribute($pageSetup, 'orientation'),
+                    'paper_size' => $this->officeAttribute($pageSetup, 'paperSize'),
+                    'fit_to_width' => $this->officeAttribute($pageSetup, 'fitToWidth'),
+                    'fit_to_height' => $this->officeAttribute($pageSetup, 'fitToHeight'),
+                    'margins' => ['top' => $this->officeAttribute($pageMargins, 'top'), 'right' => $this->officeAttribute($pageMargins, 'right'), 'bottom' => $this->officeAttribute($pageMargins, 'bottom'), 'left' => $this->officeAttribute($pageMargins, 'left')],
+                ],
+            ];
+        }
+
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $part = $zip->getNameIndex($i);
+            if (! is_string($part)) {
+                continue;
+            }
+            if (str_starts_with($part, 'xl/tables/') && str_ends_with($part, '.xml') && is_string($tableXml = $zip->getFromIndex($i))) {
+                [, $tableXpath] = $this->officeXml($tableXml, 'XLSX', $part, ['x' => 'http://schemas.openxmlformats.org/spreadsheetml/2006/main']);
+                $table = $tableXpath->query('//x:table')->item(0);
+                if ($table instanceof \DOMElement) {
+                    $columns = [];
+                    foreach ($tableXpath->query('//x:table/x:tableColumns/x:tableColumn') as $column) {
+                        if ($column instanceof \DOMElement) {
+                            $columns[] = $this->officeAttribute($column, 'name');
+                        }
+                    }
+                    $tables[] = ['part' => $part, 'name' => $this->officeAttribute($table, 'displayName'), 'ref' => $this->officeAttribute($table, 'ref'), 'columns' => $columns];
+                }
+            }
+            if (str_starts_with($part, 'xl/drawings/') || str_starts_with($part, 'xl/embeddings/')) {
+                $unsupported[] = ['part' => $part, 'kind' => str_starts_with($part, 'xl/embeddings/') ? 'embedded_office_object' : 'drawing_object'];
+            }
+        }
+
+        $schema = $this->newDynamicSchema('XLSX');
+        $schema['office_identity']['named_ranges'] = $this->boundedSchemaNodes($namedRanges, $truncations, 'office_identity.named_ranges');
+        $schema['office_identity']['tables'] = $this->boundedSchemaNodes($tables, $truncations, 'office_identity.tables');
+        $schema['office_identity']['custom_properties'] = $this->boundedSchemaNodes($this->customProperties($zip), $truncations, 'office_identity.custom_properties');
+        $schema['document_structure'] = [
+            'worksheets' => $this->boundedSchemaNodes($worksheets, $truncations, 'document_structure.worksheets'),
+            'tables' => $this->boundedSchemaNodes($tables, $truncations, 'document_structure.tables'),
+        ];
+        $schema['regions'] = [
+            'static_editable' => [],
+            // Excel built-ins such as Print_Area describe layout, not a
+            // writable business-data region. They remain in the structural
+            // schema but are never offered to a future runtime resolver.
+            'data' => array_map(fn (array $range): array => ['identity' => 'named_range:'.$range['name'], 'classification' => 'PENDING_RUNTIME_CLASSIFICATION'], $this->runtimeNamedRanges($namedRanges)),
+            'signatures' => array_values(array_filter(array_map(fn (array $range): ?array => str_contains($this->normalise($range['name']), 'signature') ? ['identity' => 'named_range:'.$range['name'], 'classification' => 'SYSTEM_CONTROLLED'] : null, $this->runtimeNamedRanges($namedRanges)))),
+            'repeating' => array_map(fn (array $table): array => ['identity' => 'table:'.$table['name'], 'classification' => 'PENDING_RUNTIME_CLASSIFICATION'], $tables),
+        ];
+        $schema['style_edit_metadata'] = $this->xlsxStyleMetadata($zip, $truncations);
+        $schema['unsupported'] = $this->boundedSchemaNodes($unsupported, $truncations, 'unsupported');
+        $this->appendOfficeWarnings($schema, $namedRanges, $unsupported);
+        $this->appendSchemaTruncationWarnings($schema, $truncations);
+
+        return $schema;
+    }
+
+    /** @return array<string,mixed> */
+    private function newDynamicSchema(string $format): array
+    {
+        return [
+            'schema_version' => 1,
+            'source' => ['format' => $format],
+            'office_identity' => ['content_controls' => [], 'bookmarks' => [], 'named_ranges' => [], 'tables' => [], 'custom_properties' => []],
+            'document_structure' => [],
+            'regions' => ['static_editable' => [], 'data' => [], 'signatures' => [], 'repeating' => []],
+            'style_edit_metadata' => [],
+            'resolver' => ['bindings' => [], 'unresolved' => [], 'confidence' => []],
+            'compatibility_warnings' => [],
+            'unsupported' => [],
+        ];
+    }
+
+    /** @param list<array<string,mixed>> $controls @return array<string,list<array<string,mixed>>> */
+    private function docxRegions(array $controls): array
+    {
+        $regions = ['static_editable' => [], 'data' => [], 'signatures' => [], 'repeating' => []];
+        foreach ($controls as $control) {
+            $identity = trim((string) ($control['tag'] ?: $control['alias'] ?: $control['id']));
+            if ($identity === '') {
+                continue;
+            }
+            $entry = ['identity' => 'content_control:'.$identity, 'classification' => $control['classification']];
+            $normalised = $this->normalise($identity.' '.($control['alias'] ?? ''));
+            if (str_contains($normalised, 'signature')) {
+                $regions['signatures'][] = $entry;
+            } elseif (str_contains($normalised, 'repeat') || str_contains($normalised, 'collection')) {
+                $regions['repeating'][] = $entry;
+            } elseif (($control['data_binding'] ?? null) !== null || ($control['tag'] ?? '') !== '') {
+                $regions['data'][] = $entry;
+            } elseif ($control['classification'] === 'PENDING_RUNTIME_CLASSIFICATION') {
+                $regions['static_editable'][] = $entry;
+            }
+        }
+
+        return $regions;
+    }
+
+    /** @param array<string,mixed> $schema @param list<mixed> $identities @param list<mixed> $unsupported */
+    private function appendOfficeWarnings(array &$schema, array $identities, array $unsupported): void
+    {
+        if ($identities === []) {
+            $schema['compatibility_warnings'][] = ['severity' => 'WARNING', 'code' => 'NO_EMBEDDED_OFFICE_IDENTITY', 'message' => 'No supported hidden Office identity was found. Later phases may use structural and visible-label recognition only.'];
+        } else {
+            $schema['compatibility_warnings'][] = ['severity' => 'INFO', 'code' => 'OFFICE_IDENTITY_DISCOVERED', 'message' => 'Supported Office identity was discovered and remains hidden from ordinary Admin users.'];
+        }
+        foreach ($unsupported as $object) {
+            $schema['compatibility_warnings'][] = ['severity' => 'WARNING', 'code' => 'LOCKED_UNSUPPORTED_OFFICE_OBJECT', 'message' => 'An Office object is locked for future editor changes because it cannot yet be safely preserved.', 'part' => $object['part'] ?? null];
+        }
+    }
+
+    /** @param array<string,mixed> $schema @param list<array{path:string,discovered_count:int}> $truncations */
+    private function appendSchemaTruncationWarnings(array &$schema, array $truncations): void
+    {
+        foreach ($truncations as $truncation) {
+            $schema['compatibility_warnings'][] = [
+                'severity' => 'BLOCKING',
+                'code' => 'SCHEMA_NODE_LIMIT_EXCEEDED',
+                'message' => 'The Office layout contains more structural entries than can be safely persisted for a complete template schema.',
+                'path' => $truncation['path'],
+                'discovered_count' => $truncation['discovered_count'],
+            ];
+        }
+    }
+
+    /** @return array{0:\DOMDocument,1:\DOMXPath} */
+    private function officeXml(string $xml, string $format, string $part, array $namespaces): array
+    {
+        if (! class_exists(\DOMDocument::class)) {
+            throw ValidationException::withMessages(['template_file' => "$format structure validation requires the PHP DOM extension."]);
+        }
+        $document = new \DOMDocument;
+        if (! @$document->loadXML($xml, LIBXML_NONET | LIBXML_COMPACT)) {
+            throw ValidationException::withMessages(['template_file' => "The uploaded $format contains unreadable Office XML in $part."]);
+        }
+        $xpath = new \DOMXPath($document);
+        foreach ($namespaces as $prefix => $namespace) {
+            $xpath->registerNamespace($prefix, $namespace);
+        }
+
+        return [$document, $xpath];
+    }
+
+    private function officeAttribute(?\DOMNode $node, string $localName): string
+    {
+        if (! $node instanceof \DOMElement) {
+            return '';
+        }
+        foreach ($node->attributes as $attribute) {
+            if ($attribute->localName === $localName) {
+                return $attribute->value;
+            }
+        }
+
+        return '';
+    }
+
+    private function boundedText(string $text, int $limit): string
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+
+        return mb_substr($text, 0, $limit);
+    }
+
+    /** @param list<mixed> $nodes @param list<array{path:string,discovered_count:int}> $truncations @return list<mixed> */
+    private function boundedSchemaNodes(array $nodes, array &$truncations, string $path): array
+    {
+        if (count($nodes) > self::MAX_SCHEMA_NODES) {
+            $truncations[] = ['path' => $path, 'discovered_count' => count($nodes)];
+        }
+
+        return array_slice(array_values($nodes), 0, self::MAX_SCHEMA_NODES);
+    }
+
+    /** @return list<array<string,string>> */
+    private function customProperties(ZipArchive $zip): array
+    {
+        $xml = $zip->getFromName('docProps/custom.xml');
+        if (! is_string($xml)) {
+            return [];
+        }
+        [, $xpath] = $this->officeXml($xml, 'Office', 'docProps/custom.xml', ['cp' => 'http://schemas.openxmlformats.org/officeDocument/2006/custom-properties']);
+        $properties = [];
+        foreach ($xpath->query('//cp:property') as $property) {
+            if ($property instanceof \DOMElement) {
+                $properties[] = ['name' => $this->officeAttribute($property, 'name')];
+            }
+        }
+
+        return $properties;
+    }
+
+    /** @return array<string,mixed> */
+    private function docxStyleMetadata(ZipArchive $zip, array &$truncations): array
+    {
+        $xml = $zip->getFromName('word/styles.xml');
+        $styles = [];
+        if (is_string($xml)) {
+            [, $xpath] = $this->officeXml($xml, 'DOCX', 'word/styles.xml', ['w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main']);
+            foreach ($xpath->query('//w:style') as $style) {
+                if ($style instanceof \DOMElement) {
+                    $name = $xpath->query('./w:name', $style)->item(0);
+                    $styles[] = [
+                        'id' => $this->officeAttribute($style, 'styleId'),
+                        'type' => $this->officeAttribute($style, 'type'),
+                        'name' => $this->officeAttribute($name, 'val'),
+                    ];
+                }
+            }
+        }
+
+        return [
+            'supported_presentation_operations' => ['wording', 'alignment', 'spacing', 'wrapping', 'safe_font_size', 'table_presentation'],
+            'available_styles' => $this->boundedSchemaNodes($styles, $truncations, 'style_edit_metadata.available_styles'),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function xlsxStyleMetadata(ZipArchive $zip, array &$truncations): array
+    {
+        $xml = $zip->getFromName('xl/styles.xml');
+        $counts = ['fonts' => 0, 'fills' => 0, 'borders' => 0, 'cell_formats' => 0];
+        if (is_string($xml)) {
+            [, $xpath] = $this->officeXml($xml, 'XLSX', 'xl/styles.xml', ['x' => 'http://schemas.openxmlformats.org/spreadsheetml/2006/main']);
+            $counts = [
+                'fonts' => $xpath->query('//x:fonts/x:font')->length,
+                'fills' => $xpath->query('//x:fills/x:fill')->length,
+                'borders' => $xpath->query('//x:borders/x:border')->length,
+                'cell_formats' => $xpath->query('//x:cellXfs/x:xf')->length,
+            ];
+        }
+
+        return [
+            'supported_presentation_operations' => ['wording', 'alignment', 'wrapping', 'row_height', 'column_width', 'table_presentation'],
+            'style_counts' => $counts,
+        ];
+    }
+
+    /** @return array<string,string> */
+    private function xlsxRelationships(ZipArchive $zip): array
+    {
+        $xml = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        if (! is_string($xml)) {
+            throw ValidationException::withMessages(['template_file' => 'The uploaded XLSX is missing workbook relationships.']);
+        }
+        [, $xpath] = $this->officeXml($xml, 'XLSX', 'xl/_rels/workbook.xml.rels', ['r' => 'http://schemas.openxmlformats.org/package/2006/relationships']);
+        $relationships = [];
+        foreach ($xpath->query('//r:Relationship') as $relationship) {
+            if ($relationship instanceof \DOMElement) {
+                $relationships[$this->officeAttribute($relationship, 'Id')] = $this->officeAttribute($relationship, 'Target');
+            }
+        }
+
+        return $relationships;
+    }
+
+    private function xlsxTargetPath(string $base, string $target): string
+    {
+        $target = str_replace('\\', '/', $target);
+        $baseDirectory = str_replace('\\', '/', dirname($base));
+        $segments = [];
+        foreach (explode('/', $baseDirectory.'/'.$target) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($segments);
+                continue;
+            }
+            $segments[] = $segment;
+        }
+
+        return implode('/', $segments);
+    }
+
+    /** @param list<array<string,mixed>> $ranges */
+    private function namedRangeReference(array $ranges, string $name, string $worksheet): string
+    {
+        foreach ($ranges as $range) {
+            $reference = (string) ($range['reference'] ?? '');
+            $worksheetReference = preg_quote($worksheet, '/');
+            if (($range['name'] ?? '') === $name && preg_match("/(?:'{$worksheetReference}'|{$worksheetReference})!/", $reference) === 1) {
+                return $reference;
+            }
+        }
+
+        return '';
+    }
+
+    private function safeNamedRangeReference(string $formula): ?string
+    {
+        $reference = trim(ltrim(trim($formula), '='));
+        $sheetReference = "(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_. ]*)!\\$?[A-Z]{1,3}\\$?\\d+(?::\\$?[A-Z]{1,3}\\$?\\d+)?";
+
+        return preg_match('/^'.$sheetReference.'(?:,'.$sheetReference.')*$/', $reference) === 1
+            ? $this->boundedText($reference, 300)
+            : null;
+    }
+
+    /** @param list<array<string,mixed>> $ranges @return list<array<string,mixed>> */
+    private function runtimeNamedRanges(array $ranges): array
+    {
+        return array_values(array_filter($ranges, fn (array $range): bool => ! str_starts_with(strtolower((string) ($range['name'] ?? '')), '_xlnm.')));
+    }
+
+    /** @param array<string,mixed> $schema */
+    private function assertValidDynamicSchema(array $schema, string $format): void
+    {
+        if (($schema['schema_version'] ?? null) !== 1 || ($schema['source']['format'] ?? null) !== $format) {
+            throw ValidationException::withMessages(['template_file' => 'The uploaded Office layout produced an invalid document schema.']);
+        }
+        foreach (['office_identity', 'document_structure', 'regions', 'resolver', 'compatibility_warnings'] as $key) {
+            if (! is_array($schema[$key] ?? null)) {
+                throw ValidationException::withMessages(['template_file' => 'The uploaded Office layout produced an incomplete document schema.']);
+            }
+        }
+        foreach ($schema['compatibility_warnings'] as $warning) {
+            if (! is_array($warning) || ! in_array($warning['severity'] ?? null, self::SCHEMA_WARNING_SEVERITIES, true)) {
+                throw ValidationException::withMessages(['template_file' => 'The uploaded Office layout produced an invalid compatibility warning.']);
+            }
+        }
+    }
+
     /** @return array{0:ZipArchive,1:string} */
     private function openZip(string $bytes, string $format): array
     {
@@ -1323,6 +1448,33 @@ class DocumentTemplateLayoutService
             @unlink($path);
             throw ValidationException::withMessages(['template_file' => "The uploaded $format layout is unreadable or corrupt."]);
         }
+        try {
+            $this->assertSafeOfficeArchive($zip, $format);
+        } catch (\Throwable $exception) {
+            $zip->close();
+            @unlink($path);
+
+            throw $exception;
+        }
         return [$zip, $path];
+    }
+
+    private function assertSafeOfficeArchive(ZipArchive $zip, string $format): void
+    {
+        if ($zip->numFiles > self::MAX_ARCHIVE_ENTRIES) {
+            throw ValidationException::withMessages(['template_file' => "The uploaded $format contains too many internal files to inspect safely."]);
+        }
+        $uncompressed = 0;
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            $name = (string) ($stat['name'] ?? '');
+            if ($name === '' || str_starts_with($name, '/') || str_contains(str_replace('\\', '/', $name), '../')) {
+                throw ValidationException::withMessages(['template_file' => "The uploaded $format contains an unsafe Office package path."]);
+            }
+            $uncompressed += max(0, (int) ($stat['size'] ?? 0));
+            if ($uncompressed > self::MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+                throw ValidationException::withMessages(['template_file' => "The uploaded $format expands beyond the safe inspection limit."]);
+            }
+        }
     }
 }

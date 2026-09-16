@@ -12,7 +12,7 @@
     grid-template-columns: minmax(0, 1fr) minmax(330px, .95fr);
     align-items: start;
     gap: 24px;
-    margin-bottom: 18px;
+    margin-bottom: 24px;
 }
 .release-flow-page .release-page-heading .release-eyebrow {
     margin: 2px 0 8px;
@@ -26,7 +26,7 @@
     font-weight: 750;
     overflow-wrap: anywhere;
 }
-.release-flow-page .release-page-heading > div > p:last-child { font-size: 14px; }
+.release-flow-page .release-page-heading > div > p:last-child { max-width: 900px; font-size: 14px; line-height: 1.55; }
 .release-flow-page .release-status-summary {
     overflow: hidden;
     border: 1px solid var(--border);
@@ -75,7 +75,7 @@
 .release-flow-page .request-tracker__pending-label { display: none; }
 .release-flow-page .request-tracker__step.is-pending .request-tracker__copy { opacity: 1; }
 .release-flow-page .request-tracker__step.is-pending .request-tracker__copy strong { color: var(--text-muted); }
-.release-flow-page .content-area, .release-flow-page .content-grid { margin-top: 15px; }
+.release-flow-page .content-area, .release-flow-page .content-grid { margin-top: 24px; }
 .release-flow-page .release-context-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
 .release-flow-page .release-context-card { padding: 18px 16px 12px; }
 .release-flow-page .release-card-title { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; }
@@ -151,50 +151,24 @@
 .release-flow-page .release-schedule-suggestion .button { flex-shrink: 0; }
 .release-flow-page .release-preparation-form > p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .release-flow-page .release-preparation-form .table-wrap table { min-width: 580px; }
-.prepared-quantity-stepper {
-    display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
-    align-items: stretch;
+.release-preparation-form .actual-prepared-quantity {
     width: 100%;
     max-width: 190px;
+    min-height: 40px;
+    margin: 0;
+    padding: 9px 11px;
+    color: var(--heading);
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 7px;
-    transition: border-color var(--motion) ease, box-shadow var(--motion) ease;
+    text-align: left;
+    box-shadow: none;
 }
-.prepared-quantity-stepper:focus-within { border-color: var(--interactive); box-shadow: var(--focus-ring); }
-.release-preparation-form .prepared-quantity-stepper [data-prepared-quantity] {
-    max-width: none;
-    min-height: 38px;
-    margin: 0;
-    padding: 8px 2px;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    text-align: center;
+.release-preparation-form .actual-prepared-quantity:focus {
+    outline: 0;
+    border-color: var(--interactive);
+    box-shadow: var(--focus-ring);
 }
-.release-preparation-form .prepared-quantity-stepper [data-prepared-quantity]:focus { outline: 0; box-shadow: none; }
-/* Actual Prepared only: the native spinner is replaced by the click-once steppers. */
-input.actual-prepared-quantity::-webkit-outer-spin-button,
-input.actual-prepared-quantity::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
-input.actual-prepared-quantity { -moz-appearance: textfield; appearance: textfield; }
-.prepared-quantity-step {
-    display: grid;
-    place-items: center;
-    min-height: 38px;
-    padding: 0;
-    color: var(--text-secondary);
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    font-size: 15px;
-    font-weight: 800;
-    line-height: 1;
-    cursor: pointer;
-    transition: color var(--motion-fast) ease, background-color var(--motion-fast) ease;
-}
-.prepared-quantity-step:hover:not(:disabled) { color: var(--interactive); background: var(--surface-hover); }
-.prepared-quantity-step:disabled { color: var(--text-soft); cursor: not-allowed; }
 .release-flow-page .release-preparation-form .empty-state { min-height: 0; padding: 12px; align-items: flex-start; text-align: left; }
 .release-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding-right: 40px; }
 .release-documents-panel { margin-top: 4px; }
@@ -204,10 +178,10 @@ input.actual-prepared-quantity { -moz-appearance: textfield; appearance: textfie
 .release-document-copy > strong { font-size: 12px; color: var(--heading); }
 .release-document-copy > small { font-size: 12px; text-transform: none; }
 .release-document-row > .button { justify-self: end; margin-right: 74px; min-width: 56px; }
-.release-flow-page .release-step-note { margin: 8px 0 0; color: var(--text-muted); font-size: 12px; }
+.release-flow-page .release-step-note { max-width: 900px; margin: 8px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .release-flow-page .release-physical-heading h3 { margin: 0; color: var(--text-muted); font-size: 15px; font-weight: 750; line-height: 1.5; text-transform: uppercase; }
 .release-flow-page .release-handover-form { margin-top: 26px; gap: 26px; }
-.release-flow-page .release-handover-intro { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.release-flow-page .release-handover-intro { max-width: 900px; margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-muted); }
 .release-flow-page .release-handover-form .checkbox { align-items: flex-start; gap: 18px; margin: 0; font-size: 12px; font-weight: 400; line-height: 1.5; color: var(--heading); }
 .release-handover-form .checkbox > span { max-width: 960px; }
 .release-handover-form input[type="checkbox"] { flex: 0 0 14px; width: 14px; height: 14px; min-height: 14px; margin-top: 2px; accent-color: var(--release-blue); }

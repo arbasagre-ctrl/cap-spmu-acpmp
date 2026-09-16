@@ -16,15 +16,25 @@
 <section class="page-heading heading-action-lowered">
     <div>
         <p class="eyebrow">
-            {{ $isBorrower ? 'Borrowing availability' : 'Inventory monitoring' }}
+            @if($isBorrower)
+                Borrowable Items
+            @elseif($isInventoryAdmin)
+                Inventory Management
+            @else
+                Inventory Operations
+            @endif
         </p>
 
-        <h1>{{ $isBorrower ? 'Available Items' : 'Inventory' }}</h1>
+        <h1>{{ $isBorrower ? 'Equipment Availability' : 'Inventory' }}</h1>
 
         <p>
-            {{ $isBorrower
-                ? 'Browse active, borrowable, serviceable items currently available for borrowing. Displayed stock does not reserve an item or guarantee approval.'
-                : 'Monitor physical stock, reservations, active custody, laundry/incident states, condition, and borrowing restrictions.' }}
+            @if($isBorrower)
+                Browse items currently available for borrowing and review their use restrictions before creating a request.
+            @elseif($isInventoryAdmin)
+                Monitor stock, availability, reservations, custody, laundry, condition, and inventory records.
+            @else
+                Check current stock, reservations, custody, returns, laundry, and item condition.
+            @endif
         </p>
     </div>
 
@@ -252,12 +262,12 @@
                             <th scope="col" class="is-nowrap">Item ID</th>
                             <th scope="col">Item</th>
                             <th scope="col" class="is-numeric">Total Stock</th>
-                            <th scope="col" class="is-numeric">Available Stock</th>
-                            <th scope="col" class="is-numeric">Allocated</th>
+                            <th scope="col" class="is-numeric">Available</th>
+                            <th scope="col" class="is-numeric">Reserved</th>
                             <th scope="col" class="is-numeric">On Custody</th>
-                            <th scope="col">Laundry / Incident</th>
+                            <th scope="col">Unavailable</th>
                             <th scope="col">Condition</th>
-                            <th scope="col">Use</th>
+                            <th scope="col">Borrowing Rule</th>
                             <th scope="col">Actions</th>
                         </tr>
                     </thead>

@@ -9,6 +9,7 @@ use App\Models\BorrowingRequest;
 use App\Models\OrganizationalUnit;
 use App\Models\RequestVersion;
 use App\Models\User;
+use App\Reports\ReportCatalogue;
 use App\Reports\ReportExportOptions;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -67,9 +68,10 @@ class ReportPageTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Report builder', false);
-        $response->assertSee('Generate detailed operational reports for review, documentation, printing, and export.', false);
-        $response->assertSee('Generate Report', false);
-        $response->assertSee('More Filters', false);
+        $response->assertSee('Preview official operational reports, then print or export the exact records you reviewed.', false);
+        $response->assertSee('Preview Report', false);
+        $response->assertSee('Filters', false);
+        $response->assertDontSee('More Filters', false);
     }
 
     public function test_reports_page_starts_with_configuration_and_no_generated_document(): void
@@ -79,11 +81,44 @@ class ReportPageTest extends TestCase
             ->get(route('reports.index'));
 
         $response->assertOk();
-        $response->assertSee('Select your report options and click Generate Report to preview the report.', false);
+        $response->assertSee('Choose the report options above, then select Preview Report to review the records here.', false);
         $response->assertDontSee('CAMARINES SUR POLYTECHNIC COLLEGES', false);
         $response->assertDontSee('Export / Print', false);
         $response->assertDontSee('Web record navigation', false);
         $response->assertDontSee('For analysis, insights, and forecasting, use the Analytics module.', false);
+    }
+
+
+    public function test_preview_button_submits_the_generated_flag_and_filters_are_visible(): void
+    {
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.index', ['report' => 'approval']));
+
+        $response->assertOk();
+        $response->assertSee('name="generated"', false);
+        $response->assertSee('value="1"', false);
+        $response->assertSee('Preview Report', false);
+        $response->assertSee('AO Verification', false);
+        $response->assertSee('Admin Decision', false);
+        $response->assertDontSee('<details class="report-more-filters"', false);
+    }
+
+    public function test_applied_filters_show_a_clear_filters_action(): void
+    {
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.index', [
+                'report' => 'approval',
+                'academic_period' => 'month',
+                'division' => 'ACADEMIC',
+                'generated' => 1,
+            ]));
+
+        $response->assertOk();
+        $response->assertSee('1 applied', false);
+        $response->assertSee('Clear filters', false);
+        $response->assertDontSee('Applied filters:', false);
     }
 
     public function test_builder_groups_the_report_types(): void
@@ -104,12 +139,15 @@ class ReportPageTest extends TestCase
             ->get(route('reports.index', ['academic_period' => 'month']));
 
         $response->assertOk();
-        $response->assertSee('Resolved Period', false);
+        $response->assertSee('Date Range', false);
         $response->assertSee(now()->startOfMonth()->format('d M Y').' – '.now()->endOfMonth()->format('d M Y'), false);
     }
 
     public function test_generated_reports_page_shows_the_analytics_boundary_note(): void
     {
+        /* The boundary note belongs to an actual rendered report, not an empty preview. */
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
         $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index', ['generated' => 1]))
@@ -279,6 +317,30 @@ class ReportPageTest extends TestCase
 
     public function test_inventory_report_states_an_as_of_date_not_a_range(): void
     {
+        /* A formal document is intentionally not rendered for a zero-record preview. */
+        $category = \App\Models\InventoryCategory::query()->create([
+            'category_code' => 'PAGE-INV',
+            'category_name' => 'Reports Page Inventory',
+            'active' => true,
+        ]);
+        $measure = \App\Models\UnitOfMeasure::query()->create([
+            'unit_code' => 'PAGE-PC',
+            'unit_name' => 'Piece',
+            'active' => true,
+        ]);
+        \App\Models\InventoryItem::query()->create([
+            'category_id' => $category->id,
+            'unit_id' => $measure->id,
+            'unique_description' => 'Reports page inventory fixture',
+            'total_quantity' => 1,
+            'condition_code' => 'SERVICEABLE',
+            'borrowable' => true,
+            'off_campus_allowed' => false,
+            'laundry_required' => false,
+            'provisional' => false,
+            'active' => true,
+        ]);
+
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index', ['report' => 'inventory', 'academic_period' => 'month', 'generated' => 1]));
@@ -290,6 +352,9 @@ class ReportPageTest extends TestCase
 
     public function test_report_options_dialog_offers_only_supported_formats(): void
     {
+        /* Export controls are only offered after a preview has real records. */
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
         $response = $this->actingAs($this->head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->get(route('reports.index', ['report' => 'borrowing', 'generated' => 1]));
@@ -301,12 +366,19 @@ class ReportPageTest extends TestCase
             $response->assertSee('value="'.$value.'"', false);
         }
 
-        /* Page setup and content toggles, not report-engine internals. */
+        /* Universal output controls: only relevant settings stay user-editable. */
         $response->assertSee('Include report summary', false);
-        $response->assertSee('Repeat table headers on each PDF/printed page', false);
-        $response->assertSee('Export XLSX', false);
+        $response->assertSee('Automatic (Recommended)', false);
+        $response->assertSee('Advanced Print Settings', false);
+        $response->assertSee('Included automatically in formal reports', false);
+        $response->assertSee('Export PDF', false);
+        $response->assertSee('Export Word', false);
+        $response->assertSee('Export Excel', false);
         $response->assertSee('Export CSV', false);
-        $response->assertSee('Print Report', false);
+        $response->assertSee('Open Print Preview', false);
+        $response->assertDontSee('Include generated-by information', false);
+        $response->assertDontSee('Include system-generated footer', false);
+        $response->assertDontSee('Repeat table headers on each PDF/printed page', false);
         $response->assertDontSee('Max Title Height', false);
         $response->assertDontSee('Max Row Height', false);
     }
@@ -318,7 +390,11 @@ class ReportPageTest extends TestCase
             ->get(route('reports.index', ['report' => 'custody', 'generated' => 1]));
 
         $response->assertOk();
+        $response->assertSee('No matching records', false);
         $response->assertSee('No released/custody records were found for this period.', false);
+        $response->assertSee('Change Period or Filters', false);
+        $response->assertDontSee('Export / Print', false);
+        $response->assertDontSee('<article class="doc-sheet">', false);
         $response->assertDontSee('<table class="report-table">', false);
     }
 
@@ -349,11 +425,76 @@ class ReportPageTest extends TestCase
             ->assertSee('were not recognised and were ignored', false);
     }
 
+    public function test_transaction_reports_offer_a_borrower_filter_while_asset_reports_do_not(): void
+    {
+        foreach ([
+            'borrowing',
+            'approval',
+            'custody',
+            'returns',
+            'accountability-cases',
+            'billing-settlement',
+            'laundry',
+            'gate-pass',
+        ] as $report) {
+            $this->assertArrayHasKey(
+                'borrower',
+                ReportCatalogue::filtersFor($report),
+                "{$report} should support borrower filtering."
+            );
+        }
+
+        $this->assertArrayNotHasKey('borrower', ReportCatalogue::filtersFor('inventory'));
+        $this->assertArrayNotHasKey('borrower', ReportCatalogue::filtersFor('utilization'));
+    }
+
+    public function test_borrower_filter_limits_the_report_and_is_written_into_report_metadata(): void
+    {
+        $target = User::factory()->create([
+            'access_classification' => AccessClassification::BorrowerOnly,
+            'organizational_unit_id' => $this->unit->id,
+            'full_name' => 'Target Borrower',
+            'email' => 'target.borrower@cspc.edu.ph',
+        ]);
+
+        $other = User::factory()->create([
+            'access_classification' => AccessClassification::BorrowerOnly,
+            'organizational_unit_id' => $this->unit->id,
+            'full_name' => 'Other Borrower',
+            'email' => 'other.borrower@cspc.edu.ph',
+        ]);
+
+        $targetRequest = $this->request('ACADEMIC', 'College of Computer Studies', $target);
+        $otherRequest = $this->request('ACADEMIC', 'College of Computer Studies', $other);
+
+        $response = $this->actingAs($this->head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->get(route('reports.index', [
+                'report' => 'borrowing',
+                'academic_period' => 'month',
+                'borrower' => (string) $target->id,
+                'generated' => 1,
+            ]));
+
+        $response->assertOk();
+        $response->assertSee((string) $targetRequest->request_no, false);
+        $response->assertDontSee((string) $otherRequest->request_no, false);
+        $response->assertSee('Borrower:', false);
+        $response->assertSee('Target Borrower', false);
+        $response->assertDontSee('target.borrower@cspc.edu.ph', false);
+        $response->assertSee('name="borrower" value="'.$target->id.'"', false);
+    }
+
     public function test_pagination_preserves_report_period_and_filters(): void
     {
         /* Twelve records over a page size of ten forces a second page. */
+        $borrower = User::factory()->create([
+            'access_classification' => AccessClassification::BorrowerOnly,
+            'organizational_unit_id' => $this->unit->id,
+        ]);
+
         foreach (range(1, 12) as $index) {
-            $this->request('ACADEMIC', 'College of Computer Studies');
+            $this->request('ACADEMIC', 'College of Computer Studies', $borrower);
         }
 
         $response = $this->actingAs($this->head)
@@ -362,19 +503,21 @@ class ReportPageTest extends TestCase
                 'report' => 'borrowing',
                 'academic_period' => 'month',
                 'division' => 'ACADEMIC',
+                'borrower' => (string) $borrower->id,
                 'generated' => 1,
             ]));
 
         $response->assertOk();
         $response->assertSee('Web record navigation', false);
         $response->assertSee('Showing 1–10 of 12 records', false);
-        $response->assertSee('<dt>Total requests</dt>', false);
-        $response->assertSee('<dd>12</dd>', false);
+        $response->assertSee('aria-label="Report summary values"', false);
+        $response->assertSee('Total requests', false);
 
         /* Every page link carries the report, the period and the filter. */
         $response->assertSee('report=borrowing', false);
         $response->assertSee('academic_period=month', false);
         $response->assertSee('division=ACADEMIC', false);
+        $response->assertSee('borrower='.$borrower->id, false);
         $response->assertSee('generated=1', false);
     }
 
@@ -444,11 +587,11 @@ class ReportPageTest extends TestCase
     /* Fixture                                                             */
     /* ------------------------------------------------------------------ */
 
-    private function request(string $division, string $unit): BorrowingRequest
+    private function request(string $division, string $unit, ?User $borrower = null): BorrowingRequest
     {
         $createdAt = now()->copy()->subDays(2);
 
-        $borrower = User::factory()->create([
+        $borrower ??= User::factory()->create([
             'access_classification' => AccessClassification::BorrowerOnly,
             'organizational_unit_id' => $this->unit->id,
         ]);

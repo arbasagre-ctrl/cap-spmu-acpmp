@@ -1,9 +1,9 @@
 <style>
 .spmu-inventory { --inventory-blue: #0865df; width: 100%; min-width: 0; font-size: 13px; }
 .spmu-inventory [hidden] { display: none !important; }
-.spmu-inventory-card { padding: 17px 18px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); }
+.spmu-inventory-card { padding: 17px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-elevated); }
 .spmu-inventory-card label { min-width: 0; margin: 0; display: grid; gap: 8px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
-.spmu-inventory-card input, .spmu-inventory-card select { width: 100%; min-height: 40px; border-radius: 7px; font-size: 12px; }
+.spmu-inventory-card input, .spmu-inventory-card select { width: 100%; min-height: 44px; border-radius: 9px; font-size: 12px; }
 
 /* Availability window */
 
@@ -14,10 +14,10 @@
 /* Result summary above the table */
 .spmu-inventory-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 12px; padding: 0 2px; color: var(--text-secondary); font-size: 12px; }
 .spmu-inventory-page-size { display: inline-flex; align-items: center; }
-.spmu-inventory-page-size select { min-height: 38px; width: auto; min-width: 168px; padding: 8px 36px 8px 13px; border: 1px solid var(--border); border-radius: 7px; background-color: var(--surface-elevated); color: var(--heading); font-size: 12px; font-weight: 650; }
+.spmu-inventory-page-size select { min-height: 40px; width: auto; min-width: 168px; padding: 8px 36px 8px 13px; border: 1px solid var(--border); border-radius: 9px; background-color: var(--surface-elevated); color: var(--heading); font-size: 12px; font-weight: 650; }
 
 /* Table */
-.spmu-inventory-table-wrap { border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); }
+.spmu-inventory-table-wrap { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-elevated); }
 .spmu-inventory-table-scroll { width: 100%; min-width: 0; overflow-x: auto; }
 .spmu-inventory .spmu-inventory-table { width: 100%; min-width: 1140px; margin: 0; border-collapse: collapse; }
 .spmu-inventory .spmu-inventory-table th { padding: 13px 14px; border-bottom: 1px solid var(--border); background: var(--table-heading-bg); color: var(--text-secondary); font-size: 10px; font-weight: 750; letter-spacing: .05em; line-height: 1.35; text-transform: uppercase; text-align: left; vertical-align: bottom; }
@@ -32,14 +32,17 @@
 .spmu-inventory-table th:nth-child(8) { width: 10%; }
 .spmu-inventory-table th:nth-child(9) { width: 11%; }
 .spmu-inventory-table th:nth-child(10) { width: 11%; }
-.spmu-inventory-id { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); color: var(--heading); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.spmu-inventory-id { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); color: var(--heading); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .spmu-inventory-item strong { display: block; color: var(--heading); font-size: 12px; font-weight: 700; line-height: 1.4; }
 .spmu-inventory-item small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
 .spmu-inventory-count { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .spmu-inventory-states { display: grid; gap: 2px; color: var(--text-secondary); font-size: 11px; }
+.spmu-inventory-states strong { color: var(--heading); font-size: 11px; font-weight: 750; }
 .spmu-inventory-states span.has-open { color: var(--warning); font-weight: 700; }
-/* Good / suitable for borrowing reads as a positive condition. */
-.spmu-inventory-table td[data-condition="SERVICEABLE"] .status-badge { color: var(--success); background: var(--success-bg); border-color: var(--success-border); }
+.spmu-condition-all-good { display: inline-flex; align-items: center; min-height: 25px; padding: 3px 8px; border: 1px solid var(--success-border); border-radius: 999px; background: var(--success-bg); color: var(--success); font-size: 10.5px; font-weight: 750; white-space: nowrap; }
+.spmu-condition-summary { display: grid; gap: 1px; color: var(--text-secondary); font-size: 10.5px; line-height: 1.35; }
+.spmu-condition-summary strong { color: var(--heading); font-size: 11px; }
+.spmu-condition-summary small { color: var(--warning); font-size: 10.5px; font-weight: 650; }
 .spmu-inventory-use { color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
 .spmu-inventory-use small { display: block; margin-top: 3px; color: var(--text-muted); }
 .spmu-inventory-actions { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; white-space: nowrap; }
@@ -54,7 +57,7 @@
 .spmu-inventory-footer > p { margin: 0; color: var(--text-secondary); font-size: 12px; }
 .spmu-inventory-pagination-group { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px 14px; margin-left: auto; }
 .spmu-inventory-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-.spmu-inventory-page { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 36px; height: 38px; padding: 6px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-elevated); color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer; }
+.spmu-inventory-page { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 36px; height: 38px; padding: 6px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-elevated); color: var(--text-secondary); font: inherit; font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer; }
 .spmu-inventory-page:hover:not(:disabled):not(.is-active) { color: var(--inventory-blue); border-color: var(--inventory-blue); }
 .spmu-inventory-page.is-active { color: #fff; background: var(--inventory-blue); border-color: var(--inventory-blue); font-weight: 750; }
 .spmu-inventory-page:disabled { color: var(--text-soft); background: var(--surface-subtle); cursor: not-allowed; }

@@ -14,6 +14,7 @@ class DocumentTemplate extends Model
         'version_label',
         'template_name',
         'content_template',
+        'dynamic_schema',
         'stored_file_id',
         'render_stored_file_id',
         'source_mode',
@@ -27,6 +28,7 @@ class DocumentTemplate extends Model
     protected function casts(): array
     {
         return [
+            'dynamic_schema' => 'array',
             'activated_at' => 'datetime',
             'superseded_at' => 'datetime',
         ];

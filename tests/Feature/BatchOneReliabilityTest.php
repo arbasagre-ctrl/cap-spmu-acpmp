@@ -116,6 +116,14 @@ class BatchOneReliabilityTest extends TestCase
                     'location' =>
                         'Campus',
 
+                    /*
+                     * BorrowingRequestController::validateRequest() requires
+                     * requesting_organizational_unit_id (an authorized
+                     * OrganizationalUnit id).
+                     */
+                    'requesting_organizational_unit_id' =>
+                        $borrower->organizational_unit_id,
+
                     'schedule_date' =>
                         now()
                             ->addDay()
@@ -249,6 +257,14 @@ class BatchOneReliabilityTest extends TestCase
                     'location' =>
                         $version
                             ->location,
+
+                    /*
+                     * BorrowingRequestController::validateRequest() requires
+                     * requesting_organizational_unit_id (an authorized
+                     * OrganizationalUnit id).
+                     */
+                    'requesting_organizational_unit_id' =>
+                        $borrower->organizational_unit_id,
 
                     'schedule_date' =>
                         now()
@@ -670,6 +686,14 @@ class BatchOneReliabilityTest extends TestCase
             'location' =>
                 $version
                     ->location,
+
+            /*
+             * BorrowingRequestController::validateRequest() requires
+             * requesting_organizational_unit_id (an authorized
+             * OrganizationalUnit id).
+             */
+            'requesting_organizational_unit_id' =>
+                $borrower->organizational_unit_id,
 
             'schedule_date' =>
                 now()

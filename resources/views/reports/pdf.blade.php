@@ -62,11 +62,12 @@
     table.doc-table td.numeric, table.doc-table th.numeric { text-align: right; }
     .doc-table-empty { text-align: center; padding: 14pt 4pt; color: #555; }
 
-    .doc-summary { margin-top: 12pt; }
+    .doc-summary { margin: 8pt 0 10pt; }
     .doc-summary-heading { font-size: 8.5pt; font-weight: bold; text-transform: uppercase; margin: 0 0 4pt; }
-    .doc-summary div { font-size: 8pt; margin: 0 0 1pt; }
-    .doc-summary span { display: inline-block; width: 170pt; }
-    .doc-summary strong { font-weight: bold; }
+    table.doc-summary-table { width: 300pt; border-collapse: collapse; font-size: 8pt; }
+    table.doc-summary-table td { padding: 2.4pt 0; border-bottom: 0.45pt solid #dddddd; vertical-align: top; }
+    table.doc-summary-table td:first-child { width: 205pt; padding-right: 10pt; }
+    table.doc-summary-table td:last-child { width: 95pt; text-align: right; font-weight: bold; }
 
     .doc-footer { margin-top: 16pt; padding-top: 5pt; border-top: 0.6pt solid #999; }
     .doc-footer div { font-size: 7pt; color: #333; }
@@ -117,6 +118,22 @@
     @endif
 </div>
 
+@if(($options['summary'] ?? true) && ! empty($dataset->summary))
+    <div class="doc-summary">
+        <div class="doc-summary-heading">Report Summary</div>
+        <table class="doc-summary-table" aria-label="Report summary">
+            <tbody>
+                @foreach($dataset->summary as $label => $value)
+                    <tr>
+                        <td>{{ $label }}</td>
+                        <td>{{ App\Reports\ReportSummaryFormatter::display((string) $label, $value) }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    </div>
+@endif
+
 <table class="doc-table">
     <thead>
         <tr>
@@ -141,15 +158,6 @@
         @endforelse
     </tbody>
 </table>
-
-@if(($options['summary'] ?? true) && ! empty($dataset->summary))
-    <div class="doc-summary">
-        <div class="doc-summary-heading">Summary</div>
-        @foreach($dataset->summary as $label => $value)
-            <div><span>{{ $label }}</span>: <strong>{{ is_numeric($value) ? number_format((float) $value) : $value }}</strong></div>
-        @endforeach
-    </div>
-@endif
 
 @if($options['footer'] ?? true)
     <div class="doc-footer">

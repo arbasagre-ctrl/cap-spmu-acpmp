@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Enums\RequestStatus;
-use App\Models\BillingStatement;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
@@ -108,6 +107,10 @@ class AnalyticsService
      */
     public const STOCK_COVERAGE_MINIMUM_RELEASES = 3;
 
+    public function __construct(
+        private readonly ReturnMetricsService $returnMetrics
+    ) {}
+
     /**
      * Requests that reached the system's authoritative approved state.
      *
@@ -122,27 +125,35 @@ class AnalyticsService
     }
 
     /**
-     * Requests created in the period, narrowed by the borrower filters.
+     * Requests actually filed in the period, narrowed by borrower filters.
      *
-     * The join pins each request to its current version so a revised request
-     * is counted under the unit it currently belongs to. States listed in
-     * excludedFromActivity() are left out, so an abandoned draft never
-     * inflates a demand figure.
+     * submitted_at is the filing event. created_at is used only as a legacy
+     * fallback for older substantive records that predate explicit submission
+     * timestamps. Drafts, withdrawals and expired requests are not activity.
      */
     public function requestScope(
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division = null,
-        ?string $unit = null
+        ?string $unit = null,
+        ?int $borrower = null
     ): Builder {
         $query = BorrowingRequest::query()
             ->join('request_versions', function ($join): void {
                 $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
                     ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
             })
-            ->whereBetween('borrowing_requests.created_at', [$from, $to])
-            /* Drafts, withdrawals and lapsed requests are not activity. */
-            ->whereNotIn('borrowing_requests.status', self::excludedFromActivity());
+            ->where(function ($scope) use ($from, $to): void {
+                $scope->whereBetween('request_versions.submitted_at', [$from, $to])
+                    ->orWhere(function ($legacy) use ($from, $to): void {
+                        $legacy->whereNull('request_versions.submitted_at')
+                            ->whereBetween('borrowing_requests.created_at', [$from, $to]);
+                    });
+            })
+            ->whereNotIn('borrowing_requests.status', array_map(
+                static fn (RequestStatus $status): string => $status->value,
+                self::excludedFromActivity()
+            ));
 
         if ($division !== null && $division !== '' && $division !== 'all') {
             $query->where('request_versions.division_code', $division);
@@ -152,7 +163,152 @@ class AnalyticsService
             $query->where('request_versions.office_unit', $unit);
         }
 
+        if ($borrower !== null) {
+            $query->where('borrowing_requests.borrower_user_id', $borrower);
+        }
+
         return $query;
+    }
+
+    /**
+     * Future borrowing dates already represented by filed requests.
+     *
+     * Scheduled demand is not a forecast. A request filed today for next
+     * month belongs to next month's scheduled demand even though its filing
+     * timestamp is today. That is why this scope follows the requested
+     * schedule date rather than submitted_at.
+     */
+    private function scheduledRequestScope(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Builder {
+        $excluded = [
+            RequestStatus::Draft,
+            RequestStatus::Signed,
+            RequestStatus::Rejected,
+            RequestStatus::Cancelled,
+            RequestStatus::Expired,
+        ];
+
+        $query = BorrowingRequest::query()
+            ->join('request_versions', function ($join): void {
+                $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
+                    ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
+            })
+            ->whereNotIn(
+                'borrowing_requests.status',
+                array_map(static fn (RequestStatus $status): string => $status->value, $excluded)
+            )
+            ->where(function ($schedule) use ($from, $to): void {
+                $schedule->whereBetween('request_versions.schedule_date', [
+                    Carbon::parse($from)->toDateString(),
+                    Carbon::parse($to)->toDateString(),
+                ])->orWhere(function ($legacy) use ($from, $to): void {
+                    $legacy->whereNull('request_versions.schedule_date')
+                        ->whereBetween('request_versions.needed_from', [$from, $to]);
+                });
+            });
+
+        if ($division !== null && $division !== '' && $division !== 'all') {
+            $query->where('request_versions.division_code', $division);
+        }
+
+        if ($unit !== null && $unit !== '' && $unit !== 'all') {
+            $query->where('request_versions.office_unit', $unit);
+        }
+
+        if ($borrower !== null) {
+            $query->where('borrowing_requests.borrower_user_id', $borrower);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Known demand already filed for a future schedule window.
+     *
+     * @return array{requests:int,divisions:array<string,mixed>,units:array<string,mixed>}
+     */
+    public function scheduledDemand(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null,
+        ?int $borrower = null
+    ): array {
+        $base = $this->scheduledRequestScope($from, $to, $division, $unit, $borrower);
+        $requests = (clone $base)->count('borrowing_requests.id');
+
+        $divisionCounts = (clone $base)
+            ->select('request_versions.division_code')
+            ->selectRaw('COUNT(borrowing_requests.id) AS total')
+            ->groupBy('request_versions.division_code')
+            ->pluck('total', 'division_code');
+
+        $groups = collect(self::DIVISIONS)
+            ->map(fn (string $label, string $code): array => [
+                'code' => $code,
+                'label' => $label,
+                'count' => (int) ($divisionCounts[$code] ?? 0),
+                'percentage' => $requests > 0
+                    ? (int) round(((int) ($divisionCounts[$code] ?? 0)) / $requests * 100)
+                    : 0,
+            ])
+            ->filter(fn (array $row): bool => $row['count'] > 0)
+            ->values();
+
+        $unitRows = (clone $base)
+            ->select('request_versions.division_code', 'request_versions.office_unit')
+            ->selectRaw('COUNT(borrowing_requests.id) AS total')
+            ->groupBy('request_versions.division_code', 'request_versions.office_unit')
+            ->get();
+
+        $columns = collect(self::DIVISIONS)
+            ->map(function (string $label, string $code) use ($unitRows): array {
+                $units = $unitRows
+                    ->where('division_code', $code)
+                    ->filter(fn ($row): bool => filled($row->office_unit))
+                    ->sortByDesc('total')
+                    ->values();
+                $highest = (int) ($units->max('total') ?: 0);
+
+                return [
+                    'code' => $code,
+                    'label' => $label,
+                    'units' => $units->map(fn ($row): array => [
+                        'name' => (string) $row->office_unit,
+                        'count' => (int) $row->total,
+                        'share' => $highest > 0
+                            ? (int) round(((int) $row->total) / $highest * 100)
+                            : 0,
+                    ])->all(),
+                    'leader' => $units->first()?->office_unit,
+                    'leader_count' => (int) ($units->first()->total ?? 0),
+                ];
+            })
+            ->filter(fn (array $column): bool => $column['units'] !== [])
+            ->values();
+
+        return [
+            'requests' => $requests,
+            'divisions' => [
+                'total' => $requests,
+                'groups' => $groups,
+                'summary' => $requests === 0
+                    ? 'No requests are scheduled for the next period yet.'
+                    : $requests.' '.($requests === 1 ? 'request is' : 'requests are').' already scheduled for the next period.',
+            ],
+            'units' => [
+                'columns' => $columns,
+                'summary' => $columns->map(fn (array $column): string =>
+                    $column['leader'].' has the most scheduled demand among '
+                    .strtolower($column['label']).' units ('.$column['leader_count'].').'
+                )->all(),
+            ],
+        ];
     }
 
     /**
@@ -174,49 +330,249 @@ class AnalyticsService
     }
 
     /**
-     * Custody transactions as they stand right now, whatever period the
-     * originating request was filed in.
+     * Physical releases that happened inside the reporting period.
      *
-     * "Currently out" and "needs follow-up" are present-tense questions. An
-     * item released in August and still held in September is still out in
-     * September, so tying these figures to the reporting period would make
-     * them vanish from view precisely when they most need attention.
-     *
-     * The borrower filters still apply, because the SPMU Head narrowing to
-     * one division expects every figure on the page to follow.
+     * Release analytics follow released_at, not the date the borrower filed
+     * the request. The request-version snapshot is used only for Division /
+     * Office filtering.
      */
-    private function currentCustodyScope(?string $division, ?string $unit): Builder
+    private function releaseCustodyScope(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Builder {
+        $query = CustodyTransaction::query()
+            ->whereNotNull('released_at')
+            ->whereBetween('released_at', [$from, $to]);
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $query->whereIn('request_version_id', $versionIds);
+        }
+
+        if ($borrower !== null) {
+            $query->where('borrower_user_id', $borrower);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Return records whose physical completion event may fall in the period.
+     *
+     * closed_at is included only for historical rows created before physical
+     * return receipts were persisted. The final date/state is always decided
+     * by ReturnMetricsService after the candidates are loaded.
+     */
+    private function returnCandidateScope(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Builder {
+        $query = CustodyTransaction::query()
+            ->with([
+                'borrower',
+                'request',
+                'lines.requestItem.inventoryItem',
+                'returns',
+                'laundryJob',
+            ])
+            ->whereNotNull('released_at')
+            ->where(function ($events) use ($from, $to): void {
+                $events->whereBetween('closed_at', [$from, $to])
+                    ->orWhereHas(
+                        'returns',
+                        fn ($returns) => $returns->whereBetween('received_at', [$from, $to])
+                    )
+                    ->orWhereHas(
+                        'laundryJob',
+                        fn ($laundry) => $laundry->whereBetween('worker_received_at', [$from, $to])
+                    );
+            });
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $query->whereIn('request_version_id', $versionIds);
+        }
+
+        if ($borrower !== null) {
+            $query->where('borrower_user_id', $borrower);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Completed returns whose authoritative physical-return date is inside the
+     * selected period.
+     *
+     * @return Collection<int, array{custody:CustodyTransaction,returned_at:Carbon,state:string}>
+     */
+    private function completedReturnRecords(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Collection {
+        return $this->returnCandidateScope($from, $to, $division, $unit, $borrower)
+            ->get()
+            ->map(function (CustodyTransaction $custody): ?array {
+                $returnedAt = $this->returnMetrics->completionDate($custody);
+
+                if (! $returnedAt) {
+                    return null;
+                }
+
+                return [
+                    'custody' => $custody,
+                    'returned_at' => $returnedAt,
+                    'state' => $this->returnMetrics->state($custody),
+                ];
+            })
+            ->filter(function (?array $row) use ($from, $to): bool {
+                if ($row === null) {
+                    return false;
+                }
+
+                return $row['returned_at']->betweenIncluded(
+                    Carbon::parse($from)->startOfDay(),
+                    Carbon::parse($to)->endOfDay()
+                );
+            })
+            ->values();
+    }
+
+    /**
+     * Unresolved accountability opened in the selected period, de-duplicated
+     * to one case per custody transaction.
+     */
+    private function openAccountabilityCount(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): int {
+        $incidentIds = Incident::query()
+            ->whereBetween('reported_at', [$from, $to])
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->pluck('custody_transaction_id');
+
+        $lateReturnIds = DB::table('overdue_cases')
+            ->whereNotNull('actual_return_date')
+            ->whereBetween('actual_return_date', [
+                Carbon::parse($from)->toDateString(),
+                Carbon::parse($to)->toDateString(),
+            ])
+            ->where('status', '!=', 'RESOLVED')
+            ->pluck('custody_transaction_id');
+
+        $billingIds = DB::table('billing_statements')
+            ->join('billing_lines', 'billing_lines.billing_statement_id', '=', 'billing_statements.id')
+            ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
+            ->whereBetween('billing_statements.issued_at', [$from, $to])
+            ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
+            ->pluck('penalties.custody_transaction_id');
+
+        $ids = $incidentIds
+            ->concat($lateReturnIds)
+            ->concat($billingIds)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return 0;
+        }
+
+        $query = CustodyTransaction::query()->whereIn('id', $ids);
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $query->whereIn('request_version_id', $versionIds);
+        }
+
+        if ($borrower !== null) {
+            $query->where('borrower_user_id', $borrower);
+        }
+
+        return $query->count();
+    }
+
+        /**
+     * Custody transactions as they stand right now, whatever period the
+     * originating request was filed in. Borrower affiliation comes from the
+     * immutable request-version snapshot captured on the custody transaction.
+     */
+    private function currentCustodyScope(?string $division, ?string $unit, ?int $borrower = null): Builder
     {
         $query = CustodyTransaction::query();
+
+        if ($borrower !== null) {
+            $query->where('borrower_user_id', $borrower);
+        }
 
         if (($division === null || $division === '' || $division === 'all')
             && ($unit === null || $unit === '' || $unit === 'all')) {
             return $query;
         }
 
-        return $query->whereIn(
-            'request_id',
-            BorrowingRequest::query()
-                ->join('request_versions', function ($join): void {
-                    $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
-                        ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
-                })
-                ->when(
-                    $division !== null && $division !== '' && $division !== 'all',
-                    fn ($inner) => $inner->where('request_versions.division_code', $division)
-                )
-                ->when(
-                    $unit !== null && $unit !== '' && $unit !== 'all',
-                    fn ($inner) => $inner->where('request_versions.office_unit', $unit)
-                )
-                ->select('borrowing_requests.id')
-        );
+        $versionIds = DB::table('request_versions')
+            ->when(
+                $division !== null && $division !== '' && $division !== 'all',
+                fn ($versions) => $versions->where('division_code', $division)
+            )
+            ->when(
+                $unit !== null && $unit !== '' && $unit !== 'all',
+                fn ($versions) => $versions->where('office_unit', $unit)
+            )
+            ->select('id');
+
+        return $query->whereIn('request_version_id', $versionIds);
     }
 
     /** Released, not yet closed - the assets physically out right now. */
-    private function currentlyOutQuery(?string $division, ?string $unit): Builder
+    private function currentlyOutQuery(?string $division, ?string $unit, ?int $borrower = null): Builder
     {
-        return $this->currentCustodyScope($division, $unit)
+        return $this->currentCustodyScope($division, $unit, $borrower)
             ->whereNotNull('released_at')
             ->whereNull('closed_at')
             ->whereNotIn('status', ['CLOSED', 'CANCELLED']);
@@ -229,13 +585,13 @@ class AnalyticsService
      * measure as a late return, which is an item that did come back, only
      * after its due date. The two are never added together.
      */
-    private function currentlyOverdueQuery(?string $division, ?string $unit): Builder
+    private function currentlyOverdueQuery(?string $division, ?string $unit, ?int $borrower = null): Builder
     {
-        return $this->currentlyOutQuery($division, $unit)
+        return $this->currentlyOutQuery($division, $unit, $borrower)
             ->where(function ($query): void {
                 $query->where('status', 'OVERDUE')
                     ->orWhere(function ($inner): void {
-                        $inner->whereNotNull('due_at')->where('due_at', '<', now());
+                        $inner->whereNotNull('due_at')->where('due_at', '<', now()->startOfDay());
                     });
             });
     }
@@ -249,12 +605,13 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $total = (clone $this->requestScope($from, $to, $division, $unit))
+        $total = (clone $this->requestScope($from, $to, $division, $unit, $borrower))
             ->count('borrowing_requests.id');
 
-        $approved = (clone $this->requestScope($from, $to, $division, $unit))
+        $approved = (clone $this->requestScope($from, $to, $division, $unit, $borrower))
             ->whereIn('borrowing_requests.status', $this->approvedStatuses())
             ->count('borrowing_requests.id');
 
@@ -262,8 +619,8 @@ class AnalyticsService
          * Both of the next two are present-tense: they describe what is out
          * and what is late right now, not what the selected period produced.
          */
-        $onCustody = $this->currentlyOutQuery($division, $unit)->count();
-        $needsFollowUp = $this->currentlyOverdueQuery($division, $unit)->count();
+        $onCustody = $this->currentlyOutQuery($division, $unit, $borrower)->count();
+        $needsFollowUp = $this->currentlyOverdueQuery($division, $unit, $borrower)->count();
 
         return [
             'total' => $total,
@@ -427,10 +784,10 @@ class AnalyticsService
         CarbonInterface $to,
         ?string $division,
         ?string $unit,
-        int $limit = 5
+        int $limit = 5,
+        ?int $borrower = null
     ): array {
-        $custodyIds = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
+        $custodyIds = $this->releaseCustodyScope($from, $to, $division, $unit, $borrower)
             ->select('id');
 
         $rows = DB::table('custody_lines')
@@ -477,9 +834,10 @@ class AnalyticsService
         CarbonInterface $to,
         ?string $division,
         ?string $unit,
-        int $limit = 5
+        int $limit = 5,
+        ?int $borrower = null
     ): array {
-        $versionIds = $this->requestScope($from, $to, $division, $unit)
+        $versionIds = $this->requestScope($from, $to, $division, $unit, $borrower)
             ->select('request_versions.id');
 
         $rows = DB::table('request_items')
@@ -535,9 +893,10 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $requests = (clone $this->requestScope($from, $to, $division, $unit))
+        $requests = (clone $this->requestScope($from, $to, $division, $unit, $borrower))
             ->count('borrowing_requests.id');
 
         /*
@@ -545,7 +904,7 @@ class AnalyticsService
          * in the organisation but filed nothing this period is not active, so
          * the count comes from the request versions rather than the org table.
          */
-        $activeUnits = (clone $this->requestScope($from, $to, $division, $unit))
+        $activeUnits = (clone $this->requestScope($from, $to, $division, $unit, $borrower))
             ->whereNotNull('request_versions.office_unit')
             ->where('request_versions.office_unit', '!=', '')
             ->distinct()
@@ -555,7 +914,7 @@ class AnalyticsService
         $requestedQuantity = (float) DB::table('request_items')
             ->whereIn(
                 'request_items.request_version_id',
-                $this->requestScope($from, $to, $division, $unit)->select('request_versions.id')
+                $this->requestScope($from, $to, $division, $unit, $borrower)->select('request_versions.id')
             )
             ->sum('request_items.requested_quantity');
 
@@ -566,8 +925,7 @@ class AnalyticsService
         $releasedQuantity = (float) DB::table('custody_lines')
             ->whereIn(
                 'custody_lines.custody_transaction_id',
-                $this->custodyScope($from, $to, $division, $unit)
-                    ->whereNotNull('released_at')
+                $this->releaseCustodyScope($from, $to, $division, $unit, $borrower)
                     ->select('id')
             )
             ->sum('custody_lines.actual_released_quantity');
@@ -666,16 +1024,17 @@ class AnalyticsService
         CarbonInterface $to,
         ?string $division,
         ?string $unit,
-        string $periodSelection
+        string $periodSelection,
+        ?int $borrower = null
     ): array {
-        $rows = $this->requestScope($from, $to, $division, $unit)
-            ->select('borrowing_requests.created_at')
+        $rows = $this->requestScope($from, $to, $division, $unit, $borrower)
+            ->selectRaw('COALESCE(request_versions.submitted_at, borrowing_requests.created_at) AS filed_at')
             ->get();
 
         $buckets = $this->emptyBuckets($from, $to, $periodSelection);
 
         foreach ($rows as $row) {
-            $key = $this->bucketKey($row->created_at, $periodSelection);
+            $key = $this->bucketKey(Carbon::parse($row->filed_at), $periodSelection);
 
             if (isset($buckets[$key])) {
                 $buckets[$key]['count']++;
@@ -770,45 +1129,30 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $closed = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNotNull('closed_at')
-            ->get(['closed_at', 'due_at']);
+        $completedRows = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
 
-        $onTime = $closed->filter(
-            fn ($custody): bool => $custody->due_at === null
-                || $custody->closed_at->lessThanOrEqualTo($custody->due_at)
-        )->count();
+        $onTime = $completedRows
+            ->where('state', ReturnMetricsService::RETURNED_ON_TIME)
+            ->count();
 
-        $late = $closed->count() - $onTime;
+        $late = $completedRows
+            ->where('state', ReturnMetricsService::RETURNED_LATE)
+            ->count();
 
-        /* Still out and past due, regardless of when it was requested. */
-        $overdue = $this->currentlyOverdueQuery($division, $unit)->count();
-
-        $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
+        /* Still out and past due is a present-tense measure. */
+        $overdue = $this->currentlyOverdueQuery($division, $unit, $borrower)->count();
 
         /*
-         * Billing statements carry no custody column of their own; they reach
-         * custody through the penalty line that was assessed against it.
+         * One custody equals one accountability case in Analytics. Incident,
+         * late-return and billing records are de-duplicated by custody id so a
+         * single obligation never appears as two or three separate cases.
          */
-        $openCases = Incident::query()
-            ->whereIn('custody_transaction_id', $custodyIds)
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->count()
-            + BillingStatement::query()
-                ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
-                ->whereExists(function ($query) use ($custodyIds): void {
-                    $query->select(DB::raw(1))
-                        ->from('billing_lines')
-                        ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
-                        ->whereColumn('billing_lines.billing_statement_id', 'billing_statements.id')
-                        ->whereIn('penalties.custody_transaction_id', $custodyIds);
-                })
-                ->count();
+        $openCases = $this->openAccountabilityCount($from, $to, $division, $unit, $borrower);
 
-        $completed = $closed->count();
+        $completed = $completedRows->count();
 
         return [
             'on_time' => $onTime,
@@ -817,16 +1161,11 @@ class AnalyticsService
             'open_cases' => $openCases,
             'completed' => $completed,
 
-            /*
-             * Rates are null rather than zero when nothing has been returned:
-             * "0% on time" and "no returns yet" are different readings, and
-             * only one of them is true here.
-             */
             'on_time_rate' => $completed > 0 ? round($onTime / $completed * 100, 1) : null,
             'late_rate' => $completed > 0 ? round($late / $completed * 100, 1) : null,
 
-            'average_duration' => $this->averageCustodyDuration($from, $to, $division, $unit),
-            'has_data' => $closed->isNotEmpty() || $overdue > 0 || $openCases > 0,
+            'average_duration' => $this->averageCustodyDuration($from, $to, $division, $unit, $borrower),
+            'has_data' => $completed > 0 || $overdue > 0 || $openCases > 0,
             'summary' => $this->returnsSentence($completed, $onTime, $late, $overdue, $openCases),
         ];
     }
@@ -888,14 +1227,14 @@ class AnalyticsService
             'allocated' => 0.0,
             'on_custody' => 0.0,
             'maintenance' => 0.0,
-            'problem' => 0.0,
             /*
-             * Held by an open incident. Kept apart from `problem`, which also
-             * carries lost, stolen and destroyed: only this one is subtracted
-             * from current availability, so only this one belongs in a
-             * composition of serviceable stock.
+             * `problem` is the incident-held quantity. Lost/stolen/destroyed
+             * are condition subtypes of those same incident lines and must not
+             * be added again or one physical unit is counted twice.
              */
+            'problem' => 0.0,
             'incident' => 0.0,
+            'attention' => 0.0,
             'laundry' => 0.0,
         ];
 
@@ -910,7 +1249,7 @@ class AnalyticsService
             $balance = $balances[$item->id] ?? [];
 
             $totals['serviceable'] += (float) ($balance['serviceable_total'] ?? 0);
-            $totals['available'] += (float) ($balance['current_available'] ?? 0);
+            $totals['available'] += (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? 0);
 
             /*
              * allocated and reserved are the same units read over two windows:
@@ -924,13 +1263,24 @@ class AnalyticsService
             $totals['allocated'] += (float) ($balance['reserved'] ?? 0);
 
             $totals['on_custody'] += (float) ($balance['borrowed'] ?? 0);
-            $totals['maintenance'] += (float) ($balance['damaged_maintenance'] ?? 0);
-            $totals['laundry'] += (float) ($balance['laundry'] ?? 0);
-            $totals['incident'] += (float) ($balance['incident'] ?? 0);
-            $totals['problem'] += (float) ($balance['lost'] ?? 0)
+            $maintenance = (float) ($balance['damaged_maintenance'] ?? 0);
+            $incident = (float) ($balance['incident'] ?? 0);
+            $terminalIncidentStates = (float) ($balance['lost'] ?? 0)
                 + (float) ($balance['stolen'] ?? 0)
-                + (float) ($balance['destroyed'] ?? 0)
-                + (float) ($balance['incident'] ?? 0);
+                + (float) ($balance['destroyed'] ?? 0);
+
+            $totals['maintenance'] += $maintenance;
+            $totals['laundry'] += (float) ($balance['laundry'] ?? 0);
+            $totals['incident'] += $incident;
+            $totals['problem'] += $incident;
+
+            /*
+             * Maintenance and lost/stolen/destroyed are breakdowns of the
+             * incident quantity for a normal SERVICEABLE item. `max()` also
+             * covers the legacy whole-item maintenance condition without
+             * stacking the same quantity on top of an incident again.
+             */
+            $totals['attention'] += max($incident, $maintenance, $terminalIncidentStates);
 
             $stock = (float) ($balance['serviceable_total'] ?? 0);
 
@@ -939,7 +1289,7 @@ class AnalyticsService
                 continue;
             }
 
-            $usable = (float) ($balance['current_available'] ?? 0);
+            $usable = (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? 0);
             $share = $usable / $stock;
 
             $availability[] = [
@@ -969,9 +1319,9 @@ class AnalyticsService
             'threshold' => self::LOW_AVAILABILITY_RATIO,
             'summary' => $items->isEmpty()
                 ? 'No active inventory items are recorded yet.'
-                : ($totals['problem'] > 0 || $totals['maintenance'] > 0
-                    ? ($totals['problem'] + $totals['maintenance']).' units are currently unavailable through maintenance or an open incident.'
-                    : 'No inventory units are currently held by maintenance or an incident.'),
+                : ($totals['attention'] > 0
+                    ? ($totals['attention'] + 0).' units currently need condition or incident follow-up.'
+                    : 'No inventory units currently need condition or incident follow-up.'),
         ];
     }
 
@@ -1013,7 +1363,7 @@ class AnalyticsService
                 continue;
             }
 
-            $usable = (float) ($balance['current_available'] ?? 0);
+            $usable = (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? 0);
             $share = $usable / $stock;
 
             if ($share > self::LOW_AVAILABILITY_RATIO) {
@@ -1124,27 +1474,45 @@ class AnalyticsService
     /* Section H - Movement                                                */
     /* ------------------------------------------------------------------ */
 
-    /**
+        /**
      * Equipment that moved least, including equipment that never moved.
      *
-     * The fast-moving ranking can be answered from custody lines alone, but
-     * the slow-moving one cannot: an item borrowed zero times has no custody
-     * line to find. This starts from the catalogue and joins activity onto
-     * it, so items with no movement are the ones that surface first - which
-     * is the whole point of the question.
+     * Release activity follows released_at and respects the selected borrower
+     * affiliation snapshot. Catalogue rows with no matching release remain in
+     * the result at zero, which is the point of this view.
      *
      * @return array<string, mixed>
      */
     public function slowMovingItems(
         CarbonInterface $from,
         CarbonInterface $to,
-        int $limit = 10
+        int $limit = 10,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
-        $released = DB::table('custody_lines')
+        $releasedQuery = DB::table('custody_lines')
             ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
             ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
             ->whereNotNull('custody_transactions.released_at')
-            ->whereBetween('custody_transactions.released_at', [$from, $to])
+            ->whereBetween('custody_transactions.released_at', [$from, $to]);
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $releasedQuery->whereIn('custody_transactions.request_version_id', $versionIds);
+        }
+
+        $released = $releasedQuery
             ->groupBy('request_items.inventory_item_id')
             ->select('request_items.inventory_item_id AS item_id')
             ->selectRaw('SUM(custody_lines.actual_released_quantity) AS quantity')
@@ -1212,9 +1580,10 @@ class AnalyticsService
         ?string $unit
     ): array {
         $timestamps = $this->requestScope($from, $to, $division, $unit)
-            ->select('borrowing_requests.created_at')
+            ->selectRaw('COALESCE(request_versions.submitted_at, borrowing_requests.created_at) AS filed_at')
             ->get()
-            ->pluck('created_at');
+            ->pluck('filed_at')
+            ->map(fn ($moment) => Carbon::parse($moment));
 
         $total = $timestamps->count();
 
@@ -1315,31 +1684,34 @@ class AnalyticsService
         ?string $unit,
         int $limit = 10
     ): array {
-        $rows = $this->custodyScope($from, $to, $division, $unit)
-            ->join('users', 'users.id', '=', 'custody_transactions.borrower_user_id')
-            ->whereNotNull('custody_transactions.released_at')
-            ->whereNotNull('custody_transactions.closed_at')
-            ->whereNotNull('custody_transactions.due_at')
-            ->whereColumn('custody_transactions.closed_at', '>', 'custody_transactions.due_at')
-            ->groupBy('users.id', 'users.full_name')
-            ->select('users.full_name AS name')
-            ->selectRaw('COUNT(custody_transactions.id) AS late_returns')
-            ->orderByDesc('late_returns')
-            ->limit($limit)
-            ->get();
+        $rows = $this->completedReturnRecords($from, $to, $division, $unit)
+            ->where('state', ReturnMetricsService::RETURNED_LATE)
+            ->groupBy(fn (array $row): int => (int) $row['custody']->borrower_user_id)
+            ->map(function (Collection $group): array {
+                /** @var CustodyTransaction $custody */
+                $custody = $group->first()['custody'];
+
+                return [
+                    'name' => (string) ($custody->borrower?->full_name ?? 'Unknown borrower'),
+                    'late_returns' => $group->count(),
+                ];
+            })
+            ->sortByDesc('late_returns')
+            ->take($limit)
+            ->values();
 
         $highest = (int) ($rows->max('late_returns') ?: 0);
 
         return [
-            'borrowers' => $rows->map(fn ($row): array => [
-                'name' => (string) $row->name,
-                'late_returns' => (int) $row->late_returns,
-                'share' => $highest > 0 ? (int) round((int) $row->late_returns / $highest * 100) : 0,
+            'borrowers' => $rows->map(fn (array $row): array => [
+                'name' => $row['name'],
+                'late_returns' => $row['late_returns'],
+                'share' => $highest > 0 ? (int) round($row['late_returns'] / $highest * 100) : 0,
             ])->all(),
             'summary' => $rows->isEmpty()
                 ? 'No borrowing was returned after its due date during this period.'
-                : $rows->first()->name.' recorded the most late returns ('
-                    .(int) $rows->first()->late_returns.').',
+                : $rows->first()['name'].' recorded the most late returns ('
+                    .$rows->first()['late_returns'].').',
         ];
     }
 
@@ -1355,31 +1727,40 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $rows = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNotNull('closed_at')
-            ->get(['released_at', 'closed_at']);
+        $records = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
 
-        if ($rows->isEmpty()) {
+        if ($records->isEmpty()) {
             return ['available' => false, 'summary' => 'No completed borrowings to measure yet.'];
         }
 
-        $hours = $rows
-            ->map(fn ($row): float => (float) $row->released_at->diffInMinutes($row->closed_at) / 60)
-            ->filter(fn (float $value): bool => $value >= 0);
+        $hours = $records
+            ->map(function (array $row): ?float {
+                /** @var CustodyTransaction $custody */
+                $custody = $row['custody'];
+                $returnedAt = $this->returnMetrics->completionMoment($custody);
+
+                if (! $custody->released_at || ! $returnedAt) {
+                    return null;
+                }
+
+                return (float) $custody->released_at->diffInMinutes($returnedAt) / 60;
+            })
+            ->filter(fn (?float $value): bool => $value !== null && $value >= 0)
+            ->values();
 
         if ($hours->isEmpty()) {
             return ['available' => false, 'summary' => 'No completed borrowings to measure yet.'];
         }
 
-        $averageHours = $hours->avg();
+        $averageHours = (float) $hours->avg();
         $days = $averageHours / 24;
 
         return [
             'available' => true,
-            'count' => $rows->count(),
+            'count' => $hours->count(),
             'hours' => round($averageHours, 1),
             'days' => round($days, 1),
             'label' => $days >= 1
@@ -1387,16 +1768,16 @@ class AnalyticsService
                 : round($averageHours).' '.(round($averageHours) === 1.0 ? 'hour' : 'hours'),
             'summary' => 'A completed borrowing lasted about '
                 .($days >= 1 ? round($days, 1).' days' : round($averageHours).' hours')
-                .' on average across '.$rows->count().' '
-                .($rows->count() === 1 ? 'record' : 'records').'.',
+                .' on average across '.$hours->count().' '
+                .($hours->count() === 1 ? 'record' : 'records').'.',
         ];
     }
 
-    /**
-     * Incidents and their affected quantity for the period.
+        /**
+     * Incidents opened during the selected period and their affected quantity.
      *
-     * Nothing is inferred: with no incident records the section reports a
-     * clean zero rather than an invented history.
+     * Incident analytics follow reported_at. The release denominator follows
+     * physical released_at over the same period and filter scope.
      *
      * @return array<string, mixed>
      */
@@ -1404,20 +1785,43 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
+        $incidentQuery = Incident::query()
+            ->whereBetween('reported_at', [$from, $to])
+            ->with('lines');
 
-        $incidents = Incident::query()
-            ->whereIn('custody_transaction_id', $custodyIds)
-            ->with('lines')
-            ->get();
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')
+            || $borrower !== null) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $custodyIds = CustodyTransaction::query()
+                ->whereIn('request_version_id', $versionIds)
+                ->when($borrower !== null, fn ($q) => $q->where('borrower_user_id', $borrower))
+                ->select('id');
+
+            $incidentQuery->whereIn('custody_transaction_id', $custodyIds);
+        }
+
+        $incidents = $incidentQuery->get();
 
         $released = (float) DB::table('custody_lines')
-            ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
-            ->whereIn('custody_lines.custody_transaction_id', $custodyIds)
-            ->whereNotNull('custody_transactions.released_at')
-            ->sum('custody_lines.actual_released_quantity');
+            ->whereIn(
+                'custody_transaction_id',
+                $this->releaseCustodyScope($from, $to, $division, $unit, $borrower)->select('id')
+            )
+            ->sum('actual_released_quantity');
 
         $byType = $incidents
             ->groupBy('incident_type')
@@ -1442,7 +1846,6 @@ class AnalyticsService
             ])->values()->all(),
             'affected_quantity' => $affected + 0,
             'released_quantity' => $released + 0,
-            /* A rate needs a denominator; without releases there is none. */
             'rate' => $released > 0 ? round($affected / $released * 100, 2) : null,
             'summary' => $incidents->isEmpty()
                 ? 'No property incidents were recorded for this period.'
@@ -1476,8 +1879,9 @@ class AnalyticsService
      * continues at the observed rate, which no borrowing pattern guarantees,
      * and it carries no probability because the data does not support one.
      *
-     * Usable availability is InventoryService's current_available, the same
-     * authoritative figure the Inventory module uses.
+     * Usable availability is InventoryService's borrower_available: stock
+     * that is physically usable and not already reserved for another approved
+     * request. This keeps planning figures consistent with allocation rules.
      *
      * @return array<string, mixed>
      */
@@ -1485,16 +1889,11 @@ class AnalyticsService
     /* Section F2 - Return performance detail                              */
     /* ------------------------------------------------------------------ */
 
-    /**
-     * Completed returns per bucket, split into on-time and late.
+        /**
+     * Completed physical returns per bucket, split into on-time and late.
      *
-     * Same population as returns(): custody belonging to requests filed in the
-     * period. Buckets follow the selected period exactly as trend() does, so a
-     * return closed outside the window is not plotted - the card says so.
-     *
-     * ON TIME and LATE are both finished borrowings. Equipment that is still
-     * out is OVERDUE and never appears here; that measure is reported on its
-     * own and the two are never added together.
+     * This uses the exact same completed-return population and classification
+     * as returns(), so the trend always reconciles with the KPI totals.
      *
      * @return array<string, mixed>
      */
@@ -1503,30 +1902,25 @@ class AnalyticsService
         CarbonInterface $to,
         ?string $division,
         ?string $unit,
-        string $periodSelection
+        string $periodSelection,
+        ?int $borrower = null
     ): array {
-        $closed = $this->custodyScope($from, $to, $division, $unit)
-            ->whereNotNull('released_at')
-            ->whereNotNull('closed_at')
-            ->get(['closed_at', 'due_at']);
-
+        $completed = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
         $buckets = [];
 
         foreach ($this->emptyBuckets($from, $to, $periodSelection) as $key => $bucket) {
             $buckets[$key] = $bucket + ['on_time' => 0, 'late' => 0];
         }
 
-        foreach ($closed as $custody) {
-            $key = $this->bucketKey($custody->closed_at, $periodSelection);
+        foreach ($completed as $row) {
+            $key = $this->bucketKey($row['returned_at'], $periodSelection);
 
             if (! isset($buckets[$key])) {
                 continue;
             }
 
-            $onTime = $custody->due_at === null
-                || $custody->closed_at->lessThanOrEqualTo($custody->due_at);
-
-            $buckets[$key][$onTime ? 'on_time' : 'late']++;
+            $bucket = $row['state'] === ReturnMetricsService::RETURNED_LATE ? 'late' : 'on_time';
+            $buckets[$key][$bucket]++;
         }
 
         $points = collect($buckets)->values();
@@ -1542,21 +1936,20 @@ class AnalyticsService
                 'label' => $p['label'],
                 'on_time' => $p['on_time'],
                 'late' => $p['late'],
-                /* Both series share one scale so the shapes stay comparable. */
                 'on_time_share' => (int) round($p['on_time'] / $highest * 100),
                 'late_share' => (int) round($p['late'] / $highest * 100),
             ])->all(),
             'plotted' => (int) $points->sum(fn (array $p): int => $p['on_time'] + $p['late']),
-            'total' => $closed->count(),
+            'total' => $completed->count(),
         ];
     }
 
-    /**
-     * Where this period's borrowings currently stand.
+        /**
+     * Mutually exclusive current stage of borrowings filed in the period.
      *
-     * Every stage is a status the workflow actually writes, counted over the
-     * requests filed in the selected period, so the strip reads as one
-     * population moving through the process rather than five unrelated totals.
+     * Custody state takes precedence once custody exists. A returned custody
+     * cannot simultaneously remain in Awaiting Release, which keeps this strip
+     * a true current-stage snapshot instead of a cumulative funnel.
      *
      * @return list<array<string, mixed>>
      */
@@ -1564,29 +1957,61 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $approved = (clone $this->requestScope($from, $to, $division, $unit))
-            ->whereIn('borrowing_requests.status', $this->approvedStatuses())
-            ->count('borrowing_requests.id');
+        $requests = $this->requestScope($from, $to, $division, $unit, $borrower)
+            ->select('borrowing_requests.id', 'borrowing_requests.status')
+            ->get();
 
-        $preparing = (clone $this->custodyScope($from, $to, $division, $unit))
-            ->where('status', 'PREPARING_RELEASE')
-            ->count();
+        $custodies = CustodyTransaction::query()
+            ->whereIn('request_id', $requests->pluck('id'))
+            ->with(['lines.requestItem.inventoryItem', 'returns', 'laundryJob'])
+            ->get()
+            ->keyBy('request_id');
 
-        $onCustody = (clone $this->custodyScope($from, $to, $division, $unit))
-            ->whereNotNull('released_at')
-            ->whereNull('closed_at')
-            ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
-            ->count();
+        $approvedValues = array_map(
+            static fn (RequestStatus $status): string => $status->value,
+            $this->approvedStatuses()
+        );
 
-        $returned = (clone $this->custodyScope($from, $to, $division, $unit))
-            ->whereNotNull('released_at')
-            ->whereNotNull('closed_at')
-            ->count();
+        $awaiting = 0;
+        $preparing = 0;
+        $onCustody = 0;
+        $returned = 0;
+
+        foreach ($requests as $request) {
+            /** @var CustodyTransaction|null $custody */
+            $custody = $custodies->get($request->id);
+
+            if ($custody) {
+                if ($custody->released_at !== null) {
+                    if ($this->returnMetrics->completionMoment($custody) !== null) {
+                        $returned++;
+                    } else {
+                        $onCustody++;
+                    }
+
+                    continue;
+                }
+
+                if ((string) $custody->status === 'PREPARING_RELEASE') {
+                    $preparing++;
+                    continue;
+                }
+            }
+
+            $status = $request->status instanceof RequestStatus
+                ? $request->status->value
+                : (string) $request->status;
+
+            if (in_array($status, $approvedValues, true)) {
+                $awaiting++;
+            }
+        }
 
         return [
-            ['key' => 'approved', 'label' => 'Approved', 'value' => $approved, 'note' => 'Cleared for release'],
+            ['key' => 'approved', 'label' => 'Awaiting release', 'value' => $awaiting, 'note' => 'Approved, not yet in preparation'],
             ['key' => 'preparing', 'label' => 'Preparing release', 'value' => $preparing, 'note' => 'Being prepared by SPMU'],
             ['key' => 'custody', 'label' => 'On custody', 'value' => $onCustody, 'note' => 'Released, not yet returned'],
             ['key' => 'returned', 'label' => 'Returned', 'value' => $returned, 'note' => 'Physical return recorded'],
@@ -1603,15 +2028,15 @@ class AnalyticsService
      *
      * @return array<string, mixed>
      */
-    public function currentOverdue(?string $division, ?string $unit, int $limit = 5): array
+    public function currentOverdue(?string $division, ?string $unit, int $limit = 5, ?int $borrower = null): array
     {
-        $rows = $this->currentlyOverdueQuery($division, $unit)
+        $rows = $this->currentlyOverdueQuery($division, $unit, $borrower)
             ->with(['borrower', 'request'])
             ->orderBy('due_at')
             ->limit($limit)
             ->get();
 
-        $total = $this->currentlyOverdueQuery($division, $unit)->count();
+        $total = $this->currentlyOverdueQuery($division, $unit, $borrower)->count();
 
         return [
             'total' => $total,
@@ -1635,11 +2060,10 @@ class AnalyticsService
     }
 
     /**
-     * What condition equipment came back in.
+     * Condition quantities actually recorded at return inspection in-period.
      *
-     * Read straight from return_lines.condition_code, which is the value the
-     * receiving officer recorded at inspection. Only codes actually present
-     * are listed - a condition nobody recorded is not charted as a zero.
+     * The event date is return_transactions.received_at, not the original
+     * request filing date.
      *
      * @return array<string, mixed>
      */
@@ -1647,13 +2071,35 @@ class AnalyticsService
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
-        ?string $unit
+        ?string $unit,
+        ?int $borrower = null
     ): array {
-        $custodyIds = $this->custodyScope($from, $to, $division, $unit)->select('id');
-
-        $rows = DB::table('return_lines')
+        $query = DB::table('return_lines')
             ->join('return_transactions', 'return_transactions.id', '=', 'return_lines.return_transaction_id')
-            ->whereIn('return_transactions.custody_transaction_id', $custodyIds)
+            ->join('custody_transactions', 'custody_transactions.id', '=', 'return_transactions.custody_transaction_id')
+            ->whereBetween('return_transactions.received_at', [$from, $to]);
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $query->whereIn('custody_transactions.request_version_id', $versionIds);
+        }
+
+        if ($borrower !== null) {
+            $query->where('custody_transactions.borrower_user_id', $borrower);
+        }
+
+        $rows = $query
             ->groupBy('return_lines.condition_code')
             ->select('return_lines.condition_code AS code')
             ->selectRaw('SUM(return_lines.quantity_received) AS quantity')
@@ -1670,7 +2116,6 @@ class AnalyticsService
                 'label' => str((string) $row->code)->replace('_', ' ')->title()->toString(),
                 'quantity' => (float) $row->quantity + 0,
                 'share' => $highest > 0 ? (int) round((float) $row->quantity / $highest * 100) : 0,
-                /* FINE is the only code that means nothing went wrong. */
                 'is_fine' => strtoupper((string) $row->code) === 'FINE',
             ])->all(),
         ];
@@ -1680,18 +2125,36 @@ class AnalyticsService
         InventoryService $inventoryService,
         CarbonInterface $from,
         CarbonInterface $to,
-        int $limit = 10
+        int $limit = 10,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
         $days = max(1, (int) Carbon::parse($from)->startOfDay()->diffInDays(Carbon::parse($to)->startOfDay()) + 1);
-
-        /* A window this short cannot support a daily rate for any item. */
         $windowSufficient = $days >= self::STOCK_COVERAGE_MINIMUM_WINDOW_DAYS;
 
-        $usage = DB::table('custody_lines')
+        $usageQuery = DB::table('custody_lines')
             ->join('custody_transactions', 'custody_transactions.id', '=', 'custody_lines.custody_transaction_id')
             ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
             ->whereNotNull('custody_transactions.released_at')
-            ->whereBetween('custody_transactions.released_at', [$from, $to])
+            ->whereBetween('custody_transactions.released_at', [$from, $to]);
+
+        if (($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
+            $versionIds = DB::table('request_versions')
+                ->when(
+                    $division !== null && $division !== '' && $division !== 'all',
+                    fn ($versions) => $versions->where('division_code', $division)
+                )
+                ->when(
+                    $unit !== null && $unit !== '' && $unit !== 'all',
+                    fn ($versions) => $versions->where('office_unit', $unit)
+                )
+                ->select('id');
+
+            $usageQuery->whereIn('custody_transactions.request_version_id', $versionIds);
+        }
+
+        $usage = $usageQuery
             ->groupBy('request_items.inventory_item_id')
             ->select('request_items.inventory_item_id AS item_id')
             ->selectRaw('SUM(custody_lines.actual_released_quantity) AS quantity')
@@ -1705,7 +2168,6 @@ class AnalyticsService
             ->get();
 
         $balances = $inventoryService->portfolio($items, now()->startOfDay(), now()->endOfDay());
-
         $rows = [];
 
         foreach ($items as $item) {
@@ -1713,16 +2175,13 @@ class AnalyticsService
             $released = (float) ($activity->quantity ?? 0);
             $releases = (int) ($activity->releases ?? 0);
 
-            /* No consumption at all offers nothing to project from. */
             if ($released <= 0) {
                 continue;
             }
 
             $balance = $balances[$item->id] ?? [];
-            $available = (float) ($balance['current_available'] ?? 0);
-
+            $available = (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? 0);
             $sufficient = $windowSufficient && $releases >= self::STOCK_COVERAGE_MINIMUM_RELEASES;
-
             $perDay = $sufficient ? $released / $days : null;
             $cover = ($perDay !== null && $perDay > 0) ? $available / $perDay : null;
 
@@ -1739,7 +2198,6 @@ class AnalyticsService
             ];
         }
 
-        /* Shortest cover first; rows without a reading sink to the bottom. */
         usort($rows, fn (array $a, array $b): int => ($a['days_cover'] ?? PHP_INT_MAX) <=> ($b['days_cover'] ?? PHP_INT_MAX));
 
         $measured = array_values(array_filter($rows, fn (array $row): bool => $row['sufficient']));
@@ -1747,7 +2205,6 @@ class AnalyticsService
         $insufficient = count($rows) - count($measured);
 
         return [
-            /* True only when at least one item could actually be measured. */
             'available' => $measured !== [],
             'window_days' => $days,
             'window_sufficient' => $windowSufficient,

@@ -9,7 +9,7 @@
         }
 
         const records = Array.from(list.querySelectorAll('[data-custody-record]'));
-        const tabs = Array.from(workspace.querySelectorAll('[data-custody-tab]'));
+        const status = document.getElementById('custody-oversight-status');
         const search = document.getElementById('custody-oversight-search');
         const from = document.getElementById('custody-oversight-from');
         const to = document.getElementById('custody-oversight-to');
@@ -21,7 +21,7 @@
         const pageSize = document.getElementById('custody-oversight-page-size');
         const pagination = document.getElementById('custody-oversight-pagination');
 
-        let activeTab = 'all';
+        let activeStatus = 'all';
         let currentPage = 1;
 
         const compareDateValues = (leftValue, rightValue, direction = 'asc') => {
@@ -45,8 +45,8 @@
                 const rightArchived = ['completed', 'cancelled'].includes(right.dataset.custodyGroup);
 
                 // Keep completed/cancelled records after active operational work
-                // unless the user explicitly opens one of those archive tabs.
-                if (! ['completed', 'cancelled'].includes(activeTab) && leftArchived !== rightArchived) {
+                // unless the user explicitly filters to one of those archive statuses.
+                if (! ['completed', 'cancelled'].includes(activeStatus) && leftArchived !== rightArchived) {
                     return leftArchived ? 1 : -1;
                 }
 
@@ -88,18 +88,18 @@
             return ordered;
         };
 
-        const matchesTab = (record) => {
+        const matchesStatus = (record) => {
             const group = record.dataset.custodyGroup || 'active';
 
-            if (activeTab === 'all') {
+            if (activeStatus === 'all') {
                 return true;
             }
 
-            if (activeTab === 'active') {
+            if (activeStatus === 'active') {
                 return group !== 'completed' && group !== 'cancelled';
             }
 
-            return group === activeTab;
+            return group === activeStatus;
         };
 
         const perPage = () => {
@@ -235,7 +235,7 @@
                         && (!toDate || date <= toDate)
                     );
 
-                if (matchesTab(record) && searchMatches && dateMatches) {
+                if (matchesStatus(record) && searchMatches && dateMatches) {
                     matched.push(record);
                 } else {
                     record.hidden = true;
@@ -252,12 +252,6 @@
 
             matched.forEach((record, index) => {
                 record.hidden = index < firstIndex || index >= lastIndex;
-            });
-
-            tabs.forEach((tab) => {
-                const selected = tab.dataset.custodyTab === activeTab;
-                tab.classList.toggle('is-active', selected);
-                tab.setAttribute('aria-pressed', selected ? 'true' : 'false');
             });
 
             if (noResults) {
@@ -278,16 +272,13 @@
             }
         };
 
-        tabs.forEach((tab) => {
-            tab.addEventListener('click', () => {
-                activeTab = tab.dataset.custodyTab || 'all';
-                currentPage = 1;
-                render();
-            });
+        status?.addEventListener('change', () => {
+            activeStatus = status.value || 'all';
+            currentPage = 1;
+            render();
         });
 
         search?.addEventListener('input', () => {
-            activeTab = 'all';
             currentPage = 1;
             render();
         });

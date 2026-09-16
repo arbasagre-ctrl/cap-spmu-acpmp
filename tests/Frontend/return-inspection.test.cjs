@@ -41,12 +41,13 @@ function inspection(outstandings = [100, 5], hasForm = true) {
         }));
         const total = element();
         const state = element();
-        const evidence = element();
-        const police = element();
+        const evidence = element({ value: '' });
+        const police = element({ value: '' });
         const policeWrap = element();
         const details = element({
             matches: selector => selector === '[data-return-issue-details]',
             querySelector: selector => ({ '.return-evidence-input': evidence, '.return-police-input': police, '[data-police-wrap]': policeWrap })[selector],
+            querySelectorAll: selector => selector === '.return-evidence-input, .return-police-input' ? [evidence, police] : [],
         });
         return element({
             dataset: { outstanding: String(outstanding) },
@@ -66,8 +67,19 @@ function inspection(outstandings = [100, 5], hasForm = true) {
     const dismiss = element();
     const flash = element({ querySelector: () => dismiss });
     const form = element({
+        checkValidity: () => rows.every(row => {
+            const numbersValid = Object.values(row.inputs).every(input => input.validity.valid);
+            const evidenceValid = !row.evidence.required || Boolean(row.evidence.value);
+            const policeValid = !row.police.required || Boolean(row.police.value);
+            return numbersValid && evidenceValid && policeValid;
+        }),
         querySelectorAll: () => rows,
-        querySelector: selector => ({ 'textarea[name="remarks"]': remarks, '[data-return-remarks-count]': count })[selector],
+        querySelector: selector => ({
+            '#record-return-button': button,
+            '#return-accounting-message': message,
+            'textarea[name="remarks"]': remarks,
+            '[data-return-remarks-count]': count,
+        })[selector],
     });
     const context = {
         document: {
@@ -83,46 +95,66 @@ function inspection(outstandings = [100, 5], hasForm = true) {
             rows[row].inputs[condition].value = String(value);
             rows[row].inputs[condition].dispatch('input');
         },
+        evidence(row, value = 'evidence.jpg') {
+            rows[row].evidence.value = value;
+            rows[row].evidence.dispatch('input');
+        },
+        police(row, value = 'BLT-001') {
+            rows[row].police.value = value;
+            rows[row].police.dispatch('input');
+        },
     };
 }
 
-test('a return requires full accounting for every selected item, while untouched items can wait', () => {
+test('a non-linen return requires every outstanding item type and full quantity in one inspection', () => {
     const ui = inspection();
     assert.equal(ui.button.disabled, true);
     assert.equal(ui.rows[0].total.textContent, '0 / 100');
-    assert.equal(ui.rows[0].state.textContent, '0% accounted');
+    assert.equal(ui.rows[0].state.textContent, 'Not yet accounted');
     ui.quantity(0, 'FINE', 99);
     assert.equal(ui.button.disabled, true);
     assert.equal(ui.rows[0].state.textContent, '99% accounted');
     ui.quantity(0, 'FINE', 100);
-    assert.equal(ui.button.disabled, false);
+    assert.equal(ui.button.disabled, true);
+    assert.match(ui.copy.textContent, /No partial return/);
     ui.quantity(1, 'FINE', 3);
     assert.equal(ui.button.disabled, true);
     ui.quantity(1, 'FINE', 5);
     assert.equal(ui.button.disabled, false);
     assert.equal(ui.warningIcon.hidden, true);
     assert.equal(ui.successIcon.hidden, false);
-    assert.match(ui.copy.textContent, /fully accounted/);
+    assert.match(ui.copy.textContent, /complete non-linen return branch/);
 });
 
 test('mixed conditions require evidence, and stolen quantities also require a police reference', () => {
     const ui = inspection();
     ui.quantity(0, 'FINE', 80);
     ui.quantity(0, 'DAMAGED', 20);
-    assert.equal(ui.button.disabled, false);
+    ui.quantity(1, 'FINE', 5);
     assert.equal(ui.rows[0].details.hidden, false);
     assert.equal(ui.rows[0].evidence.required, true);
-    assert.equal(ui.rows[0].police.required, false);
+    assert.equal(ui.button.disabled, true);
+
+    ui.evidence(0);
+    assert.equal(ui.button.disabled, false);
+
     ui.quantity(0, 'FINE', 79);
+    ui.quantity(0, 'DAMAGED', 20);
     ui.quantity(0, 'STOLEN', 1);
     assert.equal(ui.rows[0].police.required, true);
     assert.equal(ui.rows[0].policeWrap.hidden, false);
+    assert.equal(ui.button.disabled, true);
+
+    ui.police(0);
+    assert.equal(ui.button.disabled, false);
+
     ui.quantity(0, 'STOLEN', 0);
     ui.quantity(0, 'DAMAGED', 0);
     ui.quantity(0, 'FINE', 100);
     assert.equal(ui.rows[0].details.hidden, true);
     assert.equal(ui.rows[0].evidence.required, false);
     assert.equal(ui.rows[0].police.required, false);
+    assert.equal(ui.button.disabled, false);
 });
 
 test('over-counted, negative, fractional, and invalid quantities cannot enable recording', () => {

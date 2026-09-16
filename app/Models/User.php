@@ -174,6 +174,9 @@ class User extends Authenticatable
         return $this->hasMany(BorrowerRestriction::class, 'borrower_user_id')
             ->where('status', 'ACTIVE')
             ->where(function ($query): void {
+                $query->whereNull('effective_from')->orWhere('effective_from', '<=', now());
+            })
+            ->where(function ($query): void {
                 $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
             });
     }

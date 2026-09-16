@@ -179,8 +179,8 @@ class PolicyService
 
     /**
      * Build the information shown beside the SPMU Head decision. This is a
-     * preview only; no offense is counted until the Head explicitly checks
-     * the confirmation box and submits the case decision.
+     * preview only; no offense is counted until the Head explicitly chooses
+     * Yes in the administrative-offense review and submits the case decision.
      *
      * @return array<string, mixed>
      */
@@ -250,6 +250,7 @@ class PolicyService
 
         $canConfirm = $eligibleTypes !== []
             && $period !== null
+            && $rule !== null
             && ! in_array($existingViolation?->status, ['DISMISSED'], true);
 
         return [

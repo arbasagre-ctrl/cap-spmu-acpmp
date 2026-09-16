@@ -435,6 +435,7 @@ class ReportReleaseReturnTest extends TestCase
         );
 
         $this->assertSame(1, $this->returns(['division' => 'ACADEMIC'])->count());
+        $this->assertSame(1, $this->returns(['return_status' => 'COMPLETED'])->count());
         $this->assertSame(1, $this->returns(['return_status' => 'RETURNED_ON_TIME'])->count());
         $this->assertSame(1, $this->returns(['return_status' => 'CURRENTLY_OVERDUE'])->count());
         $this->assertSame(0, $this->returns(['return_status' => 'RETURNED_LATE'])->count());

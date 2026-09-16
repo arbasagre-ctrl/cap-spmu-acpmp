@@ -139,7 +139,7 @@ class GatePass extends Model
             }
 
             if (($custodyStage['key'] ?? null) === 'PICKUP_EXPIRED') {
-                return ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Window Expired', 'tone' => 'warning'];
+                return ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Missed', 'tone' => 'warning'];
             }
 
             if (($custodyStage['key'] ?? null) === 'PREPARING_RELEASE') {

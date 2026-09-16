@@ -3,8 +3,8 @@
 .borrower-request-detail [hidden] { display: none !important; }
 
 /* Cards */
-.borrower-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); align-items: start; gap: 18px; }
-.borrower-request-detail .borrower-detail-card { min-width: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); overflow: hidden; }
+.borrower-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); align-items: stretch; gap: 18px; }
+.borrower-request-detail .borrower-detail-card { min-width: 0; height: 100%; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); overflow: hidden; }
 .borrower-request-detail .borrower-card-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 0; padding: 17px 20px; border-bottom: 1px solid var(--border); color: var(--heading); font-size: 15px; font-weight: 750; }
 .borrower-card-icon { display: grid; place-items: center; flex-shrink: 0; color: var(--borrower-blue); }
 .borrower-card-note { margin-left: auto; color: var(--text-muted); font-size: 12px; font-weight: 600; }

@@ -9,14 +9,14 @@
     <div class="actions">
         @if(session('active_workspace') === 'ICTU')
             @if(Route::has('administration.users.index'))
-                <a class="button primary ui-pressable" href="{{ route('administration.users.index') }}">Manage users</a>
+                <a class="button primary ui-pressable" href="{{ route('administration.users.index') }}"><span>Manage users</span><x-icon name="arrow-right" size="15" /></a>
             @endif
             @if(Route::has('administration.delegations.index'))
-                <a class="button secondary ui-pressable" href="{{ route('administration.delegations.index') }}">Delegations</a>
+                <a class="button secondary ui-pressable" href="{{ route('administration.delegations.index') }}"><span>Delegations</span><x-icon name="arrow-right" size="15" /></a>
             @endif
         @endif
         @if(Route::has('administration.settings.index'))
-            <a class="button secondary ui-pressable" href="{{ route('administration.settings.index') }}">Configuration</a>
+            <a class="button secondary ui-pressable" href="{{ route('administration.settings.index') }}"><span>Configuration</span><x-icon name="arrow-right" size="15" /></a>
         @endif
     </div>
 </section>
@@ -26,7 +26,7 @@
         <span class="kpi-label">All accounts</span>
         <strong class="kpi-value">{{ $userCount }}</strong>
         @if(Route::has('administration.users.index'))
-            <a class="dashboard-view-all" href="{{ route('administration.users.index') }}">Manage users <x-icon name="chevron-right" size="12" /></a>
+            <a class="dashboard-view-all" href="{{ route('administration.users.index') }}">Manage users <x-icon name="arrow-right" size="12" /></a>
         @endif
     </article>
 
@@ -34,7 +34,7 @@
         <span class="kpi-label">Active accounts</span>
         <strong class="kpi-value">{{ $activeUserCount }}</strong>
         @if(Route::has('administration.settings.index'))
-            <a class="dashboard-view-all" href="{{ route('administration.settings.index') }}">Review configuration <x-icon name="chevron-right" size="12" /></a>
+            <a class="dashboard-view-all" href="{{ route('administration.settings.index') }}">Review configuration <x-icon name="arrow-right" size="12" /></a>
         @endif
     </article>
 
@@ -42,7 +42,7 @@
         <span class="kpi-label">Open configuration values</span>
         <strong class="kpi-value">{{ $openSettings }}</strong>
         @if($mayViewAuditTrail && Route::has('reports.audit'))
-            <a class="dashboard-view-all" href="{{ route('reports.audit') }}">Open audit trail <x-icon name="chevron-right" size="12" /></a>
+            <a class="dashboard-view-all" href="{{ route('reports.audit') }}">Open audit trail <x-icon name="arrow-right" size="12" /></a>
         @endif
     </article>
 </section>
@@ -56,7 +56,7 @@
                 <h2>Recent attributable actions</h2>
             </div>
             @if(Route::has('reports.audit'))
-                <a class="button secondary small ui-pressable" href="{{ route('reports.audit') }}">Full audit</a>
+                <a class="button secondary small ui-pressable" href="{{ route('reports.audit') }}"><span>Full audit</span><x-icon name="arrow-right" size="14" /></a>
             @endif
         </div>
         <div class="timeline">

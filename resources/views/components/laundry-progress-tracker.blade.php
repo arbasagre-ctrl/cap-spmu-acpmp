@@ -11,10 +11,10 @@
     $legacyReconciliationPending = $job->status === 'TURNED_OVER_TO_LAUNDRY';
 
     $progressLabel = match (true) {
-        $available => 'Available',
-        $legacyReconciliationPending => 'Availability Reconciliation Pending',
+        $available => 'SPMU Recorded',
+        $legacyReconciliationPending => 'Reconciliation Pending',
         $formComplete => 'Ready for SPMU Encoding',
-        default => 'Laundry Processing / Form Pending',
+        default => 'Laundry Form Pending',
     };
 
     $steps = [
@@ -25,18 +25,18 @@
             'description' => 'Laundry Personnel receive the linen, record RECEIVED BY, finish the offline laundry process, fill DATE COMPLETED, and deliver the completed form to SPMU.',
         ],
         [
-            'label' => 'SPMU Records Final Form',
+            'label' => 'SPMU Return Encoding',
             'icon' => 'requests',
             'state' => $returnEncoded ? 'complete' : ($formComplete ? 'current' : 'pending'),
             'description' => 'The Action Officer uploads the completed form and encodes the received quantity plus any reported issue. If no issue was reported, the full received quantity is recorded as Fine / Good.',
         ],
         [
-            'label' => 'Available',
+            'label' => 'Return Reconciled',
             'icon' => 'success',
             'state' => $available ? 'complete' : ($legacyReconciliationPending ? 'current' : 'pending'),
             'description' => $legacyReconciliationPending
                 ? 'This older record is waiting for the system one-time reconciliation. No separate Action Officer finalization is required.'
-                : 'After SPMU encoding, serviceable linen becomes Available automatically. Adverse or late findings continue through Accountability Processing.',
+                : 'After SPMU encoding, the linen return is reconciled. Serviceable quantity returns to available stock, while adverse or late findings continue through Accountability Processing.',
         ],
     ];
 @endphp
@@ -45,7 +45,7 @@
     <div class="card-header">
         <div>
             <p class="eyebrow">Laundry tracker</p>
-            <h2>Where this linen is now</h2>
+            <h2>Linen return progress</h2>
         </div>
         <span class="status-badge {{ $available ? 'status-success' : 'status-info' }} laundry-progress-status">{{ $progressLabel }}</span>
     </div>

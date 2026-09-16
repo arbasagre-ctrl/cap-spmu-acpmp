@@ -3,8 +3,15 @@
 namespace Tests\Feature;
 
 use App\Enums\AccessClassification;
+use App\Models\InventoryCategory;
+use App\Models\InventoryItem;
+use App\Models\UnitOfMeasure;
 use App\Models\User;
+use App\Reports\ReportFilters;
+use App\Services\ReportService;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Tests\TestCase;
 
 /**
@@ -91,6 +98,92 @@ class AnalyticsCardDrilldownTest extends TestCase
         $response->assertDontSee('Detail unavailable');
     }
 
+
+    /**
+     * Record-backed card details should expose the matching Reports dataset,
+     * already generated and carrying the card's scope.
+     *
+     * @return array<string, array{0:string,1:string,2:string}>
+     */
+    public static function recordBackedCardSources(): array
+    {
+        return [
+            'overview trend' => ['overview', 'overview.trend', 'report=borrowing'],
+            'return compliance' => ['overview', 'overview.return-compliance', 'return_status=COMPLETED'],
+            'released quantity' => ['demand', 'demand.released-quantity', 'report=utilization'],
+            'available inventory' => ['inventory', 'inventory.available', 'availability_status=AVAILABLE'],
+            'low availability' => ['inventory', 'inventory.low-availability', 'availability_status=LOW_AVAILABILITY'],
+            'return outcome' => ['returns', 'returns.outcome', 'return_status=COMPLETED'],
+            'current overdue' => ['returns', 'returns.followup', 'return_status=CURRENTLY_OVERDUE'],
+            'return summary' => ['returns', 'returns.summary', 'return_status=COMPLETED'],
+            'return issues' => ['returns', 'returns.issues', 'report=returns'],
+            /*
+             * Condition is only ever recorded on a completed physical return,
+             * so COMPLETED is the exact population the breakdown is summed
+             * from.
+             */
+            'return condition' => ['returns', 'returns.condition', 'return_status=COMPLETED'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('recordBackedCardSources')]
+    public function test_record_backed_card_details_offer_the_matching_source_records(
+        string $section,
+        string $key,
+        string $expectedQuery
+    ): void {
+        $response = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
+            'section' => $section,
+            'academic_period' => 'month',
+            'detail' => 'card',
+            'for' => $key,
+        ]));
+
+        $response->assertOk();
+        $response->assertSee('View source records', false);
+        $response->assertSee($expectedQuery, false);
+        $response->assertSee('generated=1', false);
+    }
+
+    /**
+     * Derived/composite readings deliberately do not pretend there is one
+     * exact raw-record dataset behind them.
+     *
+     * @return array<string, array{0:string,1:string}>
+     */
+    public static function derivedCardsWithoutSingleSource(): array
+    {
+        return [
+            'priority insights' => ['overview', 'overview.insights'],
+            'inventory coverage estimate' => ['inventory', 'inventory.coverage'],
+            'forecast outlook' => ['predictive', 'forecast.outlook'],
+            'forecast methodology' => ['predictive', 'forecast.methodology'],
+            /*
+             * Awaiting/preparing release live in Borrowing Activity Report, on
+             * custody belongs to Release & Custody, and returned belongs to
+             * Return & Accountability - no single report reproduces the whole
+             * lifecycle strip, so none is offered.
+             */
+            'borrowing lifecycle' => ['returns', 'returns.lifecycle'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('derivedCardsWithoutSingleSource')]
+    public function test_derived_cards_without_one_exact_dataset_do_not_show_a_source_records_button(
+        string $section,
+        string $key
+    ): void {
+        $response = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
+            'section' => $section,
+            'academic_period' => 'month',
+            'detail' => 'card',
+            'for' => $key,
+        ]));
+
+        $response->assertOk();
+        $response->assertDontSee('View source records', false);
+    }
+
     public function test_an_unknown_card_key_still_answers_rather_than_vanishing(): void
     {
         $this->actingAs($this->spmuHead())
@@ -149,7 +242,7 @@ class AnalyticsCardDrilldownTest extends TestCase
                 'for' => 'returns.followup',
             ]))
             ->assertOk()
-            ->assertSee('separate measure from a late return', false);
+            ->assertSee('Out past the due date right now', false);
     }
 
     public function test_scheduled_demand_is_not_described_as_a_forecast(): void
@@ -162,6 +255,82 @@ class AnalyticsCardDrilldownTest extends TestCase
                 'for' => 'forecast.scheduled',
             ]))
             ->assertOk()
-            ->assertSee('It is a record, not a projection', false);
+            ->assertSee('requests already filed', false);
+    }
+
+    /**
+     * Inventory Availability reconciliation.
+     *
+     * The KPI row, the "Inventory Availability" card detail and the Inventory
+     * Status Report all describe the same physical stock, so all three must
+     * agree on the same number. AnalyticsCardDetailService::inventoryState()
+     * used to read $inventory['available'] instead of the nested
+     * $inventory['totals']['available'] the KPI cards actually use, which
+     * silently produced zero for every facet regardless of true stock.
+     */
+    public function test_inventory_availability_reconciles_across_kpi_detail_and_report(): void
+    {
+        $category = InventoryCategory::query()->create([
+            'category_code' => 'DRILL',
+            'category_name' => 'Drilldown Fixture',
+            'active' => true,
+        ]);
+
+        $measure = UnitOfMeasure::query()->create([
+            'unit_code' => 'PC-DRILL',
+            'unit_name' => 'Piece',
+            'active' => true,
+        ]);
+
+        InventoryItem::query()->create([
+            'category_id' => $category->id,
+            'unit_id' => $measure->id,
+            'unique_description' => 'Reconciliation Fixture Chair',
+            'total_quantity' => 47,
+            'condition_code' => 'SERVICEABLE',
+            'borrowable' => true,
+            'off_campus_allowed' => false,
+            'laundry_required' => false,
+            'provisional' => false,
+            'active' => true,
+        ]);
+
+        $user = $this->spmuHead();
+
+        $kpi = $this->actingAs($user)->get(route('analytics.index', [
+            'section' => 'inventory',
+            'academic_period' => 'month',
+        ]));
+
+        $kpi->assertOk();
+        $kpi->assertSee('47', false);
+
+        $detail = $this->actingAs($user)->get(route('analytics.index', [
+            'section' => 'inventory',
+            'academic_period' => 'month',
+            'detail' => 'card',
+            'for' => 'inventory.availability',
+        ]));
+
+        $detail->assertOk();
+        $detail->assertSee('Available', false);
+        $detail->assertSee('47', false);
+
+        /*
+         * Inventory is a present-tense snapshot (AnalyticsService::inventory()
+         * and InventoryStatusReport both ignore the reporting period), so the
+         * exact window here does not matter - only that both sides agree.
+         */
+        $report = app(ReportService::class)->generate(
+            ReportFilters::fromRequest(
+                Request::create('/reports', 'GET'),
+                'inventory',
+                Carbon::now()->startOfMonth(),
+                Carbon::now()->endOfMonth(),
+                'month'
+            )
+        );
+
+        $this->assertSame(47, $report->summary['Available to allocate']);
     }
 }

@@ -4,7 +4,7 @@
      * - Non-linen is physically received and inspected directly by the Action Officer.
      * - Linen is encoded only from the accomplished Laundry Form.
      * - A pending Laundry Form must NEVER block a valid non-linen return inspection.
-     * - Any item type not physically returned yet stays at zero and remains outstanding.
+     * - No partial branch return: every outstanding item type in a selected return channel is accounted together.
      */
     $linenReturnLines = $eligibleReturnLines->filter(
         fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
@@ -112,7 +112,7 @@
                                         <div>
                                             <strong>Non-linen return inspection</strong>
                                             <small>
-                                                Record only items physically returned. Items left at 0 remain outstanding.
+                                                Account for every outstanding non-linen item type in this AO inspection. No item-type or quantity splitting.
                                             </small>
                                         </div>
                                         <span class="status-badge status-info">AO inspection</span>
@@ -130,9 +130,9 @@
                                             <strong>Linen return</strong>
                                             <small>
                                                 @if($laundryFormMissing)
-                                                    Pending accomplished Laundry Form. Linen remains outstanding.
+                                                    Record the accomplished Laundry Form before encoding linen return quantities.
                                                 @else
-                                                    Use the accomplished Laundry Form. RECEIVED BY determines linen timeliness.
+                                                    Encode every outstanding linen item type from the accomplished Laundry Form. RECEIVED BY determines linen timeliness.
                                                 @endif
                                             </small>
                                         </div>
@@ -158,11 +158,6 @@
                                 </small>
                                 <small>Outstanding: {{ $outstanding + 0 }}</small>
 
-                                @if($linenLinePending)
-                                    <small class="return-linen-locked-copy">
-                                        Waiting for accomplished Laundry Form
-                                    </small>
-                                @endif
                             </td>
 
                             @foreach([
@@ -192,7 +187,7 @@
 
                             <td>
                                 @if($linenLinePending)
-                                    <span class="status-badge status-warning">Pending Form</span>
+                                    <span class="return-accounted-state" title="Available after the accomplished Laundry Form is recorded">—</span>
                                 @else
                                     <strong class="return-accounted-total">
                                         0 / {{ $outstanding + 0 }}
@@ -212,7 +207,7 @@
                             <td colspan="8">
                                 <div class="return-issue-details__grid">
                                     <label data-evidence-wrap>
-                                        Evidence for non-good quantity
+                                        Supporting evidence
                                         <input
                                             type="file"
                                             class="return-evidence-input"
@@ -220,8 +215,11 @@
                                             accept="application/pdf,image/png,image/jpeg,image/webp"
                                         >
                                         <small>
-                                            Required only when Damaged, Destroyed, Missing,
-                                            Lost, or Stolen is greater than zero.
+                                            @if($isLinenLine)
+                                                Optional for linen because the accomplished Laundry Form is the authoritative condition record.
+                                            @else
+                                                Required when Damaged, Destroyed, Missing, Lost, or Stolen is greater than zero.
+                                            @endif
                                         </small>
                                     </label>
 
@@ -306,8 +304,8 @@
 @if($eligibleReturnLines->isEmpty())
     <article class="card return-empty-state">
         <div class="empty-state">
-            <strong>No return item requires encoding.</strong>
-            <span>Review the Return Status panel for the next action.</span>
+            <strong>Physical return completed.</strong>
+            <span>All issued property has been accounted for. See Return History below for the recorded inspection.</span>
         </div>
     </article>
 @endif

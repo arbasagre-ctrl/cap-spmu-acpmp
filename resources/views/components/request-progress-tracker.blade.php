@@ -17,8 +17,6 @@
         )
         : null;
 
-    $accountabilityIndicator = $custody?->activeAccountabilityIndicator();
-
     $laundry = $custody?->laundryJob;
 
     $laundryStatus = $laundry
@@ -143,8 +141,53 @@
     $isReleased =
         (bool) $releasedAt;
 
+    $allCustodyLines = $custody?->lines ?? collect();
+    $hasLinenItem = $allCustodyLines->contains(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+    $hasNonLinenItem = $allCustodyLines->contains(
+        fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+
+    $outstandingLines = $custody?->lines?->filter(
+        fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+    ) ?? collect();
+    $hasOutstandingLinen = $outstandingLines->contains(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+    $hasOutstandingNonLinen = $outstandingLines->contains(
+        fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+
     $isClosed =
         $custodyStatus === 'CLOSED';
+
+    /*
+     * Accountability is a post-return branch, not another name for physical
+     * return processing. Once all issued quantities have been physically
+     * returned and an unresolved case exists, the tracker moves to a distinct
+     * Accountability step instead of staying on "Return Processing".
+     */
+    $activeAccountability = $custody?->activeAccountabilityIndicator();
+    $obligationSummary = $activeAccountability ? $custody?->openObligationSummary() : null;
+    $physicalReturnComplete = $isReleased
+        && (bool) $returnStartedAt
+        && $outstandingLines->isEmpty();
+    $showAccountabilityStage = $physicalReturnComplete
+        && $activeAccountability !== null
+        && ! $isClosed;
+
+    $accountabilityIncident = $custody
+        ? ($custody->incidents ?? collect())
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->sortByDesc(fn ($incident) => $incident->reported_at?->timestamp ?? $incident->id)
+            ->first()
+        : null;
+
+    $accountabilityStartedAt = $accountabilityIncident?->head_decided_at
+        ?: $accountabilityIncident?->reported_at
+        ?: $custody?->overdueCase?->overdue_started_at
+        ?: $returnStartedAt;
 
     $pickupExpired =
         (bool) $custody?->pickup_expired_at
@@ -182,7 +225,8 @@
     $pickupStepIndex = $requiresActionOfficerVerification ? 5 : 4;
     $releaseStepIndex = $requiresActionOfficerVerification ? 6 : 5;
     $returnStepIndex = $requiresActionOfficerVerification ? 7 : 6;
-    $completedStepIndex = $requiresActionOfficerVerification ? 8 : 7;
+    $accountabilityStepIndex = $showAccountabilityStage ? $returnStepIndex + 1 : null;
+    $completedStepIndex = $returnStepIndex + ($showAccountabilityStage ? 2 : 1);
 
     $reviewStepIndex = match (true) {
         $requiresActionOfficerVerification
@@ -198,6 +242,8 @@
 
     $currentIndex = match (true) {
         $isClosed => $completedStepIndex,
+
+        $showAccountabilityStage => $accountabilityStepIndex,
 
         $isReleased => $returnStepIndex,
 
@@ -268,8 +314,12 @@
 
                 'FOR_LAUNDRY'
                     => $laundry->hasVerifiedAccomplishedForm()
-                        ? 'The completed Laundry Form is on file. SPMU is encoding the linen return result.'
-                        : 'Return the linen and same printed Laundry Form to the Laundry Area. Laundry Personnel record Received by, finish the laundry process, fill Date Completed, then deliver the completed form to SPMU.',
+                        ? ($hasOutstandingNonLinen
+                            ? 'The completed Laundry Form is on file for linen. Return every outstanding non-linen item to SPMU in one complete AO return inspection while SPMU encodes the linen result.'
+                            : 'The completed Laundry Form is on file. SPMU is encoding the linen return result.')
+                        : ($hasOutstandingNonLinen
+                            ? 'This is a mixed return: return every outstanding non-linen item to SPMU, and return every outstanding linen item with the same printed Laundry Form to the Laundry Area. Each branch must be complete.'
+                            : 'Return every outstanding linen item and the same printed Laundry Form to the Laundry Area. Laundry Personnel record Received by, finish the laundry process, fill Date Completed, then deliver the completed form to SPMU.'),
 
                 'TURNED_OVER_TO_LAUNDRY'
                     => 'This is an older Laundry record awaiting compatibility availability reconciliation.',
@@ -309,30 +359,24 @@
          * Still on custody.
          */
         elseif ($custody?->due_at) {
-            $returnDescription =
-                now()->greaterThan($custody->due_at)
-                    ? 'Return is overdue since '
-                        .$custody->due_at->format(
-                            'd M Y, g:i A'
-                        )
-                        .'.'
-                    : 'Items are currently on custody. Return due '
-                        .$custody->due_at->format(
-                            'd M Y, g:i A'
-                        )
-                        .'.';
+            $returnDescription = now()->greaterThan($custody->due_at)
+                ? ($hasOutstandingLinen && $hasOutstandingNonLinen
+                    ? 'Return is overdue since '.$custody->due_at->format('d M Y, g:i A').'. Return non-linen to SPMU and linen with the Laundry Form to the Laundry Area immediately.'
+                    : ($hasOutstandingLinen
+                        ? 'Linen return is overdue since '.$custody->due_at->format('d M Y, g:i A').'. Return the linen with the Laundry Form to the Laundry Area immediately.'
+                        : 'Return is overdue since '.$custody->due_at->format('d M Y, g:i A').'. Return all outstanding non-linen items to SPMU immediately.'))
+                : ($hasOutstandingLinen && $hasOutstandingNonLinen
+                    ? 'Mixed items are currently on custody. By '.$custody->due_at->format('d M Y, g:i A').', return non-linen to SPMU and linen with the Laundry Form to the Laundry Area.'
+                    : ($hasOutstandingLinen
+                        ? 'Linen is currently on custody. Return it with the Laundry Form to the Laundry Area by '.$custody->due_at->format('d M Y, g:i A').'.'
+                        : 'Items are currently on custody. Return all outstanding non-linen items to SPMU by '.$custody->due_at->format('d M Y, g:i A').'.'));
         }
 
         else {
-            $returnDescription =
-                'Items are currently on custody and are awaiting return to SPMU.';
+            $returnDescription = $hasOutstandingLinen
+                ? 'Follow the applicable Laundry Area return process for linen; return any outstanding non-linen items to SPMU.'
+                : 'Items are currently on custody and are awaiting return to SPMU.';
         }
-    }
-
-    if ($isReleased && $accountabilityIndicator) {
-        $returnDescription = $custody?->hasOutstandingProperty()
-            ? $accountabilityIndicator['label'].' is active while the remaining return branch is still being processed.'
-            : $accountabilityIndicator['label'].' remains active until SPMU records the required resolution.';
     }
 
     /*
@@ -369,7 +413,7 @@
         $steps[$actionOfficerStepIndex] = [
             'label' => 'Action Officer Verification',
             'icon' => 'eye',
-            'time' => $verificationStep?->received_at ?: $reviewStartedAt,
+            'time' => $verificationStep?->decided_at ?: $verificationStep?->received_at ?: $reviewStartedAt,
             'description' => match (true) {
                 $verificationStep?->decision === 'RETURNED_FOR_REVISION'
                     => 'The Action Officer returned the Gate Pass request for correction and resubmission.',
@@ -389,7 +433,10 @@
     $steps[$headReviewStepIndex] = [
         'label' => 'SPMU Head / Admin Review',
         'icon' => 'success',
-        'time' => $headDecisionStep?->received_at ?: ($requiresActionOfficerVerification ? null : $reviewStartedAt),
+        'time' => $headDecisionStep?->decided_at
+            ?: $approvedAt
+            ?: $headDecisionStep?->received_at
+            ?: ($requiresActionOfficerVerification ? null : $reviewStartedAt),
         'description' => match (true) {
             $headDecisionStep?->decision === 'RETURNED_FOR_REVISION'
                 => 'The SPMU Head / Admin returned the request for correction and resubmission.',
@@ -431,7 +478,7 @@
                 => 'SPMU set the pickup schedule.',
 
             $pickupExpired
-                => 'The previous pickup window expired. Waiting for SPMU to schedule a new pickup window.',
+                => 'The pickup was missed. Waiting for the next valid pickup schedule.',
 
             $isApproved
                 => 'Waiting for SPMU operational processing and pickup scheduling.',
@@ -447,7 +494,11 @@
         'time' => $releasedAt,
         'description' =>
             $isReleased
-                ? 'SPMU physically released the approved items to the borrower.'
+                ? match (true) {
+                    $hasLinenItem && $hasNonLinenItem => 'The approved non-linen and linen branches were physically issued through their applicable handover processes. Laundry Personnel issue linen under the printed Laundry Form; SPMU records the completed release.',
+                    $hasLinenItem => 'Laundry Personnel physically issued the linen under the printed Laundry Form and wet-signed Issued by; SPMU recorded the completed physical release.',
+                    default => 'SPMU physically released the approved items to the borrower.',
+                }
                 : match (true) {
                     ! $hasActivePickupSchedule
                         => 'Pickup must be scheduled before item preparation and release.',
@@ -459,11 +510,25 @@
     ];
 
     $steps[$returnStepIndex] = [
-        'label' => $accountabilityIndicator ? 'Return + Accountability' : 'Return Processing',
+        'label' => $physicalReturnComplete ? 'Return Recorded' : 'Return Processing',
         'icon' => 'custody',
         'time' => $returnStartedAt,
-        'description' => $returnDescription,
+        'description' => $physicalReturnComplete
+            ? 'The physical return was recorded. Any unresolved post-return accountability is handled in the next stage.'
+            : $returnDescription,
     ];
+
+    if ($showAccountabilityStage) {
+        $steps[$accountabilityStepIndex] = [
+            'label' => 'Accountability',
+            'icon' => 'warning',
+            'time' => $accountabilityStartedAt,
+            'description' => trim(
+                (($obligationSummary['title'] ?? $activeAccountability['label'] ?? 'Accountability processing').'. ')
+                .($obligationSummary['copy'] ?? 'An unresolved accountability case must be cleared before this borrowing transaction can be completed.')
+            ),
+        ];
+    }
 
     $steps[$completedStepIndex] = [
         'label' => 'Completed',
@@ -498,18 +563,21 @@
 
     $trackerEyebrow =
         $isClosed
-            ? 'Request history'
+            ? 'Transaction history'
             : 'Real-time progress';
 
-    $trackerTitle =
-        $isClosed
-            ? 'Borrowing workflow'
-            : 'Request progress';
+    $trackerTitle = match (true) {
+        $isClosed => 'Borrowing transaction history',
+        (bool) $custody => 'Borrowing transaction progress',
+        default => 'Request progress',
+    };
 
     $trackerIntro =
         $isClosed
             ? 'Review the completed stages of this borrowing transaction.'
-            : 'Follow your request from preparation through final return and reconciliation.';
+            : ((bool) $custody
+                ? 'Follow this borrowing from request approval through pickup, return, accountability when applicable, and final completion.'
+                : 'Follow your request from preparation through final approval.');
 
     /*
     |--------------------------------------------------------------------------
@@ -532,19 +600,23 @@
             => 'Borrower Revision Required',
 
         $pickupExpired
-            => 'Pickup Window Expired',
+            => 'Pickup Missed',
 
         $isClosed
             => 'Completed',
 
-        $isReleased && $accountabilityIndicator
-            => $custody?->hasOutstandingProperty() ? 'Return + Accountability' : 'Accountability Processing',
+        $showAccountabilityStage
+            => $obligationSummary['label'] ?? $activeAccountability['label'] ?? 'Accountability Processing',
 
         $isReleased
             && $laundryStatus === 'FOR_LAUNDRY'
-            => $laundry?->hasVerifiedAccomplishedForm()
-                ? 'Awaiting SPMU Return Verification'
-                : 'Awaiting Laundry Return',
+            => match (true) {
+                $hasOutstandingLinen && $hasOutstandingNonLinen => 'Mixed Return Pending',
+                $hasOutstandingNonLinen => 'Non-Linen Return Pending',
+                $laundry?->hasVerifiedAccomplishedForm() => 'Awaiting SPMU Linen Encoding',
+                $hasOutstandingLinen => 'Awaiting Laundry Return',
+                default => 'Return Reconciliation',
+            },
 
         $isReleased
             && $laundryStatus === 'TURNED_OVER_TO_LAUNDRY'
@@ -687,7 +759,7 @@
             <div class="request-tracker__attention-note" role="status">
                 <x-icon name="information" size="18" />
                 <span>
-                    The previous pickup window expired.
+                    The pickup was missed.
                     The reservation remains in place while waiting for SPMU to schedule a new pickup window.
                 </span>
             </div>

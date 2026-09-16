@@ -242,6 +242,65 @@ class AnalyticsRestructureTest extends TestCase
         $this->assertNull($returns['late_rate']);
     }
 
+    public function test_return_compliance_opens_its_own_matching_breakdown(): void
+    {
+        foreach ([true, false] as $onTime) {
+            $this->request(
+                'ACADEMIC',
+                'College of Computer Studies',
+                RequestStatus::ApprovedReadyForRelease,
+                custody: [
+                    'status' => 'CLOSED',
+                    'released_at' => $this->from->copy()->addDay(),
+                    'due_at' => $this->from->copy()->addDays(5)->endOfDay(),
+                    'closed_at' => $onTime
+                        ? $this->from->copy()->addDays(4)
+                        : $this->from->copy()->addDays(9),
+                ]
+            );
+        }
+
+        $overview = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
+            'section' => 'overview',
+            'academic_period' => 'month',
+        ]));
+
+        $overview->assertOk();
+        $overview->assertSee('1 of 2 completed returns were on time', false);
+
+        $detail = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
+            'section' => 'overview',
+            'academic_period' => 'month',
+            'detail' => 'card',
+            'for' => 'overview.return-compliance',
+        ]));
+
+        $detail->assertOk();
+        $detail->assertSee('Return Compliance', false);
+        $detail->assertSee('Completed returns', false);
+        $detail->assertSee('Returned on time', false);
+        $detail->assertSee('Returned late', false);
+        $detail->assertDontSee('Returned Late</h2>', false);
+    }
+
+    public function test_priority_insights_detail_matches_the_visible_signals_without_the_long_explanation(): void
+    {
+        $this->request('ACADEMIC', 'College of Computer Studies');
+
+        $response = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
+            'section' => 'overview',
+            'academic_period' => 'month',
+            'detail' => 'card',
+            'for' => 'overview.insights',
+        ]));
+
+        $response->assertOk();
+        $response->assertSee('Priority Insights', false);
+        $response->assertSee('Top borrowing unit', false);
+        $response->assertSee('Inventory availability', false);
+        $response->assertDontSee('The panel mixes two kinds of reading.', false);
+    }
+
     public function test_average_borrowing_duration_uses_release_to_closure(): void
     {
         $this->request(
@@ -610,6 +669,7 @@ class AnalyticsRestructureTest extends TestCase
             'report' => 'borrowing',
             'academic_period' => 'month',
             'division' => 'ACADEMIC',
+            'generated' => 1,
         ])), false);
     }
 
@@ -637,15 +697,17 @@ class AnalyticsRestructureTest extends TestCase
         ]));
 
         $response->assertOk();
-        $response->assertSee('aria-modal="true"', false);
-        $response->assertSee('It is not a measure of actual asset usage.', false);
+        $response->assertSee('data-analytics-detail-panel', false);
+        $response->assertSee('analytics-detail-inline', false);
+        $response->assertSee('Drafts, cancelled and expired requests are excluded.', false);
 
         /* Reports is the secondary step, with the analytics filters intact. */
-        $response->assertSee('View source records in Reports', false);
+        $response->assertSee('View source records', false);
         $response->assertSee(e(route('reports.index', [
             'report' => 'borrowing',
             'academic_period' => 'month',
             'division' => 'ACADEMIC',
+            'generated' => 1,
         ])), false);
     }
 
@@ -673,6 +735,7 @@ class AnalyticsRestructureTest extends TestCase
         $out->assertSee(e(route('reports.index', [
             'report' => 'custody',
             'academic_period' => 'month',
+            'generated' => 1,
             'custody_status' => 'ACTIVE',
         ])), false);
 
@@ -684,7 +747,7 @@ class AnalyticsRestructureTest extends TestCase
 
         $followUp->assertOk();
         /* The overdue / late-return distinction survives into the detail. */
-        $followUp->assertSee('has not come back after its effective due date', false);
+        $followUp->assertSee('Late returns are already returned and are counted separately.', false);
         $followUp->assertSee('Days overdue', false);
     }
 
@@ -698,10 +761,19 @@ class AnalyticsRestructureTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Current inventory status, as of today', false);
+        /*
+         * The Overview "Low Availability" figure counts every borrowable item
+         * at or below the availability threshold (AnalyticsService::
+         * lowAvailability()), not only items at zero stock, so its source
+         * link must carry the same LOW_AVAILABILITY status the Inventory
+         * Status Report uses for that population - FULLY_COMMITTED covers
+         * only the zero-stock subset and previously under-counted this link.
+         */
         $response->assertSee(e(route('reports.index', [
             'report' => 'inventory',
             'academic_period' => 'month',
-            'availability_status' => 'FULLY_COMMITTED',
+            'generated' => 1,
+            'availability_status' => 'LOW_AVAILABILITY',
         ])), false);
     }
 
@@ -728,7 +800,7 @@ class AnalyticsRestructureTest extends TestCase
         $response->assertSee('Monoblock Chair', false);
         $response->assertSee('Requested quantity (expressed demand)', false);
         $response->assertSee('Released quantity (actual usage)', false);
-        $response->assertSee('They are different measures and are never combined.', false);
+        $response->assertSee('Requested quantity shows demand; released quantity shows actual usage.', false);
     }
 
     public function test_unit_and_division_details_render_with_their_scope(): void
@@ -775,7 +847,7 @@ class AnalyticsRestructureTest extends TestCase
 
             $response->assertOk();
             $response->assertSee($heading, false);
-            $response->assertSee('View source records in Reports', false);
+            $response->assertSee('View source records', false);
         }
     }
 
@@ -807,6 +879,13 @@ class AnalyticsRestructureTest extends TestCase
         /* With this dataset the guard holds, and the detail says why. */
         $response->assertSee('Not enough historical data', false);
         $response->assertDontSee('machine learning', false);
+
+        /*
+         * The headline figure is a weighted projection for a period that has
+         * not happened yet, not a count of raw records, so no report can
+         * reproduce it and the drawer must not offer one.
+         */
+        $response->assertDontSee('View source records', false);
     }
 
     public function test_coverage_detail_withholds_a_rate_without_enough_history(): void
@@ -830,8 +909,8 @@ class AnalyticsRestructureTest extends TestCase
          * stat labels the detail only emits once the history is sufficient,
          * so their absence is what proves the guard held.
          */
-        $response->assertSee('Insufficient usage history', false);
-        $response->assertSee('before stock coverage is estimated', false);
+        $response->assertSee('Insufficient history', false);
+        $response->assertSee('Not enough release history to estimate stock coverage for this item.', false);
         $response->assertDontSee('Risk classification', false);
         $response->assertDontSee('Estimated days of coverage', false);
     }

@@ -37,6 +37,9 @@ class LaundryOperationsReport implements ReportBuilder
     {
         $from = $filters->from;
         $to = $filters->to;
+        $division = $filters->get('division');
+        $unit = $filters->get('unit');
+        $borrower = $filters->get('borrower');
 
         $jobs = LaundryJob::query()
             ->with([
@@ -51,6 +54,13 @@ class LaundryOperationsReport implements ReportBuilder
                     ->orWhereBetween('worker_completed_at', [$from, $to])
                     ->orWhereBetween('completed_at', [$from, $to]);
             })
+            ->when(
+                $borrower !== null,
+                fn ($query) => $query->whereHas(
+                    'custody',
+                    fn ($custody) => $custody->where('borrower_user_id', (int) $borrower)
+                )
+            )
             ->latest('created_at')
             ->get();
 
@@ -89,7 +99,10 @@ class LaundryOperationsReport implements ReportBuilder
                     ->all();
 
                 return [
+                    '_borrower_user_id' => (int) ($custody?->borrower_user_id ?? 0),
                     '_status' => (string) $job->status,
+                    '_division_code' => (string) ($version?->division_code ?? ''),
+                    '_office_unit' => (string) ($version?->office_unit ?? ''),
                     '_item_ids' => $itemIds,
                     '_link' => $custody ? route('custody.show', $custody) : null,
                     '_tone_laundry_status' => match ((string) $job->status) {
@@ -129,6 +142,18 @@ class LaundryOperationsReport implements ReportBuilder
                         : '',
                 ];
             })
+            ->when(
+                $division !== null,
+                fn (Collection $rows): Collection => $rows->filter(
+                    fn (array $row): bool => $row['_division_code'] === $division
+                )
+            )
+            ->when(
+                $unit !== null,
+                fn (Collection $rows): Collection => $rows->filter(
+                    fn (array $row): bool => strcasecmp($row['_office_unit'], (string) $unit) === 0
+                )
+            )
             ->when(
                 $linen !== null,
                 fn (Collection $rows): Collection => $rows->filter(

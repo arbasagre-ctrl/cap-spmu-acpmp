@@ -19,7 +19,11 @@
     <div>
         <p class="eyebrow">Generated sample review</p>
         <h1>{{ $label }} · {{ $template->version_label ?: 'v'.$template->template_version.'.0' }}</h1>
-        <p>Review the approved source and the generated sample. This sample uses the same production renderer that will create future controlled documents.</p>
+        @if($officeContext)
+            <p>Review the approved source and generated Office Draft sample. It was compiled from a temporary source clone; the active controlled template remains unchanged.</p>
+        @else
+            <p>Review the approved source and the generated sample. This sample uses the same production renderer that will create future controlled documents.</p>
+        @endif
     </div>
     <div class="preview-actions">
         <a class="button secondary ui-pressable" href="{{ $sourceRoute }}" target="_blank" rel="noopener">Review Approved Source</a>
@@ -31,8 +35,12 @@
 <section class="content-area template-preview-page">
     <article class="card template-preview-summary">
         <div><span>Format</span><strong>{{ $format }}</strong></div>
-        <div><span>Production layout</span><strong>Prepared</strong></div>
-        <div><span>System data</span><strong>Connected</strong></div>
+        <div><span>{{ $officeContext ? 'Office Draft compiler' : 'Production layout' }}</span><strong>Prepared</strong></div>
+        @if($runtimeContext)
+            <div><span>Preview data</span><strong>{{ $runtimeContext['source']['kind'] === 'AUTHORIZED_WORKFLOW_RECORD' ? 'Authorized workflow record' : 'Synthetic demo' }}</strong></div>
+        @else
+            <div><span>System data</span><strong>Connected</strong></div>
+        @endif
         @if($format === 'PDF')<div><span>Pages</span><strong>{{ $pageCount }}</strong></div>@endif
         @if($format === 'XLSX')<div><span>Worksheets</span><strong>{{ count($review['worksheets'] ?? []) }}</strong></div>@endif
     </article>

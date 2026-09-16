@@ -631,6 +631,16 @@ Route::middleware(['auth', 'active'])->group(function (): void {
                 ->whereNumber('template')
                 ->name('document-templates.prepare');
 
+            Route::get('/document-templates/{type}/{template}/minor-edit', [DocumentTemplateController::class, 'editMinorPresentation'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.minor-edit');
+
+            Route::post('/document-templates/{type}/{template}/minor-edit', [DocumentTemplateController::class, 'updateMinorPresentation'])
+                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
+                ->whereNumber('template')
+                ->name('document-templates.minor-edit.update');
+
             Route::get('/document-templates/{type}/{template}/preview', [DocumentTemplateController::class, 'preview'])
                 ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
                 ->whereNumber('template')

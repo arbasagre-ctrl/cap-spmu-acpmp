@@ -21,8 +21,8 @@
             class="button secondary ui-pressable approval-queue-records"
             href="{{ route('requests.index') }}"
         >
-            <x-icon name="requests" size="16" />
-            View Request Records
+            <span>View Request Records</span>
+            <x-icon name="arrow-right" size="15" />
         </a>
     </section>
 

@@ -117,28 +117,39 @@
 
 (() => {
     const calendar = document.querySelector('[data-borrowing-calendar]');
-    const drawer = document.querySelector('[data-calendar-drawer]');
-    const drawerBackdrop = document.querySelector('.calendar-drawer-backdrop');
+    const preview = document.querySelector('[data-calendar-preview]');
+    const previewBackdrop = document.querySelector('.calendar-preview-backdrop');
 
-    if (!calendar || !drawer || !drawerBackdrop) {
+    if (!calendar || !preview || !previewBackdrop) {
         return;
     }
 
-    const drawerContent = drawer.querySelector('[data-calendar-drawer-content]');
-    const drawerClose = drawer.querySelector('[data-calendar-drawer-close]');
+    const previewContent = preview.querySelector('[data-calendar-preview-content]');
+    const previewClose = preview.querySelector('[data-calendar-preview-close]');
     const viewButtons = calendar.querySelectorAll('[data-calendar-view-button]');
     const viewPanels = calendar.querySelectorAll('[data-calendar-view-panel]');
-    const statusFilterBar = document.querySelector('[data-calendar-status-filters]');
-    const statusFilterButtons = statusFilterBar
-        ? Array.from(statusFilterBar.querySelectorAll('[data-calendar-status-filter]'))
-        : [];
-    const filterLive = statusFilterBar?.querySelector('[data-calendar-filter-live]');
+    const phaseFilterControl = calendar.querySelector('[data-calendar-phase-filters]');
+    const filterToggle = calendar.querySelector('[data-calendar-filter-toggle]');
+    const filterPopover = calendar.querySelector('[data-calendar-filter-popover]');
+    const phaseInputs = Array.from(calendar.querySelectorAll('[data-calendar-phase-filter]'));
+    const phaseLive = calendar.querySelector('[data-calendar-phase-live]');
+    const filterLabel = calendar.querySelector('[data-calendar-filter-label]');
+    const listSearch = calendar.querySelector('[data-calendar-list-search]');
+    const listStatus = calendar.querySelector('[data-calendar-list-status]');
+    const listSort = calendar.querySelector('[data-calendar-list-sort]');
+    const listLive = calendar.querySelector('[data-calendar-list-live]');
+    const listRecords = calendar.querySelector('[data-calendar-list-records]');
     const filterEmpty = calendar.querySelector('[data-calendar-filter-empty]');
+    const filterEmptyCopy = calendar.querySelector('[data-calendar-filter-empty-copy]');
     const defaultEmptyStates = calendar.querySelectorAll('[data-calendar-default-empty]');
     const compactViewport = window.matchMedia('(max-width: 700px)');
+    let selectedPhaseCategory = ''; // empty means all activities
+    let selectedListStatus = '';
+    let selectedListQuery = '';
+    let selectedListSort = 'date-soonest';
+    let activeView = 'month';
     let lastTrigger = null;
     let closeTimer = null;
-    let selectedStatus = '';
 
     const statusLabels = {
         active: 'Active',
@@ -147,38 +158,61 @@
         returned: 'Returned',
     };
 
-    const eventMatchesStatus = (eventTrigger) => {
-        if (!selectedStatus) {
-            return true;
+    const ownRecordInScope = (eventTrigger) => {
+        const ownOnly = calendar.dataset.calendarFilterOwnOnly === 'true';
+        return !ownOnly || eventTrigger.dataset.calendarOwnRecord === 'true';
+    };
+
+    const eventMatchesPhase = (eventTrigger) => {
+        if (!ownRecordInScope(eventTrigger)) {
+            return false;
+        }
+
+        const categories = (eventTrigger.dataset.calendarPhaseCategories || 'pickup')
+            .split(' ')
+            .filter(Boolean);
+
+        return !selectedPhaseCategory || categories.includes(selectedPhaseCategory);
+    };
+
+    const eventMatchesList = (eventTrigger) => {
+        if (!ownRecordInScope(eventTrigger)) {
+            return false;
         }
 
         const statuses = (eventTrigger.dataset.calendarFilterStatuses || '')
             .split(' ')
             .filter(Boolean);
+        const searchable = (eventTrigger.dataset.calendarFilterSearch || '').toLowerCase();
+        const statusMatches = !selectedListStatus || statuses.includes(selectedListStatus);
+        const searchMatches = !selectedListQuery || searchable.includes(selectedListQuery);
 
-        const ownOnly = calendar.dataset.calendarFilterOwnOnly === 'true';
-        const inScope = !ownOnly || eventTrigger.dataset.calendarOwnRecord === 'true';
-
-        return inScope && statuses.includes(selectedStatus);
+        return statusMatches && searchMatches;
     };
 
-    const filterEventsIn = (context) => {
-        context.querySelectorAll('[data-calendar-event]').forEach((eventTrigger) => {
-            eventTrigger.hidden = !eventMatchesStatus(eventTrigger);
+    const updateEmptyState = (matchingCount, hasFilters, copy) => {
+        if (filterEmpty) {
+            filterEmpty.hidden = !hasFilters || matchingCount > 0;
+        }
+        if (filterEmptyCopy && copy) {
+            filterEmptyCopy.textContent = copy;
+        }
+        defaultEmptyStates.forEach((emptyState) => {
+            emptyState.hidden = hasFilters;
         });
     };
 
     const refreshMonthDays = () => {
+        let matchingCount = 0;
+
         calendar.querySelectorAll('[data-calendar-day-events]').forEach((dayEvents) => {
-            const occurrences = Array.from(
-                dayEvents.querySelectorAll('[data-calendar-occurrence]')
-            );
+            const occurrences = Array.from(dayEvents.querySelectorAll('[data-calendar-occurrence]'));
             const matching = occurrences.filter((occurrence) => {
                 const eventTrigger = occurrence.querySelector('[data-calendar-event]');
-
-                return eventTrigger && eventMatchesStatus(eventTrigger);
+                return eventTrigger && eventMatchesPhase(eventTrigger);
             });
 
+            matchingCount += matching.length;
             occurrences.forEach((occurrence) => {
                 occurrence.hidden = true;
             });
@@ -193,42 +227,84 @@
                 moreButton.textContent = `+${remaining} more`;
             }
         });
+
+        const hasFilters = selectedPhaseCategory !== '';
+        if (activeView === 'month') {
+            updateEmptyState(matchingCount, hasFilters, 'Choose another activity type or All activities.');
+        }
+
+        const selectedButton = phaseInputs.find((button) => button.value === selectedPhaseCategory);
+        const selectedText = selectedButton?.textContent.trim() || 'All activities';
+        if (phaseLive) {
+            phaseLive.textContent = selectedPhaseCategory
+                ? `Showing ${selectedText} calendar activity.`
+                : 'Showing all calendar activity types.';
+        }
+        if (filterLabel) {
+            filterLabel.textContent = selectedText;
+        }
+        phaseInputs.forEach((button) => {
+            button.classList.toggle('is-selected', button.value === selectedPhaseCategory);
+        });
     };
 
-    const applyStatusFilter = () => {
-        const listPanel = calendar.querySelector('[data-calendar-view-panel="list"]');
-        const listEvents = listPanel
-            ? Array.from(listPanel.children).filter((child) => child.matches('[data-calendar-event]'))
-            : [];
-
-        listEvents.forEach((eventTrigger) => {
-            eventTrigger.hidden = !eventMatchesStatus(eventTrigger);
-        });
-        refreshMonthDays();
-
-        const matchingCount = listEvents.filter(eventMatchesStatus).length;
-        if (filterEmpty) {
-            filterEmpty.hidden = !selectedStatus || matchingCount > 0;
+    const closeFilterMenu = () => {
+        if (!filterPopover || !filterToggle) {
+            return;
         }
-        defaultEmptyStates.forEach((emptyState) => {
-            emptyState.hidden = Boolean(selectedStatus);
-        });
+        filterPopover.hidden = true;
+        filterToggle.setAttribute('aria-expanded', 'false');
+    };
 
-        statusFilterButtons.forEach((button) => {
-            const buttonStatus = button.dataset.calendarStatusFilter || '';
-            const selected = buttonStatus === selectedStatus;
-            button.classList.toggle('is-selected', selected);
-            button.setAttribute('aria-pressed', String(selected));
-        });
+    const toggleFilterMenu = () => {
+        if (!filterPopover || !filterToggle) {
+            return;
+        }
+        const willOpen = filterPopover.hidden;
+        filterPopover.hidden = !willOpen;
+        filterToggle.setAttribute('aria-expanded', String(willOpen));
+    };
 
-        if (filterLive) {
-            filterLive.textContent = selectedStatus
-                ? `Showing ${statusLabels[selectedStatus]} records.`
-                : 'Showing all calendar records.';
+    const sortListRecords = () => {
+        if (!listRecords) {
+            return;
+        }
+
+        const records = Array.from(listRecords.children).filter((child) => child.matches('[data-calendar-event]'));
+        records.sort((left, right) => {
+            const leftDate = Number(left.dataset.calendarSortDate || 0);
+            const rightDate = Number(right.dataset.calendarSortDate || 0);
+            return selectedListSort === 'date-latest' ? rightDate - leftDate : leftDate - rightDate;
+        });
+        records.forEach((record) => listRecords.appendChild(record));
+    };
+
+    const applyListFilters = () => {
+        if (!listRecords) {
+            return;
+        }
+
+        const records = Array.from(listRecords.children).filter((child) => child.matches('[data-calendar-event]'));
+        records.forEach((eventTrigger) => {
+            eventTrigger.hidden = !eventMatchesList(eventTrigger);
+        });
+        sortListRecords();
+
+        const matchingCount = records.filter(eventMatchesList).length;
+        const hasFilters = Boolean(selectedListStatus || selectedListQuery);
+        if (activeView === 'list') {
+            updateEmptyState(matchingCount, hasFilters, 'Adjust your search or status filter.');
+        }
+
+        if (listLive) {
+            const statusText = selectedListStatus ? statusLabels[selectedListStatus] : 'all statuses';
+            const searchText = selectedListQuery ? ` matching “${selectedListQuery}”` : '';
+            listLive.textContent = `Showing ${matchingCount} calendar records for ${statusText}${searchText}.`;
         }
     };
 
     const selectView = (view) => {
+        activeView = view;
         viewButtons.forEach((button) => {
             const selected = button.dataset.calendarViewButton === view;
             button.classList.toggle('active', selected);
@@ -237,125 +313,65 @@
         viewPanels.forEach((panel) => {
             panel.hidden = panel.dataset.calendarViewPanel !== view;
         });
-    };
-
-    const clearStatusJumpHighlight = () => {
-        calendar.querySelectorAll('.calendar-status-jump-target').forEach((element) => {
-            element.classList.remove('calendar-status-jump-target');
-        });
-        calendar.querySelectorAll('.calendar-status-jump-day').forEach((element) => {
-            element.classList.remove('calendar-status-jump-day');
-        });
-        filterEmpty?.classList.remove('calendar-status-jump-empty');
-    };
-
-    const nearestMatchingMonthOccurrence = () => {
-        const candidates = Array.from(calendar.querySelectorAll('[data-calendar-occurrence]'))
-            .filter((occurrence) => {
-                const trigger = occurrence.querySelector('[data-calendar-event]');
-                return trigger && eventMatchesStatus(trigger);
-            });
-
-        if (!candidates.length) {
-            return null;
+        if (phaseFilterControl) {
+            phaseFilterControl.hidden = view !== 'month';
         }
+        closeFilterMenu();
 
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-
-        return candidates
-            .map((occurrence) => {
-                const rawDate = occurrence.dataset.calendarOccurrenceDate || '';
-                const time = rawDate ? new Date(`${rawDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
-                return { occurrence, distance: Math.abs(time - today), time };
-            })
-            .sort((left, right) => left.distance - right.distance || left.time - right.time)[0]?.occurrence || null;
+        if (view === 'month') {
+            refreshMonthDays();
+        } else {
+            applyListFilters();
+        }
     };
 
-    const jumpToSelectedStatus = () => {
-        clearStatusJumpHighlight();
-
-        if (!selectedStatus) {
-            const todayCell = calendar.querySelector('.calendar-day.is-today');
-            const target = todayCell || calendar.querySelector('.calendar-toolbar');
-            target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const filterPreviewMonthEvents = () => {
+        if (!previewContent || activeView !== 'month') {
             return;
         }
 
-        const monthPanel = calendar.querySelector('[data-calendar-view-panel="month"]');
-        const monthIsVisible = monthPanel && !monthPanel.hidden;
-
-        if (monthIsVisible) {
-            const occurrence = nearestMatchingMonthOccurrence();
-            const eventTrigger = occurrence?.querySelector('[data-calendar-event]');
-            if (occurrence && eventTrigger) {
-                occurrence.hidden = false;
-                eventTrigger.classList.add('calendar-status-jump-target');
-                const day = occurrence.closest('.calendar-day');
-                day?.classList.add('calendar-status-jump-day');
-                day?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-                window.setTimeout(clearStatusJumpHighlight, 2400);
-                return;
-            }
-        } else {
-            const listPanel = calendar.querySelector('[data-calendar-view-panel="list"]');
-            const eventTrigger = listPanel
-                ? Array.from(listPanel.querySelectorAll('[data-calendar-event]')).find((event) => !event.hidden && eventMatchesStatus(event))
-                : null;
-            if (eventTrigger) {
-                eventTrigger.classList.add('calendar-status-jump-target');
-                eventTrigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                window.setTimeout(clearStatusJumpHighlight, 2400);
-                return;
-            }
-        }
-
-        if (filterEmpty && !filterEmpty.hidden) {
-            filterEmpty.classList.add('calendar-status-jump-empty');
-            filterEmpty.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            window.setTimeout(clearStatusJumpHighlight, 2400);
-        }
+        previewContent.querySelectorAll('[data-calendar-event]').forEach((eventTrigger) => {
+            eventTrigger.hidden = !eventMatchesPhase(eventTrigger);
+        });
     };
 
-    const openDrawer = (template, trigger) => {
-        if (!template || !drawerContent) {
+    const openPreview = (template, trigger) => {
+        if (!template || !previewContent) {
             return;
         }
 
         window.clearTimeout(closeTimer);
-        drawerContent.replaceChildren(template.content.cloneNode(true));
-        if (selectedStatus) {
-            filterEventsIn(drawerContent);
-        }
-        if (!drawer.contains(trigger)) {
+        previewContent.replaceChildren(template.content.cloneNode(true));
+        filterPreviewMonthEvents();
+        if (!preview.contains(trigger)) {
             lastTrigger = trigger;
         }
-        drawer.hidden = false;
-        drawerBackdrop.hidden = false;
-        drawer.setAttribute('aria-hidden', 'false');
-        document.body.classList.add('calendar-drawer-open');
+        preview.hidden = false;
+        previewBackdrop.hidden = false;
+        preview.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('calendar-preview-open');
 
         window.requestAnimationFrame(() => {
-            drawer.classList.add('is-open');
-            drawerBackdrop.classList.add('is-open');
-            drawerClose?.focus();
+            preview.classList.add('is-open');
+            previewBackdrop.classList.add('is-open');
+            previewClose?.focus();
         });
     };
 
-    const closeDrawer = (restoreFocus = true) => {
-        if (drawer.hidden) {
+    const closePreview = (restoreFocus = true) => {
+        if (preview.hidden) {
             return;
         }
 
-        drawer.classList.remove('is-open');
-        drawerBackdrop.classList.remove('is-open');
-        drawer.setAttribute('aria-hidden', 'true');
-        document.body.classList.remove('calendar-drawer-open');
+        preview.classList.remove('is-open');
+        previewBackdrop.classList.remove('is-open');
+        preview.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('calendar-preview-open');
         closeTimer = window.setTimeout(() => {
-            drawer.hidden = true;
-            drawerBackdrop.hidden = true;
-            drawerContent?.replaceChildren();
-        }, 190);
+            preview.hidden = true;
+            previewBackdrop.hidden = true;
+            previewContent?.replaceChildren();
+        }, 170);
 
         if (restoreFocus && lastTrigger?.isConnected) {
             lastTrigger.focus();
@@ -364,16 +380,16 @@
 
     const activateCalendarControl = (target) => {
         const eventTrigger = target.closest('[data-calendar-event]');
-        if (eventTrigger && (calendar.contains(eventTrigger) || drawer.contains(eventTrigger))) {
+        if (eventTrigger && (calendar.contains(eventTrigger) || preview.contains(eventTrigger))) {
             const template = document.getElementById(`calendar-detail-${eventTrigger.dataset.calendarEvent}`);
-            openDrawer(template, eventTrigger);
+            openPreview(template, eventTrigger);
             return true;
         }
 
         const dayTrigger = target.closest('[data-calendar-day]');
         if (dayTrigger && calendar.contains(dayTrigger)) {
             const template = document.getElementById(`calendar-day-${dayTrigger.dataset.calendarDay}`);
-            openDrawer(template, dayTrigger);
+            openPreview(template, dayTrigger);
             return true;
         }
 
@@ -383,34 +399,59 @@
     viewButtons.forEach((button) => {
         button.addEventListener('click', () => selectView(button.dataset.calendarViewButton));
     });
-    statusFilterButtons.forEach((button) => {
-        const count = Number(button.dataset.calendarStatusCount || 0);
-        button.dataset.calendarZero = String(count === 0 && Boolean(button.dataset.calendarStatusFilter));
 
+    filterToggle?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleFilterMenu();
+    });
+
+    phaseInputs.forEach((button) => {
         button.addEventListener('click', () => {
-            const requestedStatus = button.dataset.calendarStatusFilter || '';
-            selectedStatus = requestedStatus && selectedStatus === requestedStatus
-                ? ''
-                : requestedStatus;
-            applyStatusFilter();
-            window.requestAnimationFrame(jumpToSelectedStatus);
+            selectedPhaseCategory = button.value || '';
+            refreshMonthDays();
+            closeFilterMenu();
         });
     });
 
-    calendar.addEventListener('click', (event) => activateCalendarControl(event.target));
-    drawerContent?.addEventListener('click', (event) => activateCalendarControl(event.target));
-    document.querySelectorAll('[data-calendar-drawer-close]').forEach((control) => {
-        control.addEventListener('click', () => closeDrawer());
-    });
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && !drawer.hidden) {
-            closeDrawer();
-        }
+    listStatus?.addEventListener('change', () => {
+        selectedListStatus = listStatus.value || '';
+        applyListFilters();
     });
 
-    if (statusFilterBar) {
-        applyStatusFilter();
-    }
+    listSearch?.addEventListener('input', () => {
+        selectedListQuery = listSearch.value.trim().toLowerCase();
+        applyListFilters();
+    });
+
+    listSort?.addEventListener('change', () => {
+        selectedListSort = listSort.value || 'date-soonest';
+        applyListFilters();
+    });
+
+    calendar.addEventListener('click', (event) => activateCalendarControl(event.target));
+    previewContent?.addEventListener('click', (event) => activateCalendarControl(event.target));
+    document.querySelectorAll('[data-calendar-preview-close]').forEach((control) => {
+        control.addEventListener('click', () => closePreview());
+    });
+    document.addEventListener('click', (event) => {
+        if (filterPopover && !filterPopover.hidden && !phaseFilterControl?.contains(event.target)) {
+            closeFilterMenu();
+        }
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') {
+            return;
+        }
+        if (!preview.hidden) {
+            closePreview();
+            return;
+        }
+        closeFilterMenu();
+    });
+
+    refreshMonthDays();
+    selectedListStatus = listStatus?.value || '';
+    selectedListSort = listSort?.value || 'date-soonest';
     selectView(compactViewport.matches ? 'list' : 'month');
 })();
 

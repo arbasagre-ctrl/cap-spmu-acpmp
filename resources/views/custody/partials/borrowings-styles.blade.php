@@ -1,43 +1,50 @@
 <style>
-.my-borrowings { --borrowings-blue: #0f62d6; --borrowings-count: var(--navy-900); width: 100%; min-width: 0; font-size: 13px; }
+.my-borrowings { --borrowings-blue: #0f62d6; width: 100%; min-width: 0; font-size: 13px; }
 .my-borrowings [hidden] { display: none !important; }
 
-.my-borrowings-card { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); overflow: hidden; }
+/* Use the same Search + Status + Sort pattern as the other transaction lists. */
+.borrowings-toolbar {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(190px, 230px) minmax(150px, 190px);
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 16px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+    box-shadow: var(--shadow-sm);
+}
+.borrowings-toolbar label { display: grid; gap: 6px; margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 800; }
+.borrowings-toolbar input,
+.borrowings-toolbar select { width: 100%; min-height: 42px; }
+.borrowings-toolbar .search-input-shell input { padding-left: 38px; }
 
-/* Tabs use the same low-contrast navigation surface as status filters. */
-.borrowings-tabs { display: flex; align-items: stretch; flex-wrap: wrap; gap: 6px; margin: 10px 12px 0; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
-.borrowings-tab { display: inline-flex; align-items: center; gap: 9px; min-height: 38px; padding: 8px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 700; line-height: 1; cursor: pointer; transition: color var(--motion) ease, border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease; }
-.borrowings-tab:hover { color: var(--heading); border-color: var(--border); background: var(--surface-elevated); box-shadow: 0 1px 2px rgba(21, 45, 73, .05); }
-.borrowings-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.borrowings-tab.is-active { color: var(--borrowings-blue); border-color: color-mix(in srgb, var(--borrowings-blue) 35%, var(--border)); background: var(--info-bg); box-shadow: inset 0 -2px 0 var(--borrowings-blue); font-weight: 800; }
-.borrowings-tab-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-muted); color: var(--text-muted); font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.borrowings-tab.is-active .borrowings-tab-count { border-color: transparent; background: var(--borrowings-count); color: #fff; }
-
-/* Panels */
-.borrowings-panel { padding: 20px; }
+.borrowings-results-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 10px; color: var(--text-secondary); }
+.borrowings-results-head strong { color: var(--heading); font-size: 13px; }
 .borrowings-list { display: grid; gap: 10px; }
 
-.borrowings-accountability-note { display: block; margin-top: 4px; color: var(--warning); font-size: 11px; font-weight: 700; line-height: 1.3; }
+.my-borrowings-card { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); overflow: hidden; }
+.borrowings-filter-empty { margin-top: 10px; }
 
 /* Empty state */
-.borrowings-empty { display: flex; min-height: clamp(320px, 44vh, 440px); align-items: center; justify-content: center; padding: 44px 20px 48px; text-align: center; }
+.borrowings-empty { display: flex; min-height: clamp(300px, 40vh, 400px); align-items: center; justify-content: center; padding: 40px 20px 44px; text-align: center; }
 .borrowings-empty-content { display: flex; flex-direction: column; align-items: center; max-width: 500px; }
-.borrowings-empty-illustration { display: block; width: 100%; max-width: 224px; height: auto; margin-bottom: 20px; }
-
+.borrowings-empty-illustration { display: block; width: 100%; max-width: 205px; height: auto; margin-bottom: 18px; }
 .borrowings-empty-backdrop { fill: #e8f0fa; }
 .borrowings-empty-box { stroke: #2f74d0; fill: none; }
 .borrowings-empty-clipboard { stroke: #1f6bd4; fill: #ffffff; }
 .borrowings-empty-clip { fill: #d5e5f9; }
 .borrowings-empty-checks { stroke: #4b8adc; fill: #f2f7fd; }
 .borrowings-empty-sparkles { fill: #bed7f2; }
-
-.my-borrowings .borrowings-empty h2 { margin: 0 0 12px; color: var(--heading); font-size: 20px; font-weight: 800; line-height: 1.35; }
-.borrowings-empty p { margin: 0 0 26px; max-width: 42ch; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
-.my-borrowings .button.borrowings-empty-action { gap: 10px; min-height: 46px; padding: 12px 22px; border: 1px solid var(--borrowings-blue); border-radius: 8px; background: var(--surface-elevated); color: var(--borrowings-blue); font-size: 14px; font-weight: 750; }
-.my-borrowings .button.borrowings-empty-action:hover, .my-borrowings .button.borrowings-empty-action:focus-visible { color: #fff; background: var(--borrowings-blue); border-color: var(--borrowings-blue); }
+.my-borrowings .borrowings-empty h2 { margin: 0 0 10px; color: var(--heading); font-size: 19px; font-weight: 800; line-height: 1.35; }
+.borrowings-empty p { margin: 0 0 22px; max-width: 42ch; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.my-borrowings .button.borrowings-empty-action { gap: 10px; min-height: 44px; padding: 11px 20px; border: 1px solid var(--borrowings-blue); border-radius: 8px; background: var(--surface-elevated); color: var(--borrowings-blue); font-size: 13px; font-weight: 750; }
+.my-borrowings .button.borrowings-empty-action:hover,
+.my-borrowings .button.borrowings-empty-action:focus-visible { color: #fff; background: var(--borrowings-blue); border-color: var(--borrowings-blue); }
 .borrowings-empty-action .ui-icon { flex-shrink: 0; }
 
-html[data-theme="dark"] .my-borrowings { --borrowings-blue: #72b7f4; --borrowings-count: #1c4a7d; }
+html[data-theme="dark"] .my-borrowings { --borrowings-blue: #72b7f4; }
 html[data-theme="dark"] .borrowings-empty-backdrop { fill: #16263a; }
 html[data-theme="dark"] .borrowings-empty-box { stroke: #4d87c9; }
 html[data-theme="dark"] .borrowings-empty-clipboard { stroke: #4d87c9; fill: #17273a; }
@@ -47,17 +54,14 @@ html[data-theme="dark"] .borrowings-empty-sparkles { fill: #2f4a68; }
 html[data-theme="dark"] .my-borrowings .button.borrowings-empty-action:hover,
 html[data-theme="dark"] .my-borrowings .button.borrowings-empty-action:focus-visible { color: var(--navy-950); }
 
+@media (max-width: 760px) {
+    .borrowings-toolbar { grid-template-columns: 1fr; }
+}
 @media (max-width: 620px) {
-    .borrowings-tabs { margin: 8px 8px 0; padding: 5px; }
-    .borrowings-tab { flex: 1 1 auto; justify-content: center; padding: 8px; font-size: 12px; }
-    .borrowings-tab-count { min-width: 22px; height: 22px; font-size: 11px; }
-    .borrowings-panel { padding: 14px; }
-    .borrowings-empty { min-height: 290px; padding: 30px 12px; }
-    .borrowings-empty-illustration { max-width: 180px; }
+    .borrowings-toolbar { padding: 12px; }
+    .borrowings-empty { min-height: 280px; padding: 28px 12px; }
+    .borrowings-empty-illustration { max-width: 175px; }
     .my-borrowings .borrowings-empty h2 { font-size: 18px; }
     .borrowings-empty p br { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .borrowings-tab { transition: none; }
 }
 </style>

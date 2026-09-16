@@ -16,6 +16,7 @@ use App\Models\NotificationDelivery;
 use App\Models\OverdueCase;
 use App\Models\Penalty;
 use App\Models\Sanction;
+use App\Models\User;
 use App\Reports\ReportCatalogue;
 use App\Reports\ReportExportOptions;
 use App\Reports\ReportFilters;
@@ -24,6 +25,7 @@ use App\Services\InventoryService;
 use App\Services\ReportService;
 use App\Services\ReportingPeriodService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Response;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -37,7 +39,7 @@ class ReportController extends Controller
     /** Records shown on one page of a generated report. */
     private const PER_PAGE = 10;
 
-    public function index(Request $request): View|RedirectResponse
+    public function index(Request $request): View|RedirectResponse|JsonResponse
     {
         abort_unless(
             $request->user()?->access_classification === AccessClassification::SpmuHead,
@@ -53,6 +55,15 @@ class ReportController extends Controller
             return redirect()->route('analytics.index', [
                 'academic_period' => $request->input('academic_period', 'month'),
             ]);
+        }
+
+        /*
+         * The Borrower picker is cascading, not global. It asks this same
+         * endpoint for borrowers that actually have matching report records
+         * inside the selected Reporting Period + Division + Office / Unit.
+         */
+        if ($request->boolean('borrower_options')) {
+            return $this->borrowerOptions($request);
         }
 
         $scope = $this->resolveScope($request, $request->input('report'));
@@ -128,6 +139,128 @@ class ReportController extends Controller
             'dataset' => app(ReportService::class)->generate($scope['filters'], $request->user()),
             'options' => $options->contentToggles(),
             'exportOptions' => $options,
+        ]);
+    }
+
+    /**
+     * Return borrowers that exist inside the current upstream report scope.
+     *
+     * Cascade order: Reporting Period -> Division -> Office / Unit -> Borrower.
+     * Borrower itself and downstream report filters are ignored while building
+     * this option list so "All borrowers" always means all borrowers within
+     * that current upstream scope.
+     *
+     * The endpoint is intentionally searchable and capped so a large borrower
+     * population does not render hundreds of options in the browser at once.
+     */
+    private function borrowerOptions(Request $request): JsonResponse
+    {
+        $report = ReportCatalogue::resolveKey($request->input('report'));
+
+        if (! array_key_exists('borrower', ReportCatalogue::filtersFor($report))) {
+            return response()->json([
+                'options' => [],
+                'count' => 0,
+                'shown' => 0,
+                'has_more' => false,
+            ]);
+        }
+
+        $scopeRequest = $request->duplicate();
+
+        foreach (array_keys(ReportCatalogue::filtersFor($report)) as $filterKey) {
+            if (! in_array($filterKey, ['division', 'unit'], true)) {
+                $scopeRequest->query->remove($filterKey);
+            }
+        }
+
+        $scopeRequest->query->remove('borrower_options');
+        $scopeRequest->query->remove('generated');
+        $scopeRequest->query->remove('q');
+        $scopeRequest->query->remove('selected_borrower');
+        $scopeRequest->query->set('report', $report);
+
+        $scope = $this->resolveScope($scopeRequest, $report);
+        $dataset = app(ReportService::class)->generate($scope['filters'], $request->user());
+
+        $ids = $dataset->rows
+            ->pluck('_borrower_user_id')
+            ->filter(fn ($id): bool => is_numeric($id) && (int) $id > 0)
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return response()->json([
+                'options' => [],
+                'count' => 0,
+                'shown' => 0,
+                'has_more' => false,
+            ]);
+        }
+
+        $search = trim((string) $request->input('q', ''));
+        $search = mb_substr($search, 0, 100);
+        $selectedBorrower = (int) $request->input('selected_borrower', 0);
+        $limit = 50;
+
+        $query = User::query()->whereIn('id', $ids->all());
+
+        if ($search !== '') {
+            $query->where(function ($borrowers) use ($search): void {
+                $borrowers
+                    ->where('full_name', 'like', '%'.$search.'%')
+                    ->orWhere('email', 'like', '%'.$search.'%');
+            });
+        }
+
+        $count = (clone $query)->count();
+
+        $users = $query
+            ->orderBy('full_name')
+            ->orderBy('email')
+            ->limit($limit)
+            ->get(['id', 'full_name', 'email']);
+
+        /*
+         * When the picker is opened without a search, preserve a currently
+         * selected borrower even when they fall outside the first 50 names.
+         * This lets the browser validate the selection after an upstream
+         * Division / Office / period change without falsely resetting it.
+         */
+        if (
+            $search === ''
+            && $selectedBorrower > 0
+            && $ids->contains($selectedBorrower)
+            && ! $users->contains('id', $selectedBorrower)
+        ) {
+            $selected = User::query()
+                ->whereKey($selectedBorrower)
+                ->first(['id', 'full_name', 'email']);
+
+            if ($selected) {
+                $users->prepend($selected);
+            }
+        }
+
+        $options = $users
+            ->map(function (User $user): array {
+                $name = trim((string) $user->full_name);
+                $email = trim((string) $user->email);
+
+                return [
+                    'value' => (string) $user->id,
+                    'name' => $name !== '' ? $name : 'Borrower #'.$user->id,
+                    'email' => $email,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'options' => $options,
+            'count' => $count,
+            'shown' => $options->count(),
+            'has_more' => $count > $limit,
         ]);
     }
 
@@ -219,28 +352,24 @@ class ReportController extends Controller
             403
         );
 
+        /*
+         * Every catalogue-backed formal report is exportable automatically.
+         * Keep only the remaining legacy/administrative export endpoints in
+         * the explicit list so adding a new formal report cannot leave its
+         * Export / Print button pointing at a controller 404.
+         */
+        $legacyExportTypes = [
+            'overdue',
+            'penalty',
+            'billing',
+            'sanction',
+            'compliance',
+            'notification',
+            'audit',
+        ];
+
         abort_unless(
-            in_array(
-                $type,
-                [
-                    'inventory',
-                    'borrowing',
-                    'approval',
-                    'custody',
-                    'returns',
-                    'laundry',
-                    'gate-pass',
-                    'utilization',
-                    'overdue',
-                    'penalty',
-                    'billing',
-                    'sanction',
-                    'compliance',
-                    'notification',
-                    'audit',
-                ],
-                true
-            ),
+            ReportCatalogue::has($type) || in_array($type, $legacyExportTypes, true),
             404
         );
 

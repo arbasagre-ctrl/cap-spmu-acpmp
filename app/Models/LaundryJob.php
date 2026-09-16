@@ -88,8 +88,8 @@ class LaundryJob extends Model
         return match (true) {
             $this->status === 'FOR_LAUNDRY' && $this->hasVerifiedAccomplishedForm()
                 => 'Ready for SPMU Encoding',
-            $this->status === 'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
-            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Availability Reconciliation Pending',
+            $this->status === 'FOR_LAUNDRY' => 'Laundry Form Pending',
+            $this->status === 'TURNED_OVER_TO_LAUNDRY' => 'Reconciliation Pending',
             $this->status === 'LAUNDRY_COMPLETED' => 'Available',
             default => str($this->status)->replace('_', ' ')->title(),
         };
@@ -105,7 +105,7 @@ class LaundryJob extends Model
             $this->status === 'TURNED_OVER_TO_LAUNDRY'
                 => 'Legacy record · SPMU return encoded · automatic reconciliation pending',
             $this->status === 'LAUNDRY_COMPLETED'
-                => 'Serviceable linen available',
+                => 'Serviceable linen is available for borrowing',
             default => $this->displayStatusLabel(),
         };
     }

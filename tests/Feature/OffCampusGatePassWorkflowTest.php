@@ -297,15 +297,21 @@ class OffCampusGatePassWorkflowTest extends TestCase
             ->assertOk()
             ->assertHeader('content-disposition', 'inline; filename="'.$gatePassDocument->file->original_name.'"');
 
-        $pickupAt = $request->currentVersion->schedule_date->copy()->setTime(13, 0);
-        $pickupEndsAt = $pickupAt->copy()->addHours(3);
+        /*
+         * Approval already generated the pickup window from the Operational
+         * Calendar. The normal schedule endpoint only confirms that record;
+         * it never reads a borrower- or test-supplied pickup date.
+         */
+        $custody->refresh();
+        $pickupAt = $custody->scheduled_release_at;
+        $pickupEndsAt = $custody->pickup_expires_at;
+
+        $this->assertNotNull($pickupAt, 'Approval must generate a Pickup / Issuance window.');
+        $this->assertNotNull($pickupEndsAt, 'Approval must generate a Pickup / Issuance expiry.');
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($this->officer)
-            ->post(route('custody.schedule-pickup', $custody), [
-                'pickup_at' => $pickupAt->format('Y-m-d H:i:s'),
-                'pickup_expires_at' => $pickupEndsAt->format('Y-m-d H:i:s'),
-            ])
+            ->post(route('custody.schedule-pickup', $custody))
             ->assertSessionHasNoErrors();
 
         $quantities = $custody->lines
@@ -371,8 +377,14 @@ class OffCampusGatePassWorkflowTest extends TestCase
             'purpose_event' => 'Off-campus institutional activity',
             'event_details' => 'Off-campus institutional activity',
             'location' => 'Municipal activity venue',
-            'division_code' => 'ADMINISTRATION',
-            'office_unit' => 'Office of the President',
+            /*
+             * BorrowingRequestController::validateRequest() requires
+             * requesting_organizational_unit_id (an authorized
+             * OrganizationalUnit id) and derives division_code/office_unit
+             * from it server-side - the free-text division_code/office_unit
+             * fields this payload used to send are no longer read at all.
+             */
+            'requesting_organizational_unit_id' => $this->borrower->organizational_unit_id,
             'schedule_date' => $scheduleDate->toDateString(),
             'return_date' => $scheduleDate->copy()->addDay()->toDateString(),
             'represents_student_activity' => $studentActivity ? '1' : '0',

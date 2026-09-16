@@ -23,7 +23,11 @@
             && $custody->pickup_expires_at
             && now()->gt($custody->pickup_expires_at));
 
-    $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed;
+    $pickupMissed = ! $custody->released_at
+        && (bool) $custody->pickup_scheduled_at
+        && ((bool) $custody->pickup_expired_at || $pickupWindowPassed);
+
+    $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed || $pickupMissed;
     $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup');
     $releaseCurrentDocuments = $documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']);
     $releaseDocumentsReady = $releaseCurrentDocuments->contains('document_type', 'BORROWER_SLIP')
@@ -85,21 +89,19 @@
                         <h3>Pickup &amp; Issuance Schedule</h3>
                         @if($hasSystemPickupWindow)
                             <p class="release-step-schedule"><x-icon name="calendar" size="16" />{{ $custody->scheduled_release_at->format('M j, Y') }} · {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}</p>
-                            @if($hasPickupSchedule)
-                                @if($pickupWindowPassed)
-                                    <p class="release-step-notified"><x-icon name="warning" size="16" />The scheduled pickup window has passed. Follow the missed-pickup handling process.</p>
-                                @else
-                                    <p class="release-step-notified"><x-icon name="approval" size="16" />Scheduled automatically from the SPMU Operational Calendar.</p>
-                                @endif
+                            @if($pickupMissed)
+                                <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup window passed. Waiting for borrower action.</p>
+                            @elseif($hasPickupSchedule)
+                                <p class="release-step-notified"><x-icon name="approval" size="16" />Scheduled automatically from the SPMU Operational Calendar.</p>
                             @else
-                                <p class="release-step-notified"><x-icon name="information" size="16" />Automatic scheduling requires SPMU exception handling.</p>
+                                <p class="release-step-notified"><x-icon name="information" size="16" />Pickup schedule requires SPMU follow-up.</p>
                             @endif
                         @else
                             <p>No automatic pre-borrowing pickup window is available.</p>
                         @endif
                     </div>
                     <div class="release-schedule-status">
-                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $pickupWindowPassed ? 'Schedule Passed' : ($hasPickupSchedule ? 'Scheduled' : 'Schedule Exception') }}</span>
+                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $pickupMissed ? 'Pickup Missed' : ($pickupWindowPassed ? 'Schedule Passed' : ($hasPickupSchedule ? 'Scheduled' : 'Schedule Exception')) }}</span>
                     </div>
                     <div class="release-step-actions release-schedule-actions">
                         <button class="icon-button release-step-toggle release-schedule-toggle" type="button" data-release-panel-toggle aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}" aria-label="Toggle pickup schedule details" title="Show or hide pickup schedule details"><x-icon name="chevron-down" size="18" /></button>
@@ -151,7 +153,7 @@
                         @endif
                     </div>
                 @else
-                    <p class="release-step-note">Confirm item preparation to review the release documents.</p>
+                    <p class="release-step-note">{{ $pickupMissed ? 'Waiting for a new pickup schedule before release documents are used.' : 'Confirm item preparation to review the release documents.' }}</p>
                 @endif
             </li>
 
@@ -173,7 +175,7 @@
                         </div>
                     @endif
                 @else
-                    <p class="release-step-note" id="physical-release-availability">Complete pickup scheduling and item preparation before recording physical handover.</p>
+                    <p class="release-step-note" id="physical-release-availability">{{ $pickupMissed ? 'Waiting for a new pickup schedule before physical release.' : 'Complete pickup scheduling and item preparation before recording physical handover.' }}</p>
                 @endif
                 @include('custody.partials.physical-release-form')
             </li>

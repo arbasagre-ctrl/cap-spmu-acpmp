@@ -43,6 +43,17 @@ class CustodyTransaction extends Model
         'pickup_scheduled_by_user_id',
         'pickup_scheduled_at',
         'released_at',
+
+        /*
+         * The Action Officer's physical-handover attestation. Distinct
+         * from released_by_signature_snapshot_id: physical release
+         * intentionally captures no E-signature (see
+         * RoleBasedSignatureTest::
+         * test_physical_release_does_not_capture_or_render_an_action_officer_issuance_signature),
+         * so this is a plain timestamp, not a signature reference.
+         */
+        'physical_handover_attested_at',
+
         'prepared_at',
         'due_at',
         'original_due_at',
@@ -60,6 +71,7 @@ class CustodyTransaction extends Model
             'pickup_expired_at' => 'datetime',
             'pickup_scheduled_at' => 'datetime',
             'released_at' => 'datetime',
+            'physical_handover_attested_at' => 'datetime',
             'prepared_at' => 'datetime',
             'due_at' => 'datetime',
             'original_due_at' => 'datetime',
@@ -75,6 +87,12 @@ class CustodyTransaction extends Model
         return $this->belongsTo(BorrowingRequest::class, 'request_id');
     }
 
+    /** The immutable request-version snapshot this custody was released from. */
+    public function requestVersion(): BelongsTo
+    {
+        return $this->belongsTo(RequestVersion::class, 'request_version_id');
+    }
+
     public function borrower(): BelongsTo
     {
         return $this->belongsTo(User::class, 'borrower_user_id');
@@ -83,6 +101,12 @@ class CustodyTransaction extends Model
     public function pickupScheduledBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'pickup_scheduled_by_user_id');
+    }
+
+    /** SPMU Action Officer who confirmed the prepared quantities. */
+    public function preparedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'prepared_by_user_id');
     }
 
     /**
@@ -182,7 +206,7 @@ class CustodyTransaction extends Model
                 'FOR_BILLING' => ['key' => 'FOR_BILLING', 'label' => 'Billing Required'],
                 'BILLING_PENDING' => ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending'],
                 'COMPLIANCE_REQUIRED' => ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
-                default => ['key' => 'INCIDENT_OPEN', 'label' => 'Property Case Open'],
+                default => ['key' => 'INCIDENT_OPEN', 'label' => 'Accountability Pending'],
             };
         }
 
@@ -214,6 +238,9 @@ class CustodyTransaction extends Model
             $hasActiveRestriction = BorrowerRestriction::query()
                 ->whereIn('incident_id', $incidentIds)
                 ->where('status', 'ACTIVE')
+                ->where(function ($query): void {
+                    $query->whereNull('effective_from')->orWhere('effective_from', '<=', now());
+                })
                 ->where(function ($query): void {
                     $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
                 })
@@ -393,7 +420,7 @@ class CustodyTransaction extends Model
 
         return [
             'key' => 'OBLIGATION_OPEN',
-            'label' => 'Obligation Open',
+            'label' => 'Accountability Pending',
             'title' => 'Outstanding obligation',
             'copy' => 'The physical return is complete, but an accountability obligation still requires resolution.',
         ];
@@ -431,32 +458,44 @@ class CustodyTransaction extends Model
                 : ['key' => 'BORROWER_CLEARED', 'label' => 'Borrower Cleared', 'group' => 'completed'];
         }
 
-        $activeAccountability = $this->activeAccountabilityIndicator();
-
-        if ($activeAccountability) {
-            return [
-                'key' => 'OBLIGATION_OPEN',
-                'label' => $this->hasOutstandingProperty()
-                    ? 'Return + Accountability'
-                    : 'Accountability Processing',
-                'group' => 'attention',
-            ];
-        }
-
-        if ((string) $this->status === 'OBLIGATION_OPEN') {
-            return ['key' => 'OBLIGATION_OPEN', 'label' => 'Obligation Open', 'group' => 'attention'];
-        }
-
-        if ((string) $this->status === 'INCIDENT_OPEN') {
-            return ['key' => 'INCIDENT_OPEN', 'label' => 'Incident Open', 'group' => 'attention'];
+        /*
+         * Physical state stays authoritative while property is still out.
+         * Accountability remains available as a secondary indicator/detail,
+         * but it must not hide an overdue or in-progress physical return.
+         */
+        if ((string) $this->status === 'OVERDUE') {
+            return ['key' => 'OVERDUE', 'label' => 'Overdue', 'group' => 'attention'];
         }
 
         if (in_array((string) $this->status, ['RETURN_PROCESSING', 'PARTIALLY_RETURNED', 'EARLY_RETURN'], true)) {
             return ['key' => 'RETURN_PROCESSING', 'label' => 'Return Processing', 'group' => 'return'];
         }
 
-        if ((string) $this->status === 'OVERDUE') {
-            return ['key' => 'OVERDUE', 'label' => 'Overdue', 'group' => 'attention'];
+        $activeAccountability = $this->activeAccountabilityIndicator();
+
+        if ($activeAccountability) {
+            /*
+             * Keep the transaction status aligned with the actual unresolved
+             * accountability branch. A compliance case should say Compliance
+             * Required, an issued bill should say Billing Unpaid/Payment
+             * Verification, etc. Do not collapse every open case back to the
+             * generic "Accountability Pending" label.
+             */
+            $obligation = $this->openObligationSummary();
+
+            return [
+                'key' => (string) ($obligation['key'] ?? $activeAccountability['key']),
+                'label' => (string) ($obligation['label'] ?? $activeAccountability['label']),
+                'group' => 'attention',
+            ];
+        }
+
+        if ((string) $this->status === 'OBLIGATION_OPEN') {
+            return ['key' => 'OBLIGATION_OPEN', 'label' => 'Accountability Pending', 'group' => 'attention'];
+        }
+
+        if ((string) $this->status === 'INCIDENT_OPEN') {
+            return ['key' => 'INCIDENT_OPEN', 'label' => 'Accountability Pending', 'group' => 'attention'];
         }
 
         if ($this->released_at) {
@@ -471,7 +510,7 @@ class CustodyTransaction extends Model
             $open = $hasSchedule && ! $expired && ! $upcoming;
 
             if ($expired) {
-                return ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Window Expired', 'group' => 'release'];
+                return ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Missed', 'group' => 'release'];
             }
 
             if ($this->prepared_at && $open) {

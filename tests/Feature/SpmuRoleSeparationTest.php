@@ -11,6 +11,7 @@ use App\Models\CustodyTransaction;
 use App\Models\InventoryItem;
 use App\Models\RequestItem;
 use App\Models\User;
+use App\Services\OperationalCalendarService;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -54,7 +55,7 @@ class SpmuRoleSeparationTest extends TestCase
             )
             ->assertOk()
             ->assertSee(
-                'SPMU Head oversight'
+                'Release & Return Oversight'
             )
             ->assertDontSee(
                 'Save Pickup Schedule'
@@ -90,13 +91,17 @@ class SpmuRoleSeparationTest extends TestCase
             )
             ->assertOk()
             ->assertSee(
-                'Save Pickup Schedule'
+                'Pickup & Issuance Schedule'
             )
             ->assertSeeText(
-                'Confirm Preparation & Generate Physical Forms'
+                'Scheduled automatically from the SPMU Operational Calendar.'
+            )
+            ->assertSeeText('Confirm Preparation')
+            ->assertDontSee(
+                'Release & Return Oversight'
             )
             ->assertDontSee(
-                'SPMU Head oversight'
+                'Save Pickup Schedule'
             );
     }
 
@@ -110,23 +115,11 @@ class SpmuRoleSeparationTest extends TestCase
                 AccessClassification::SpmuHead
             );
 
-        $pickup =
-            $custody
-                ->request
-                ->currentVersion
-                ->schedule_date
-                ->copy()
-                ->setTime(
-                    13,
-                    0
-                );
+        $pickup = $custody->scheduled_release_at;
+        $pickupExpiresAt = $custody->pickup_expires_at;
 
-        $this
-            ->travelTo(
-                $pickup
-                    ->copy()
-                    ->subHour()
-            );
+        $this->assertNotNull($pickup);
+        $this->assertNotNull($pickupExpiresAt);
 
         $this
             ->withSession([
@@ -140,35 +133,18 @@ class SpmuRoleSeparationTest extends TestCase
                 route(
                     'custody.schedule-pickup',
                     $custody
-                ),
-                [
-                    'pickup_at' =>
-                        $pickup
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-
-                    'pickup_expires_at' =>
-                        $pickup
-                            ->copy()
-                            ->addHours(
-                                3
-                            )
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-                ]
+                )
             )
             ->assertForbidden();
 
-        $this->assertNull(
-            $custody
-                ->fresh()
-                ->scheduled_release_at
-        );
+        $fresh = $custody->fresh();
+
+        $this->assertTrue($pickup->equalTo($fresh->scheduled_release_at));
+        $this->assertTrue($pickupExpiresAt->equalTo($fresh->pickup_expires_at));
+        $this->assertNull($fresh->pickup_scheduled_by_user_id);
     }
 
-    public function test_spmu_action_officer_can_schedule_pickup(): void
+    public function test_spmu_action_officer_can_confirm_without_replacing_the_system_generated_pickup_schedule(): void
     {
         $custody =
             $this->preparingCustody();
@@ -178,23 +154,11 @@ class SpmuRoleSeparationTest extends TestCase
                 AccessClassification::SpmuOfficer
             );
 
-        $pickup =
-            $custody
-                ->request
-                ->currentVersion
-                ->schedule_date
-                ->copy()
-                ->setTime(
-                    13,
-                    0
-                );
+        $pickup = $custody->scheduled_release_at;
+        $pickupExpiresAt = $custody->pickup_expires_at;
 
-        $this
-            ->travelTo(
-                $pickup
-                    ->copy()
-                    ->subHour()
-            );
+        $this->assertNotNull($pickup);
+        $this->assertNotNull($pickupExpiresAt);
 
         $this
             ->withSession([
@@ -208,39 +172,16 @@ class SpmuRoleSeparationTest extends TestCase
                 route(
                     'custody.schedule-pickup',
                     $custody
-                ),
-                [
-                    'pickup_at' =>
-                        $pickup
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-
-                    'pickup_expires_at' =>
-                        $pickup
-                            ->copy()
-                            ->addHours(
-                                3
-                            )
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-                ]
+                )
             )
             ->assertSessionHasNoErrors();
 
-        $this->assertNotNull(
-            $custody
-                ->fresh()
-                ->scheduled_release_at
-        );
+        $fresh = $custody->fresh();
 
-        $this->assertSame(
-            $officer->id,
-            $custody
-                ->fresh()
-                ->pickup_scheduled_by_user_id
-        );
+        $this->assertTrue($pickup->equalTo($fresh->scheduled_release_at));
+        $this->assertTrue($pickupExpiresAt->equalTo($fresh->pickup_expires_at));
+        $this->assertNotNull($fresh->pickup_scheduled_at);
+        $this->assertNull($fresh->pickup_scheduled_by_user_id);
     }
 
     private function preparingCustody(): CustodyTransaction
@@ -265,12 +206,15 @@ class SpmuRoleSeparationTest extends TestCase
                 )
                 ->firstOrFail();
 
-        $scheduleDate =
-            now()
-                ->addDays(
-                    2
-                )
-                ->startOfDay();
+        $calendar = app(OperationalCalendarService::class);
+
+        $scheduleDate = now()->addWeek()->startOfDay();
+        $pickupWindow = $calendar->automaticPickupWindowBefore($scheduleDate, now());
+
+        $this->assertNotNull(
+            $pickupWindow,
+            'The seeded Operational Calendar must provide the system-generated pickup window used by an approved request.'
+        );
 
         $returnDate =
             now()
@@ -415,6 +359,17 @@ class SpmuRoleSeparationTest extends TestCase
 
                     'status' =>
                         'PREPARING_RELEASE',
+
+                    /*
+                     * RequestWorkflowService approval creates this window
+                     * from OperationalCalendarService before a custody
+                     * record reaches the Release workspace. Reproduce the
+                     * current generated state instead of letting this raw
+                     * fixture invent a staff-selected pickup date.
+                     */
+                    'scheduled_release_at' => $pickupWindow['start'],
+                    'pickup_expires_at' => $pickupWindow['end'],
+                    'pickup_scheduled_at' => now(),
 
                     'due_at' =>
                         $returnDate

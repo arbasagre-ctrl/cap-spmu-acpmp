@@ -7,45 +7,53 @@
             return;
         }
 
-        const tabs = Array.from(browser.querySelectorAll('[data-borrowings-tab]'));
-        const panels = Array.from(browser.querySelectorAll('[data-borrowings-panel]'));
+        const list = browser.querySelector('#borrowings-list');
+        const rows = Array.from(browser.querySelectorAll('[data-borrowings-record]'));
+        const search = browser.querySelector('#borrowings-search');
+        const status = browser.querySelector('#borrowings-status');
+        const sort = browser.querySelector('#borrowings-sort');
+        const summary = browser.querySelector('#borrowings-result-summary');
+        const empty = browser.querySelector('#borrowings-filter-empty');
 
-        if (tabs.length === 0 || panels.length === 0) {
+        if (!list || rows.length === 0 || !search || !status || !sort) {
             return;
         }
 
-        const showTab = (name) => {
-            tabs.forEach((tab) => {
-                const selected = tab.dataset.borrowingsTab === name;
-                tab.classList.toggle('is-active', selected);
-                tab.setAttribute('aria-selected', selected ? 'true' : 'false');
-                tab.tabIndex = selected ? 0 : -1;
+        const render = () => {
+            const term = search.value.trim().toLowerCase();
+            const selectedStatus = status.value;
+            const direction = sort.value === 'oldest' ? 1 : -1;
+
+            const orderedRows = [...rows].sort((a, b) => {
+                return direction * ((Number(a.dataset.borrowingsCreated) || 0) - (Number(b.dataset.borrowingsCreated) || 0));
             });
 
-            panels.forEach((panel) => {
-                panel.hidden = panel.dataset.borrowingsPanel !== name;
+            orderedRows.forEach((row) => list.appendChild(row));
+
+            let visibleCount = 0;
+
+            orderedRows.forEach((row) => {
+                const matchesSearch = term === '' || (row.dataset.borrowingsSearch || '').includes(term);
+                const matchesStatus = selectedStatus === 'all' || (row.dataset.borrowingsStatus || '') === selectedStatus;
+                const visible = matchesSearch && matchesStatus;
+
+                row.hidden = !visible;
+                if (visible) visibleCount += 1;
             });
+
+            if (summary) {
+                summary.textContent = `${visibleCount} ${visibleCount === 1 ? 'borrowing' : 'borrowings'}`;
+            }
+
+            if (empty) {
+                empty.hidden = visibleCount !== 0;
+            }
         };
 
-        tabs.forEach((tab, index) => {
-            tab.addEventListener('click', () => showTab(tab.dataset.borrowingsTab));
-
-            tab.addEventListener('keydown', (event) => {
-                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
-                    return;
-                }
-
-                event.preventDefault();
-
-                const step = event.key === 'ArrowRight' ? 1 : -1;
-                const next = tabs[(index + step + tabs.length) % tabs.length];
-
-                showTab(next.dataset.borrowingsTab);
-                next.focus();
-            });
-        });
-
-        showTab(tabs[0].dataset.borrowingsTab);
+        search.addEventListener('input', render);
+        status.addEventListener('change', render);
+        sort.addEventListener('change', render);
+        render();
     };
 
     if (document.readyState === 'loading') {

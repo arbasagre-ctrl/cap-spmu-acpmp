@@ -36,13 +36,14 @@
         default => 8,
     };
 
-    $borrowerCounts = $isBorrower
-        ? [
-            'active' => $custodies->filter(fn ($custody) => ! in_array($groupForCustody($custody), ['completed', 'cancelled'], true))->count(),
-            'completed' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'completed')->count(),
-            'cancelled' => $custodies->filter(fn ($custody) => $groupForCustody($custody) === 'cancelled')->count(),
-        ]
-        : [];
+
+    $borrowerFilterStatuses = $isBorrower
+        ? $custodies
+            ->map(fn ($custody) => $custody->workflowStatus())
+            ->filter(fn ($status) => ! empty($status['key']) && ! empty($status['label']))
+            ->unique('key')
+            ->values()
+        : collect();
 
     $oversightTabs = [
         'all' => 'All',
@@ -78,6 +79,64 @@
             'all' => $custodies->count(),
         ]
         : [];
+
+
+    /*
+     * Release/Return status filters are built from the same status shown on
+     * each transaction row. This keeps the dropdown aligned with workflow
+     * wording instead of maintaining a second, stale list in JavaScript.
+     */
+    $operationalStatusForCustody = static function ($custody) use ($mode): array {
+        if ($mode === 'return' && $custody->relationLoaded('earlyReturnRequests')) {
+            $earlyReturn = $custody->earlyReturnRequests
+                ->first(fn ($request) => $request->status === 'REQUESTED');
+
+            if ($earlyReturn) {
+                return ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested'];
+            }
+        }
+
+        $workflow = $custody->workflowStatus();
+
+        return ['key' => $workflow['key'], 'label' => $workflow['label']];
+    };
+
+    /*
+     * Keep each operational filter stable even when its queue is empty. The
+     * options below are the same labels used by workflowStatus(), so an Action
+     * Officer can always filter by a valid stage instead of seeing a dropdown
+     * that changes based on whatever happens to be on screen today.
+     */
+    $releaseFilterStatuses = collect([
+        ['key' => 'PICKUP_SCHEDULING', 'label' => 'For Pickup Scheduling'],
+        ['key' => 'ITEM_PREPARATION', 'label' => 'For Item Preparation'],
+        ['key' => 'PICKUP_SCHEDULED', 'label' => 'Pickup Scheduled'],
+        ['key' => 'READY_FOR_RELEASE', 'label' => 'Ready for Release'],
+        ['key' => 'PREPARING_RELEASE', 'label' => 'Preparing for Release'],
+        ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Missed'],
+    ]);
+
+    $returnFilterStatuses = collect([
+        ['key' => 'BORROWED', 'label' => 'Items Released / On Custody'],
+        ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested'],
+        ['key' => 'RETURN_PROCESSING', 'label' => 'Return Processing'],
+        ['key' => 'OVERDUE', 'label' => 'Overdue'],
+        ['key' => 'ACCOUNTABILITY_REVIEW', 'label' => 'Accountability Review'],
+        ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
+        ['key' => 'FOR_BILLING', 'label' => 'Billing Statement Pending'],
+        ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending'],
+        ['key' => 'BILLING_ISSUED', 'label' => 'Billing Unpaid'],
+        ['key' => 'PAYMENT_VERIFICATION', 'label' => 'Payment Verification'],
+        ['key' => 'LATE_RETURN', 'label' => 'Late Return Processing'],
+        ['key' => 'BORROWING_RESTRICTED', 'label' => 'Borrowing Restricted'],
+        ['key' => 'OBLIGATION_OPEN', 'label' => 'Accountability Pending'],
+    ]);
+
+    $operationalFilterStatuses = match ($mode) {
+        'release' => $releaseFilterStatuses,
+        'return' => $returnFilterStatuses,
+        default => collect(),
+    };
 @endphp
 
 @if($isOversightView)
@@ -167,97 +226,68 @@
     @include('custody.partials.oversight-interactions')
 @elseif($isBorrower)
     <div class="content-area my-borrowings" data-my-borrowings>
-        <div class="my-borrowings-card">
-            <div class="borrowings-tabs" role="tablist" aria-label="Borrowing status">
-                <button
-                    class="borrowings-tab is-active"
-                    type="button"
-                    role="tab"
-                    data-borrowings-tab="active"
-                    aria-selected="true"
-                    aria-controls="borrowings-panel-active"
-                >
-                    Active Borrowings
-                    <span class="borrowings-tab-count">{{ $borrowerCounts['active'] ?? 0 }}</span>
-                </button>
+        <div class="borrowings-toolbar">
+            <label>
+                Search
+                <span class="search-input-shell">
+                    <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="17" /></span>
+                    <input
+                        id="borrowings-search"
+                        type="search"
+                        placeholder="Search custody no., request no., or event..."
+                        autocomplete="off"
+                    >
+                </span>
+            </label>
 
-                <button
-                    class="borrowings-tab"
-                    type="button"
-                    role="tab"
-                    data-borrowings-tab="completed"
-                    aria-selected="false"
-                    aria-controls="borrowings-panel-completed"
-                    tabindex="-1"
-                >
-                    Completed
-                    <span class="borrowings-tab-count">{{ $borrowerCounts['completed'] ?? 0 }}</span>
-                </button>
+            <label>
+                Status
+                <select id="borrowings-status">
+                    <option value="all">All statuses</option>
+                    @foreach($borrowerFilterStatuses as $filterStatus)
+                        <option value="{{ $filterStatus['key'] }}">{{ $filterStatus['label'] }}</option>
+                    @endforeach
+                </select>
+            </label>
 
+            <label>
+                Sort
+                <select id="borrowings-sort">
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                </select>
+            </label>
+        </div>
 
-                <button
-                    class="borrowings-tab"
-                    type="button"
-                    role="tab"
-                    data-borrowings-tab="cancelled"
-                    aria-selected="false"
-                    aria-controls="borrowings-panel-cancelled"
-                    tabindex="-1"
-                >
-                    Cancelled
-                    <span class="borrowings-tab-count">{{ $borrowerCounts['cancelled'] ?? 0 }}</span>
-                </button>
+        @if($custodies->isEmpty())
+            <div class="my-borrowings-card">
+                @include('custody.partials.borrowings-empty', [
+                    'emptyHidden' => false,
+                    'emptyTitle' => 'No borrowing records yet.',
+                    'emptyMessage' => 'Approved borrowings will appear here once items are allocated for pickup.',
+                ])
+            </div>
+        @else
+            <div class="borrowings-results-head">
+                <strong id="borrowings-result-summary" role="status" aria-live="polite">
+                    {{ $custodies->count() }} {{ $custodies->count() === 1 ? 'borrowing' : 'borrowings' }}
+                </strong>
             </div>
 
-            @foreach([
-                'active' => [
-                    'No active borrowings yet.',
-                    'Approved borrowings will appear here once items are allocated and ready for pickup.',
-                ],
-                'completed' => [
-                    'No completed borrowings yet.',
-                    'A borrowing moves here once every item is returned and the record is cleared.',
-                ],
-                'cancelled' => [
-                    'No cancelled borrowings.',
-                    'Cancelled borrowing records will appear here for reference.',
-                ],
-            ] as $panel => $emptyCopy)
-                @php
-                    $panelCustodies = $custodies->filter(function ($custody) use ($panel, $groupForCustody) {
-                        $group = $groupForCustody($custody);
+            <div class="operational-record-list borrowings-list" id="borrowings-list">
+                @foreach($custodies as $custody)
+                    @include('custody.partials.borrowings-row')
+                @endforeach
+            </div>
 
-                        return match ($panel) {
-                            'completed' => $group === 'completed',
-                            'cancelled' => $group === 'cancelled',
-                            default => ! in_array($group, ['completed', 'cancelled'], true),
-                        };
-                    });
-                @endphp
-
-                <div
-                    class="borrowings-panel"
-                    id="borrowings-panel-{{ $panel }}"
-                    role="tabpanel"
-                    data-borrowings-panel="{{ $panel }}"
-                    @if($panel !== 'active') hidden @endif
-                >
-                    @if($panelCustodies->isEmpty())
-                        @include('custody.partials.borrowings-empty', [
-                            'emptyHidden' => false,
-                            'emptyTitle' => $emptyCopy[0],
-                            'emptyMessage' => $emptyCopy[1],
-                        ])
-                    @else
-                        <div class="operational-record-list borrowings-list">
-                            @foreach($panelCustodies as $custody)
-                                @include('custody.partials.borrowings-row')
-                            @endforeach
-                        </div>
-                    @endif
-                </div>
-            @endforeach
-        </div>
+            <div class="my-borrowings-card borrowings-filter-empty" id="borrowings-filter-empty" hidden>
+                @include('custody.partials.borrowings-empty', [
+                    'emptyHidden' => false,
+                    'emptyTitle' => 'No matching borrowings.',
+                    'emptyMessage' => 'Try another search term or status.',
+                ])
+            </div>
+        @endif
     </div>
 
     @include('custody.partials.borrowings-interactions')
@@ -272,10 +302,15 @@
                 </span>
             </label>
             <label>Status
-                <select id="operational-status"><option value="all">All statuses</option></select>
+                <select id="operational-status">
+                    <option value="all">All statuses</option>
+                    @foreach($operationalFilterStatuses as $filterStatus)
+                        <option value="{{ $filterStatus['key'] }}">{{ $filterStatus['label'] }}</option>
+                    @endforeach
+                </select>
             </label>
             <label>Sort
-                <select id="operational-sort"><option value="newest">Newest</option><option value="oldest">Oldest</option></select>
+                <select id="operational-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
             </label>
         </div>
         @endif
@@ -308,9 +343,11 @@
                         : null;
 
                     $workflowStatus = $custody->workflowStatus();
-                    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
                     $operationalLabel = $workflowStatus['label'];
                     $operationalStatusKey = $workflowStatus['key'];
+                    $operationalFilterStatus = $activeEarlyReturn
+                        ? ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested']
+                        : ['key' => $operationalStatusKey, 'label' => $operationalLabel];
                     $isCompleted = $workflowStatus['group'] === 'completed';
                     $isCancelled = $workflowStatus['group'] === 'cancelled';
                     $isFullyComplete = $operationalStatusKey === 'COMPLETED';
@@ -327,7 +364,7 @@
                     data-operational-record
                     data-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
                     data-priority="{{ $activeEarlyReturn ? 1 : 0 }}"
-                    data-status="{{ $activeEarlyReturn ? 'Early Return Requested' : $operationalLabel }}"
+                    data-status="{{ $operationalFilterStatus['key'] }}"
                     data-search="{{ strtolower(trim(($custody->borrower?->full_name ?? '').' '.($custody->request?->request_no ?? '').' '.($custody->custody_no ?? '').' '.($custody->request?->currentVersion?->purpose_event ?? ''))) }}"
                     @endif
                 >
@@ -374,10 +411,7 @@
                             :status="$operationalStatusKey"
                             :label="$operationalLabel"
                         />
-                        @if($accountabilityIndicator)
-                            <small class="operational-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
-                        @endif
-                        <strong>View<x-icon name="chevron-right" size="16" /></strong>
+                        <strong>View<x-icon name="arrow-right" size="16" /></strong>
                     </span>
                 </a>
             @empty
@@ -406,11 +440,10 @@
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
     .early-return-fact small,.early-return-fact strong{color:#0b6f8c}
     .operational-record-action{align-content:center}
-    .operational-accountability-note{display:block;color:var(--warning);font-size:10.5px;font-weight:700;line-height:1.25}
     @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
     </style>
     <script>
-    (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;[...new Set(rows.map(r=>r.dataset.status).filter(Boolean))].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;status.appendChild(o)});const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>{const priority=Number(b.dataset.priority||0)-Number(a.dataset.priority||0);if(priority!==0)return priority;return(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)});ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();
+    (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>{const priority=Number(b.dataset.priority||0)-Number(a.dataset.priority||0);if(priority!==0)return priority;return(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)});ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();
     </script>
     @endif
 @endif

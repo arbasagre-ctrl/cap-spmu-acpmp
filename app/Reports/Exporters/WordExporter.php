@@ -2,8 +2,10 @@
 
 namespace App\Reports\Exporters;
 
+use App\Reports\ReportScopeFormatter;
 use App\Reports\ReportDataset;
 use App\Reports\ReportExportOptions;
+use App\Reports\ReportSummaryFormatter;
 use PhpOffice\PhpWord\PhpWord;
 use PhpOffice\PhpWord\SimpleType\Jc;
 use PhpOffice\PhpWord\Style\Language;
@@ -42,11 +44,12 @@ class WordExporter
         $this->addInstitutionalHeader($section);
         $this->addTitle($section, $dataset, $meta);
         $this->addMetadata($section, $meta, $options);
-        $this->addTable($section, $dataset, $options);
 
         if ($options->includeSummary && ! empty($dataset->summary)) {
             $this->addSummary($section, $dataset);
         }
+
+        $this->addTable($section, $dataset, $options);
 
         if ($options->includeFooter) {
             $this->addFooter($section);
@@ -120,16 +123,13 @@ class WordExporter
         );
 
         if ($options->includeFilters && ! empty($meta['applied_filters'])) {
-            $filters = [];
-            foreach ($meta['applied_filters'] as $label => $value) {
-                $filters[] = $label.': '.$value;
+            foreach (ReportScopeFormatter::rows($meta['applied_filters']) as $scope) {
+                $section->addText(
+                    $scope['label'].' : '.$scope['value'],
+                    ['size' => 9],
+                    ['spaceAfter' => 0]
+                );
             }
-
-            $section->addText(
-                'Applied Filters : '.implode('; ', $filters),
-                ['size' => 9],
-                ['spaceAfter' => 0]
-            );
         }
 
         $section->addTextBreak(1);
@@ -137,6 +137,9 @@ class WordExporter
 
     private function addTable(mixed $section, ReportDataset $dataset, ReportExportOptions $options): void
     {
+        $bodyFontSize = $options->fontSize ?: 9;
+        $headerFontSize = max(6.0, $bodyFontSize - 1.0);
+
         $table = $section->addTable([
             'borderSize' => 6,
             'borderColor' => 'AAAAAA',
@@ -155,7 +158,7 @@ class WordExporter
             $cell = $table->addCell(null, ['bgColor' => 'F2F2F2', 'valign' => 'bottom']);
             $cell->addText(
                 mb_strtoupper((string) $column['label']),
-                ['bold' => true, 'size' => 7.5],
+                ['bold' => true, 'size' => $headerFontSize],
                 ['spaceAfter' => 0]
             );
         }
@@ -180,7 +183,7 @@ class WordExporter
 
                 $table->addCell(null, ['valign' => 'top'])->addText(
                     (string) ($record[$column['key']] ?? ''),
-                    ['size' => 8],
+                    ['size' => $bodyFontSize],
                     ['alignment' => $alignment, 'spaceAfter' => 0]
                 );
             }
@@ -189,16 +192,48 @@ class WordExporter
 
     private function addSummary(mixed $section, ReportDataset $dataset): void
     {
-        $section->addTextBreak(1);
-        $section->addText('SUMMARY', ['bold' => true, 'size' => 9], ['spaceAfter' => 60]);
+        $section->addText(
+            'REPORT SUMMARY',
+            ['bold' => true, 'size' => 9],
+            ['spaceBefore' => 80, 'spaceAfter' => 40]
+        );
+
+        /*
+         * Formal reports use one compact key/value list. A borderless table is
+         * used only to keep labels, colons, and values aligned in Word; it is
+         * intentionally styled to read like plain document text, not cards.
+         */
+        $table = $section->addTable([
+            'borderSize' => 0,
+            'cellMargin' => 0,
+        ]);
 
         foreach ($dataset->summary as $label => $value) {
-            $section->addText(
-                $label.' : '.(is_numeric($value) ? number_format((float) $value) : $value),
-                ['size' => 9],
+            $table->addRow();
+
+            $labelCell = $table->addCell(3000, ['valign' => 'top']);
+            $labelCell->addText(
+                (string) $label,
+                ['size' => 8.5],
+                ['spaceAfter' => 0]
+            );
+
+            $colonCell = $table->addCell(220, ['valign' => 'top']);
+            $colonCell->addText(
+                ':',
+                ['size' => 8.5],
+                ['alignment' => Jc::CENTER, 'spaceAfter' => 0]
+            );
+
+            $valueCell = $table->addCell(1800, ['valign' => 'top']);
+            $valueCell->addText(
+                ReportSummaryFormatter::display((string) $label, $value),
+                ['size' => 8.5, 'bold' => true],
                 ['spaceAfter' => 0]
             );
         }
+
+        $section->addTextBreak(1);
     }
 
     private function addFooter(mixed $section): void

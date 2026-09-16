@@ -10,7 +10,7 @@
         <h1>{{ $job->custody->custody_no }}</h1>
         <p>{{ $job->custody->borrower->full_name }} · Request {{ $job->custody->request->request_no }}</p>
     </div>
-    <a class="button secondary ui-pressable" href="{{ route('laundry.spmu.index') }}">Back to Laundry cases</a>
+    <a class="button secondary ui-pressable" href="{{ route('laundry.spmu.index') }}"><x-icon name="arrow-left" size="16" /><span>Back to Laundry cases</span></a>
 </section>
 @if(session('status'))
 <section class="content-area"><div class="callout success">{{ session('status') }}</div></section>
@@ -30,7 +30,7 @@
                     <strong>Final physical inspection is required first.</strong>
                     <p>Receive and inspect the cleaned linen in the Return workflow, then archive the signed form here.</p>
                 </div>
-                <a class="button primary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}">Open final return inspection</a>
+                <a class="button primary ui-pressable" href="{{ route('custody.return.show', $job->custody) }}"><span>Open final return inspection</span><x-icon name="arrow-right" size="15" /></a>
             @elseif($canArchive)
                 @if($job->status === 'FORM_REPLACEMENT_REQUIRED')
                     <div class="callout warning"><strong>Replacement scan required.</strong><p>Upload a clear and readable scan/photo of the fully signed form.</p></div>
@@ -91,7 +91,8 @@
     </div>
 </section>
 <style>
-.laundry-final-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:18px}
-@media(max-width:900px){.laundry-final-grid{grid-template-columns:1fr}}
+.laundry-final-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch;gap:18px}
+.laundry-final-grid>.card{height:100%}
+@media(max-width:900px){.laundry-final-grid{grid-template-columns:1fr}.laundry-final-grid>.card{height:auto}}
 </style>
 @endsection

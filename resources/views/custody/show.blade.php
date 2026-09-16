@@ -1,4 +1,12 @@
-@extends('layouts.app', ['title' => $custody->custody_no, 'inlinePageNotices' => ($spmuMode ?? null) === 'return'])
+@extends('layouts.app', [
+    'title' => $custody->custody_no,
+    'topbarTitle' => session('active_workspace') === 'BORROWER'
+        ? 'My Borrowings'
+        : (auth()->user()?->access_classification?->value === 'SPMU_HEAD'
+            ? 'Release & Return Oversight'
+            : (($spmuMode ?? null) === 'return' ? 'Return' : 'Release')),
+    'inlinePageNotices' => ($spmuMode ?? null) === 'return',
+])
 
 @section('content')
 @php
@@ -40,6 +48,16 @@
         )
     );
 
+    $outstandingLines = $custody->lines->filter(
+        fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+    );
+    $hasOutstandingLinen = $outstandingLines->contains(
+        fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+    $hasOutstandingNonLinen = $outstandingLines->contains(
+        fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
+    );
+
     $activeEarlyReturn = $custody->earlyReturnRequests
         ->where('status', 'REQUESTED')
         ->sortByDesc(fn ($notice) => $notice->requested_at?->timestamp ?? 0)
@@ -61,17 +79,19 @@
         && (bool) $custody->due_at
         && now()->lt($custody->due_at);
     $preparationComplete = (bool) $custody->prepared_at;
-    $hasPickupSchedule = (bool) $custody->scheduled_release_at
-        && (bool) $custody->pickup_expires_at
-        && ! $custody->pickup_expired_at;
-
     $pickupWindowStartsAt = $custody->scheduled_release_at;
     $pickupWindowEndsAt = $custody->pickup_expires_at;
+    $pickupWindowPassed = (bool) $pickupWindowEndsAt
+        && now()->gt($pickupWindowEndsAt);
+    $pickupMissed = ! $custody->released_at
+        && (bool) $custody->pickup_scheduled_at
+        && ((bool) $custody->pickup_expired_at || $pickupWindowPassed);
+    $hasPickupSchedule = (bool) $pickupWindowStartsAt
+        && (bool) $pickupWindowEndsAt
+        && ! $pickupMissed;
+
     $pickupWindowUpcoming = $hasPickupSchedule
         && now()->lt($pickupWindowStartsAt);
-
-    $pickupWindowPassed = $hasPickupSchedule
-        && now()->gt($pickupWindowEndsAt);
 
     $pickupWindowOpen = $hasPickupSchedule
         && ! $pickupWindowUpcoming
@@ -88,10 +108,40 @@
 
     $laundryJob = $custody->relationLoaded('laundryJob') ? $custody->laundryJob : null;
 
+    /*
+     * Keep the summary table honest after return: release condition and return
+     * finding are different facts. The old generic "Condition" column used
+     * release_condition, which could show SERVICEABLE even when the recorded
+     * return finding was DAMAGED.
+     */
+    $returnFindingsByCustodyLine = ($custody->returns ?? collect())
+        ->flatMap(fn ($return) => $return->lines ?? collect())
+        ->groupBy('custody_line_id')
+        ->map(function ($returnLines): string {
+            return $returnLines
+                ->groupBy(fn ($line) => strtoupper((string) ($line->condition_code ?: 'FINE')))
+                ->map(function ($lines, $condition): string {
+                    $label = match ($condition) {
+                        'FINE' => 'Good',
+                        'DAMAGED' => 'Damaged',
+                        'MISSING', 'LOST' => 'Missing',
+                        'DESTROYED' => 'Destroyed',
+                        'STOLEN' => 'Stolen',
+                        default => str($condition)->replace('_', ' ')->lower()->title()->toString(),
+                    };
+
+                    return $label.': '.((float) $lines->sum('quantity_received') + 0);
+                })
+                ->values()
+                ->implode('; ');
+        });
+
     $workflowStatus = $custody->workflowStatus();
     $operationalStatusKey = $workflowStatus['key'];
     $obligationSummary = $custody->openObligationSummary();
-    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
+    $accountabilityIndicator = in_array((string) $custody->status, ['OBLIGATION_OPEN', 'INCIDENT_OPEN'], true)
+        ? ($obligationSummary ?? ['label' => 'Accountability Pending'])
+        : null;
     $operationalLabel = $workflowStatus['label'];
     $transactionFullyComplete = $operationalStatusKey === 'COMPLETED';
     $transactionCancelled = $operationalStatusKey === 'CANCELLED';
@@ -113,7 +163,7 @@
             'success',
         ],
         $accountabilityIndicator !== null => [
-            $custody->hasOutstandingProperty() ? 'Return + accountability in progress' : 'Accountability processing',
+            'Accountability processing',
             ($obligationSummary['copy'] ?? null) ?: $accountabilityIndicator['label'].' requires resolution. See My Obligations for the current action.',
             'warning',
         ],
@@ -124,20 +174,70 @@
                 : 'An accountability or billing obligation still needs resolution. See My Obligations for the required action.',
             'warning',
         ],
+        $custody->status === 'RETURN_PROCESSING' && $hasOutstandingLinen && $hasOutstandingNonLinen => [
+            'Return processing is in progress',
+            'A return branch has been recorded, but both return channels still show outstanding property. Return every outstanding non-linen item to SPMU and every outstanding linen item, with the same printed Laundry Form, to the Laundry Area.',
+            'warning',
+        ],
+        $custody->status === 'RETURN_PROCESSING' && $hasOutstandingLinen => [
+            'Linen return still required',
+            'Return every outstanding linen item and the same printed Laundry Form to the Laundry Area. Laundry RECEIVED BY is the physical return date used for timeliness.',
+            'warning',
+        ],
+        $custody->status === 'RETURN_PROCESSING' && $hasOutstandingNonLinen => [
+            'Non-linen return still required',
+            'Return every outstanding non-linen item to SPMU in one complete AO return inspection.',
+            'warning',
+        ],
         $custody->status === 'RETURN_PROCESSING' => [
             'Return processing is in progress',
-            'SPMU is reconciling your returned items.',
+            'All physical quantities have been recorded. SPMU is completing reconciliation and any linked accountability processing.',
             'info',
+        ],
+        $custody->status === 'OVERDUE' && $hasOutstandingLinen && $hasOutstandingNonLinen => [
+            'This borrowing is overdue',
+            'Return every outstanding non-linen item to SPMU and every outstanding linen item, with the same printed Laundry Form, to the Laundry Area immediately.',
+            'danger',
+        ],
+        $custody->status === 'OVERDUE' && $hasOutstandingLinen => [
+            'This borrowing is overdue',
+            'Return every outstanding linen item and the same printed Laundry Form to the Laundry Area immediately. Laundry RECEIVED BY is the physical return date used for timeliness.',
+            'danger',
         ],
         $custody->status === 'OVERDUE' => [
             'This borrowing is overdue',
-            'Coordinate the return with SPMU as soon as possible.',
+            'Return every outstanding non-linen item to SPMU immediately for official return inspection.',
             'danger',
+        ],
+        (bool) $custody->released_at && $hasOutstandingLinen && $hasOutstandingNonLinen => [
+            'Items are currently on your custody',
+            'On or before the expected return date, return all non-linen items to SPMU and all linen items, with the same printed Laundry Form, to the Laundry Area.',
+            'info',
+        ],
+        (bool) $custody->released_at && $hasOutstandingLinen => [
+            'Linen is currently on your custody',
+            'On or before the expected return date, return the linen and the same printed Laundry Form to the Laundry Area.',
+            'info',
         ],
         (bool) $custody->released_at => [
             'Items are currently on your custody',
-            'Return the items to SPMU on or before the expected return date.',
+            'Return all outstanding non-linen items to SPMU on or before the expected return date.',
             'info',
+        ],
+        $pickupMissed && $pickupRescheduleRequested => [
+            'Pickup reschedule requested',
+            'SPMU will set the next valid pickup schedule for this same approved request.',
+            'warning',
+        ],
+        $pickupMissed && ! $pickupRescheduleAvailable => [
+            'Pickup missed',
+            'Your pickup schedule has passed and no valid pickup window remains before the expected return date. Cancel the request or coordinate an approved date revision with SPMU.',
+            'warning',
+        ],
+        $pickupMissed => [
+            'Pickup missed',
+            'Your pickup schedule has passed and the items were not claimed. Choose what you want to do with this approved request.',
+            'warning',
         ],
         $preparationComplete && $pickupWindowOpen => [
             'Ready for physical release',
@@ -176,7 +276,7 @@
     <div>
         @if($isBorrower)
             <a class="borrower-custody-back" href="{{ route('custody.index') }}">
-                <x-icon name="chevron-right" size="16" />
+                <x-icon name="arrow-right" size="16" />
                 My Borrowings
             </a>
         @else
@@ -194,7 +294,12 @@
             @endif
         </p>
     </div>
-    <x-status-badge :status="$operationalStatusKey" :label="$operationalLabel" />
+    <x-status-badge
+        :status="$operationalStatusKey"
+        :label="$isBorrower && $pickupMissed
+            ? ($pickupRescheduleRequested ? 'Reschedule Requested' : 'Pickup Missed')
+            : $operationalLabel"
+    />
 </section>
 @endif
 
@@ -354,13 +459,24 @@
                     </div>
                 @endif
 
-                <a
-                    class="button secondary small ui-pressable borrower-custody-status-action"
-                    href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
-                >
-                    {{ $accountabilityIndicator ? 'View obligation' : 'View request' }}
-                    <x-icon name="chevron-right" size="15" />
-                </a>
+                <div class="borrower-custody-status-actions">
+                    @if($pickupMissed && ! $pickupRescheduleRequested && $pickupRescheduleAvailable)
+                        <form method="post" action="{{ route('custody.request-pickup-reschedule', $custody) }}">
+                            @csrf
+                            <button class="button primary small ui-pressable borrower-custody-status-action" type="submit">
+                                Request Reschedule
+                            </button>
+                        </form>
+                    @endif
+
+                    <a
+                        class="button secondary small ui-pressable borrower-custody-status-action"
+                        href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
+                    >
+                        {{ $accountabilityIndicator ? 'View obligation' : ($pickupMissed ? 'Open Request Actions' : 'View request') }}
+                        <x-icon name="arrow-right" size="15" />
+                    </a>
+                </div>
             </div>
 
             {{-- Coordination already sent: one line, not a card. --}}
@@ -551,7 +667,7 @@
 
                         <span class="borrower-early-return-copy">
                             <strong>Request early return</strong>
-                            <small>Returning the items sooner? Propose a handover schedule to SPMU.</small>
+                            <small>Returning the items sooner? Propose an early return date, then follow the applicable SPMU or Laundry Area return channel.</small>
                         </span>
 
                         <span class="borrower-early-return-toggle">
@@ -617,8 +733,7 @@
                         </div>
 
                         <p class="meta">
-                            Quantities are shown for reference only. SPMU records the actual returned
-                            quantities and conditions during Return &amp; Inspection.
+                            Quantities are shown for reference only. Non-linen is physically inspected by the Action Officer at SPMU. Linen is physically received and checked by Laundry Personnel, then encoded by the Action Officer from the accomplished Laundry Form.
                         </p>
 
                         <label for="early-return-reason">
@@ -663,7 +778,7 @@
 @if($useReleaseProcessLayout)
     @include('custody.partials.release-process')
 @else
-    <x-request-progress-tracker :request="$custody->request" />
+    <x-request-progress-tracker :request="$custody->request" :show-current-status="false" />
 
 <section class="content-grid two">
     <article class="card">
@@ -689,8 +804,8 @@
     <article class="card">
         <div class="card-header">
             <div>
-                <p class="eyebrow">Operational requirements</p>
-                <h2>Before physical release</h2>
+                <p class="eyebrow">Operational context</p>
+                <h2>{{ $custody->released_at ? 'Release & return requirements' : 'Before physical release' }}</h2>
             </div>
         </div>
 
@@ -712,8 +827,8 @@
     <article class="card">
         <div class="card-header">
             <div>
-                <p class="eyebrow">Approved property</p>
-                <h2>Approved and issued quantities</h2>
+                <p class="eyebrow">Property record</p>
+                <h2>{{ $custody->released_at ? 'Issued and returned quantities' : 'Approved and issued quantities' }}</h2>
             </div>
         </div>
 
@@ -726,7 +841,8 @@
                         <th>Issued</th>
                         <th>Returned</th>
                         <th>Outstanding</th>
-                        <th>Condition</th>
+                        <th>Release Condition</th>
+                        <th>Return Condition</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -742,7 +858,8 @@
                             <td>
                                 {{ max(0, (float) $line->actual_released_quantity - (float) $line->returned_quantity) + 0 }}
                             </td>
-                            <td>{{ $line->release_condition ?: '—' }}</td>
+                            <td>{{ $line->release_condition ? str($line->release_condition)->replace('_', ' ')->lower()->title() : '—' }}</td>
+                            <td>{{ $returnFindingsByCustodyLine->get($line->id) ?: ((float) $line->returned_quantity > 0 ? 'Recorded' : '—') }}</td>
                         </tr>
                     @endforeach
                 </tbody>

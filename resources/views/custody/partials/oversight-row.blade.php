@@ -7,7 +7,6 @@
     $returnDate = $returnDateValue ? \Illuminate\Support\Carbon::parse($returnDateValue) : null;
 
     $workflowStatus = $custody->workflowStatus();
-    $accountabilityIndicator = $custody->activeAccountabilityIndicator();
     $operationalLabel = $workflowStatus['label'];
     $operationalStatusKey = $workflowStatus['key'];
     $group = $workflowStatus['group'];
@@ -18,26 +17,6 @@
 
     $borrowerName = $custody->borrower?->full_name ?: 'Borrower';
     $borrowerUnit = $custody->borrower?->organizationalUnit?->unit_name;
-
-    $initials = \Illuminate\Support\Str::of($borrowerName)
-        ->squish()
-        ->explode(' ')
-        ->filter()
-        ->take(3)
-        ->map(fn ($word) => mb_strtoupper(mb_substr($word, 0, 1)))
-        ->implode('');
-    $initials = $initials !== '' ? $initials : 'B';
-
-    // Stable per-borrower avatar colour so the same person reads the same way
-    // across pages of the oversight list. It stays behind an uploaded photo
-    // and shows through again if the picture cannot be loaded.
-    $avatarTone = (crc32($borrowerName) % 6) + 1;
-
-    $borrowerPhotoUrl = filled($custody->borrower?->profile_picture_path)
-        && Route::has('users.picture.show')
-            ? route('users.picture.show', $custody->borrower)
-                .'?v='.($custody->borrower->updated_at?->timestamp ?? 0)
-            : null;
 
     $searchText = strtolower(trim(
         $borrowerName.' '.
@@ -69,20 +48,6 @@
     aria-label="View release and return details for {{ $custody->custody_no ?: $borrowerName }}"
 >
     <div class="custody-oversight-borrower">
-        <span class="custody-oversight-avatar" data-avatar-tone="{{ $avatarTone }}" aria-hidden="true">
-            {{ $initials }}
-
-            @if($borrowerPhotoUrl)
-                <img
-                    class="custody-oversight-avatar-photo"
-                    src="{{ $borrowerPhotoUrl }}"
-                    alt=""
-                    loading="lazy"
-                    onerror="this.remove()"
-                >
-            @endif
-        </span>
-
         <span class="custody-oversight-identity">
             <span class="custody-oversight-name">
                 <span>{{ $borrowerName }}</span>
@@ -127,12 +92,9 @@
                 :label="$operationalLabel"
                 :title="$operationalLabel"
             />
-            @if($accountabilityIndicator)
-                <small class="custody-oversight-accountability">{{ $accountabilityIndicator['label'] }}</small>
-            @endif
         </span>
     </div>
 
-    <span class="custody-oversight-view" aria-hidden="true">View</span>
+    <span class="custody-oversight-view" aria-hidden="true"><span>View details</span><x-icon name="arrow-right" size="14" /></span>
 </a>
 

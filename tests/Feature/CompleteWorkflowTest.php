@@ -181,7 +181,7 @@ class CompleteWorkflowTest extends TestCase
          * Return inspection is only permitted on or after the Expected
          * Return Date.
          */
-        $this->travelTo($custody->fresh()->due_at);
+        $this->travelTo($this->safeReturnMoment($custody->fresh()->due_at));
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuOfficer)
@@ -489,7 +489,7 @@ class CompleteWorkflowTest extends TestCase
          * Return inspection is only permitted on or after the Expected
          * Return Date.
          */
-        $this->travelTo($custody->fresh()->due_at);
+        $this->travelTo($this->safeReturnMoment($custody->fresh()->due_at));
 
         $service->receiveReturn(
             $custody->fresh(),
@@ -648,18 +648,23 @@ class CompleteWorkflowTest extends TestCase
             ->with('lines')
             ->firstOrFail();
 
-        // Pickup / release runs 1:00 PM - 4:00 PM.
-        $pickupAt = $version->schedule_date->copy()->setTime(13, 0, 0);
-        $pickupExpiresAt = $pickupAt->copy()->addHours(1);
+        /*
+         * custody.schedule-pickup only CONFIRMS the automatic Pickup /
+         * Issuance window the system already generated at approval
+         * (RequestWorkflowService::approve() -> ensurePickupRecord());
+         * it takes no date from the request. Use that real window
+         * instead of inventing one from version->schedule_date.
+         */
+        $pickupAt = $custody->scheduled_release_at;
+        $pickupExpiresAt = $custody->pickup_expires_at;
+        $this->assertNotNull($pickupAt, 'Approval must have already generated a Pickup / Issuance window.');
+        $this->assertNotNull($pickupExpiresAt, 'Approval must have already generated a Pickup / Issuance window.');
 
         $this->travelTo($pickupAt->copy()->subHour());
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuOfficer)
-            ->post(route('custody.schedule-pickup', $custody), [
-                'pickup_at' => $pickupAt->format('Y-m-d H:i:s'),
-                'pickup_expires_at' => $pickupExpiresAt->format('Y-m-d H:i:s'),
-            ])
+            ->post(route('custody.schedule-pickup', $custody))
             ->assertSessionHasNoErrors();
 
         $this->withSession(['active_workspace' => 'SPMU'])
@@ -672,7 +677,7 @@ class CompleteWorkflowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         /*
-         * Travel past the original pickup window without releasing.
+         * Travel past the confirmed pickup window without releasing.
          */
         $this->travelTo($pickupExpiresAt->copy()->addMinutes(5));
 
@@ -687,27 +692,36 @@ class CompleteWorkflowTest extends TestCase
         $this->assertNull($custody->fresh()->released_at);
 
         /*
-         * Reschedule to a later operational date inside the same approved
-         * borrowing period. Missing the original pickup window does not
-         * cancel the reservation and does not force pickup back onto the
-         * already-expired Schedule Date.
+         * A missed CONFIRMED pickup is not rescheduled by posting to
+         * custody.schedule-pickup again (a pickup is only ever confirmed
+         * once -- CustodyService::confirmPickupSchedule() no-ops on a
+         * transaction that already has one). Production instead requires
+         * the borrower to explicitly ask to continue
+         * (custody.request-pickup-reschedule ->
+         * CustodyService::requestPickupReschedule()) before SPMU may
+         * assign a new window (custody.reschedule-pickup ->
+         * CustodyService::rescheduleMissedPickup()).
          */
-        $newPickupAt = app(\App\Services\OperationalCalendarService::class)
-            ->nextOpenDate(
-                \App\Services\OperationalCalendarService::PICKUP,
-                $pickupAt->copy()->addDay(),
-                true
-            )
-            ->setTime(13, 0, 0);
-        $newPickupExpiresAt = $newPickupAt->copy()->addHours(2);
+        $this->withSession(['active_workspace' => 'BORROWER'])
+            ->actingAs($borrower)
+            ->post(route('custody.request-pickup-reschedule', $custody))
+            ->assertSessionHasNoErrors();
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuOfficer)
-            ->post(route('custody.schedule-pickup', $custody), [
-                'pickup_at' => $newPickupAt->format('Y-m-d H:i:s'),
-                'pickup_expires_at' => $newPickupExpiresAt->format('Y-m-d H:i:s'),
-            ])
+            ->post(route('custody.reschedule-pickup', $custody))
             ->assertSessionHasNoErrors();
+
+        $custody->refresh();
+        $newPickupAt = $custody->scheduled_release_at;
+        $newPickupExpiresAt = $custody->pickup_expires_at;
+
+        $this->assertNotNull($newPickupAt, 'SPMU reschedule must have assigned a new Pickup / Issuance window.');
+        $this->assertNotNull($newPickupExpiresAt, 'SPMU reschedule must have assigned a new Pickup / Issuance window.');
+        $this->assertTrue(
+            $newPickupAt->gt($pickupExpiresAt),
+            'The rescheduled window must be a later window than the one that expired.'
+        );
 
         /*
          * Inside the new window, release now succeeds.
@@ -1042,7 +1056,7 @@ class CompleteWorkflowTest extends TestCase
          * Return inspection is only permitted on or after the Expected
          * Return Date.
          */
-        $this->travelTo($custody->fresh()->due_at);
+        $this->travelTo($this->safeReturnMoment($custody->fresh()->due_at));
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuOfficer)
@@ -1133,6 +1147,11 @@ class CompleteWorkflowTest extends TestCase
                 [
                     'resolution_outcome' => 'BILLING_REQUIRED',
                     'resolution_remarks' => 'Stolen property requires borrower billing.',
+                    // This stolen-property incident is offense-eligible, so
+                    // the SPMU Head must explicitly choose whether it also
+                    // counts as an administrative offense. This scenario is
+                    // financial liability only, not a sanction.
+                    'count_as_offense' => false,
                 ]
             )
             ->assertSessionHasNoErrors();
@@ -1610,21 +1629,23 @@ class CompleteWorkflowTest extends TestCase
         User $spmuOfficer,
         $version
     ): void {
-        // Pickup / release runs 1:00 PM - 4:00 PM.
-        $pickupAt =
-            $version
-                ->schedule_date
-                ->copy()
-                ->setTime(
-                    13,
-                    0,
-                    0
-                );
+        /*
+         * custody.schedule-pickup only CONFIRMS the automatic Pickup /
+         * Issuance window the system already generated at approval
+         * (RequestWorkflowService::approve() -> ensurePickupRecord()) --
+         * CustodyController::schedulePickup() takes no date from the
+         * request at all, and CustodyService::confirmPickupSchedule()
+         * confirms $custody->scheduled_release_at / pickup_expires_at
+         * exactly as generated. Read and use that real system-generated
+         * window instead of inventing one from version->schedule_date,
+         * which the confirm endpoint never reads.
+         */
+        $custody->refresh();
+        $pickupAt = $custody->scheduled_release_at;
+        $pickupExpiresAt = $custody->pickup_expires_at;
 
-        $pickupExpiresAt =
-            $pickupAt
-                ->copy()
-                ->addHours(3);
+        $this->assertNotNull($pickupAt, 'Approval must have already generated a Pickup / Issuance window.');
+        $this->assertNotNull($pickupExpiresAt, 'Approval must have already generated a Pickup / Issuance window.');
 
         /*
          * Schedule while the pickup time is still in the future.
@@ -1643,20 +1664,7 @@ class CompleteWorkflowTest extends TestCase
                 route(
                     'custody.schedule-pickup',
                     $custody
-                ),
-                [
-                    'pickup_at' =>
-                        $pickupAt
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-
-                    'pickup_expires_at' =>
-                        $pickupExpiresAt
-                            ->format(
-                                'Y-m-d H:i:s'
-                            ),
-                ]
+                )
             )
             ->assertSessionHasNoErrors();
 
@@ -1687,6 +1695,37 @@ class CompleteWorkflowTest extends TestCase
                 ->copy()
                 ->addMinutes(30)
         );
+    }
+
+    /**
+     * A safe, in-window moment to perform a Return transaction for the
+     * given Expected Return Date. due_at itself lands at 23:59:59 (the
+     * end-of-day convention used when a version has no explicit
+     * return_due_at - see CustodyService::ensurePickupRecord()), which is
+     * not necessarily inside the configured RETURN operating hours (this
+     * file's setUp() deliberately narrows every open weekday to 1:00 PM -
+     * 4:00 PM). Resolve the next actually-open RETURN date on or after
+     * due_at and land inside its real configured window instead of
+     * assuming a specific hour.
+     */
+    private function safeReturnMoment(\Illuminate\Support\Carbon|\Carbon\CarbonImmutable $dueAt): \Carbon\CarbonImmutable
+    {
+        $calendar = app(\App\Services\OperationalCalendarService::class);
+        $date = $calendar->nextOpenDate(
+            \App\Services\OperationalCalendarService::RETURN,
+            $dueAt,
+            true
+        );
+
+        [$open, $close] = $calendar->operatingWindow(
+            \App\Services\OperationalCalendarService::RETURN,
+            $date
+        );
+
+        $this->assertNotNull($open, 'A configured RETURN operating window is required for this fixture.');
+        $this->assertNotNull($close, 'A configured RETURN operating window is required for this fixture.');
+
+        return $open->copy()->addMinutes(30);
     }
 
     private function roleUser(

@@ -8,6 +8,7 @@ use App\Models\EvidenceSubmission;
 use App\Models\GeneratedDocument;
 use App\Models\GatePass;
 use App\Models\Incident;
+use App\Models\OverdueCase;
 use App\Models\Payment;
 use App\Models\RequestSupportingDocument;
 use App\Models\SignatureSnapshot;
@@ -100,10 +101,17 @@ class DocumentController extends Controller
                 ->value('borrower_user_id')
             : null;
 
+        $overdueBorrowerId = $document->subject_type === OverdueCase::class
+            ? OverdueCase::query()
+                ->whereKey($document->subject_id)
+                ->value('borrower_user_id')
+            : null;
+
         abort_unless(
             ($borrowingRequest
                 && (int) $borrowingRequest->borrower_user_id === (int) $user->id)
             || (int) $billingBorrowerId === (int) $user->id
+            || (int) $overdueBorrowerId === (int) $user->id
             || $user->hasRole(UserRole::Spmu)
             || $user->hasRole(UserRole::Ictu),
             403

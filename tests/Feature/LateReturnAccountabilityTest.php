@@ -114,6 +114,41 @@ class LateReturnAccountabilityTest extends TestCase
         return $this->user(AccessClassification::SpmuHead);
     }
 
+    /** Register the active E-signature required by real Head signing actions. */
+    private function registerSignature(User $user): void
+    {
+        if (\App\Models\UserSignature::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'ACTIVE')
+            ->exists()) {
+            return;
+        }
+
+        $bytes = "\x89PNG\r\n\x1a\n".'late-return-signature-'.$user->id;
+        $path = 'tests/signatures/'.$user->id.'/signature.png';
+
+        \Illuminate\Support\Facades\Storage::disk('local')->put($path, $bytes);
+
+        $file = \App\Models\StoredFile::query()->create([
+            'uploaded_by_user_id' => $user->id,
+            'disk' => 'local',
+            'storage_path' => $path,
+            'original_name' => 'signature.png',
+            'mime_type' => 'image/png',
+            'byte_size' => strlen($bytes),
+            'sha256' => hash('sha256', $bytes),
+            'classification' => 'SIGNATURE',
+        ]);
+
+        \App\Models\UserSignature::query()->create([
+            'user_id' => $user->id,
+            'stored_file_id' => $file->id,
+            'effective_from' => now()->subMinute(),
+            'effective_to' => null,
+            'status' => 'ACTIVE',
+        ]);
+    }
+
     /**
      * A released custody carrying one line, optionally linen.
      */
@@ -707,6 +742,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->overdueCase($custody);
         $officer = $this->officer();
         $head = $this->spmuHead();
+        $this->registerSignature($head);
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
@@ -747,6 +783,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->overdueCase($custody);
         $officer = $this->officer();
         $head = $this->spmuHead();
+        $this->registerSignature($head);
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
@@ -918,7 +955,7 @@ class LateReturnAccountabilityTest extends TestCase
             ->assertSee('Overdue - Item Not Returned')
             ->assertSee('Estimated Fee So Far')
             ->assertSee('Still overdue', false)
-            ->assertSee('A final Late Return Fee Form cannot be issued yet.')
+            ->assertSee('A formal Late Return Notice cannot be issued until the physical return is recorded and the assessment is confirmed.')
             ->assertSee('Awaiting borrower return')
             /* No confirmation or approval control while it is merely overdue. */
             ->assertDontSee('Confirm Late Return')
@@ -978,7 +1015,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->accountability($officer)
             ->assertOk()
             ->assertSee('Approved - Awaiting Payment')
-            ->assertSee('The Late Return Fee Form has been issued.');
+            ->assertSee('The Late Return Notice and Billing Statement have been issued.');
     }
 
     public function test_linen_awaiting_its_laundry_receipt_shows_the_attestation_field(): void
@@ -992,10 +1029,10 @@ class LateReturnAccountabilityTest extends TestCase
             ->get(route('custody.return.show', $custody))
             ->assertOk()
             ->assertSee('Laundry Received Date')
-            ->assertSee("Confirm the date shown in the Laundry Form's RECEIVED BY section.", false);
+            ->assertSee('Use the RECEIVED BY date on the form.');
     }
 
-    public function test_linen_with_a_recorded_receipt_shows_the_date_read_only(): void
+    public function test_linen_with_worker_received_date_but_no_accomplished_form_still_requires_form_upload(): void
     {
         $custody = $this->custody($this->borrower(), linen: true);
         $this->laundryJob($custody, Carbon::create(2026, 9, 3, 11));
@@ -1004,10 +1041,11 @@ class LateReturnAccountabilityTest extends TestCase
             ->actingAs($this->officer())
             ->get(route('custody.return.show', $custody))
             ->assertOk()
+            ->assertSee('Record Accomplished Form')
             ->assertSee('Laundry Received Date')
-            ->assertSee('03 Sep 2026')
-            /* No input is offered when Laundry already recorded it. */
-            ->assertDontSee('name="laundry_received_date"', false);
+            ->assertSee('Use the RECEIVED BY date on the form.')
+            ->assertSee('name="laundry_received_on"', false)
+            ->assertDontSee('03 Sep 2026');
     }
 
     /* ================================================================== */

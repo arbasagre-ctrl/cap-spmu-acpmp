@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AccessClassification;
+use App\Enums\RequestStatus;
 use App\Models\BillingStatement;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
@@ -95,55 +97,117 @@ class NotificationController extends Controller
 
         $sourceId = (int) $event->source_id;
 
-        /*
-         * Laundry operations have no borrower-facing screen, so the branch
-         * turns on what the viewer may actually open rather than on which
-         * workspace tab they happen to be in.
-         */
-        $hasSpmuAccess = (bool) auth()->user()?->hasWorkspace('SPMU');
+        $viewer = auth()->user();
 
         return match ($event->source_type) {
-            BorrowingRequest::class => $this->requestUrl($sourceId),
-            CustodyTransaction::class => $this->custodyUrl($sourceId),
-            LaundryJob::class => $this->laundryUrl($sourceId, $hasSpmuAccess),
+            BorrowingRequest::class => $this->requestUrl($sourceId, $viewer),
+            CustodyTransaction::class => $this->custodyUrl($sourceId, $viewer),
+            LaundryJob::class => $this->laundryUrl($sourceId, $viewer),
             GeneratedDocument::class => $this->documentUrl($sourceId),
             BillingStatement::class, Incident::class => route('accountability.index'),
             default => null,
         };
     }
 
-    private function requestUrl(int $requestId): ?string
+    private function requestUrl(int $requestId, $viewer): ?string
     {
-        $borrowingRequest = BorrowingRequest::query()->find($requestId);
+        if (! $viewer) {
+            return null;
+        }
 
-        return $borrowingRequest
-            ? route('requests.show', $borrowingRequest)
-            : null;
+        $borrowingRequest = BorrowingRequest::query()
+            ->with('currentVersion.approvalSteps')
+            ->find($requestId);
+
+        if (! $borrowingRequest) {
+            return null;
+        }
+
+        if ((int) $borrowingRequest->borrower_user_id === (int) $viewer->id) {
+            return route('requests.show', $borrowingRequest);
+        }
+
+        if ($viewer->access_classification === AccessClassification::SpmuOfficer) {
+            if ($borrowingRequest->final_approved_at !== null) {
+                return route('requests.show', $borrowingRequest);
+            }
+
+            if ($borrowingRequest->status === RequestStatus::UnderSpmu) {
+                $steps = $borrowingRequest->currentVersion?->approvalSteps ?? collect();
+                $canVerify = $steps->contains(
+                    fn ($step) => (int) $step->sequence_no === 1
+                        && in_array((string) $step->decision, ['PENDING', 'RECEIVED'], true)
+                );
+                $canDecideAsDelegate = $viewer->activeDelegationFor('SPMU') !== null
+                    && $steps->contains(
+                        fn ($step) => (int) $step->sequence_no === 2
+                            && in_array((string) $step->decision, ['PENDING', 'RECEIVED'], true)
+                    );
+
+                if ($canVerify || $canDecideAsDelegate) {
+                    return route('requests.show', $borrowingRequest);
+                }
+            }
+
+            return null;
+        }
+
+        if ($viewer->access_classification === AccessClassification::SpmuHead) {
+            $steps = $borrowingRequest->currentVersion?->approvalSteps ?? collect();
+
+            if ($borrowingRequest->status !== RequestStatus::UnderSpmu) {
+                $hasSpmuHistory = $borrowingRequest->final_approved_at !== null
+                    || $steps->contains(fn ($step) => (string) $step->stage_code === 'SPMU');
+
+                return $hasSpmuHistory ? route('requests.show', $borrowingRequest) : null;
+            }
+
+            $canDecide = $steps->contains(
+                fn ($step) => (int) $step->sequence_no === 2
+                    && in_array((string) $step->decision, ['PENDING', 'RECEIVED'], true)
+            );
+
+            return $canDecide ? route('requests.show', $borrowingRequest) : null;
+        }
+
+        return null;
     }
 
-    private function custodyUrl(int $custodyId): ?string
+    private function custodyUrl(int $custodyId, $viewer = null): ?string
     {
+        $viewer ??= auth()->user();
         $custody = CustodyTransaction::query()->find($custodyId);
 
-        return $custody
+        if (! $custody || ! $viewer) {
+            return null;
+        }
+
+        $isOwner = (int) $custody->borrower_user_id === (int) $viewer->id;
+        $isSpmu = in_array(
+            $viewer->access_classification,
+            [AccessClassification::SpmuOfficer, AccessClassification::SpmuHead],
+            true
+        );
+
+        return ($isOwner || $isSpmu)
             ? route('custody.show', $custody)
             : null;
     }
 
-    private function laundryUrl(int $jobId, bool $hasSpmuAccess): ?string
+    private function laundryUrl(int $jobId, $viewer): ?string
     {
         $job = LaundryJob::query()->find($jobId);
 
-        if (! $job) {
+        if (! $job || ! $viewer) {
             return null;
         }
 
-        if ($hasSpmuAccess) {
+        if ($viewer->access_classification === AccessClassification::SpmuOfficer) {
             return route('laundry.show', $job);
         }
 
         return $job->custody_transaction_id
-            ? $this->custodyUrl((int) $job->custody_transaction_id)
+            ? $this->custodyUrl((int) $job->custody_transaction_id, $viewer)
             : null;
     }
 

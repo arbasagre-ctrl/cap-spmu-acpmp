@@ -35,7 +35,7 @@
 
 .borrower-custody-stack {
     display: grid;
-    gap: 18px;
+    gap: 24px;
 }
 
 .borrower-custody-stack .card { padding: 0; }
@@ -132,6 +132,15 @@
 
 .borrower-custody-status .borrower-custody-status-action { gap: 8px; }
 
+.borrower-custody-status-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.borrower-custody-status-actions form { margin: 0; }
+
 .borrower-custody-status.is-success { border-left-color: var(--success); }
 .borrower-custody-status.is-warning { border-left-color: var(--warning); }
 .borrower-custody-status.is-danger { border-left-color: var(--danger); }
@@ -147,6 +156,7 @@
 }
 
 .borrower-custody-status-copy p {
+    max-width: 760px;
     margin: 5px 0 0;
     color: var(--text-muted);
     font-size: 13px;
@@ -483,6 +493,11 @@
     .borrower-custody-status-fact {
         padding-left: 0;
         border-left: 0;
+    }
+
+    .borrower-custody-status-actions {
+        width: 100%;
+        flex-wrap: wrap;
     }
 
     .borrower-summary-grid { grid-template-columns: 1fr; }

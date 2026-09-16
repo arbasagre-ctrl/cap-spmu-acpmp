@@ -82,7 +82,7 @@ class RoleWorkspaceSmokeTest extends TestCase
                 'hide' => ['User Accounts', 'Audit Trail', 'Delivery Records', 'Laundry Operations'],
             ],
             UserRole::Ictu->value => [
-                'see' => ['User Accounts', 'System Settings', 'Audit Trail', 'Delivery Records'],
+                'see' => ['User Accounts', 'System Configuration', 'Audit Trail', 'Delivery Records'],
                 'hide' => ['Borrowing Calendar', 'For Approval', 'Laundry Operations'],
             ],
         ];

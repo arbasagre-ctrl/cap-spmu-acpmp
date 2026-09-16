@@ -17,8 +17,57 @@
     const previous = root.querySelector('[data-gate-pass-page="previous"]');
     const next = root.querySelector('[data-gate-pass-page="next"]');
     const pageSize = Math.max(1, Number.parseInt(root.dataset.pageSize, 10) || 10);
+    const actionMenus = [...root.querySelectorAll('.gate-pass-more')];
     let page = 1;
     let pageCount = 1;
+
+    const closeActionMenus = (except = null) => {
+        actionMenus.forEach(menu => {
+            if (menu !== except && menu.open) menu.open = false;
+        });
+    };
+
+    const positionActionMenu = details => {
+        if (!details?.open) return;
+        const trigger = details.querySelector('summary');
+        const menu = details.querySelector('.gate-pass-more-links');
+        if (!trigger || !menu) return;
+
+        const gap = 6;
+        const edge = 8;
+        const triggerRect = trigger.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+
+        let left = triggerRect.right - menuRect.width;
+        left = Math.max(edge, Math.min(left, window.innerWidth - menuRect.width - edge));
+
+        let top = triggerRect.bottom + gap;
+        if (top + menuRect.height > window.innerHeight - edge) {
+            top = Math.max(edge, triggerRect.top - menuRect.height - gap);
+        }
+
+        menu.style.left = `${Math.round(left)}px`;
+        menu.style.top = `${Math.round(top)}px`;
+    };
+
+    actionMenus.forEach(details => {
+        details.addEventListener('toggle', () => {
+            if (!details.open) return;
+            closeActionMenus(details);
+            window.requestAnimationFrame(() => positionActionMenu(details));
+        });
+    });
+
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.gate-pass-more')) closeActionMenus();
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeActionMenus();
+    });
+
+    window.addEventListener('resize', () => closeActionMenus());
+    window.addEventListener('scroll', () => closeActionMenus(), true);
 
     const render = () => {
         const terms = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);

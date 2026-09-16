@@ -349,6 +349,7 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
     min-height: 34px;
     padding: 0 14px;
     color: var(--interactive);
@@ -370,6 +371,16 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
 .ob-details[open] > summary {
     margin-bottom: 10px;
     background: var(--surface-subtle);
+}
+
+.ob-disclosure-chevron {
+    flex: 0 0 auto;
+    transition: transform .16s ease;
+}
+
+.ob-details[open] > summary .ob-disclosure-chevron,
+.ob-resolved-history-disclosure[open] > summary .ob-disclosure-chevron {
+    transform: rotate(180deg);
 }
 
 .ob-detail-grid {
@@ -606,6 +617,12 @@ html[data-theme="dark"] .ob-summary-card:hover { background:var(--surface-hover)
 }
 
 .ob-resolved-history-disclosure > summary::-webkit-details-marker { display: none; }
+
+.ob-resolved-history-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
 
 .ob-resolved-history-disclosure[open] > summary { margin-bottom: 14px; }
 

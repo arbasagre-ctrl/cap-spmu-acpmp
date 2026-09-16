@@ -15,7 +15,7 @@
             @if($hasOffCampusItem)
                 I confirm that the Borrower Slip and approved Gate Pass were validated and the barricade was handed to the borrower.
             @elseif($hasLaundryItem)
-                I confirm that Laundry Personnel issued the linen and wet-signed <strong>Issued by</strong> on the printed Laundry Form.
+                I confirm that the linen was physically issued by Laundry Personnel and the printed Laundry Form was completed with the required <strong>ISSUED BY</strong> signature.
             @else
                 I confirm that the Borrower Slip and approved item were validated and the item was physically handed to the borrower.
             @endif

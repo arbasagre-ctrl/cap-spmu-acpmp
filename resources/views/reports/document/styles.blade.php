@@ -69,8 +69,33 @@
 @media print {
     .doc-sheet { max-width: none; margin: 0; padding: 0; }
     .doc-table-scroll { overflow: visible; }
-    .doc-table thead { display: table-header-group; }
-    .doc-table tr { break-inside: avoid; }
+
+/* Universal print table fitting */
+.doc-table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+}
+
+.doc-table th,
+.doc-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+    .doc-table thead {
+        display: table-header-group;
+        break-after: avoid-page;
+    }
+
+    .doc-table tbody {
+        display: table-row-group;
+    }
+
+    .doc-table tbody tr {
+        break-inside: auto;
+        page-break-inside: auto;
+    }
     .doc-summary, .doc-footer { break-inside: avoid; }
 }
 </style>

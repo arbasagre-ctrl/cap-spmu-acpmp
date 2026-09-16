@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
 use App\Models\AcademicPeriod;
+use App\Models\User;
 use App\Services\AnalyticsDetailService;
 use App\Services\AnalyticsService;
 use App\Services\ForecastService;
 use App\Services\InventoryService;
 use App\Services\ReportingPeriodService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
@@ -20,9 +22,10 @@ use Illuminate\View\View;
  * ForecastService, so Reports and Analytics cannot drift apart and the Blade
  * template stays a layout.
  *
- * Only the active section's figures are computed. Opening Overview must not
- * pay for the forecast, and opening Forecast must not pay for the returns
- * breakdown.
+ * Only the active section's figures are computed. Overview also prepares a
+ * compact cross-tab summary (demand, inventory, returns and forecast readiness)
+ * so it can act as the executive snapshot without duplicating each tab's full
+ * rankings, tables or forecast workspace.
  */
 class AnalyticsController extends Controller
 {
@@ -67,7 +70,7 @@ class AnalyticsController extends Controller
         InventoryService $inventory,
         ReportingPeriodService $periods,
         AnalyticsDetailService $details
-    ): View {
+    ): View|JsonResponse {
         abort_unless(
             $request->user()?->access_classification === AccessClassification::SpmuHead,
             403
@@ -118,6 +121,20 @@ class AnalyticsController extends Controller
         $unitFilter = $unit === 'all' ? null : $unit;
 
         /*
+         * The Borrower picker is cascading, not global. It asks this same
+         * endpoint for borrowers that actually filed a request inside the
+         * selected Reporting Period + Division + Office / Unit.
+         */
+        if ($request->boolean('borrower_options')) {
+            return $this->borrowerOptions($request, $analytics, $from, $to, $divisionFilter, $unitFilter);
+        }
+
+        $borrowerFilter = $this->resolveBorrower($request, $analytics, $from, $to, $divisionFilter, $unitFilter);
+        $selectedBorrowerLabel = $borrowerFilter !== null
+            ? (User::query()->find($borrowerFilter)?->full_name ?? 'Selected borrower')
+            : 'All borrowers';
+
+        /*
          * Semester and academic-year scopes fall back to the current calendar
          * month when Operational Configuration holds no academic period. The
          * fallback is kept - the page must still render - but it is surfaced,
@@ -146,7 +163,8 @@ class AnalyticsController extends Controller
                 $to,
                 $divisionFilter,
                 $unitFilter,
-                $periodSelection
+                $periodSelection,
+                $borrowerFilter
             );
 
         $data = [
@@ -168,6 +186,8 @@ class AnalyticsController extends Controller
             'selectedUnit' => $unit,
             'unitOptions' => $unitOptions,
             'selectableUnits' => $selectableUnits,
+            'selectedBorrower' => $borrowerFilter,
+            'selectedBorrowerLabel' => $selectedBorrowerLabel,
         ];
 
         return view(
@@ -181,16 +201,125 @@ class AnalyticsController extends Controller
                 $to,
                 $divisionFilter,
                 $unitFilter,
-                $periodSelection
+                $periodSelection,
+                $borrowerFilter
             )
         );
     }
 
     /**
+     * A submitted borrower id, accepted only when it actually filed a request
+     * inside the current Reporting Period + Division + Office / Unit scope.
+     *
+     * Cascading validation, not a stale global id: changing an upstream
+     * filter can silently invalidate a previously selected borrower, and this
+     * resets it to "All borrowers" rather than keep filtering by someone who
+     * no longer belongs to the current scope.
+     */
+    private function resolveBorrower(
+        Request $request,
+        AnalyticsService $analytics,
+        \Carbon\CarbonInterface $from,
+        \Carbon\CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): ?int {
+        $submitted = (int) $request->input('borrower', 0);
+
+        if ($submitted <= 0) {
+            return null;
+        }
+
+        $exists = $analytics->requestScope($from, $to, $division, $unit)
+            ->where('borrowing_requests.borrower_user_id', $submitted)
+            ->exists();
+
+        return $exists ? $submitted : null;
+    }
+
+    /**
+     * Borrowers who filed a request inside the current Reporting Period +
+     * Division + Office / Unit scope, for the Borrower picker.
+     *
+     * Mirrors ReportController::borrowerOptions() so the two pickers behave
+     * identically: searchable, capped, and scoped to the same upstream
+     * filters rather than listing every borrower in the system.
+     */
+    private function borrowerOptions(
+        Request $request,
+        AnalyticsService $analytics,
+        \Carbon\CarbonInterface $from,
+        \Carbon\CarbonInterface $to,
+        ?string $division,
+        ?string $unit
+    ): JsonResponse {
+        $ids = $analytics->requestScope($from, $to, $division, $unit)
+            ->pluck('borrowing_requests.borrower_user_id')
+            ->filter(fn ($id): bool => is_numeric($id) && (int) $id > 0)
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return response()->json(['options' => [], 'count' => 0, 'shown' => 0, 'has_more' => false]);
+        }
+
+        $search = mb_substr(trim((string) $request->input('q', '')), 0, 100);
+        $selectedBorrower = (int) $request->input('selected_borrower', 0);
+        $limit = 50;
+
+        $query = User::query()->whereIn('id', $ids->all());
+
+        if ($search !== '') {
+            $query->where(function ($borrowers) use ($search): void {
+                $borrowers
+                    ->where('full_name', 'like', '%'.$search.'%')
+                    ->orWhere('email', 'like', '%'.$search.'%');
+            });
+        }
+
+        $count = (clone $query)->count();
+
+        $users = $query
+            ->orderBy('full_name')
+            ->orderBy('email')
+            ->limit($limit)
+            ->get(['id', 'full_name', 'email']);
+
+        /*
+         * Preserve a currently selected borrower even when they fall outside
+         * the first 50 names, so the browser can validate the selection
+         * after an upstream Division / Office / period change without
+         * falsely resetting it.
+         */
+        if ($selectedBorrower > 0
+            && $ids->contains($selectedBorrower)
+            && ! $users->contains('id', $selectedBorrower)) {
+            $selected = User::query()->find($selectedBorrower, ['id', 'full_name', 'email']);
+
+            if ($selected) {
+                $users->push($selected);
+            }
+        }
+
+        return response()->json([
+            'options' => $users->map(fn (User $user): array => [
+                'value' => (string) $user->id,
+                'name' => (string) $user->full_name,
+                'email' => (string) $user->email,
+            ])->all(),
+            'count' => $count,
+            'shown' => $users->count(),
+            'has_more' => $count > $users->count(),
+        ]);
+    }
+
+    /**
      * The figures a single section needs, and nothing else.
      *
-     * Opening Overview must not pay for the forecast, and opening Predictive
-     * Analytics must not pay for the returns breakdown.
+     * Overview intentionally computes only the small cross-tab figures needed
+     * by its Analytics Summary. It still does not build the detailed rankings,
+     * return breakdowns or predictive tables owned by the other tabs.
      *
      * @return array<string, mixed>
      */
@@ -203,20 +332,41 @@ class AnalyticsController extends Controller
         \Carbon\CarbonInterface $to,
         ?string $division,
         ?string $unit,
-        string $periodSelection
+        string $periodSelection,
+        ?int $borrower = null
     ): array {
         if ($section === 'overview') {
-            $overview = $analytics->overview($from, $to, $division, $unit);
+            $overview = $analytics->overview($from, $to, $division, $unit, $borrower);
+            /*
+             * Borrower Distribution and Top Borrowing Units are breakdowns
+             * across borrowers/units. A single selected borrower would make
+             * either one trivial, so they stay scoped to Division / Office
+             * only and are not additionally narrowed to one borrower.
+             */
             $groups = $analytics->borrowerGroups($from, $to, $division, $unit);
             $units = $analytics->unitRankings($from, $to, $division, $unit);
-            $equipment = $analytics->equipment($from, $to, $division, $unit);
+            $equipment = $analytics->equipment($from, $to, $division, $unit, 5, $borrower);
 
             /*
              * Granularity follows the selected period rather than a fixed
              * value, so a semester view is not bucketed as if it were a month.
              */
-            $trend = $analytics->trend($from, $to, $division, $unit, $periodSelection);
-            $returns = $analytics->returns($from, $to, $division, $unit);
+            $trend = $analytics->trend($from, $to, $division, $unit, $periodSelection, $borrower);
+            $returns = $analytics->returns($from, $to, $division, $unit, $borrower);
+
+            /*
+             * Compact cross-tab summary only. These are headline values from
+             * the detailed workspaces; Overview does not recreate their tables
+             * or rankings.
+             */
+            $demandSummary = $analytics->demandTotals($from, $to, $division, $unit, $borrower);
+            $peakSummary = $analytics->peakBorrowing($from, $to, $division, $unit);
+            $inventorySummary = $analytics->inventory($inventory);
+
+            [$forecastFrom, $forecastTo] = $forecasts->forecastWindow($from, $to);
+            $forecastDemand = $forecasts->demand($analytics, $from, $to, $division, $unit);
+            $scheduledDemand = $analytics->scheduledDemand($forecastFrom, $forecastTo, $division, $unit, $borrower);
+            $scheduledRequests = (int) $scheduledDemand['requests'];
 
             return [
                 'overview' => $overview,
@@ -224,7 +374,6 @@ class AnalyticsController extends Controller
                 'units' => $units,
                 'equipment' => $equipment,
                 'trend' => $trend,
-                'comparison' => $analytics->previousPeriod($from, $to, $division, $unit),
                 'lowAvailability' => $analytics->lowAvailability($inventory),
                 'insights' => $analytics->insights(
                     $overview,
@@ -234,24 +383,28 @@ class AnalyticsController extends Controller
                     $trend,
                     $returns
                 ),
-
-                /*
-                 * Already computed above for insights(). Overview's priority
-                 * rows and period snapshot read the same figures, so handing
-                 * the array to the view costs nothing extra.
-                 */
                 'returns' => $returns,
+                'demandSummary' => $demandSummary,
+                'peakSummary' => $peakSummary,
+                'inventorySummary' => $inventorySummary,
+                'forecastSummary' => [
+                    'ready' => (bool) ($forecastDemand['available'] ?? false),
+                    'forecast' => $forecastDemand['forecast'] ?? null,
+                    'scheduled' => $scheduledRequests,
+                    'from' => $forecastFrom,
+                    'to' => $forecastTo,
+                ],
             ];
         }
 
         if ($section === 'demand') {
             return [
                 /* Headline figures: filed demand, expressed demand, actual release. */
-                'totals' => $analytics->demandTotals($from, $to, $division, $unit),
-                'trend' => $analytics->trend($from, $to, $division, $unit, $periodSelection),
-                'requested' => $analytics->requestedEquipment($from, $to, $division, $unit, 10),
-                'released' => $analytics->equipment($from, $to, $division, $unit, 10),
-                'slowMoving' => $analytics->slowMovingItems($from, $to),
+                'totals' => $analytics->demandTotals($from, $to, $division, $unit, $borrower),
+                'trend' => $analytics->trend($from, $to, $division, $unit, $periodSelection, $borrower),
+                'requested' => $analytics->requestedEquipment($from, $to, $division, $unit, 10, $borrower),
+                'released' => $analytics->equipment($from, $to, $division, $unit, 10, $borrower),
+                'slowMoving' => $analytics->slowMovingItems($from, $to, 10, $division, $unit),
                 'groups' => $analytics->borrowerGroups($from, $to, $division, $unit),
                 'units' => $analytics->unitRankings($from, $to, $division, $unit),
                 'peak' => $analytics->peakBorrowing($from, $to, $division, $unit),
@@ -262,9 +415,9 @@ class AnalyticsController extends Controller
             return [
                 'inventory' => $analytics->inventory($inventory),
                 'lowAvailability' => $analytics->lowAvailability($inventory, 10),
-                'released' => $analytics->equipment($from, $to, $division, $unit, 5),
+                'released' => $analytics->equipment($from, $to, $division, $unit, 5, $borrower),
                 /* Quiet items are reported on Demand & Utilization, not here. */
-                'coverage' => $analytics->stockCoverage($inventory, $from, $to),
+                'coverage' => $analytics->stockCoverage($inventory, $from, $to, 10, $division, $unit),
             ];
         }
 
@@ -276,12 +429,12 @@ class AnalyticsController extends Controller
              * overdue follow-up and accountability outcomes are performing.
              */
             return [
-                'returns' => $analytics->returns($from, $to, $division, $unit),
-                'returnTrend' => $analytics->returnTrend($from, $to, $division, $unit, $periodSelection),
-                'lifecycle' => $analytics->lifecycle($from, $to, $division, $unit),
-                'currentOverdue' => $analytics->currentOverdue($division, $unit),
-                'returnConditions' => $analytics->returnConditions($from, $to, $division, $unit),
-                'incidents' => $analytics->incidentSummary($from, $to, $division, $unit),
+                'returns' => $analytics->returns($from, $to, $division, $unit, $borrower),
+                'returnTrend' => $analytics->returnTrend($from, $to, $division, $unit, $periodSelection, $borrower),
+                'lifecycle' => $analytics->lifecycle($from, $to, $division, $unit, $borrower),
+                'currentOverdue' => $analytics->currentOverdue($division, $unit, 5, $borrower),
+                'returnConditions' => $analytics->returnConditions($from, $to, $division, $unit, $borrower),
+                'incidents' => $analytics->incidentSummary($from, $to, $division, $unit, $borrower),
             ];
         }
 
@@ -297,19 +450,21 @@ class AnalyticsController extends Controller
              * so they are fetched and reported apart from anything the weighted
              * average produces and are never merged with it.
              */
-            'scheduled' => [
-                'requests' => $analytics->requestScope($forecastFrom, $forecastTo, $division, $unit)
-                    ->count('borrowing_requests.id'),
-                'divisions' => $analytics->borrowerGroups($forecastFrom, $forecastTo, $division, $unit),
-                'units' => $analytics->unitRankings($forecastFrom, $forecastTo, $division, $unit),
-            ],
+            'scheduled' => $analytics->scheduledDemand($forecastFrom, $forecastTo, $division, $unit, $borrower),
 
+            /*
+             * The projected trend, division/unit/equipment forecasts and busy
+             * period are institution-level projections drawn from historical
+             * completed periods. Borrower scope only applies to Scheduled
+             * Demand above, which is a real, already-filed record set rather
+             * than a projection.
+             */
             'demand' => $forecasts->demand($analytics, $from, $to, $division, $unit),
-            'divisionForecast' => $forecasts->divisionDemand($analytics, $from, $to),
-            'unitForecast' => $forecasts->unitDemand($analytics, $from, $to),
-            'equipmentForecast' => $forecasts->equipment($from, $to),
-            'busyPeriod' => $forecasts->busyPeriod($analytics, $from, $to),
-            'coverage' => $analytics->stockCoverage($inventory, $from, $to, 5),
+            'divisionForecast' => $forecasts->divisionDemand($analytics, $from, $to, $division, $unit),
+            'unitForecast' => $forecasts->unitDemand($analytics, $from, $to, $division, $unit),
+            'equipmentForecast' => $forecasts->equipment($from, $to, ForecastService::EQUIPMENT_LIMIT, $division, $unit),
+            'busyPeriod' => $forecasts->busyPeriod($analytics, $from, $to, $division, $unit),
+            'coverage' => $analytics->stockCoverage($inventory, $from, $to, 5, $division, $unit),
             'forecastBasis' => $forecasts->basis(),
         ];
     }

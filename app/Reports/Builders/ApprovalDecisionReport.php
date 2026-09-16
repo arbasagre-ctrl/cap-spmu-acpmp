@@ -34,12 +34,15 @@ class ApprovalDecisionReport implements ReportBuilder
 {
     public function build(ReportFilters $filters): ReportDataset
     {
+        $borrower = $filters->get('borrower');
+
         $requests = BorrowingRequest::query()
             ->with([
                 'borrower',
                 'currentVersion.approvalSteps.approver',
             ])
             ->whereBetween('created_at', [$filters->from, $filters->to])
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', (int) $borrower))
             ->latest('created_at')
             ->get();
 
@@ -90,6 +93,7 @@ class ApprovalDecisionReport implements ReportBuilder
                 [$finalStatusCode, $finalStatusLabel] = OperationalStatus::forRequest($request);
 
                 return [
+                    '_borrower_user_id' => (int) $request->borrower_user_id,
                     '_verification' => $verificationState,
                     '_decision' => $decisionState,
                     '_division_code' => (string) ($version?->division_code ?? ''),

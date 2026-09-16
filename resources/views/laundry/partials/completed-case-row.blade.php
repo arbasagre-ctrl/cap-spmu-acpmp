@@ -66,7 +66,7 @@
         $job->lines->map(fn ($line) => $line->custodyLine?->requestItem?->description_snapshot)->implode(' '),
     ]);
 @endphp
-<tr data-completed-record data-search="{{ $caseSearch }}" data-outcomes="{{ implode(' ', $caseOutcomes) }}">
+<tr data-completed-record data-search="{{ $caseSearch }}" data-outcomes="{{ implode(' ', $caseOutcomes) }}" data-created="{{ optional($completedDate)->timestamp ?? optional($job->updated_at)->timestamp ?? optional($job->created_at)->timestamp ?? 0 }}">
     <td class="completed-laundry-case-id">{{ $caseId }}</td>
     <td>{{ $caseBorrower }}</td>
     <td>{{ $itemSummary }}</td>
@@ -90,5 +90,5 @@
             @endif
         </div>
     </td>
-    <td><a class="button secondary small ui-pressable completed-laundry-view" href="{{ route('laundry.show', $job) }}" aria-label="View details for {{ $caseId }}">View Details</a></td>
+    <td><a class="button secondary small ui-pressable completed-laundry-view" href="{{ route('laundry.show', $job) }}" aria-label="View details for {{ $caseId }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a></td>
 </tr>

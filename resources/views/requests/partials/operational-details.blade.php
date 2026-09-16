@@ -155,7 +155,7 @@
                             <strong>Accomplished Gate Pass</strong>
                             <small>
                                 @if($gatePassAccomplishedFile)
-                                    {{ $gatePassAccomplishedVerified ? 'Verified · Historical exit/return evidence' : 'Uploaded · Awaiting verification' }}
+                                    {{ $gatePassAccomplishedVerified ? 'Verified · Historical off-campus release record' : 'Uploaded · Awaiting verification' }}
                                 @else
                                     No accomplished scan on file
                                 @endif

@@ -39,6 +39,26 @@ final class ReportCatalogue
             ],
 
             /*
+             * Borrower is a searchable, scoped picker rather than a plain
+             * select: the option list is fetched from ReportController's
+             * borrower_options endpoint, narrowed to the current Reporting
+             * Period + Division + Office / Unit. The static option list here
+             * exists only so a submitted borrower id can be validated against
+             * a real user without re-running the whole report scope.
+             */
+            'borrower' => [
+                'label' => 'Borrower',
+                'type' => 'select',
+                'placeholder' => 'All borrowers',
+                'options' => fn (): array => \App\Models\User::query()
+                    ->whereNotNull('full_name')
+                    ->orderBy('full_name')
+                    ->pluck('full_name', 'id')
+                    ->map(fn ($name): string => (string) $name)
+                    ->all(),
+            ],
+
+            /*
              * Unit is dependent on Division: the option list is the units of
              * the chosen division, and a unit from another division is
              * rejected by validation rather than silently returning nothing.
@@ -133,6 +153,7 @@ final class ReportCatalogue
                 'type' => 'select',
                 'placeholder' => 'All return states',
                 'options' => fn (): array => [
+                    'COMPLETED' => 'Completed returns',
                     'RETURNED_ON_TIME' => 'Returned on time',
                     'RETURNED_LATE' => 'Returned late',
                     'CURRENTLY_OVERDUE' => 'Currently overdue',
@@ -218,12 +239,69 @@ final class ReportCatalogue
                 ],
             ],
 
+            'accountability_finding' => [
+                'label' => 'Finding',
+                'type' => 'select',
+                'placeholder' => 'All findings',
+                'options' => fn (): array => [
+                    'DAMAGED' => 'Damaged',
+                    'MISSING' => 'Missing',
+                    'LOST' => 'Lost',
+                    'STOLEN' => 'Stolen',
+                    'DESTROYED' => 'Destroyed',
+                    'LATE_RETURN' => 'Late Return',
+                ],
+            ],
+
+            'accountability_status' => [
+                'label' => 'Case Status',
+                'type' => 'select',
+                'placeholder' => 'All statuses',
+                'options' => fn (): array => [
+                    'OPEN' => 'Open',
+                    'COMPLIANCE_REQUIRED' => 'Compliance Required',
+                    'BILLING_PENDING' => 'Billing Pending',
+                    'RESOLVED' => 'Resolved',
+                    'CLOSED' => 'Closed',
+                    'VOID_CORRECTION' => 'Void Correction',
+                    'OVERDUE' => 'Overdue',
+                    'RETURNED_PENDING_SETTLEMENT' => 'Pending AO Confirmation',
+                    'FOR_HEAD_APPROVAL' => 'For Head/Admin Decision',
+                    'BILLED' => 'Awaiting Payment',
+                ],
+            ],
+
+            'billing_status' => [
+                'label' => 'Billing Status',
+                'type' => 'select',
+                'placeholder' => 'All billing statuses',
+                'options' => fn (): array => [
+                    'DRAFT' => 'Draft',
+                    'ISSUED' => 'Issued',
+                    'SETTLED' => 'Settled',
+                    'WAIVED' => 'Waived',
+                    'VOID' => 'Void',
+                ],
+            ],
+
+            'payment_status' => [
+                'label' => 'Payment Status',
+                'type' => 'select',
+                'placeholder' => 'All payment statuses',
+                'options' => fn (): array => [
+                    'UNPAID' => 'Unpaid',
+                    'PARTIALLY_PAID' => 'Partially Paid',
+                    'PAID' => 'Paid',
+                ],
+            ],
+
             'availability_status' => [
                 'label' => 'Availability Status',
                 'type' => 'select',
                 'placeholder' => 'All availability states',
                 'options' => fn (): array => [
                     'AVAILABLE' => 'Has available stock',
+                    'LOW_AVAILABILITY' => 'Low availability (25% or below)',
                     'FULLY_COMMITTED' => 'Nothing available',
                     'ALLOCATED' => 'Has allocated stock',
                     'ON_CUSTODY' => 'Has stock on custody',
@@ -254,7 +332,7 @@ final class ReportCatalogue
                 'label' => 'Borrowing Activity Report',
                 'group' => 'Borrowing',
                 'description' => 'Detailed borrowing request records for the selected period.',
-                'filters' => ['division', 'unit', 'status'],
+                'filters' => ['division', 'unit', 'status', 'borrower'],
                 'builder' => Builders\BorrowingActivityReport::class,
                 'export' => 'borrowing',
                 'empty' => 'No borrowing records matched the selected reporting criteria.',
@@ -272,7 +350,7 @@ final class ReportCatalogue
                 'label' => 'Approval & Decision Report',
                 'group' => 'Borrowing',
                 'description' => 'Action Officer verification and SPMU Head decision for each request, read from the authoritative approval steps.',
-                'filters' => ['division', 'unit', 'verification', 'decision'],
+                'filters' => ['division', 'unit', 'verification', 'decision', 'borrower'],
                 'builder' => Builders\ApprovalDecisionReport::class,
                 'export' => 'approval',
                 'empty' => 'No approval or decision records matched the selected reporting criteria.',
@@ -290,7 +368,7 @@ final class ReportCatalogue
                 'label' => 'Release & Custody Report',
                 'group' => 'Custody & Return',
                 'description' => 'Official records of physically released assets and their current custody state. Approved-but-unreleased requests are not counted as released.',
-                'filters' => ['division', 'unit', 'equipment', 'custody_status'],
+                'filters' => ['division', 'unit', 'equipment', 'custody_status', 'borrower'],
                 'builder' => Builders\ReleaseCustodyReport::class,
                 'export' => 'custody',
                 'empty' => 'No released/custody records were found for this period.',
@@ -308,10 +386,46 @@ final class ReportCatalogue
                 'label' => 'Return & Accountability Report',
                 'group' => 'Custody & Return',
                 'description' => 'Return lifecycle and unresolved obligations, one record per custody transaction.',
-                'filters' => ['division', 'unit', 'return_status', 'open_accountability'],
+                'filters' => ['division', 'unit', 'return_status', 'open_accountability', 'borrower'],
                 'builder' => Builders\ReturnAccountabilityReport::class,
                 'export' => 'returns',
                 'empty' => 'No return/accountability records matched the selected filters.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
+            ],
+
+            'accountability-cases' => [
+                'label' => 'Accountability Cases Report',
+                'group' => 'Accountability',
+                'description' => 'One row per accountability case - property Incidents and confirmed Late Returns - with finding, offense/sanction, and resolution status.',
+                'filters' => ['division', 'unit', 'accountability_finding', 'accountability_status', 'borrower'],
+                'builder' => Builders\AccountabilityCasesReport::class,
+                'export' => 'accountability-cases',
+                'empty' => 'No accountability cases matched the selected reporting criteria.',
+
+                /*
+                 * period_mode says how the reporting period reads on the
+                 * printed document: a range for activity over time, or an
+                 * as-of date for a point-in-time snapshot.
+                 */
+                'period_mode' => 'range',
+                'orientation' => 'landscape',
+            ],
+
+            'billing-settlement' => [
+                'label' => 'Billing Settlement Report',
+                'group' => 'Accountability',
+                'description' => 'Billing statements with assessed amount, verified Cashier payments, remaining balance, and settlement status, from the current one-step payment/verification flow.',
+                'filters' => ['billing_status', 'payment_status', 'borrower'],
+                'builder' => Builders\BillingSettlementReport::class,
+                'export' => 'billing-settlement',
+                'empty' => 'No billing statements matched the selected reporting criteria.',
 
                 /*
                  * period_mode says how the reporting period reads on the
@@ -362,7 +476,7 @@ final class ReportCatalogue
                 'label' => 'Laundry Operations Report',
                 'group' => 'Special Operations',
                 'description' => 'Linen traceability from issuance through laundry receipt, completion, and return to available stock.',
-                'filters' => ['linen', 'laundry_status'],
+                'filters' => ['linen', 'laundry_status', 'borrower'],
                 'builder' => Builders\LaundryOperationsReport::class,
                 'export' => 'laundry',
                 'empty' => 'No laundry operations matched the selected period.',
@@ -380,7 +494,7 @@ final class ReportCatalogue
                 'label' => 'Off-Campus / Gate Pass Report',
                 'group' => 'Special Operations',
                 'description' => 'Off-campus transactions with verification, decision, Permission to Conduct where the Student Activity rule applies, and gate pass state.',
-                'filters' => ['division', 'unit', 'gate_pass_status', 'student_activity', 'off_campus'],
+                'filters' => ['division', 'unit', 'gate_pass_status', 'student_activity', 'off_campus', 'borrower'],
                 'builder' => Builders\OffCampusGatePassReport::class,
                 'export' => 'gate-pass',
                 'empty' => 'No Gate Pass records matched the selected criteria.',
@@ -420,18 +534,24 @@ final class ReportCatalogue
             'review-turnaround' => 'approval',
 
             /*
-             * Overdue cases and incident/violation records are columns and
-             * filters on Return & Accountability, which reports one row per
+             * Overdue cases as a live custody-level filter remain a column and
+             * filter on Return & Accountability, which reports one row per
              * custody transaction so a case cannot be counted twice.
              */
             'overdue' => 'returns',
-            'accountability' => 'returns',
+
+            /*
+             * Incident/violation case records now have their own one-row-per-
+             * case report instead of being folded into the one-row-per-custody
+             * Return & Accountability report.
+             */
+            'accountability' => 'accountability-cases',
 
             /*
              * The compliance percentage is an Analytics interpretation; the
-             * detailed return records behind it are here.
+             * detailed case records behind it are here.
              */
-            'compliance' => 'returns',
+            'compliance' => 'accountability-cases',
 
             /*
              * Borrower ranking is an Analytics summary; the detailed

@@ -2,6 +2,7 @@
 
 namespace App\Reports\Builders;
 
+use App\Enums\RequestStatus;
 use App\Models\BorrowingRequest;
 use App\Reports\OperationalStatus;
 use App\Reports\ReportBuilder;
@@ -31,10 +32,33 @@ class BorrowingActivityReport implements ReportBuilder
          * loop below touches borrower, currentVersion and custody for every
          * record.
          */
+        $excluded = array_map(
+            static fn (RequestStatus $status): string => $status->value,
+            \App\Services\AnalyticsService::excludedFromActivity()
+        );
+
+        $borrower = $filters->get('borrower');
+
         $requests = BorrowingRequest::query()
+            ->join('request_versions', function ($join): void {
+                $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
+                    ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
+            })
             ->with(['borrower', 'currentVersion', 'custody'])
-            ->whereBetween('created_at', [$filters->from, $filters->to])
-            ->latest('created_at')
+            ->where(function ($scope) use ($filters): void {
+                $scope->whereBetween('request_versions.submitted_at', [$filters->from, $filters->to])
+                    ->orWhere(function ($legacy) use ($filters): void {
+                        $legacy->whereNull('request_versions.submitted_at')
+                            ->whereBetween('borrowing_requests.created_at', [$filters->from, $filters->to]);
+                    });
+            })
+            ->whereNotIn('borrowing_requests.status', $excluded)
+            ->when(
+                $borrower !== null,
+                fn ($query) => $query->where('borrowing_requests.borrower_user_id', (int) $borrower)
+            )
+            ->select('borrowing_requests.*')
+            ->orderByRaw('COALESCE(request_versions.submitted_at, borrowing_requests.created_at) DESC')
             ->get();
 
         $division = $filters->get('division');
@@ -48,6 +72,7 @@ class BorrowingActivityReport implements ReportBuilder
 
                 return [
                     '_status_code' => $statusCode,
+                    '_borrower_user_id' => (int) $request->borrower_user_id,
                     '_division_code' => (string) ($version?->division_code ?? ''),
                     '_office_unit' => (string) ($version?->office_unit ?? ''),
                     '_link' => route('requests.show', $request),
@@ -67,7 +92,7 @@ class BorrowingActivityReport implements ReportBuilder
                         $version?->return_date ?: $version?->return_due_at
                     ),
                     'status' => OperationalStatus::label($statusCode, $statusLabel),
-                    'created_at' => $this->dateTime($request->created_at),
+                    'filed_at' => $this->dateTime($version?->submitted_at ?: $request->created_at),
                     'approved_at' => $this->dateTime($request->final_approved_at),
                 ];
             })
@@ -103,7 +128,7 @@ class BorrowingActivityReport implements ReportBuilder
                 ['key' => 'schedule_date', 'label' => 'Schedule Date'],
                 ['key' => 'return_date', 'label' => 'Expected Return'],
                 ['key' => 'status', 'label' => 'Status', 'badge' => true],
-                ['key' => 'created_at', 'label' => 'Created'],
+                ['key' => 'filed_at', 'label' => 'Filed'],
                 ['key' => 'approved_at', 'label' => 'SPMU Approved'],
             ],
             rows: $rows,

@@ -143,11 +143,19 @@ class SinglePortalRoleIsolationTest extends TestCase
 
         $this->actingAs($ictu)
             ->put(route('administration.users.update', $user), [
+                /*
+                 * UserAdministrationController::validated() requires
+                 * division_code (must match the selected Office/Unit's own
+                 * division - SPMU is an ADMINISTRATIVE_UNIT) and
+                 * employment_status.
+                 */
+                'division_code' => 'ADMINISTRATION',
                 'organizational_unit_id' => $spmuUnit->id,
                 'employee_no' => $user->employee_no,
                 'full_name' => $user->full_name,
                 'designation' => $user->designation,
                 'employment_type' => $user->employment_type->value,
+                'employment_status' => 'FULL_TIME',
                 'email' => $user->email,
                 'mobile_no' => $user->mobile_no,
                 'account_status' => $user->account_status->value,

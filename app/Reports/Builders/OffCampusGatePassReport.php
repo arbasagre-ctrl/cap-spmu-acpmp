@@ -38,6 +38,8 @@ class OffCampusGatePassReport implements ReportBuilder
 {
     public function build(ReportFilters $filters): ReportDataset
     {
+        $borrower = $filters->get('borrower');
+
         $requests = BorrowingRequest::query()
             ->with([
                 'borrower',
@@ -46,6 +48,7 @@ class OffCampusGatePassReport implements ReportBuilder
                 'custody.gatePass',
             ])
             ->whereBetween('created_at', [$filters->from, $filters->to])
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', (int) $borrower))
             ->latest('created_at')
             ->get();
 
@@ -115,6 +118,7 @@ class OffCampusGatePassReport implements ReportBuilder
                     : null;
 
                 return [
+                    '_borrower_user_id' => (int) $request->borrower_user_id,
                     '_off_campus' => $isOffCampus,
                     '_student_activity' => $isStudentActivity,
                     '_gate_pass_status' => $gatePassState,

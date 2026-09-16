@@ -4,9 +4,9 @@
     | Borrower "My Requests" row
     |--------------------------------------------------------------------------
     |
-    | Custody status is authoritative once the items are physically released.
-    | Legacy GSU/VPAF and awaiting-download records stay readable, but the
-    | borrower-facing wording follows the current SPMU-only flow.
+    | This row intentionally uses the same operational-record pattern used by
+    | My Borrowings and SPMU transaction lists so request records feel like one
+    | system instead of a separate card design.
     |
     */
     $version = $request->currentVersion;
@@ -14,58 +14,58 @@
 
     $requestStatus = $request->status;
     $custodyWorkflow = $custody?->workflowStatus();
-    $accountabilityIndicator = $custody?->activeAccountabilityIndicator();
 
     if ($custodyWorkflow) {
-        [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($custodyWorkflow['key']) {
-            'BORROWED' => ['Released / On Custody', 'blue', 'blue', 'custody'],
-            'RETURN_PROCESSING' => ['Return Processing', 'amber', 'amber', 'cycle'],
-            'OVERDUE' => ['Overdue', 'red', 'red', 'warning'],
-            'INCIDENT_OPEN' => ['Incident Open', 'red', 'red', 'warning'],
-            'OBLIGATION_OPEN' => ['Obligation Open', 'amber', 'amber', 'receipt'],
-            'COMPLETED' => ['Completed', 'green', 'green', 'check-circle'],
-            'BORROWER_CLEARED' => ['Borrower Cleared', 'green', 'green', 'check-circle'],
-            'CANCELLED' => ['Cancelled', 'neutral', 'neutral', 'close'],
-            'READY_FOR_RELEASE' => ['Ready for Release', 'green', 'green', 'check-circle'],
-            'PICKUP_SCHEDULED' => ['Pickup Scheduled', 'blue', 'blue', 'calendar'],
-            'ITEM_PREPARATION' => ['For Item Preparation', 'blue', 'blue', 'box'],
-            'PICKUP_SCHEDULING' => ['For Pickup Scheduling', 'blue', 'blue', 'calendar'],
-            'PICKUP_EXPIRED' => ['Pickup Window Expired', 'amber', 'amber', 'clock'],
-            default => [$custodyWorkflow['label'], 'blue', 'blue', 'requests'],
+        [$statusKey, $statusLabel] = match ($custodyWorkflow['key']) {
+            'BORROWED' => ['BORROWED', 'Released / On Custody'],
+            'RETURN_PROCESSING' => ['RETURN_PROCESSING', 'Return Processing'],
+            'OVERDUE' => ['OVERDUE', 'Overdue'],
+            'INCIDENT_OPEN' => ['ACCOUNTABILITY_PENDING', 'Accountability Pending'],
+            'OBLIGATION_OPEN' => ['OBLIGATION_OPEN', 'Accountability Pending'],
+            'COMPLETED' => ['COMPLETED', 'Completed'],
+            'BORROWER_CLEARED' => ['BORROWER_CLEARED', 'Borrower Cleared'],
+            'CANCELLED' => ['CANCELLED', 'Cancelled'],
+            'READY_FOR_RELEASE' => ['READY_FOR_RELEASE', 'Ready for Release'],
+            'PICKUP_SCHEDULED' => ['PICKUP_SCHEDULED', 'Pickup Scheduled'],
+            'ITEM_PREPARATION' => ['ITEM_PREPARATION', 'For Item Preparation'],
+            'PICKUP_SCHEDULING' => ['PICKUP_SCHEDULING', 'For Pickup Scheduling'],
+            'PICKUP_EXPIRED' => ['PICKUP_EXPIRED', 'Pickup Missed'],
+            default => [$custodyWorkflow['key'], $custodyWorkflow['label']],
         };
     } else {
-        [$statusLabel, $statusTone, $tileTone, $tileIcon] = match ($requestStatus) {
+        [$statusKey, $statusLabel] = match ($requestStatus) {
             App\Enums\RequestStatus::Draft
-                => ['Draft', 'neutral', 'neutral', 'edit'],
+                => ['DRAFT', 'Draft'],
 
             App\Enums\RequestStatus::ReturnedForRevision
-                => ['Returned for Revision', 'red', 'red', 'edit'],
+                => ['RETURNED_FOR_REVISION', 'Returned for Revision'],
 
             App\Enums\RequestStatus::UnderSpmu,
             App\Enums\RequestStatus::UnderGsu,
             App\Enums\RequestStatus::UnderVpaf
-                => ['For Approval', 'amber', 'blue', 'requests'],
+                => ['UNDER_SPMU', 'Under SPMU Review'],
 
             App\Enums\RequestStatus::ApprovedReadyForRelease
-                => ['Ready for Release', 'green', 'green', 'check-circle'],
+                => ['APPROVED_READY_FOR_RELEASE', 'Ready for Release'],
 
             App\Enums\RequestStatus::FinalApprovedAwaitingDownload
-                => ['Approved', 'blue', 'violet', 'requests'],
+                => ['FINAL_APPROVED_AWAITING_DOWNLOAD', 'Approved'],
 
             App\Enums\RequestStatus::Rejected
-                => ['Rejected', 'red', 'red', 'error'],
+                => ['REJECTED', 'Rejected'],
 
             App\Enums\RequestStatus::Cancelled
-                => ['Cancelled', 'neutral', 'neutral', 'close'],
+                => ['CANCELLED', 'Cancelled'],
 
             App\Enums\RequestStatus::Expired
-                => ['Inactive', 'neutral', 'neutral', 'clock'],
+                => ['INACTIVE', 'Inactive'],
 
-            default => ['In Progress', 'blue', 'blue', 'requests'],
+            default => ['SUBMITTED', 'In Progress'],
         };
     }
 
-    $requiresAction = ! $custody
+    $requiresAction = (
+        ! $custody
         && in_array(
             $requestStatus,
             [
@@ -73,15 +73,16 @@
                 App\Enums\RequestStatus::ReturnedForRevision,
             ],
             true
-        );
+        )
+    ) || (($custodyWorkflow['key'] ?? null) === 'PICKUP_EXPIRED');
 
     $statusGroup = match (true) {
         ($custodyWorkflow['group'] ?? null) === 'completed' => 'completed',
         ($custodyWorkflow['group'] ?? null) === 'cancelled' => 'closed',
-        in_array(($custodyWorkflow['group'] ?? null), ['custody', 'return', 'attention'], true) => 'custody',
-        ($custodyWorkflow['group'] ?? null) === 'release' => 'approved',
-
+        ($custodyWorkflow['group'] ?? null) === 'attention' => 'attention',
         $requiresAction => 'action',
+        in_array(($custodyWorkflow['group'] ?? null), ['custody', 'return'], true) => 'custody',
+        ($custodyWorkflow['group'] ?? null) === 'release' => 'approved',
 
         in_array($requestStatus, [
             App\Enums\RequestStatus::UnderSpmu,
@@ -120,94 +121,54 @@
         .' '.($context ?? '')
         .' '.$statusLabel
     ));
+
+    $rowToneClass = match (true) {
+        ($custodyWorkflow['key'] ?? $statusKey) === 'OVERDUE' => 'is-danger',
+        ($custodyWorkflow['group'] ?? null) === 'attention' => 'is-warning',
+        $requiresAction || $statusKey === 'RETURN_PROCESSING' => 'is-warning',
+        default => '',
+    };
 @endphp
 
-<article
-    class="mr-row {{ $requiresAction ? 'is-action-required' : '' }}"
+<a
+    class="operational-record ui-pressable {{ $rowToneClass }}"
+    href="{{ route('requests.show', $request) }}"
     data-request-card
     data-status-group="{{ $statusGroup }}"
     data-search="{{ $searchText }}"
     data-submitted="{{ optional($submittedAt)->timestamp ?? 0 }}"
 >
-    <span class="mr-row-tile is-{{ $tileTone }}" aria-hidden="true">
-        <x-icon :name="$tileIcon" size="21" />
+    <span class="operational-record-primary">
+        <strong>{{ $request->request_no }}</strong>
+        <span>{{ $version?->purpose_event ?: 'Borrowing request' }}</span>
+        <small>{{ $context ?: 'No additional details recorded' }}</small>
     </span>
 
-    <div class="mr-row-identity">
-        <a class="mr-row-reference" href="{{ route('requests.show', $request) }}">
-            {{ $request->request_no }}
-        </a>
+    <span class="operational-record-facts">
+        <span>
+            <small>Submitted</small>
+            <strong>{{ $submittedAt ? $submittedAt->format('d M Y, h:i A') : 'Not yet submitted' }}</strong>
+        </span>
 
-        <p class="mr-row-purpose">{{ $version?->purpose_event ?: 'Borrowing request' }}</p>
+        <span>
+            <small>Borrowing date</small>
+            <strong>{{ $borrowingDate ? $borrowingDate->format('d M Y') : 'Schedule pending' }}</strong>
+        </span>
 
-        <p class="mr-row-context">{{ $context ?: 'No additional details recorded' }}</p>
-    </div>
-
-    <div class="mr-row-meta">
-        <div class="mr-row-fact">
-            <span class="mr-row-fact-label">Submitted</span>
-            <span class="mr-row-fact-value">
-                <x-icon name="calendar" size="14" />
-                {{ $submittedAt ? $submittedAt->format('d M Y, h:i A') : 'Not yet submitted' }}
-            </span>
-        </div>
-
-        <div class="mr-row-fact">
-            <span class="mr-row-fact-label">Borrowing Date</span>
-            <span class="mr-row-fact-value">
-                <x-icon name="calendar" size="14" />
-                {{ $borrowingDate ? $borrowingDate->format('d M Y') : 'Schedule pending' }}
-            </span>
-        </div>
-
-        <div class="mr-row-fact">
-            <span class="mr-row-fact-label">Items</span>
-            <span class="mr-row-fact-value">
-                <x-icon name="box" size="14" />
+        <span>
+            <small>Items</small>
+            <strong>
                 {{ $itemTypes }} {{ $itemTypes === 1 ? 'item type' : 'item types' }}
-                <span class="mr-row-dot" aria-hidden="true">&bull;</span>
-                {{ number_format($pieces) }} {{ $pieces === 1 ? 'piece' : 'pieces' }}
-            </span>
-        </div>
-    </div>
+                · {{ number_format($pieces) }} {{ $pieces === 1 ? 'piece' : 'pieces' }}
+            </strong>
+        </span>
+    </span>
 
-    <div class="mr-row-action">
-        <span class="mr-badge is-{{ $statusTone }}">{{ $statusLabel }}</span>
-        @if($accountabilityIndicator)
-            <small class="mr-accountability-note">{{ $accountabilityIndicator['label'] }}</small>
-        @endif
-
-        <a class="mr-row-view" href="{{ route('requests.show', $request) }}">
-            View request
-            <svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
-        </a>
-    </div>
-
-    <div class="mr-row-menu" data-request-menu>
-        <button
-            class="mr-row-menu-trigger ui-pressable"
-            type="button"
-            aria-haspopup="true"
-            aria-expanded="false"
-            aria-label="More actions for {{ $request->request_no }}"
-            data-request-menu-trigger
-        >
-            <x-icon name="more" size="18" />
-        </button>
-
-        <div class="mr-row-menu-panel" data-request-menu-panel hidden>
-            <a href="{{ route('requests.show', $request) }}">View request</a>
-
-            @if($requiresAction)
-                <a href="{{ route('requests.edit', $request) }}">
-                    {{ $requestStatus === App\Enums\RequestStatus::Draft ? 'Continue request' : 'Revise request' }}
-                </a>
-            @endif
-
-            <button type="button" data-copy-reference="{{ $request->request_no }}">
-                Copy request number
-            </button>
-        </div>
-    </div>
-</article>
-
+    <span class="operational-record-action">
+        <x-status-badge
+            :status="$statusKey"
+            :label="$statusLabel"
+        />
+        <strong>View request<x-icon name="arrow-right" size="16" /></strong>
+    </span>
+</a>

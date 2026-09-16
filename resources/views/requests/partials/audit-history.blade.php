@@ -19,7 +19,8 @@
         string $event,
         string $actor,
         ?string $details = null,
-        ?string $key = null
+        ?string $key = null,
+        int $sortOrder = 0
     ) use (&$historyEvents): void {
         if (! $when) {
             return;
@@ -32,6 +33,9 @@
             'actor' => $actor,
             'details' => filled($details) ? $details : '—',
             'key' => $key ?: $stage.'|'.$event.'|'.$when->format('Y-m-d H:i:s'),
+            // Timestamp remains authoritative. This value is used only when
+            // two persisted workflow events share the exact same second.
+            'sort_order' => $sortOrder,
         ]);
     };
 
@@ -42,7 +46,8 @@
         'Request prepared',
         $borrowingRequest->borrower?->full_name ?: 'Borrower',
         'Borrowing request record created.',
-        'request-created'
+        'request-created',
+        10
     );
 
     // 2) Request status changes, translated into user-facing lifecycle events.
@@ -82,13 +87,24 @@
             ],
         };
 
+        // Logical tie-breaker only; changed_at is still the source of truth.
+        $statusSortOrder = match ($rawToStatus) {
+            'DRAFT' => 10,
+            'UNDER_SPMU' => 20,
+            'RETURNED_FOR_REVISION' => 30,
+            'APPROVED_READY_FOR_RELEASE', 'FINAL_APPROVED_AWAITING_DOWNLOAD' => 40,
+            'REJECTED', 'CANCELLED' => 190,
+            default => 25,
+        };
+
         $addHistoryEvent(
             $history->changed_at,
             'Request',
             $eventLabel,
             $history->actor?->full_name ?: 'System',
             $history->reason ?: $defaultDetails,
-            'request-status-'.$history->id
+            'request-status-'.$history->id,
+            $statusSortOrder
         );
     }
 
@@ -104,7 +120,8 @@
             'Action Officer verification completed',
             $verificationStep->approver?->full_name ?: 'SPMU Action Officer',
             $verificationStep->remarks ?: 'Request and supporting documents verified for Head/Admin review.',
-            'verification-'.$verificationStep->id
+            'verification-'.$verificationStep->id,
+            30
         );
     }
 
@@ -116,29 +133,32 @@
             $custody->pickup_scheduled_at ?: $custody->scheduled_release_at,
             'Pickup',
             'Pickup schedule activated',
-            'System',
+            $custody->pickupScheduledBy?->full_name ?: 'System',
             $custody->scheduled_release_at
                 ? 'Pickup/issuance scheduled for '.$custody->scheduled_release_at->format('d M Y, g:i A').'.'
                 : 'Pickup/issuance schedule recorded.',
-            'pickup-scheduled'
+            'pickup-scheduled',
+            50
         );
 
         $addHistoryEvent(
             $custody->prepared_at,
             'Release',
             'Items prepared for release',
-            'SPMU Action Officer',
+            $custody->preparedBy?->full_name ?: 'SPMU Action Officer',
             'Approved quantities were prepared for physical issuance.',
-            'release-prepared'
+            'release-prepared',
+            60
         );
 
         $addHistoryEvent(
             $custody->released_at,
             'Release',
             'Items physically released',
-            'SPMU Action Officer',
+            $custody->releasedBy?->full_name ?: 'SPMU Action Officer',
             'Physical issuance recorded and custody began for the released items.',
-            'items-released'
+            'items-released',
+            70
         );
 
         // 5) Applicable Gate Pass evidence.
@@ -150,9 +170,12 @@
                 $gatePassRecordedAt,
                 'Gate Pass',
                 'Accomplished Gate Pass recorded',
-                'SPMU Action Officer',
+                $gatePass->verified_at
+                    ? ($gatePass->verifiedBy?->full_name ?: 'SPMU Action Officer')
+                    : ($gatePass->uploadedBy?->full_name ?: 'SPMU Action Officer'),
                 'Signed/accomplished Gate Pass received and recorded by SPMU.',
-                'gate-pass-recorded'
+                'gate-pass-recorded',
+                85
             );
         }
 
@@ -163,9 +186,10 @@
                 $laundryJob->form_verified_at,
                 'Laundry',
                 'Accomplished Laundry Form recorded',
-                'SPMU Action Officer',
+                $laundryJob->formVerifier?->full_name ?: 'SPMU Action Officer',
                 'Physical Laundry Form evidence was received and verified by SPMU.',
-                'laundry-form-recorded'
+                'laundry-form-recorded',
+                85
             );
 
             $addHistoryEvent(
@@ -174,60 +198,73 @@
                 'Laundry processing completed',
                 'System',
                 'Applicable serviceable linen processing was completed.',
-                'laundry-completed'
+                'laundry-completed',
+                175
             );
         }
 
-        // 7) Physical receipt and condition inspection are separate events.
-        // For legacy rows that predate the split, keep the original one-step
-        // inspection event at received_at so historical records remain readable.
-        foreach ($custody->returns->sortBy('received_at') as $return) {
-            $hasSplitReceipt = ! empty($return->receipt_quantities)
-                || $return->status === 'RECEIVED'
-                || $return->inspected_at;
-
-            if ($hasSplitReceipt) {
-                $isLinenOnlyReturn = $return->lines->isNotEmpty()
-                    && $return->lines->every(
-                        fn ($line) => (bool) $line->custodyLine?->requestItem?->inventoryItem?->laundry_required
-                    );
-
-                $addHistoryEvent(
-                    $return->received_at,
-                    'Return',
-                    $isLinenOnlyReturn
-                        ? 'Physical return date recorded from Laundry Form'
-                        : 'Returned items received by SPMU',
-                    $isLinenOnlyReturn ? 'Laundry / SPMU record' : 'SPMU Action Officer',
-                    $isLinenOnlyReturn
-                        ? 'Borrower timeliness uses the Laundry Form RECEIVED BY date.'
-                        : 'The physical handover date/time was locked before condition inspection.',
-                    'return-received-'.$return->id
+        // 7) Current return workflow: one persisted ReturnTransaction represents
+        // the completed inspection for one physical channel. Non-linen is
+        // inspected directly by the Action Officer. Linen is encoded by SPMU
+        // from the accomplished Laundry Form, whose RECEIVED BY date is the
+        // authoritative physical-return timestamp. Do not recreate the removed
+        // split receipt/inspection fields (receipt_quantities / inspected_at).
+        foreach ($custody->returns->sortBy(fn ($return) => $return->received_at ?: $return->created_at) as $return) {
+            $isLinenOnlyReturn = $return->lines->isNotEmpty()
+                && $return->lines->every(
+                    fn ($line) => (bool) $line->custodyLine?->requestItem?->inventoryItem?->laundry_required
                 );
 
-                $addHistoryEvent(
-                    $return->inspected_at,
-                    'Return',
-                    strtoupper((string) $return->return_type) === 'EARLY'
-                        ? 'Early return inspection recorded'
-                        : 'Return inspection recorded',
-                    'SPMU Action Officer',
-                    $return->remarks ?: 'Returned quantities and condition/accountability findings were recorded.',
-                    'return-inspected-'.$return->id
-                );
+            $adverseFindings = $return->lines
+                ->filter(fn ($line) => strtoupper((string) $line->condition_code) !== 'FINE')
+                ->map(function ($line): string {
+                    $requestItem = $line->custodyLine?->requestItem;
+                    $description = $requestItem?->description_snapshot
+                        ?: $requestItem?->inventoryItem?->unique_description
+                        ?: 'Borrowed item';
+                    $quantity = (float) $line->quantity_received;
+                    $quantityLabel = fmod($quantity, 1.0) === 0.0
+                        ? (string) (int) $quantity
+                        : rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.');
+                    $unit = trim((string) ($requestItem?->unit_snapshot ?: ''));
+                    $finding = str((string) $line->condition_code)
+                        ->replace('_', ' ')
+                        ->lower()
+                        ->title()
+                        ->toString();
 
-                continue;
+                    return $description.' — '.$quantityLabel.($unit !== '' ? ' '.$unit : '').' '.$finding;
+                })
+                ->values();
+
+            $conditionDetails = $adverseFindings->isNotEmpty()
+                ? ' Adverse finding(s): '.$adverseFindings->implode('; ').'.'
+                : ' All quantities in this inspection were recorded as Fine/Good.';
+
+            $returnDetails = $isLinenOnlyReturn
+                ? 'SPMU recorded the linen quantities and condition findings from the accomplished Laundry Form. The Laundry RECEIVED BY date is the authoritative physical-return date.'
+                : 'SPMU recorded the returned quantities and physical condition findings.';
+
+            if (filled($return->remarks)) {
+                $returnDetails .= ' Remarks: '.trim((string) $return->remarks).'.';
             }
 
             $addHistoryEvent(
-                $return->received_at ?: $return->confirmed_at,
+                $return->received_at ?: $return->created_at,
                 'Return',
-                strtoupper((string) $return->return_type) === 'EARLY'
-                    ? 'Early return inspection recorded'
-                    : 'Physical return inspection recorded',
-                'SPMU Action Officer',
-                $return->remarks ?: 'Returned quantities and condition findings were recorded.',
-                'return-'.$return->id
+                match (true) {
+                    $isLinenOnlyReturn && strtoupper((string) $return->return_type) === 'EARLY' => 'Early linen return recorded from Laundry Form',
+                    $isLinenOnlyReturn => 'Linen return recorded from Laundry Form',
+                    strtoupper((string) $return->return_type) === 'EARLY' => 'Early return inspection recorded',
+                    strtoupper((string) $return->return_type) === 'OVERDUE' => 'Overdue return inspection recorded',
+                    default => 'Return inspection recorded',
+                },
+                $isLinenOnlyReturn
+                    ? 'Laundry / SPMU record'
+                    : ($return->receivedBy?->full_name ?: 'SPMU Action Officer'),
+                $returnDetails.$conditionDetails,
+                'return-'.$return->id,
+                100
             );
         }
 
@@ -247,7 +284,8 @@
                 $borrowerHistoryView
                     ? $accountabilityEvent['details_borrower']
                     : $accountabilityEvent['details_spmu'],
-                $accountabilityEvent['key']
+                $accountabilityEvent['key'],
+                (int) ($accountabilityEvent['sort_order'] ?? 110)
             );
         }
 
@@ -259,14 +297,27 @@
             'Transaction completed',
             'System',
             'Custody was closed after the applicable return, documentation, inventory, and accountability checks were completed.',
-            'custody-closed'
+            'custody-closed',
+            200
         );
     }
 
     $historyEvents = $historyEvents
         ->filter(fn ($item) => $item['when'])
         ->unique('key')
-        ->sortByDesc(fn ($item) => $item['when']->getTimestamp())
+        ->sort(function ($left, $right): int {
+            $timeOrder = $right['when']->getTimestamp() <=> $left['when']->getTimestamp();
+
+            if ($timeOrder !== 0) {
+                return $timeOrder;
+            }
+
+            // MySQL timestamps in this project are second-precision. When two
+            // real workflow actions share that same second, show the later
+            // lifecycle consequence first (e.g. restriction -> incident ->
+            // return; pickup schedule -> approval; release -> preparation).
+            return ((int) ($right['sort_order'] ?? 0)) <=> ((int) ($left['sort_order'] ?? 0));
+        })
         ->values();
 
     $latestHistory = $historyEvents->first();

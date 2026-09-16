@@ -44,7 +44,8 @@ class TransactionAccountabilityHistoryService
             string $actor,
             string $borrowerDetails,
             string $spmuDetails,
-            string $key
+            string $key,
+            int $sortOrder = 110
         ) use ($events): void {
             if (! $when) {
                 return;
@@ -59,6 +60,7 @@ class TransactionAccountabilityHistoryService
                 'details_borrower' => $borrowerDetails,
                 'details_spmu' => $spmuDetails,
                 'key' => $key,
+                'sort_order' => $sortOrder,
             ]);
         };
 
@@ -80,21 +82,30 @@ class TransactionAccountabilityHistoryService
                 ->lower()
                 ->title()
                 ->toString();
-            $item = $incident->lines
-                ->pluck('custodyLine.requestItem.description_snapshot')
-                ->filter()
-                ->first();
-            $subject = $item ? $item.' — '.$finding : $finding;
+            $incidentLine = $incident->lines->first();
+            $requestItem = $incidentLine?->custodyLine?->requestItem;
+            $item = $requestItem?->description_snapshot ?: null;
+            $quantity = $incidentLine ? (float) $incidentLine->quantity : null;
+            $quantityLabel = $quantity === null
+                ? null
+                : (fmod($quantity, 1.0) === 0.0
+                    ? (string) (int) $quantity
+                    : rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.'));
+            $unit = trim((string) ($requestItem?->unit_snapshot ?: ''));
+            $subject = $item
+                ? $item.' — '.($quantityLabel ? $quantityLabel.($unit !== '' ? ' '.$unit.' ' : ' ') : '').$finding
+                : $finding;
 
             $push(
                 $incident->reported_at ?: $incident->created_at,
                 'Accountability',
-                'Property issue recorded',
+                'Property accountability case opened',
                 'Property accountability case created',
                 $incident->reportedBy?->full_name ?: 'SPMU Action Officer',
-                "{$subject} was recorded under {$incident->incident_no}.",
-                "{$subject} was recorded as {$incident->incident_no} after the return inspection.",
-                'accountability-incident-'.$incident->id
+                "{$subject} was recorded under {$incident->incident_no}. The case entered SPMU Head/Admin review.",
+                "{$subject} was recorded under {$incident->incident_no} after the return inspection. The case was opened for SPMU Head/Admin review.",
+                'accountability-incident-'.$incident->id,
+                110
             );
         }
 
@@ -110,6 +121,7 @@ class TransactionAccountabilityHistoryService
                 ->whereIn('record_id', $incidentIds)
                 ->whereIn('action_code', [
                     'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
+                    'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED',
                     'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
                 ])
                 ->orderBy('occurred_at')
@@ -117,22 +129,50 @@ class TransactionAccountabilityHistoryService
 
             foreach ($incidentAuditEvents as $audit) {
                 $outcome = $this->outcomeLabel($audit->after_json['resolution_outcome'] ?? null);
-                $resolved = $audit->action_code === 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED';
+                $complianceVerified = $audit->action_code === 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED';
+                $resolved = $complianceVerified || $audit->action_code === 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED';
                 $reference = $incidents->firstWhere('id', $audit->record_id)?->incident_no ?: 'property case';
+                $resolutionOutcome = strtoupper((string) ($audit->after_json['resolution_outcome'] ?? ''));
+
+                if ($complianceVerified) {
+                    $borrowerEvent = 'Property compliance verified';
+                    $spmuEvent = 'Action Officer verified property compliance';
+                    $borrowerDetails = "The SPMU Action Officer verified the required repair/replacement or compliance for {$reference}; the property case was resolved.";
+                    $spmuDetails = "Action Officer physical compliance verification completed for {$reference}. Outcome: {$outcome}.";
+                    $fallbackActor = 'SPMU Action Officer';
+                    $priority = 170;
+                } elseif ($resolved) {
+                    $borrowerEvent = 'Property obligation resolved';
+                    $spmuEvent = 'Property accountability case resolved';
+                    $fallbackActor = in_array($resolutionOutcome, ['BILLING_SETTLED'], true)
+                        ? 'System / SPMU Action Officer'
+                        : 'SPMU Head/Admin';
+                    $borrowerDetails = match ($resolutionOutcome) {
+                        'BILLING_SETTLED' => "Billing settlement cleared {$reference}; the linked property case was resolved.",
+                        'BILLING_WAIVED' => "An authorized Billing Statement waiver cleared {$reference}; the linked property case was resolved.",
+                        default => "SPMU resolved {$reference}.",
+                    };
+                    $spmuDetails = "{$reference} was resolved. Outcome: {$outcome}.";
+                    $priority = 170;
+                } else {
+                    $borrowerEvent = 'SPMU decision recorded';
+                    $spmuEvent = 'SPMU Head accountability decision recorded';
+                    $fallbackActor = 'SPMU Head/Admin';
+                    $borrowerDetails = "SPMU recorded the decision for {$reference}: {$outcome}.";
+                    $spmuDetails = "Head/Admin decision for {$reference}: {$outcome}.";
+                    $priority = 130;
+                }
 
                 $push(
                     $audit->occurred_at,
                     'Accountability',
-                    $resolved ? 'Property obligation resolved' : 'SPMU decision recorded',
-                    $resolved ? 'Property accountability case resolved' : 'SPMU Head accountability decision recorded',
-                    $audit->actor?->full_name ?: 'SPMU Head/Admin',
-                    $resolved
-                        ? "SPMU resolved {$reference}."
-                        : "SPMU recorded the decision for {$reference}: {$outcome}.",
-                    $resolved
-                        ? "{$reference} was resolved. Outcome: {$outcome}."
-                        : "Head/Admin decision for {$reference}: {$outcome}.",
-                    'accountability-audit-'.$audit->id
+                    $borrowerEvent,
+                    $spmuEvent,
+                    $audit->actor?->full_name ?: $fallbackActor,
+                    $borrowerDetails,
+                    $spmuDetails,
+                    'accountability-audit-'.$audit->id,
+                    $priority
                 );
             }
         }
@@ -151,7 +191,8 @@ class TransactionAccountabilityHistoryService
                 'System',
                 'The borrowing passed its expected return date and entered accountability monitoring.',
                 'The custody passed its effective return date and an overdue case was opened.',
-                'overdue-opened-'.$case->id
+                'overdue-opened-'.$case->id,
+                105
             );
 
             $push(
@@ -162,7 +203,8 @@ class TransactionAccountabilityHistoryService
                 $case->confirmedBy?->full_name ?: 'SPMU Action Officer',
                 'SPMU confirmed the recorded late-return assessment.',
                 'The Action Officer confirmed the physical return date and frozen late-day assessment.',
-                'overdue-confirmed-'.$case->id
+                'overdue-confirmed-'.$case->id,
+                125
             );
         }
 
@@ -191,7 +233,8 @@ class TransactionAccountabilityHistoryService
                 $billing->responsibleSpmuUser?->full_name ?: 'SPMU Head/Admin',
                 "{$billing->billing_no} was issued for PHP ".number_format((float) $billing->total_amount, 2).'.',
                 "{$billing->billing_no} was issued for PHP ".number_format((float) $billing->total_amount, 2)." as part of this custody accountability lifecycle.",
-                'billing-issued-'.$billing->id
+                'billing-issued-'.$billing->id,
+                140
             );
 
             foreach ($billing->payments->sortBy(fn ($payment) => $payment->verified_at ?: $payment->submitted_at) as $payment) {
@@ -216,7 +259,7 @@ class TransactionAccountabilityHistoryService
                     ?: 'SPMU Action Officer';
 
                 $borrowerDetails = $verified
-                    ? "Payment for {$billing->billing_no} was confirmed by SPMU."
+                    ? "Payment for {$billing->billing_no} was recorded and confirmed by the SPMU Action Officer."
                     : ($rejected
                         ? "The receipt for {$billing->billing_no} needs correction."
                         : "A Cashier receipt was recorded for {$billing->billing_no}.");
@@ -232,7 +275,8 @@ class TransactionAccountabilityHistoryService
                     $actor,
                     $borrowerDetails,
                     $spmuDetails,
-                    'payment-'.$payment->id.'-'.$payment->status
+                    'payment-'.$payment->id.'-'.$payment->status,
+                    150
                 );
             }
         }
@@ -255,15 +299,26 @@ class TransactionAccountabilityHistoryService
             ->pluck('full_name', 'id');
 
         foreach ($restrictions as $restriction) {
+            $incidentReference = $restriction->incident_id
+                ? $incidents->firstWhere('id', $restriction->incident_id)?->incident_no
+                : null;
+            $referenceText = $incidentReference
+                ? 'accountability case '.$incidentReference
+                : 'linked transaction obligation';
+
             $push(
-                $restriction->effective_from ?: $restriction->created_at,
+                // effective_from may be rewritten when an existing active
+                // restriction is linked to a later billing step. created_at
+                // preserves when this restriction record was first imposed.
+                $restriction->created_at ?: $restriction->effective_from,
                 'Restriction',
                 'Borrowing restriction applied',
                 'Linked borrowing restriction applied',
                 $actorNames->get((int) $restriction->imposed_by_user_id) ?: 'SPMU',
-                'Borrowing is restricted while the linked obligation remains unresolved.',
-                "Restriction {$restriction->restriction_type} was applied for this transaction.",
-                'restriction-applied-'.$restriction->id
+                "Borrowing was temporarily restricted while {$referenceText} remains unresolved.",
+                "Restriction {$restriction->restriction_type} was linked to {$referenceText} and applied while the obligation remains unresolved.",
+                'restriction-applied-'.$restriction->id,
+                120
             );
 
             if ($restriction->status === 'LIFTED' || $restriction->effective_to) {
@@ -273,9 +328,10 @@ class TransactionAccountabilityHistoryService
                     'Borrowing restriction lifted',
                     'Linked borrowing restriction lifted',
                     $actorNames->get((int) $restriction->lifted_by_user_id) ?: 'SPMU',
-                    'The restriction linked to this obligation was lifted.',
-                    "Restriction {$restriction->restriction_type} was lifted after the linked obligation was cleared.",
-                    'restriction-lifted-'.$restriction->id
+                    "The restriction linked to {$referenceText} was lifted.",
+                    "Restriction {$restriction->restriction_type} linked to {$referenceText} was lifted after the obligation was cleared.",
+                    'restriction-lifted-'.$restriction->id,
+                    180
                 );
             }
         }
@@ -299,7 +355,8 @@ class TransactionAccountabilityHistoryService
                 $sanction->confirmedBy?->full_name ?: 'SPMU Head/Admin',
                 "SPMU recorded the applicable administrative action: {$sanction->sanction_label}.",
                 "Offense {$sanction->offense_no}: {$sanction->sanction_label}. Status: {$sanction->status}.",
-                'sanction-'.$sanction->id
+                'sanction-'.$sanction->id,
+                145
             );
         }
 
@@ -325,7 +382,8 @@ class TransactionAccountabilityHistoryService
                     $audit->actor?->full_name ?: 'SPMU Head/Admin',
                     "{$reference} was formally waived by SPMU.",
                     "{$reference} was formally waived. This outcome remains distinct from paid settlement.",
-                    'billing-waived-'.$audit->id
+                    'billing-waived-'.$audit->id,
+                    160
                 );
             }
         }
@@ -333,7 +391,15 @@ class TransactionAccountabilityHistoryService
         return $events
             ->filter(fn (array $event) => $event['when'])
             ->unique('key')
-            ->sortBy(fn (array $event) => $event['when']->getTimestamp())
+            ->sort(function (array $left, array $right): int {
+                $timeOrder = $left['when']->getTimestamp() <=> $right['when']->getTimestamp();
+
+                if ($timeOrder !== 0) {
+                    return $timeOrder;
+                }
+
+                return ((int) ($left['sort_order'] ?? 0)) <=> ((int) ($right['sort_order'] ?? 0));
+            })
             ->values();
     }
 
@@ -414,6 +480,8 @@ class TransactionAccountabilityHistoryService
             'COMPLIANCE_REQUIRED' => 'Repair / replacement / compliance required',
             'BILLING_REQUIRED' => 'Billing / payment required',
             'COMPLIANCE_COMPLETED' => 'Required compliance completed',
+            'BILLING_SETTLED' => 'Billing settled',
+            'BILLING_WAIVED' => 'Billing waived',
             'ADMINISTRATIVELY_CLEARED' => 'Administratively cleared',
             default => 'Decision recorded',
         };

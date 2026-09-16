@@ -255,7 +255,7 @@ class LaundryController extends Controller
                         }
 
                         BorrowerRestriction::query()
-                            ->where('borrower_user_id', $job->custody->borrower_user_id)
+                            ->forCustody($job->custody)
                             ->whereIn('restriction_type', ['PENDING_RETURN', 'OVERDUE_RETURN'])
                             ->where('status', 'ACTIVE')
                             ->update([

@@ -113,6 +113,15 @@
 
     $returnWorkflowStatus = $custody->workflowStatus();
     $returnAccountability = $custody->activeAccountabilityIndicator();
+
+    /*
+     * The Return workspace only shows documents that are actually required
+     * for this transaction. Billing receipts belong to Accountability
+     * Processing, not to the normal physical-return document checklist.
+     */
+    $showLaundryDocument = (bool) $hasLaundryItem;
+    $showGatePassDocument = (bool) $hasOffCampusItem;
+    $hasOperationalReturnDocuments = $showLaundryDocument || $showGatePassDocument;
 @endphp
 
 @include('custody.partials.return-process-styles')
@@ -165,131 +174,129 @@
                 </div>
 
                 <div class="return-document-list">
-                    <div class="return-document-row return-document-row-laundry">
-                        <div class="return-document-copy">
-                            <x-icon name="linen" size="22" />
-                            <div>
-                                <strong>Laundry Form</strong>
-                                <small>
-                                    @if(!$hasLaundryItem)
-                                        Not applicable — no linen items.
-                                    @elseif($laundryJob?->latestEvidence?->file)
-                                        Accomplished form recorded.
-                                    @else
-                                        Accomplished form pending.
-                                    @endif
-                                </small>
+                    @if($showLaundryDocument)
+                        <div class="return-document-row return-document-row-laundry">
+                            <div class="return-document-copy">
+                                <x-icon name="linen" size="22" />
+                                <div>
+                                    <strong>Laundry Form</strong>
+                                    <small>
+                                        @if($laundryJob?->latestEvidence?->file)
+                                            Accomplished form recorded.
+                                        @else
+                                            Accomplished form pending.
+                                        @endif
+                                    </small>
+                                </div>
                             </div>
-                        </div>
 
-                        @if(!$hasLaundryItem)
-                            <span class="status-badge status-neutral">Locked</span>
-                        @elseif($laundryJob?->latestEvidence?->file)
-                            <a
-                                class="button secondary small ui-pressable"
-                                href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
-                                target="_blank"
-                                rel="noopener"
-                            >View Form</a>
-                        @elseif($laundryJob)
-                            <details
-                                class="return-laundry-disclosure"
-                                @if($errors->has('evidence') || $errors->has('laundry_received_on')) open @endif
-                            >
-                                <summary class="button secondary small ui-pressable">
-                                    Record Accomplished Form
-                                </summary>
-
-                                <form
-                                    method="post"
-                                    action="{{ route('laundry.spmu.upload-form', $laundryJob) }}"
-                                    enctype="multipart/form-data"
-                                    class="return-laundry-form-upload"
+                            @if($laundryJob?->latestEvidence?->file)
+                                <a
+                                    class="button secondary small ui-pressable"
+                                    href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
+                                    target="_blank"
+                                    rel="noopener"
+                                >View Form</a>
+                            @elseif($laundryJob)
+                                <details
+                                    class="return-laundry-disclosure"
+                                    @if($errors->has('evidence') || $errors->has('laundry_received_on')) open @endif
                                 >
-                                    @csrf
+                                    <summary class="button secondary small ui-pressable return-disclosure-trigger">
+                                        <span>Record Accomplished Form</span>
+                                        <x-icon name="chevron-down" size="15" class="return-disclosure-chevron" />
+                                    </summary>
 
-                                    <label>
-                                        Signed Laundry Form
-                                        <input
-                                            id="return-laundry-form-evidence"
-                                            type="file"
-                                            name="evidence"
-                                            required
-                                            accept="application/pdf,image/png,image/jpeg,image/webp"
-                                        >
-                                    </label>
+                                    <form
+                                        method="post"
+                                        action="{{ route('laundry.spmu.upload-form', $laundryJob) }}"
+                                        enctype="multipart/form-data"
+                                        class="return-laundry-form-upload"
+                                    >
+                                        @csrf
 
-                                    <label>
-                                        Laundry Received Date
-                                        <input
-                                            id="laundry-actual-return-date"
-                                            type="date"
-                                            name="laundry_received_on"
-                                            value="{{ old('laundry_received_on') }}"
-                                            @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
-                                            data-laundry-return-date
-                                            data-due-date="{{ optional($custody->due_at)->toDateString() }}"
-                                            required
-                                            autocomplete="off"
-                                            aria-describedby="laundry-return-date-help laundry-return-date-status"
-                                        >
-                                        <small id="laundry-return-date-help">Use the RECEIVED BY date on the form.</small>
-                                        <small
-                                            id="laundry-return-date-status"
-                                            data-laundry-return-date-status
-                                            aria-live="polite"
-                                        ></small>
-                                    </label>
+                                        <label>
+                                            Signed Laundry Form
+                                            <input
+                                                id="return-laundry-form-evidence"
+                                                type="file"
+                                                name="evidence"
+                                                required
+                                                accept="application/pdf,image/png,image/jpeg,image/webp"
+                                            >
+                                        </label>
 
-                                    <button class="button secondary small ui-pressable" type="submit">
-                                        Upload Form
-                                    </button>
-                                </form>
-                            </details>
-                        @else
-                            <span class="status-badge status-warning">Pending Form</span>
-                        @endif
-                    </div>
+                                        <label>
+                                            Laundry Received Date
+                                            <input
+                                                id="laundry-actual-return-date"
+                                                type="date"
+                                                name="laundry_received_on"
+                                                value="{{ old('laundry_received_on') }}"
+                                                @if($custody->released_at) min="{{ $custody->released_at->toDateString() }}" @endif
+                                                data-laundry-return-date
+                                                data-due-date="{{ optional($custody->due_at)->toDateString() }}"
+                                                required
+                                                autocomplete="off"
+                                                aria-describedby="laundry-return-date-help laundry-return-date-status"
+                                            >
+                                            <small id="laundry-return-date-help">Use the RECEIVED BY date on the form.</small>
+                                            <small
+                                                id="laundry-return-date-status"
+                                                data-laundry-return-date-status
+                                                aria-live="polite"
+                                            ></small>
+                                        </label>
 
-                    <div class="return-document-row">
-                        <div class="return-document-copy">
-                            <x-icon name="shield-lock" size="22" />
-                            <div><strong>Gate Pass</strong>
-                            <small>
-                                @if(!$hasOffCampusItem)
-                                    Not applicable — on-campus only.
-                                @elseif($custody->gatePass?->accomplishedFile)
-                                    Accomplished copy recorded.
-                                @else
-                                    Accomplished copy pending.
-                                @endif
-                            </small></div>
+                                        <button class="button secondary small ui-pressable" type="submit">
+                                            Upload Form
+                                        </button>
+                                    </form>
+                                </details>
+                            @else
+                                <span class="status-badge status-warning">Pending Form</span>
+                            @endif
                         </div>
-                        @if(!$hasOffCampusItem)
-                            <span class="status-badge status-neutral">Locked</span>
-                        @elseif($custody->gatePass?->accomplishedFile)
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $custody->gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View Gate Pass</a>
-                        @elseif($custody->gatePass)
-                            <a class="button secondary small ui-pressable" href="{{ route('gate-passes.show', $custody->gatePass) }}">Record Gate Pass</a>
-                        @else
-                            <span class="status-badge status-warning">Gate Pass record unavailable</span>
-                        @endif
-                    </div>
+                    @endif
 
-                    <div class="return-document-row">
-                        <div class="return-document-copy">
-                            <x-icon name="receipt" size="22" />
-                            <div><strong>Receipt</strong>
-                            <small>{{ $relatedBillings->isNotEmpty() ? 'Payment evidence for a billing linked to this borrowing.' : 'Not applicable — no billing obligation.' }}</small></div>
+                    @if($showGatePassDocument)
+                        <div class="return-document-row">
+                            <div class="return-document-copy">
+                                <x-icon name="shield-lock" size="22" />
+                                <div>
+                                    <strong>Gate Pass</strong>
+                                    <small>
+                                        @if($custody->gatePass?->accomplishedFile)
+                                            Accomplished copy recorded.
+                                        @else
+                                            Accomplished copy pending.
+                                        @endif
+                                    </small>
+                                </div>
+                            </div>
+
+                            @if($custody->gatePass?->accomplishedFile)
+                                <a class="button secondary small ui-pressable return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
+                                    <span>View Gate Pass</span>
+                                    <span aria-hidden="true">→</span>
+                                </a>
+                            @elseif($custody->gatePass)
+                                <a class="button secondary small ui-pressable return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
+                                    <span>Record Gate Pass</span>
+                                    <span aria-hidden="true">→</span>
+                                </a>
+                            @else
+                                <span class="status-badge status-warning">Gate Pass record unavailable</span>
+                            @endif
                         </div>
-                        @if($relatedBillings->isEmpty())
-                            <span class="status-badge status-neutral">Locked</span>
-                        @elseif($latestReceipt?->evidence_file_id)
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $latestReceipt->evidence_file_id, false) }}" target="_blank" rel="noopener">View receipt</a>
-                        @else
-                            <span class="status-badge status-warning">Pending receipt upload</span>
-                        @endif
-                    </div>
+                    @endif
+
+                    @unless($hasOperationalReturnDocuments)
+                        <div class="empty-state">
+                            <strong>No additional operational documents required.</strong>
+                            <span>This return can proceed without a Laundry Form or Gate Pass.</span>
+                        </div>
+                    @endunless
                 </div>
             </article>
         </section>
@@ -322,7 +329,10 @@
                         <strong>Next: Record Gate Pass</strong>
                         <p>All items are already returned. Record the accomplished Gate Pass to complete the remaining documentation.</p>
                         @if($custody->gatePass)
-                            <a class="button primary small ui-pressable top-gap" href="{{ route('gate-passes.show', $custody->gatePass) }}">Open Gate Pass</a>
+                            <a class="button primary small ui-pressable top-gap return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
+                                <span>Open Gate Pass</span>
+                                <span aria-hidden="true">→</span>
+                            </a>
                         @endif
                     </div>
                 </div>
@@ -357,7 +367,7 @@
             </dl>
 
             @if($linenLines->isNotEmpty())
-                @if($linenOutstanding <= 0 && $laundryJob && in_array($laundryJob->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true))
+                @if($linenOutstanding <= 0 && $laundryJob && $laundryJob->status === 'TURNED_OVER_TO_LAUNDRY')
                     <a
                         class="button primary ui-pressable"
                         href="{{ route('laundry.show', $laundryJob) }}"
@@ -446,6 +456,22 @@
 
 .return-flow-page .return-laundry-disclosure[open] > summary {
     margin-bottom: 10px;
+}
+
+.return-flow-page .return-disclosure-trigger,
+.return-flow-page .return-navigation-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+}
+
+.return-flow-page .return-disclosure-chevron {
+    transition: transform .16s ease;
+}
+
+.return-flow-page .return-laundry-disclosure[open] .return-disclosure-chevron {
+    transform: rotate(180deg);
 }
 
 .return-flow-page .return-laundry-form-upload {

@@ -11,6 +11,7 @@ use App\Models\CustodyTransaction;
 use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
+use App\Models\OverdueCase;
 use App\Models\RequestVersion;
 use App\Models\Sanction;
 use App\Models\SignatureSnapshot;
@@ -31,7 +32,31 @@ class DocumentService
         private ProtectedFileService $files,
         private DocumentTemplateDefinitionService $templateDefinitions,
         private DocumentTemplateRenderer $templateRenderer,
+        private OfficeDraftTemplateRenderer $officeDrafts,
     ) {}
+
+    /**
+     * Every production document that has an uploaded custom template renders
+     * through this one seam. A DOCX/XLSX Active layout renders through the
+     * exact same Office Draft compiler its own preview used before
+     * activation - the same compile() -> compileWorkingSource() path,
+     * against the same immutable uploaded source - so activation can never
+     * change what the document looks like. Anything else (PDF, or the
+     * built-in system layout) keeps using the existing production renderer
+     * completely unchanged.
+     *
+     * @param array<string,mixed> $data
+     */
+    private function renderCustomTemplate(DocumentTemplate $customTemplate, array $data): string
+    {
+        if ($this->officeDrafts->isOfficeFormat($customTemplate)) {
+            $context = OfficialFormRuntimeContextService::forRuntimeData((string) $customTemplate->document_type, $data);
+
+            return $this->officeDrafts->render($customTemplate, $context);
+        }
+
+        return $this->templateRenderer->render($customTemplate, $data);
+    }
 
     public function requestLetter(BorrowingRequest $request, bool $final = false): GeneratedDocument
     {
@@ -163,7 +188,7 @@ class DocumentService
 
         $customTemplate = $this->activeUploadedTemplate('BORROWER_SLIP');
         if ($customTemplate) {
-            $bytes = $this->templateRenderer->render($customTemplate, $this->borrowerSlipRenderData($custody));
+            $bytes = $this->renderCustomTemplate($customTemplate, $this->borrowerSlipRenderData($custody));
             $this->supersede($custody, 'BORROWER_SLIP', 'Replaced by the latest controlled operational copy.');
 
             return $this->saveRenderedTemplate(
@@ -998,7 +1023,7 @@ HTML;
             $data = $type === 'LAUNDRY_FORM'
                 ? $this->laundryFormRenderData($custody)
                 : $this->gatePassRenderData($custody);
-            $bytes = $this->templateRenderer->render($customTemplate, $data);
+            $bytes = $this->renderCustomTemplate($customTemplate, $data);
             $this->supersede($custody, $type, 'Replaced by the latest generated physical form.');
 
             return $this->saveRenderedTemplate(
@@ -2805,7 +2830,7 @@ HTML;
             return $this->saveRenderedTemplate(
                 $customTemplate,
                 'BILLING_STATEMENT',
-                $this->templateRenderer->render($customTemplate, $this->billingStatementRenderData($billing, $authorizationSignature)),
+                $this->renderCustomTemplate($customTemplate, $this->billingStatementRenderData($billing, $authorizationSignature)),
                 null,
                 $billing::class,
                 $billing->id,
@@ -2822,6 +2847,85 @@ HTML;
             $billing->id,
             'FINAL',
             $billing->billing_no.'.pdf',
+        );
+    }
+
+    public function lateReturnNotice(
+        OverdueCase $case,
+        User $spmuHead,
+        string $disposition,
+        string $decisionBasis,
+        ?SignatureSnapshot $headSignature = null
+    ): GeneratedDocument {
+        $case->loadMissing([
+            'borrower.organizationalUnit',
+            'custody.request.currentVersion',
+            'custody.lines.requestItem.inventoryItem.unit',
+            'confirmedBy',
+        ]);
+
+        GeneratedDocument::query()
+            ->where('subject_type', $case::class)
+            ->where('subject_id', $case->id)
+            ->where('document_type', 'LATE_RETURN_NOTICE')
+            ->where('status', 'FINAL')
+            ->update([
+                'status' => 'SUPERSEDED',
+                'invalidated_at' => now(),
+                'invalidation_reason' => 'Replaced by the latest controlled Late Return Notice.',
+            ]);
+
+        $custody = $case->custody;
+        $request = $custody?->request;
+        $reference = 'LRN-'.str_pad((string) $case->id, 6, '0', STR_PAD_LEFT);
+        $items = ($custody?->lines ?? collect())
+            ->map(function ($line): array {
+                $requestItem = $line->requestItem;
+                $inventoryItem = $requestItem?->inventoryItem;
+
+                return [
+                    'description' => (string) ($requestItem?->description_snapshot ?: $inventoryItem?->unique_description ?: 'Inventory item'),
+                    'quantity' => (float) ($line->actual_released_quantity ?? 0),
+                    'unit' => (string) ($requestItem?->unit_snapshot ?: $inventoryItem?->unit?->unit_name ?: ''),
+                ];
+            })
+            ->values();
+
+        $html = view('documents.accountability.late-return-notice', [
+            'case' => $case,
+            'reference' => $reference,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'borrowerName' => (string) ($case->borrower?->full_name ?? ''),
+            'officeUnit' => (string) ($case->borrower?->organizationalUnit?->unit_name
+                ?? $case->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($custody?->custody_no ?? ''),
+            'expectedReturnDate' => $case->grace_expires_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'actualReturnDate' => $case->actual_return_date?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'lateDays' => (int) ($case->late_days ?? 0),
+            'rate' => $case->rate_snapshot !== null ? (float) $case->rate_snapshot : null,
+            'amount' => (float) ($case->accrued_amount ?? 0),
+            'disposition' => $disposition,
+            'decisionBasis' => trim($decisionBasis),
+            'aoConfirmedBy' => (string) ($case->confirmedBy?->full_name ?? 'SPMU Action Officer'),
+            'aoConfirmedAt' => $case->ao_confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y, g:i A'),
+            'headName' => (string) ($spmuHead->full_name ?: 'SPMU Head/Admin'),
+            'headDesignation' => $this->templatePrintedDesignation($spmuHead),
+            'headDate' => now()->timezone('Asia/Manila')->format('d F Y'),
+            'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
+            'generatedAt' => now()->timezone('Asia/Manila')->format('d F Y, g:i A'),
+            'items' => $items,
+        ])->render();
+
+        return $this->saveHtml(
+            'LATE_RETURN_NOTICE',
+            $html,
+            $request?->currentVersion,
+            $case::class,
+            $case->id,
+            'FINAL',
+            ($custody?->custody_no ?: $reference).'-LATE-RETURN-NOTICE.pdf',
         );
     }
 
@@ -2852,7 +2956,7 @@ HTML;
             return $this->saveRenderedTemplate(
                 $customTemplate,
                 'ACCOUNTABILITY_COMPLIANCE_NOTICE',
-                $this->templateRenderer->render(
+                $this->renderCustomTemplate(
                     $customTemplate,
                     $this->accountabilityComplianceNoticeRenderData($incident, $spmuHead, $decisionRemarks, $headSignature)
                 ),
@@ -2901,7 +3005,7 @@ HTML;
             return $this->saveRenderedTemplate(
                 $customTemplate,
                 'ADMINISTRATIVE_SANCTION_NOTICE',
-                $this->templateRenderer->render(
+                $this->renderCustomTemplate(
                     $customTemplate,
                     $this->administrativeSanctionNoticeRenderData($sanction, $headSignature)
                 ),
@@ -3115,7 +3219,7 @@ HTML;
             $document = $this->saveRenderedTemplate(
                 $customTemplate,
                 'RSLDDP',
-                $this->templateRenderer->render($customTemplate, $this->rslddpRenderData($incident)),
+                $this->renderCustomTemplate($customTemplate, $this->rslddpRenderData($incident)),
                 $incident->custody->request->currentVersion,
                 $incident::class,
                 $incident->id,
@@ -3268,14 +3372,121 @@ HTML;
         return $template?->source_mode === 'OFFICIAL_LAYOUT' ? $template : null;
     }
 
+    /**
+     * Read one existing, form-eligible workflow record into the same explicit
+     * semantic payload used by the current uploaded-template renderer.
+     *
+     * This exists solely for an unactivated Office Draft preview. It never
+     * creates a document, updates a model, selects an active template, or
+     * returns an Eloquent model. Signature image data is intentionally omitted
+     * because Office Draft previews retain the renderer's existing synthetic
+     * signature treatment until a later, separately approved phase.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function runtimePayloadForDraftPreview(string $type): ?array
+    {
+        $type = strtoupper(trim($type));
+
+        return match ($type) {
+            'BORROWER_SLIP' => ($custody = $this->latestRuntimePreviewCustody())
+                ? $this->withSafeCustodyRuntimeDetails($this->borrowerSlipRenderData($custody, false), $custody)
+                : null,
+            'LAUNDRY_FORM' => ($custody = $this->latestRuntimePreviewCustody('laundryJob'))
+                ? $this->withSafeCustodyRuntimeDetails($this->laundryFormRenderData($custody, false), $custody)
+                : null,
+            'GATE_PASS' => ($custody = $this->latestRuntimePreviewCustody('gatePass'))
+                ? $this->withSafeCustodyRuntimeDetails($this->gatePassRenderData($custody, false), $custody)
+                : null,
+            'BILLING_STATEMENT' => ($billing = BillingStatement::query()
+                ->with([
+                    'borrower.organizationalUnit',
+                    'responsibleSpmuUser',
+                    'lines.incident.custody.request.currentVersion',
+                    'lines.penalty.incident.custody.request.currentVersion',
+                    'lines.penalty.custody.request.currentVersion',
+                ])
+                ->latest('id')
+                ->first())
+                    ? $this->billingStatementRenderData($billing, null, false)
+                    : null,
+            'RSLDDP' => ($incident = Incident::query()
+                ->with([
+                    'borrower',
+                    'custody.request.currentVersion',
+                    'lines.custodyLine.requestItem',
+                    'reportedBy',
+                ])
+                ->latest('id')
+                ->first())
+                    ? $this->rslddpRenderData($incident)
+                    : null,
+            default => null,
+        };
+    }
+
+    private function latestRuntimePreviewCustody(?string $requiredRelation = null): ?CustodyTransaction
+    {
+        $query = CustodyTransaction::query()
+            ->with([
+                'request.borrower.organizationalUnit',
+                'request.currentVersion.approvalSteps.approver',
+                'lines.requestItem.inventoryItem',
+                'lines.laundryJobLine',
+                'returns.receivedBy',
+                'returns.lines.custodyLine.requestItem',
+                'releasedBy',
+                'gatePass.preparedVerifier',
+                'gatePass.approver',
+                'laundryJob.formVerifier',
+            ])
+            ->whereHas('request.currentVersion');
+
+        if ($requiredRelation !== null) {
+            $query->whereHas($requiredRelation);
+        }
+
+        return $query->latest('id')->first();
+    }
+
+    /**
+     * This is a deliberately small, read-only extension of the existing
+     * renderer payload for Office Draft discovery. These are request/custody
+     * facts, not a catalog tailored to a particular uploaded layout, so a
+     * future official revision can use an already-recorded venue, schedule,
+     * office, or classification without changing a template implementation.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function withSafeCustodyRuntimeDetails(array $payload, CustodyTransaction $custody): array
+    {
+        $request = $custody->request;
+        $version = $request?->currentVersion;
+        $borrower = $request?->borrower;
+
+        return [
+            ...$payload,
+            'request_location' => (string) ($version?->location ?? ''),
+            'request_event_details' => (string) ($version?->event_details ?? ''),
+            'request_division_code' => (string) ($version?->division_code ?? ''),
+            'request_represented_program_department' => (string) ($version?->represented_program_department ?? ''),
+            'request_represented_year_level' => (string) ($version?->represented_year_level ?? ''),
+            'request_schedule_date' => $version?->schedule_date?->format('F j, Y') ?: '',
+            'request_return_date' => $version?->return_date?->format('F j, Y') ?: '',
+            'request_is_off_campus' => (bool) ($version?->off_campus ?? false),
+            'borrower_office_unit' => (string) ($borrower?->organizationalUnit?->unit_name ?? ''),
+        ];
+    }
+
     /** @return array<string,mixed> */
-    private function borrowerSlipRenderData(CustodyTransaction $custody): array
+    private function borrowerSlipRenderData(CustodyTransaction $custody, bool $includeSignatures = true): array
     {
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
-        $return = $this->returnInspectionData($custody);
-        $approval = $this->approvalSignatory($version);
-        $issuance = $this->issuanceSignatory($custody);
+        $return = $this->returnInspectionData($custody, $includeSignatures);
+        $approval = $this->approvalSignatory($version, $includeSignatures);
+        $issuance = $this->issuanceSignatory($custody, $includeSignatures);
         $employmentType = strtoupper((string) ($borrower?->employment_type?->value ?? ''));
         $borrowerDesignation = trim((string) ($borrower?->designation ?? ''));
         if ($borrowerDesignation === ''
@@ -3298,19 +3509,19 @@ HTML;
             'release_time' => $custody->released_at?->copy()->timezone('Asia/Manila')->format('g:i A') ?: '',
             'date_returned' => $return['signed_at']?->format('F j, Y') ?: '',
             'remarks' => implode('; ', $return['findings'] ?? []),
-            'borrowed_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
+            'borrowed_by_signature' => $includeSignatures ? $this->templateSignatureAsset($version?->borrowerSignature) : null,
             'borrowed_by_printed_name' => (string) ($borrower?->full_name ?? ''),
             'borrowed_by_designation' => $borrowerDesignation,
             'borrowed_by_date' => $version?->signed_at?->format('F j, Y') ?: '',
-            'approved_by_signature' => $this->templateSignatureAsset($approval['snapshot'] ?? null),
+            'approved_by_signature' => $includeSignatures ? $this->templateSignatureAsset($approval['snapshot'] ?? null) : null,
             'approved_by_printed_name' => (string) ($approval['name'] ?? ''),
             'approved_by_designation' => (string) ($approval['designation'] ?? ''),
             'approved_by_date' => $approval['signed_at']?->format('F j, Y') ?: '',
-            'issued_by_signature' => $this->templateSignatureAsset($issuance['snapshot'] ?? null),
+            'issued_by_signature' => $includeSignatures ? $this->templateSignatureAsset($issuance['snapshot'] ?? null) : null,
             'issued_by_printed_name' => (string) ($issuance['name'] ?? ''),
             'issued_by_designation' => (string) ($issuance['designation'] ?? ''),
             'issued_by_date' => $issuance['signed_at']?->format('F j, Y') ?: '',
-            'return_received_by_signature' => $this->templateSignatureAsset($return['signature'] ?? null),
+            'return_received_by_signature' => $includeSignatures ? $this->templateSignatureAsset($return['signature'] ?? null) : null,
             'return_received_by_printed_name' => (string) ($return['received_by_name'] ?? ''),
             'return_received_by_designation' => (string) ($return['received_by_designation'] ?? ''),
             'return_received_by_date' => $return['signed_at']?->format('F j, Y') ?: '',
@@ -3326,12 +3537,12 @@ HTML;
     }
 
     /** @return array<string,mixed> */
-    private function laundryFormRenderData(CustodyTransaction $custody): array
+    private function laundryFormRenderData(CustodyTransaction $custody, bool $includeSignatures = true): array
     {
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
         $job = $custody->laundryJob;
-        $approval = $this->approvalSignatory($version);
+        $approval = $this->approvalSignatory($version, $includeSignatures);
         $requestDateSource = $version?->signed_at ?: $version?->submitted_at ?: $version?->created_at;
         $dateRequested = $requestDateSource?->format('F j, Y') ?: '';
         $requestingOffice = (string) (
@@ -3350,11 +3561,11 @@ HTML;
             'requesting_office' => $requestingOffice,
             'date_requested' => $dateRequested,
             'date_released' => $custody->released_at?->format('F j, Y') ?: '',
-            'requested_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
+            'requested_by_signature' => $includeSignatures ? $this->templateSignatureAsset($version?->borrowerSignature) : null,
             'requested_by_printed_name' => (string) ($borrower?->full_name ?? ''),
             'requested_by_designation' => $this->templatePrintedDesignation($borrower),
             'requested_by_date' => $dateRequested,
-            'approved_by_signature' => $this->templateSignatureAsset($approval['snapshot'] ?? null),
+            'approved_by_signature' => $includeSignatures ? $this->templateSignatureAsset($approval['snapshot'] ?? null) : null,
             'approved_by_printed_name' => (string) ($approval['name'] ?? ''),
             'approved_by_designation' => (string) ($approval['designation'] ?? ''),
             'approved_by_date' => $approval['signed_at']?->format('F j, Y') ?: '',
@@ -3395,7 +3606,7 @@ HTML;
     }
 
     /** @return array<string,mixed> */
-    private function gatePassRenderData(CustodyTransaction $custody): array
+    private function gatePassRenderData(CustodyTransaction $custody, bool $includeSignatures = true): array
     {
         $version = $custody->request->currentVersion;
         $gatePass = $custody->gatePass;
@@ -3417,15 +3628,15 @@ HTML;
             'movement_scope' => $movementScope ? str((string) $movementScope)->replace('_', ' ')->title()->toString() : '',
             'exit_date' => $custody->released_at?->format('F j, Y') ?: '',
             'verification_remarks' => (string) ($gatePass?->verification_remarks ?? ''),
-            'requested_by_signature' => $this->templateSignatureAsset($version?->borrowerSignature),
+            'requested_by_signature' => $includeSignatures ? $this->templateSignatureAsset($version?->borrowerSignature) : null,
             'requested_by_printed_name' => (string) ($borrower?->full_name ?? ''),
             'requested_by_designation' => $this->templatePrintedDesignation($borrower),
             'requested_by_date' => $version?->signed_at?->format('F j, Y') ?: '',
-            'verified_by_signature' => $this->templateSignatureAsset($gatePass?->preparedVerifierSignature),
+            'verified_by_signature' => $includeSignatures ? $this->templateSignatureAsset($gatePass?->preparedVerifierSignature) : null,
             'verified_by_printed_name' => (string) ($gatePass?->preparedVerifier?->full_name ?? ''),
             'verified_by_designation' => $this->templatePrintedDesignation($gatePass?->preparedVerifier),
             'verified_by_date' => $gatePass?->prepared_verified_at?->format('F j, Y') ?: '',
-            'approved_by_signature' => $this->templateSignatureAsset($gatePass?->approverSignature),
+            'approved_by_signature' => $includeSignatures ? $this->templateSignatureAsset($gatePass?->approverSignature) : null,
             'approved_by_printed_name' => (string) ($gatePass?->approver?->full_name ?? ''),
             'approved_by_designation' => $this->templatePrintedDesignation($gatePass?->approver),
             'approved_by_date' => $gatePass?->approved_at?->format('F j, Y') ?: '',
@@ -3470,15 +3681,17 @@ HTML;
     }
 
     /** @return array<string,mixed> */
-    private function billingStatementRenderData(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null): array
+    private function billingStatementRenderData(BillingStatement $billing, ?SignatureSnapshot $authorizationSignature = null, bool $includeSignatures = true): array
     {
         $incidents = $billing->lines
             ->map(fn ($line) => $line->incident ?: $line->penalty?->incident)
             ->filter();
 
         $incident = $incidents->first();
-        $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
-        $authorizationSignature ??= $incident?->headDecisionSignature;
+        if ($includeSignatures) {
+            $incident?->loadMissing(['headDecisionSignature.file', 'headDecidedBy']);
+            $authorizationSignature ??= $incident?->headDecisionSignature;
+        }
         $custodies = $billing->lines
             ->map(fn ($line) => $line->incident?->custody ?: $line->penalty?->custody ?: $line->penalty?->incident?->custody)
             ->filter()
@@ -3495,7 +3708,7 @@ HTML;
             'due_date' => $billing->due_at?->format('F j, Y') ?: '',
             'statement_remarks' => (string) ($billing->remarks ?? ''),
             'total_amount' => 'PHP '.number_format((float) $billing->total_amount, 2),
-            'issuer_signature' => $this->templateSignatureAsset($authorizationSignature),
+            'issuer_signature' => $includeSignatures ? $this->templateSignatureAsset($authorizationSignature) : null,
             'issuer_printed_name' => (string) ($billing->responsibleSpmuUser?->full_name
                 ?: $incident?->headDecidedBy?->full_name
                 ?: ''),
@@ -3889,7 +4102,7 @@ HTML;
      *
      * @return array{name: string, designation: string, snapshot: ?SignatureSnapshot, signed_at: ?CarbonInterface}
      */
-    private function approvalSignatory(?RequestVersion $version): array
+    private function approvalSignatory(?RequestVersion $version, bool $includeSignature = true): array
     {
         $step = $version?->approvalSteps
             ?->first(
@@ -3903,7 +4116,7 @@ HTML;
         return [
             'name' => $approver?->full_name ?: '',
             'designation' => $designation,
-            'snapshot' => $step?->signatureSnapshot,
+            'snapshot' => $includeSignature ? $step?->signatureSnapshot : null,
             'signed_at' => $step?->decided_at,
         ];
     }
@@ -3916,7 +4129,7 @@ HTML;
      *
      * @return array{name: string, designation: string, snapshot: ?SignatureSnapshot, signed_at: ?CarbonInterface}
      */
-    private function issuanceSignatory(CustodyTransaction $custody): array
+    private function issuanceSignatory(CustodyTransaction $custody, bool $includeSignature = true): array
     {
         $officer = $custody->releasedBy;
         $designation = trim((string) $officer?->designation);
@@ -3924,7 +4137,7 @@ HTML;
         return [
             'name' => $officer?->full_name ?: '',
             'designation' => $designation !== '' ? $designation : 'SPMU Action Officer',
-            'snapshot' => $custody->releaseSignature,
+            'snapshot' => $includeSignature ? $custody->releaseSignature : null,
             'signed_at' => $custody->released_at,
         ];
     }
@@ -3952,8 +4165,20 @@ HTML;
      *     signature: ?SignatureSnapshot
      * }
      */
-    private function returnInspectionData(CustodyTransaction $custody): array
+    private function returnInspectionData(CustodyTransaction $custody, bool $includeSignature = true): array
     {
+        /*
+         * A mixed custody may be returned in more than one real inspection
+         * (for example, non-linen items received immediately and a
+         * laundry-required line accounted for separately once its
+         * accomplished Laundry Form arrives - see LinenReturnInspectionForm
+         * "Mixed custody records non linen and linen as separate complete
+         * return branches"). Every earlier adverse finding must keep
+         * printing after a later, unrelated, clean return -- so findings
+         * are aggregated across every recorded ReturnTransaction, not just
+         * the most recent one. "Received by" / signature still reflect the
+         * latest inspection, since only one signer can be shown there.
+         */
         $return = $custody->returns
             ->sortByDesc(fn ($candidate) => $candidate->received_at?->getTimestamp() ?? 0)
             ->first();
@@ -3966,8 +4191,9 @@ HTML;
             'STOLEN' => 'stolen',
         ];
 
-        $findings = $return?->lines
-            ?->groupBy('custody_line_id')
+        $findings = $custody->returns
+            ->flatMap(fn ($candidate) => $candidate->lines ?? collect())
+            ->groupBy('custody_line_id')
             ->map(function ($lines) use ($conditionLabels): ?string {
                 $firstLine = $lines->first();
                 $description = trim((string) $firstLine?->custodyLine?->requestItem?->description_snapshot);
@@ -3996,7 +4222,7 @@ HTML;
             })
             ->filter()
             ->values()
-            ->all() ?? [];
+            ->all();
 
         return [
             'exists' => $return !== null,
@@ -4004,7 +4230,7 @@ HTML;
             'findings' => $findings,
             'received_by_name' => (string) ($return?->receivedBy?->full_name ?? ''),
             'received_by_designation' => (string) ($return?->receivedBy?->designation ?? ''),
-            'signature' => $return?->inspectionSignature,
+            'signature' => $includeSignature ? $return?->inspectionSignature : null,
         ];
     }
 

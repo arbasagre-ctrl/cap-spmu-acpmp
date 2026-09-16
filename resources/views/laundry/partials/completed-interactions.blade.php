@@ -4,7 +4,8 @@
     if (!browser || browser.dataset.completedLaundryInitialized === '1') return;
     const search = browser.querySelector('[data-completed-search]');
     const outcome = browser.querySelector('[data-completed-outcome]');
-    if (!search || !outcome) return;
+    const sort = browser.querySelector('[data-completed-sort]');
+    if (!search || !outcome || !sort) return;
     browser.dataset.completedLaundryInitialized = '1';
 
     const records = [...browser.querySelectorAll('[data-completed-record]')];
@@ -14,6 +15,14 @@
         const terms = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
         const selectedOutcome = outcome.value;
         let visible = 0;
+
+        const direction = sort.value === 'oldest' ? -1 : 1;
+        const body = records[0]?.parentElement;
+        if (body) {
+            [...records]
+                .sort((a, b) => (Number(b.dataset.created || 0) - Number(a.dataset.created || 0)) * direction)
+                .forEach((record) => body.appendChild(record));
+        }
 
         records.forEach((record) => {
             const haystack = (record.dataset.search || '').toLocaleLowerCase();
@@ -39,9 +48,11 @@
 
     search.addEventListener('input', render);
     outcome.addEventListener('change', render);
+    sort.addEventListener('change', render);
     browser.querySelector('[data-completed-reset]')?.addEventListener('click', () => {
         search.value = '';
         outcome.value = '';
+        sort.value = 'newest';
         render();
         search.focus();
     });

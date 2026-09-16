@@ -1,22 +1,3 @@
-<nav class="custody-oversight-tabs" aria-label="Release and return status filters">
-    @foreach($oversightTabs as $key => $label)
-        <button
-            class="custody-oversight-tab {{ $key === 'all' ? 'is-active' : '' }}"
-            type="button"
-            data-custody-tab="{{ $key }}"
-            aria-pressed="{{ $key === 'all' ? 'true' : 'false' }}"
-        >
-            <span class="custody-oversight-tab-icon" aria-hidden="true">
-                <x-icon :name="$oversightTabIcons[$key] ?? 'dashboard'" size="19" />
-            </span>
-
-            <span class="custody-oversight-tab-label">{{ $label }}</span>
-
-            <span class="custody-oversight-tab-count">{{ $oversightCounts[$key] ?? 0 }}</span>
-        </button>
-    @endforeach
-</nav>
-
 <div class="custody-oversight-filters">
     <label class="custody-oversight-search">
         Search
@@ -29,6 +10,15 @@
                 autocomplete="off"
             >
         </span>
+    </label>
+
+    <label>
+        Status
+        <select id="custody-oversight-status">
+            @foreach($oversightTabs as $key => $label)
+                <option value="{{ $key }}">{{ $label }} ({{ $oversightCounts[$key] ?? 0 }})</option>
+            @endforeach
+        </select>
     </label>
 
     <label>

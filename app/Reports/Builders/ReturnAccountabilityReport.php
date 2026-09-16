@@ -9,67 +9,146 @@ use App\Reports\ReportBuilder;
 use App\Reports\ReportCatalogue;
 use App\Reports\ReportDataset;
 use App\Reports\ReportFilters;
+use App\Services\ReturnMetricsService;
 use App\Support\OrganizationalStructure;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Return & Accountability Report.
  *
- * Consolidates what were three separate reports — Custody/Return's return
- * half, Overdue, and Accountability/Incident — into one detailed record per
- * custody transaction.
- *
- * One row per custody transaction is the rule that keeps the consolidation
- * honest. A transaction that is both overdue and carrying an open incident
- * previously appeared in two reports and would double-count here; instead it
- * is one row whose return status and accountability columns both say so.
- *
- * Return state is derived from the custody lines and return transactions,
- * which are authoritative once custody exists. Nothing is inferred from the
- * borrowing request's approval status.
+ * Return classification is delegated to ReturnMetricsService, the same source
+ * Analytics uses. A completed-return filter therefore means a physical return
+ * completed inside the selected reporting period, not merely a custody row
+ * that happened to be created or closed around that period.
  */
 class ReturnAccountabilityReport implements ReportBuilder
 {
+    public function __construct(private readonly ReturnMetricsService $returnMetrics) {}
+
     public function build(ReportFilters $filters): ReportDataset
     {
         $from = $filters->from;
         $to = $filters->to;
+        $division = $filters->get('division');
+        $unit = $filters->get('unit');
+        $returnStatus = $filters->get('return_status');
+        $openAccountability = $filters->get('open_accountability');
+        $borrower = $filters->get('borrower');
+
+        $completedFilter = in_array(
+            $returnStatus,
+            ['COMPLETED', ReturnMetricsService::RETURNED_ON_TIME, ReturnMetricsService::RETURNED_LATE],
+            true
+        );
 
         /*
-         * A transaction belongs in the period if its custody lifecycle
-         * touched it, or if a return, overdue case or incident was recorded
-         * against it inside the period. Accountability opened late on an
-         * older borrowing must still be reportable.
+         * Current overdue / on-custody are intentionally present-tense and
+         * must not disappear just because the original request predates the
+         * chosen reporting period. Completed-return filters, by contrast,
+         * follow the physical completion event inside the period.
          */
-        $custodies = CustodyTransaction::query()
+        $query = CustodyTransaction::query()
             ->with([
                 'borrower',
                 'request.currentVersion',
-                'lines',
+                'requestVersion',
+                'lines.requestItem.inventoryItem',
                 'returns',
+                'laundryJob',
                 'overdueCase',
+                'incidents',
             ])
-            ->where(function ($query) use ($from, $to): void {
-                $query->whereBetween('created_at', [$from, $to])
+            ->when($borrower !== null, fn ($q) => $q->where('borrower_user_id', (int) $borrower));
+
+        if ($completedFilter) {
+            $query->whereNotNull('released_at')
+                ->where(function ($events) use ($from, $to): void {
+                    $events->whereBetween('closed_at', [$from, $to])
+                        ->orWhereHas(
+                            'returns',
+                            fn ($returns) => $returns->whereBetween('received_at', [$from, $to])
+                        )
+                        ->orWhereHas(
+                            'laundryJob',
+                            fn ($laundry) => $laundry->whereBetween('worker_received_at', [$from, $to])
+                        );
+                });
+        } elseif (in_array($returnStatus, [ReturnMetricsService::CURRENTLY_OVERDUE, ReturnMetricsService::ON_CUSTODY], true)) {
+            $query->whereNotNull('released_at');
+        } elseif ($openAccountability === 'OPEN') {
+            /* Event-period filtering is applied after the open-case ids are built. */
+        } else {
+            $query->where(function ($activity) use ($from, $to): void {
+                $activity->whereBetween('created_at', [$from, $to])
                     ->orWhereBetween('released_at', [$from, $to])
                     ->orWhereBetween('closed_at', [$from, $to])
                     ->orWhereHas('returns', fn ($returns) => $returns->whereBetween('received_at', [$from, $to]))
-                    ->orWhereHas('overdueCase', fn ($cases) => $cases->whereBetween('created_at', [$from, $to]));
-            })
-            ->latest('created_at')
-            ->get();
+                    ->orWhereHas('laundryJob', fn ($laundry) => $laundry->whereBetween('worker_received_at', [$from, $to]))
+                    ->orWhereHas('overdueCase', fn ($cases) => $cases->whereBetween('created_at', [$from, $to]))
+                    ->orWhereHas('incidents', fn ($incidents) => $incidents->whereBetween('reported_at', [$from, $to]));
+            });
+        }
+
+        $custodies = $query->latest('created_at')->get();
 
         /*
-         * Incidents and confirmed violations are keyed by custody id in one
-         * query each rather than per row, so the report stays off the N+1
-         * path however many transactions the period holds.
+         * Accountability opened in this reporting period. This is the same
+         * one-case-per-custody population used by the Analytics KPI.
          */
-        $custodyIds = $custodies->pluck('id');
+        $incidentInPeriod = Incident::query()
+            ->whereBetween('reported_at', [$from, $to])
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->pluck('custody_transaction_id');
 
-        $incidents = Incident::query()
-            ->whereIn('custody_transaction_id', $custodyIds)
-            ->get()
-            ->groupBy('custody_transaction_id');
+        $lateInPeriod = DB::table('overdue_cases')
+            ->whereNotNull('actual_return_date')
+            ->whereBetween('actual_return_date', [
+                Carbon::parse($from)->toDateString(),
+                Carbon::parse($to)->toDateString(),
+            ])
+            ->where('status', '!=', 'RESOLVED')
+            ->pluck('custody_transaction_id');
+
+        $billingInPeriod = DB::table('billing_statements')
+            ->join('billing_lines', 'billing_lines.billing_statement_id', '=', 'billing_statements.id')
+            ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
+            ->whereBetween('billing_statements.issued_at', [$from, $to])
+            ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
+            ->pluck('penalties.custody_transaction_id');
+
+        $accountabilityInPeriodIds = $incidentInPeriod
+            ->concat($lateInPeriod)
+            ->concat($billingInPeriod)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($openAccountability === 'OPEN') {
+            $missing = $accountabilityInPeriodIds->diff($custodies->pluck('id'));
+
+            if ($missing->isNotEmpty()) {
+                $custodies = $custodies->concat(
+                    CustodyTransaction::query()
+                        ->with([
+                            'borrower',
+                            'request.currentVersion',
+                            'requestVersion',
+                            'lines.requestItem.inventoryItem',
+                            'returns',
+                            'laundryJob',
+                            'overdueCase',
+                            'incidents',
+                        ])
+                        ->when($borrower !== null, fn ($q) => $q->where('borrower_user_id', (int) $borrower))
+                        ->whereIn('id', $missing)
+                        ->get()
+                );
+            }
+        }
+
+        $custodyIds = $custodies->pluck('id')->unique();
 
         $violations = BorrowerViolation::query()
             ->where('status', 'CONFIRMED')
@@ -77,75 +156,63 @@ class ReturnAccountabilityReport implements ReportBuilder
             ->get()
             ->groupBy('custody_transaction_id');
 
-        $incidentOnlyCustodies = Incident::query()
-            ->whereBetween('reported_at', [$from, $to])
-            ->whereNotIn('custody_transaction_id', $custodyIds)
-            ->pluck('custody_transaction_id')
+        /* Current open billing is part of the live accountability state. */
+        $openBillingIds = DB::table('billing_statements')
+            ->join('billing_lines', 'billing_lines.billing_statement_id', '=', 'billing_statements.id')
+            ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
+            ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
+            ->whereIn('penalties.custody_transaction_id', $custodyIds)
+            ->pluck('penalties.custody_transaction_id')
+            ->filter()
             ->unique();
-
-        if ($incidentOnlyCustodies->isNotEmpty()) {
-            $extra = CustodyTransaction::query()
-                ->with(['borrower', 'request.currentVersion', 'lines', 'returns', 'overdueCase'])
-                ->whereIn('id', $incidentOnlyCustodies)
-                ->get();
-
-            $custodies = $custodies->concat($extra);
-
-            $incidents = Incident::query()
-                ->whereIn('custody_transaction_id', $custodies->pluck('id'))
-                ->get()
-                ->groupBy('custody_transaction_id');
-        }
-
-        $division = $filters->get('division');
-        $unit = $filters->get('unit');
-        $returnStatus = $filters->get('return_status');
-        $openAccountability = $filters->get('open_accountability');
 
         $rows = $custodies
             ->unique('id')
-            ->map(function (CustodyTransaction $custody) use ($incidents, $violations): array {
-                $version = $custody->request?->currentVersion;
+            ->map(function (CustodyTransaction $custody) use (
+                $violations,
+                $openBillingIds,
+                $accountabilityInPeriodIds
+            ): array {
+                /* Immutable custody snapshot first; legacy rows fall back. */
+                $version = $custody->requestVersion ?: $custody->request?->currentVersion;
+                $quantities = $this->returnMetrics->quantities($custody);
+                $returnedAt = $this->returnMetrics->completionMoment($custody);
+                $due = $this->returnMetrics->expectedReturnDate($custody);
+                $returnState = $this->returnMetrics->state($custody);
 
-                $released = (float) $custody->lines->sum(
-                    fn ($line): float => (float) $line->actual_released_quantity
-                );
-
-                $returned = (float) $custody->lines->sum(
-                    fn ($line): float => (float) $line->returned_quantity
-                );
-
-                $outstanding = max(0.0, $released - $returned);
-
-                $due = $version?->return_date
-                    ?: ($version?->return_due_at ?: $custody->due_at);
-
-                $lastReturnAt = $custody->returns
-                    ->filter(fn ($return) => $return->received_at !== null)
-                    ->max('received_at');
-
-                $custodyIncidents = $incidents->get($custody->id, collect());
-                $custodyViolations = $violations->get($custody->id, collect());
-
+                $custodyIncidents = $custody->incidents;
                 $openIncidents = $custodyIncidents->filter(
-                    fn ($incident): bool => $incident->status !== 'RESOLVED'
+                    fn ($incident): bool => ! in_array(
+                        (string) $incident->status,
+                        ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'],
+                        true
+                    )
                 );
+
+                $overdueOpen = $custody->overdueCase
+                    && (string) $custody->overdueCase->status !== 'RESOLVED';
 
                 $accountabilityOpen = $openIncidents->isNotEmpty()
-                    || in_array($custody->status, ['INCIDENT_OPEN', 'OBLIGATION_OPEN'], true);
+                    || $overdueOpen
+                    || $openBillingIds->contains($custody->id)
+                    || in_array((string) $custody->status, ['INCIDENT_OPEN', 'OBLIGATION_OPEN'], true);
 
-                $returnState = $this->returnState($custody, $outstanding, $due, $lastReturnAt);
+                $custodyViolations = $violations->get($custody->id, collect());
 
                 return [
                     '_return_state' => $returnState,
+                    '_borrower_user_id' => (int) $custody->borrower_user_id,
+                    '_completed_in_period' => false,
                     '_accountability_open' => $accountabilityOpen,
+                    '_accountability_in_period' => $accountabilityInPeriodIds->contains($custody->id),
                     '_division_code' => (string) ($version?->division_code ?? ''),
                     '_office_unit' => (string) ($version?->office_unit ?? ''),
                     '_link' => route('custody.show', $custody),
+                    '_returned_at_raw' => $returnedAt,
                     '_tone_return_status' => match ($returnState) {
-                        'RETURNED_ON_TIME' => 'positive',
-                        'RETURNED_LATE' => 'attention',
-                        'CURRENTLY_OVERDUE' => 'critical',
+                        ReturnMetricsService::RETURNED_ON_TIME => 'positive',
+                        ReturnMetricsService::RETURNED_LATE => 'attention',
+                        ReturnMetricsService::CURRENTLY_OVERDUE => 'critical',
                         default => 'progress',
                     },
                     '_tone_accountability' => $accountabilityOpen ? 'critical' : 'neutral',
@@ -159,11 +226,11 @@ class ReturnAccountabilityReport implements ReportBuilder
                     'office_unit' => (string) ($version?->office_unit ?? ''),
                     'released_at' => $this->dateTime($custody->released_at),
                     'due_at' => $this->date($due),
-                    'last_return_at' => $this->dateTime($lastReturnAt),
+                    'last_return_at' => $this->dateTime($returnedAt),
                     'return_status' => $this->returnLabel($returnState),
-                    'released_quantity' => $this->number($released),
-                    'returned_quantity' => $this->number($returned),
-                    'outstanding_quantity' => $this->number($outstanding),
+                    'released_quantity' => $this->number($quantities['released']),
+                    'returned_quantity' => $this->number($quantities['returned']),
+                    'outstanding_quantity' => $this->number($quantities['outstanding']),
                     'overdue_started_at' => $this->dateTime($custody->overdueCase?->overdue_started_at),
                     'overdue_status' => (string) ($custody->overdueCase?->status ?? ''),
                     'incidents' => (string) $custodyIncidents->count(),
@@ -179,6 +246,16 @@ class ReturnAccountabilityReport implements ReportBuilder
                         ->implode('; '),
                 ];
             })
+            ->map(function (array $row) use ($from, $to): array {
+                $returnedAt = $row['_returned_at_raw'];
+                $row['_completed_in_period'] = $returnedAt !== null
+                    && Carbon::parse($returnedAt)->startOfDay()->betweenIncluded(
+                        Carbon::parse($from)->startOfDay(),
+                        Carbon::parse($to)->endOfDay()
+                    );
+
+                return $row;
+            })
             ->when(
                 $division !== null,
                 fn (Collection $rows): Collection => $rows->filter(
@@ -193,14 +270,33 @@ class ReturnAccountabilityReport implements ReportBuilder
             )
             ->when(
                 $returnStatus !== null,
-                fn (Collection $rows): Collection => $rows->filter(
-                    fn (array $row): bool => $row['_return_state'] === $returnStatus
-                )
+                fn (Collection $rows): Collection => $rows->filter(function (array $row) use ($returnStatus): bool {
+                    if ($returnStatus === 'COMPLETED') {
+                        return $row['_completed_in_period']
+                            && in_array(
+                                $row['_return_state'],
+                                [ReturnMetricsService::RETURNED_ON_TIME, ReturnMetricsService::RETURNED_LATE],
+                                true
+                            );
+                    }
+
+                    if (in_array(
+                        $returnStatus,
+                        [ReturnMetricsService::RETURNED_ON_TIME, ReturnMetricsService::RETURNED_LATE],
+                        true
+                    )) {
+                        return $row['_completed_in_period'] && $row['_return_state'] === $returnStatus;
+                    }
+
+                    return $row['_return_state'] === $returnStatus;
+                })
             )
             ->when(
                 $openAccountability !== null,
                 fn (Collection $rows): Collection => $rows->filter(
-                    fn (array $row): bool => $row['_accountability_open'] === ($openAccountability === 'OPEN')
+                    fn (array $row): bool => $openAccountability === 'OPEN'
+                        ? ($row['_accountability_open'] && $row['_accountability_in_period'])
+                        : ! $row['_accountability_open']
                 )
             )
             ->values();
@@ -232,53 +328,22 @@ class ReturnAccountabilityReport implements ReportBuilder
             rows: $rows,
             summary: [
                 'Transactions' => $rows->count(),
-                'Returned on time' => $rows->where('_return_state', 'RETURNED_ON_TIME')->count(),
-                'Returned late' => $rows->where('_return_state', 'RETURNED_LATE')->count(),
-                'Currently overdue' => $rows->where('_return_state', 'CURRENTLY_OVERDUE')->count(),
-                'Still on custody' => $rows->where('_return_state', 'ON_CUSTODY')->count(),
+                'Returned on time' => $rows->where('_return_state', ReturnMetricsService::RETURNED_ON_TIME)->count(),
+                'Returned late' => $rows->where('_return_state', ReturnMetricsService::RETURNED_LATE)->count(),
+                'Currently overdue' => $rows->where('_return_state', ReturnMetricsService::CURRENTLY_OVERDUE)->count(),
+                'Still on custody' => $rows->where('_return_state', ReturnMetricsService::ON_CUSTODY)->count(),
                 'Open accountability' => $rows->where('_accountability_open', true)->count(),
             ],
         );
     }
 
-    /**
-     * Return state for one transaction.
-     *
-     * Fully returned decides on-time versus late by comparing the last
-     * physical receipt against the expected return date. Anything still held
-     * is overdue only once that date has actually passed.
-     */
-    private function returnState(
-        CustodyTransaction $custody,
-        float $outstanding,
-        mixed $due,
-        mixed $lastReturnAt
-    ): string {
-        $fullyReturned = $outstanding <= 0.0
-            && ($lastReturnAt !== null || $custody->closed_at !== null);
-
-        if ($fullyReturned) {
-            if ($due && $lastReturnAt && $lastReturnAt->greaterThan($due)) {
-                return 'RETURNED_LATE';
-            }
-
-            return 'RETURNED_ON_TIME';
-        }
-
-        if ($custody->status === 'OVERDUE' || ($due && now()->greaterThan($due))) {
-            return 'CURRENTLY_OVERDUE';
-        }
-
-        return 'ON_CUSTODY';
-    }
-
     private function returnLabel(string $state): string
     {
         return match ($state) {
-            'RETURNED_ON_TIME' => 'Returned on time',
-            'RETURNED_LATE' => 'Returned late',
-            'CURRENTLY_OVERDUE' => 'Currently overdue',
-            'ON_CUSTODY' => 'Still on custody',
+            ReturnMetricsService::RETURNED_ON_TIME => 'Returned on time',
+            ReturnMetricsService::RETURNED_LATE => 'Returned late',
+            ReturnMetricsService::CURRENTLY_OVERDUE => 'Currently overdue',
+            ReturnMetricsService::ON_CUSTODY => 'Still on custody',
             default => str($state)->replace('_', ' ')->title()->toString(),
         };
     }
@@ -290,11 +355,11 @@ class ReturnAccountabilityReport implements ReportBuilder
 
     private function date(mixed $value): string
     {
-        return $value ? $value->format('d M Y') : '';
+        return $value ? Carbon::parse($value)->format('d M Y') : '';
     }
 
     private function dateTime(mixed $value): string
     {
-        return $value ? $value->format('d M Y, g:i A') : '';
+        return $value ? Carbon::parse($value)->format('d M Y, g:i A') : '';
     }
 }

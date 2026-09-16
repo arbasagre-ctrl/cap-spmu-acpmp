@@ -10,9 +10,9 @@
 
 <nav class="report-pagination" aria-label="Report record pages">
     @if($paginator->onFirstPage())
-        <span class="report-page-link" aria-disabled="true">Previous</span>
+        <span class="report-page-link" aria-disabled="true" style="gap:5px"><x-icon name="arrow-left" size="14" /><span>Previous</span></span>
     @else
-        <a class="report-page-link" href="{{ $paginator->previousPageUrl() }}" rel="prev">Previous</a>
+        <a class="report-page-link" style="gap:5px" href="{{ $paginator->previousPageUrl() }}" rel="prev"><x-icon name="arrow-left" size="14" /><span>Previous</span></a>
     @endif
 
     @foreach($elements as $element)
@@ -32,8 +32,8 @@
     @endforeach
 
     @if($paginator->hasMorePages())
-        <a class="report-page-link" href="{{ $paginator->nextPageUrl() }}" rel="next">Next</a>
+        <a class="report-page-link" style="gap:5px" href="{{ $paginator->nextPageUrl() }}" rel="next"><span>Next</span><x-icon name="arrow-right" size="14" /></a>
     @else
-        <span class="report-page-link" aria-disabled="true">Next</span>
+        <span class="report-page-link" aria-disabled="true" style="gap:5px"><span>Next</span><x-icon name="arrow-right" size="14" /></span>
     @endif
 </nav>

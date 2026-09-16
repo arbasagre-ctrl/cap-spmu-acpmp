@@ -1,21 +1,11 @@
-<section id="my-requests-results" class="mr-results-panel" aria-label="Borrowing request results">
-    <div class="mr-listing-bar">
-        <p class="mr-result-count" data-request-count data-total="{{ $requests->total() }}" role="status" aria-live="polite">
+<section id="my-requests-results" class="mr-results" aria-label="Borrowing request results">
+    <div class="mr-results-head">
+        <strong class="mr-result-count" data-request-count data-total="{{ $requests->total() }}" role="status" aria-live="polite">
             {{ $requests->total() }} {{ $requests->total() === 1 ? 'request found' : 'requests found' }}
-        </p>
-
-        <label class="mr-sort">
-            <x-icon name="sort" size="19" />
-            <span>Sort by:</span>
-            <select id="request-sort" aria-label="Sort requests">
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-            </select>
-            <x-icon name="chevron-down" class="mr-sort-chevron" size="17" />
-        </label>
+        </strong>
     </div>
 
-    <div class="mr-list" id="borrower-request-list" aria-label="My borrowing requests">
+    <div class="operational-record-list mr-list" id="borrower-request-list" aria-label="My borrowing requests">
         @foreach($requests as $request)
             @include('requests.partials.my-requests-row', ['request' => $request])
         @endforeach
@@ -38,4 +28,3 @@
         {{ $requests->onEachSide(1)->links('requests.partials.my-requests-pagination') }}
     </div>
 </section>
-

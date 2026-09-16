@@ -11,6 +11,7 @@ use App\Services\AuditService;
 use App\Services\CustodyService;
 use App\Services\NotificationService;
 use App\Services\OperationalCalendarService;
+use App\Services\RequestWorkflowService;
 use Illuminate\Console\Command;
 
 class ProcessOperationalDeadlines extends Command
@@ -23,8 +24,15 @@ class ProcessOperationalDeadlines extends Command
         CustodyService $custodyService,
         NotificationService $notifications,
         AuditService $audit,
-        OperationalCalendarService $operationalCalendar
+        OperationalCalendarService $operationalCalendar,
+        RequestWorkflowService $requestWorkflow
     ): int {
+        /*
+         * Finalize only missed-pickup cases that have reached their cancellation
+         * cutoff BEFORE creating a new pickup-expired notice. This prevents a
+         * missed rescheduled pickup from receiving another reschedule cycle.
+         */
+        $pickupAutoCancelled = $requestWorkflow->autoCancelUnclaimedMissedPickups();
         $pickupExpired = $custodyService->expirePickupWindows();
         $legacyLaundryReconciled = $custodyService->reconcileLegacyLaundryAvailability();
         $issuanceLocked = 0;
@@ -169,7 +177,7 @@ class ProcessOperationalDeadlines extends Command
                         }
 
                         BorrowerRestriction::query()
-                            ->where('borrower_user_id', $custody->borrower_user_id)
+                            ->forCustody($custody)
                             ->whereIn('restriction_type', ['PENDING_RETURN', 'OVERDUE_RETURN'])
                             ->where('status', 'ACTIVE')
                             ->update([
@@ -226,6 +234,7 @@ class ProcessOperationalDeadlines extends Command
             BorrowerRestriction::query()->updateOrCreate(
                 [
                     'borrower_user_id' => $custody->borrower_user_id,
+                    'custody_transaction_id' => $custody->id,
                     'restriction_type' => 'PENDING_RETURN',
                     'status' => 'ACTIVE',
                 ],
@@ -236,14 +245,24 @@ class ProcessOperationalDeadlines extends Command
                 ]
             );
 
-            if ($isNew) {
+            $overdueNoticeAlreadySent = NotificationEvent::query()
+                ->where('event_code', 'BORROWING_OVERDUE')
+                ->where('source_type', $custody->getMorphClass())
+                ->where('source_id', $custody->id)
+                ->exists();
+
+            if (! $overdueNoticeAlreadySent) {
                 $notifications->send(
                     'BORROWING_OVERDUE',
                     collect([$custody->borrower]),
                     "Custody {$custody->custody_no} is late by {$daysLate} calendar day(s). Please return the outstanding property to SPMU.",
-                    $custody
+                    $custody,
+                    ['SYSTEM', 'EMAIL', 'SMS'],
+                    ['SYSTEM', 'EMAIL']
                 );
+            }
 
+            if ($isNew) {
                 $audit->record(
                     'CUSTODY_MARKED_OVERDUE',
                     $case,
@@ -263,6 +282,7 @@ class ProcessOperationalDeadlines extends Command
 
         $this->info(
             "Processed {$pickupExpired} pickup expiration(s), "
+            ."{$pickupAutoCancelled} unclaimed pickup auto-cancellation(s), "
             ."{$legacyLaundryReconciled} legacy Laundry availability reconciliation(s), "
             ."{$issuanceLocked} issuance auto-lock(s), "
             ."{$dueSoon} due reminder(s), "

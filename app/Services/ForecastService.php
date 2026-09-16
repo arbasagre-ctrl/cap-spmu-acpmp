@@ -324,22 +324,21 @@ class ForecastService
     /* B - Division and unit demand                                        */
     /* ------------------------------------------------------------------ */
 
-    /**
-     * Expected volume per canonical division.
-     *
-     * Research, Innovation and Collaboration is forecast on its own; it is a
-     * peer division, not part of Academic or Administrative.
+        /**
+     * Expected volume per canonical division, scoped by the active Analytics
+     * filters when one is selected.
      *
      * @return array<string, mixed>
      */
     public function divisionDemand(
         AnalyticsService $analytics,
         CarbonInterface $from,
-        CarbonInterface $to
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
         $windows = $this->historyWindows($from, $to);
-        $history = $this->groupedHistory($windows, 'request_versions.division_code');
-        $totals = array_map(fn (array $row): int => array_sum($row), array_values($history));
+        $history = $this->groupedHistory($windows, 'request_versions.division_code', $division, $unit);
 
         if (! $this->hasEnoughHistory($windows, $this->periodTotals($history, count($windows)))) {
             return ['available' => false, 'groups' => []];
@@ -348,13 +347,17 @@ class ForecastService
         $groups = [];
 
         foreach (OrganizationalStructure::DIVISIONS as $code => $label) {
+            if ($division !== null && $code !== $division) {
+                continue;
+            }
+
             $counts = $this->seriesFor($history, $code, count($windows));
 
             $groups[] = [
                 'code' => $code,
                 'label' => $label,
                 'short_label' => OrganizationalStructure::shortLabel($code),
-                'current' => $analytics->requestScope($from, $to, $code, null)
+                'current' => $analytics->requestScope($from, $to, $code, $unit)
                     ->count('borrowing_requests.id'),
                 'forecast' => $this->round($this->weightedAverage($counts)),
             ];
@@ -367,25 +370,27 @@ class ForecastService
             'available' => true,
             'groups' => $groups,
             'leader' => $hasSignal ? $leader : null,
-            'summary' => $hasSignal
+            'summary' => $hasSignal && $leader
                 ? $leader['label'].' units are expected to remain the primary borrowing group, with about '
                     .$this->requestCount($leader['forecast']).'.'
                 : 'No division is expected to record borrowing activity next period.',
         ];
     }
 
-    /**
-     * The unit expected to borrow most, when its own history supports it.
+        /**
+     * The unit expected to borrow most, within the active Analytics scope.
      *
      * @return array<string, mixed>
      */
     public function unitDemand(
         AnalyticsService $analytics,
         CarbonInterface $from,
-        CarbonInterface $to
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
         $windows = $this->historyWindows($from, $to);
-        $history = $this->groupedHistory($windows, 'request_versions.office_unit');
+        $history = $this->groupedHistory($windows, 'request_versions.office_unit', $division, $unit);
 
         if (! $this->hasEnoughHistory($windows, $this->periodTotals($history, count($windows)))) {
             return ['available' => false, 'reason' => 'Insufficient history'];
@@ -393,18 +398,17 @@ class ForecastService
 
         $units = [];
 
-        foreach ($history as $unit => $byPeriod) {
-            $counts = $this->seriesFor($history, (string) $unit, count($windows));
+        foreach ($history as $unitName => $byPeriod) {
+            $counts = $this->seriesFor($history, (string) $unitName, count($windows));
 
-            /* A unit seen once or twice is not a pattern worth predicting. */
             if (array_sum($counts) < self::UNIT_MINIMUM_OBSERVATIONS) {
                 continue;
             }
 
             $units[] = [
-                'unit' => (string) $unit,
+                'unit' => (string) $unitName,
                 'observations' => array_sum($counts),
-                'current' => $analytics->requestScope($from, $to, null, (string) $unit)
+                'current' => $analytics->requestScope($from, $to, $division, (string) $unitName)
                     ->count('borrowing_requests.id'),
                 'forecast' => $this->round($this->weightedAverage($counts)),
             ];
@@ -425,18 +429,25 @@ class ForecastService
         ];
     }
 
-    /**
+        /**
      * Request counts per history period, grouped by one request-version column.
-     *
-     * One grouped query per history period - a fixed number, independent of
-     * how many units or divisions exist.
+     * Filing follows submitted_at (created_at only for legacy rows) and uses
+     * the same activity exclusions as AnalyticsService.
      *
      * @param  list<array{0: Carbon, 1: Carbon}>  $windows
      * @return array<string, array<int, int>>
      */
-    private function groupedHistory(array $windows, string $column): array
-    {
+    private function groupedHistory(
+        array $windows,
+        string $column,
+        ?string $division = null,
+        ?string $unit = null
+    ): array {
         $history = [];
+        $excluded = array_map(
+            static fn ($status): string => $status->value,
+            AnalyticsService::excludedFromActivity()
+        );
 
         foreach ($windows as $index => [$start, $end]) {
             $rows = DB::table('borrowing_requests')
@@ -444,7 +455,16 @@ class ForecastService
                     $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
                         ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
                 })
-                ->whereBetween('borrowing_requests.created_at', [$start, $end])
+                ->where(function ($scope) use ($start, $end): void {
+                    $scope->whereBetween('request_versions.submitted_at', [$start, $end])
+                        ->orWhere(function ($legacy) use ($start, $end): void {
+                            $legacy->whereNull('request_versions.submitted_at')
+                                ->whereBetween('borrowing_requests.created_at', [$start, $end]);
+                        });
+                })
+                ->whereNotIn('borrowing_requests.status', $excluded)
+                ->when($division !== null, fn ($query) => $query->where('request_versions.division_code', $division))
+                ->when($unit !== null, fn ($query) => $query->where('request_versions.office_unit', $unit))
                 ->groupBy($column)
                 ->select($column.' AS bucket')
                 ->selectRaw('COUNT(borrowing_requests.id) AS total')
@@ -498,47 +518,54 @@ class ForecastService
     /* C - Equipment demand against expected availability                  */
     /* ------------------------------------------------------------------ */
 
-    /**
-     * Expected demand per equipment type, compared with what is expected to
-     * be free during the forecast window.
-     *
-     * Expected availability is not recalculated here. It is
-     * InventoryService::availability() asked about the forecast window, which
-     * is the same authoritative rule the Inventory module uses:
-     *
-     *     serviceable total
-     *   - allocations overlapping the forecast window   (future reservations)
-     *   - custody still out during the forecast window  (so custody due back
-     *                                                    before it counts as
-     *                                                    returned)
-     *   - linen still under Laundry Operations
-     *   - units held by an incident
-     *
-     * Nothing is double counted because a unit can only be in one of those
-     * states, and linen is excluded until Laundry Operations releases it.
+        /**
+     * Expected demand per equipment type, compared with expected availability.
+     * Historical demand uses the same filed-request event and activity scope as
+     * Analytics, including the current Division / Office filters.
      *
      * @return array<string, mixed>
      */
     public function equipment(
         CarbonInterface $from,
         CarbonInterface $to,
-        int $limit = self::EQUIPMENT_LIMIT
+        int $limit = self::EQUIPMENT_LIMIT,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
         $windows = $this->historyWindows($from, $to);
         [$forecastFrom, $forecastTo] = $this->forecastWindow($from, $to);
+        $excluded = array_map(
+            static fn ($status): string => $status->value,
+            AnalyticsService::excludedFromActivity()
+        );
 
         $history = [];
         $names = [];
         $periodTotals = array_fill(0, count($windows), 0);
 
         foreach ($windows as $index => [$start, $end]) {
-            $rows = DB::table('request_items')
-                ->join('request_versions', 'request_versions.id', '=', 'request_items.request_version_id')
+            $base = DB::table('request_versions')
                 ->join('borrowing_requests', function ($join): void {
                     $join->on('borrowing_requests.id', '=', 'request_versions.request_id')
                         ->on('borrowing_requests.current_version_no', '=', 'request_versions.version_no');
                 })
-                ->whereBetween('borrowing_requests.created_at', [$start, $end])
+                ->where(function ($scope) use ($start, $end): void {
+                    $scope->whereBetween('request_versions.submitted_at', [$start, $end])
+                        ->orWhere(function ($legacy) use ($start, $end): void {
+                            $legacy->whereNull('request_versions.submitted_at')
+                                ->whereBetween('borrowing_requests.created_at', [$start, $end]);
+                        });
+                })
+                ->whereNotIn('borrowing_requests.status', $excluded)
+                ->when($division !== null, fn ($query) => $query->where('request_versions.division_code', $division))
+                ->when($unit !== null, fn ($query) => $query->where('request_versions.office_unit', $unit));
+
+            $periodTotals[$index] = (int) (clone $base)
+                ->distinct()
+                ->count('borrowing_requests.id');
+
+            $rows = (clone $base)
+                ->join('request_items', 'request_items.request_version_id', '=', 'request_versions.id')
                 ->groupBy('request_items.inventory_item_id', 'request_items.description_snapshot')
                 ->select(
                     'request_items.inventory_item_id AS item_id',
@@ -550,11 +577,10 @@ class ForecastService
             foreach ($rows as $row) {
                 $history[$row->item_id][$index] = (float) $row->quantity;
                 $names[$row->item_id] = $row->name;
-                $periodTotals[$index] += (float) $row->quantity;
             }
         }
 
-        if (! $this->hasEnoughHistory($windows, array_map('intval', $periodTotals))) {
+        if (! $this->hasEnoughHistory($windows, $periodTotals)) {
             return [
                 'available' => false,
                 'items' => [],
@@ -569,11 +595,9 @@ class ForecastService
                 $this->weightedAverage($this->seriesFor($history, (string) $itemId, count($windows)))
             );
 
-            if ($demand <= 0) {
-                continue;
+            if ($demand > 0) {
+                $forecasts[$itemId] = $demand;
             }
-
-            $forecasts[$itemId] = $demand;
         }
 
         if ($forecasts === []) {
@@ -588,7 +612,6 @@ class ForecastService
         arsort($forecasts);
         $forecasts = array_slice($forecasts, 0, $limit, true);
 
-        /* One query for the items actually being reported, not one per row. */
         $items = InventoryItem::query()
             ->whereIn('id', array_keys($forecasts))
             ->get()
@@ -660,21 +683,20 @@ class ForecastService
     /* D - Expected busy period                                            */
     /* ------------------------------------------------------------------ */
 
-    /**
-     * How the forecast volume is expected to fall across the next period.
-     *
-     * The shape comes from history: the average share each slice of a period
-     * has carried before is applied to the forecast total. Slices are weeks
-     * for a month-length period and days for a week-length one.
+        /**
+     * How forecast volume is expected to fall across the next period.
+     * Historical shape follows filed-request timestamps and the active filters.
      *
      * @return array<string, mixed>
      */
     public function busyPeriod(
         AnalyticsService $analytics,
         CarbonInterface $from,
-        CarbonInterface $to
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null
     ): array {
-        $demand = $this->demand($analytics, $from, $to);
+        $demand = $this->demand($analytics, $from, $to, $division, $unit);
 
         if (! ($demand['available'] ?? false)) {
             return ['available' => false];
@@ -692,13 +714,13 @@ class ForecastService
         $shape = array_fill(0, $slices, 0.0);
 
         foreach ($windows as [$start, $end]) {
-            $rows = DB::table('borrowing_requests')
-                ->whereBetween('created_at', [$start, $end])
-                ->pluck('created_at');
+            $rows = $analytics->requestScope($start, $end, $division, $unit)
+                ->selectRaw('COALESCE(request_versions.submitted_at, borrowing_requests.created_at) AS filed_at')
+                ->get();
 
-            foreach ($rows as $createdAt) {
+            foreach ($rows as $row) {
                 $offset = Carbon::parse($start)->startOfDay()
-                    ->diffInDays(Carbon::parse($createdAt)->startOfDay());
+                    ->diffInDays(Carbon::parse($row->filed_at)->startOfDay());
 
                 $slice = min($slices - 1, max(0, (int) floor($offset / $sliceDays)));
                 $shape[$slice]++;
@@ -719,9 +741,7 @@ class ForecastService
             $end = $start->copy()->addDays($sliceDays - 1);
 
             $buckets[] = [
-                'label' => $sliceDays === 7
-                    ? 'Week '.($index + 1)
-                    : $start->format('D d M'),
+                'label' => $sliceDays === 7 ? 'Week '.($index + 1) : $start->format('D d M'),
                 'range' => $start->format('d M').' – '.$end->format('d M'),
                 'expected' => $this->round($demand['forecast'] * ($observed / $shapeTotal)),
             ];
@@ -742,8 +762,7 @@ class ForecastService
             'buckets' => $buckets,
             'busiest' => $peak > 0 ? $busiest : null,
             'summary' => $peak > 0 && $busiest
-                ? 'Higher borrowing activity is expected during '.$busiest['label']
-                    .' ('.$busiest['range'].').'
+                ? 'Higher borrowing activity is expected during '.$busiest['label'].' ('.$busiest['range'].').'
                 : 'Borrowing activity is expected to stay even across the next period.',
         ];
     }

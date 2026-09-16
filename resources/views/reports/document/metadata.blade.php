@@ -7,6 +7,7 @@
     */
     $meta = $dataset->meta;
     $appliedFilters = $meta['applied_filters'] ?? [];
+    $scopeRows = \App\Reports\ReportScopeFormatter::rows($appliedFilters);
     $options = $options ?? [];
 @endphp
 
@@ -23,14 +24,12 @@
         <dd>{{ $meta['generated_long'] ?? ($meta['generated_at'] ?? '') }}</dd>
     </div>
 
-    @if(($options['filters'] ?? true) && ! empty($appliedFilters))
-        <div>
-            <dt>Applied Filters</dt>
-            <dd>{{ implode('; ', array_map(
-                fn ($label, $value): string => $label.': '.$value,
-                array_keys($appliedFilters),
-                array_values($appliedFilters)
-            )) }}</dd>
-        </div>
+    @if(($options['filters'] ?? true) && ! empty($scopeRows))
+        @foreach($scopeRows as $scope)
+            <div>
+                <dt>{{ $scope['label'] }}</dt>
+                <dd>{{ $scope['value'] }}</dd>
+            </div>
+        @endforeach
     @endif
 </dl>

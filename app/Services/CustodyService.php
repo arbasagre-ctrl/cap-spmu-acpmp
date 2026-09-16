@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\AccessClassification;
 use App\Enums\UserRole;
+use App\Models\AuditEvent;
 use App\Models\BillingStatement;
 use App\Models\BorrowerRestriction;
 use App\Models\BorrowingRequest;
@@ -237,6 +238,14 @@ class CustodyService
      */
     public function expirePickupWindows(): int
     {
+        /*
+         * Repair a missing pickup-missed notification for an already-expired
+         * unreleased transaction before processing new expirations. This is
+         * intentionally limited to PICKUP_EXPIRED and retries each required
+         * channel at most once after its first failed/missing attempt.
+         */
+        $this->repairPickupExpiredNotifications();
+
         $expired = 0;
 
         CustodyTransaction::query()
@@ -295,14 +304,16 @@ class CustodyService
                         }
 
                         $pickupPassedMessage = $canStillReschedule
-                            ? "The confirmed pickup schedule for {$locked->custody_no} has passed without physical issuance. Your approved request and reservation remain active. If you still need the items, coordinate with SPMU; the same request may be rescheduled to the next valid SPMU operating window before the approved Expected Return Date."
-                            : "The confirmed pickup schedule for {$locked->custody_no} has passed without physical issuance. No valid pickup window remains before the approved Expected Return Date, so SPMU cannot extend this approval through pickup rescheduling. Coordinate with SPMU regarding cancellation or an approved revision of the borrowing dates.";
+                            ? "Your pickup schedule for {$locked->custody_no} has passed. Open My Borrowings and choose Request Reschedule if you still need the items, or Cancel Request if you no longer need them. If no action is taken within the allowed response period, the unreleased request will be cancelled automatically and the reserved quantity will return to available inventory."
+                            : "Your pickup schedule for {$locked->custody_no} has passed and no valid replacement pickup remains before the approved Expected Return Date. The unreleased request will be cancelled automatically and the reserved quantity will return to available inventory.";
 
                         $this->notifications->send(
                             'PICKUP_EXPIRED',
                             collect([$locked->borrower]),
                             $pickupPassedMessage,
-                            $locked
+                            $locked,
+                            ['SYSTEM', 'EMAIL'],
+                            ['SYSTEM', 'EMAIL']
                         );
                     }
 
@@ -311,6 +322,174 @@ class CustodyService
             });
 
         return $expired;
+    }
+
+    /**
+     * Reconcile older LaundryJob records still sitting in
+     * TURNED_OVER_TO_LAUNDRY whose accomplished Laundry Form has since been
+     * verified.
+     *
+     * The normal path completes a LaundryJob and restores serviceable linen
+     * (LAUNDRY -> AVAILABLE, via laundry_job_lines.completed_quantity, the
+     * same field InventoryService::availability() reads) inside
+     * CustodyService::receiveReturn() itself, at the moment SPMU encodes
+     * the physical return. If the accomplished form is instead verified
+     * AFTER that return was already encoded, nothing else ever re-runs
+     * that completion, so the job is stuck. See LaundryJob's own doc
+     * comment ("TURNED_OVER_TO_LAUNDRY is retained only as a legacy data
+     * state and is reconciled automatically") and
+     * ConditionalProcessingController::gatePass()'s matching comment on
+     * this exact one-time reconciliation.
+     */
+    public function reconcileLegacyLaundryAvailability(): int
+    {
+        $reconciled = 0;
+
+        LaundryJob::query()
+            ->where('status', 'TURNED_OVER_TO_LAUNDRY')
+            ->whereNotNull('latest_evidence_submission_id')
+            ->whereNotNull('form_verified_at')
+            ->orderBy('id')
+            ->each(function (LaundryJob $job) use (&$reconciled): void {
+                DB::transaction(function () use ($job, &$reconciled): void {
+                    $locked = LaundryJob::query()->lockForUpdate()->find($job->id);
+
+                    if (! $locked
+                        || $locked->status !== 'TURNED_OVER_TO_LAUNDRY'
+                        || ! $locked->hasVerifiedAccomplishedForm()) {
+                        return;
+                    }
+
+                    $locked->loadMissing([
+                        'lines.custodyLine.returnLines',
+                        'custody',
+                    ]);
+
+                    $totalServiceable = 0;
+                    $serviceableByLine = [];
+
+                    foreach ($locked->lines as $jobLine) {
+                        $received = (float) $jobLine->custodyLine->returnLines
+                            ->where('disposition_state', 'LAUNDRY')
+                            ->sum('quantity_received');
+                        $received = (int) round($received);
+                        $serviceableByLine[$jobLine->id] = $received;
+                        $totalServiceable += $received;
+                    }
+
+                    foreach ($locked->lines as $jobLine) {
+                        $serviceable = (int) ($serviceableByLine[$jobLine->id] ?? 0);
+                        $hasAdverseFinding = $jobLine->custodyLine->returnLines->contains(
+                            fn ($returnLine) => strtoupper((string) $returnLine->condition_code) !== 'FINE'
+                        );
+
+                        $jobLine->update(['completed_quantity' => $serviceable]);
+
+                        $jobLine->custodyLine->update([
+                            'item_status' => $hasAdverseFinding ? 'INCIDENT_PENDING' : 'RETURNED',
+                            'compliance_status' => 'LAUNDRY_COMPLETED',
+                        ]);
+                    }
+
+                    $before = ['status' => $locked->status];
+
+                    $locked->update([
+                        'status' => 'LAUNDRY_COMPLETED',
+                        'ready_at' => $locked->worker_completed_at ?: now(),
+                        'completed_at' => now(),
+                    ]);
+
+                    $this->audit->record(
+                        'LAUNDRY_LEGACY_AVAILABILITY_RECONCILED',
+                        $locked,
+                        before: $before,
+                        after: [
+                            'status' => 'LAUNDRY_COMPLETED',
+                            'serviceable_quantity' => $totalServiceable,
+                        ]
+                    );
+
+                    if ($locked->custody) {
+                        $this->reconcileTransactionStatus($locked->custody);
+                    }
+
+                    $reconciled++;
+                }, 3);
+            });
+
+        return $reconciled;
+    }
+
+    /**
+     * Ensure an expired, unreleased pickup has a borrower-facing in-system
+     * notice and an email attempt. Notification preferences do not suppress
+     * this operational missed-pickup notice. A failed channel gets at most one
+     * automatic retry so a broken mail transport cannot generate endless mail.
+     */
+    private function repairPickupExpiredNotifications(): void
+    {
+        CustodyTransaction::query()
+            ->with('borrower')
+            ->where('status', 'PREPARING_RELEASE')
+            ->whereNull('released_at')
+            ->whereNotNull('pickup_expired_at')
+            ->orderBy('id')
+            ->each(function (CustodyTransaction $custody): void {
+                if (! $custody->borrower) {
+                    return;
+                }
+
+                $events = NotificationEvent::query()
+                    ->with(['deliveries' => fn ($query) => $query
+                        ->where('recipient_user_id', $custody->borrower_user_id)])
+                    ->where('source_type', $custody->getMorphClass())
+                    ->where('source_id', $custody->id)
+                    ->where('event_code', 'PICKUP_EXPIRED')
+                    ->get();
+
+                $deliveries = $events->flatMap->deliveries;
+                $channels = collect(['SYSTEM', 'EMAIL'])
+                    ->filter(function (string $channel) use ($deliveries): bool {
+                        $attempts = $deliveries->where('channel', $channel);
+                        $sent = $attempts->contains(
+                            fn ($delivery) => strtoupper((string) $delivery->delivery_status) === 'SENT'
+                        );
+
+                        return ! $sent && $attempts->count() < 2;
+                    })
+                    ->values()
+                    ->all();
+
+                if ($channels === []) {
+                    return;
+                }
+
+                $expiredAt = CarbonImmutable::parse(
+                    $custody->pickup_expired_at,
+                    config('app.timezone') ?: 'Asia/Manila'
+                );
+                $dueAt = $custody->original_due_at ?: $custody->due_at;
+                $nextPickup = $this->operationalCalendar->nextPickupWindow($expiredAt);
+                $canStillReschedule = false;
+
+                if ($dueAt && $nextPickup) {
+                    $dueDay = CarbonImmutable::parse($dueAt, $expiredAt->timezone)->startOfDay();
+                    $canStillReschedule = $nextPickup->startOfDay()->lt($dueDay);
+                }
+
+                $message = $canStillReschedule
+                    ? "Your pickup schedule for {$custody->custody_no} has passed. Open My Borrowings and choose Request Reschedule if you still need the items, or Cancel Request if you no longer need them. If no action is taken within the allowed response period, the unreleased request will be cancelled automatically and the reserved quantity will return to available inventory."
+                    : "Your pickup schedule for {$custody->custody_no} has passed and no valid replacement pickup remains before the approved Expected Return Date. The unreleased request will be cancelled automatically and the reserved quantity will return to available inventory.";
+
+                $this->notifications->send(
+                    'PICKUP_EXPIRED',
+                    collect([$custody->borrower]),
+                    $message,
+                    $custody,
+                    $channels,
+                    $channels
+                );
+            });
     }
 
     public function confirmPickupSchedule(
@@ -447,6 +626,18 @@ class CustodyService
                 ]);
             }
 
+            $alreadyRescheduled = AuditEvent::query()
+                ->where('record_type', CustodyTransaction::class)
+                ->where('record_id', $locked->id)
+                ->where('action_code', 'PICKUP_RESCHEDULED')
+                ->exists();
+
+            if ($alreadyRescheduled) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The rescheduled pickup window has already passed. This unreleased request is no longer eligible for another pickup reschedule and will be cancelled automatically.',
+                ]);
+            }
+
             $dueAt = $locked->original_due_at ?: $locked->due_at;
             if (! $dueAt) {
                 throw ValidationException::withMessages([
@@ -454,8 +645,39 @@ class CustodyService
                 ]);
             }
 
-            $nextStart = $this->operationalCalendar->nextPickupWindow($now);
+            /*
+             * The initial missed-pickup response period lasts through the next
+             * valid SPMU Pickup / Release operating window after the missed
+             * schedule. A late click must not reopen a reservation that the
+             * scheduler is already entitled to cancel.
+             */
+            $expiredAt = CarbonImmutable::parse(
+                $locked->pickup_expired_at ?: $locked->pickup_expires_at,
+                $timezone
+            );
+            $responseWindowStart = $this->operationalCalendar->nextPickupWindow(
+                $expiredAt->addSecond()
+            );
             $dueDay = CarbonImmutable::parse($dueAt, $timezone)->startOfDay();
+
+            if (! $responseWindowStart || $responseWindowStart->startOfDay()->gte($dueDay)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'No valid rescheduled pickup remains before the approved Expected Return Date. The unreleased request is no longer eligible for rescheduling.',
+                ]);
+            }
+
+            [, $responseDeadline] = $this->operationalCalendar->operatingWindow(
+                OperationalCalendarService::PICKUP,
+                $responseWindowStart
+            );
+
+            if (! $responseDeadline || $now->gt($responseDeadline)) {
+                throw ValidationException::withMessages([
+                    'pickup' => 'The missed-pickup response period has ended. This unreleased request is no longer eligible for rescheduling and will be cancelled automatically.',
+                ]);
+            }
+
+            $nextStart = $this->operationalCalendar->nextPickupWindow($now);
 
             if (! $nextStart || $nextStart->startOfDay()->gte($dueDay)) {
                 throw ValidationException::withMessages([
@@ -1068,6 +1290,16 @@ class CustodyService
                 'released_by_user_id' => $spmu->id,
                 'released_by_signature_snapshot_id' => null,
                 'released_at' => now(),
+                /*
+                 * The Action Officer's physical-handover attestation
+                 * (CustodyController::release() validates
+                 * physical_signatures_confirmed as required|accepted before
+                 * ever reaching here) is an explicit, queryable timestamp,
+                 * distinct from the intentionally absent release
+                 * E-signature - see the physical_handover_attested_at
+                 * migration's own doc comment.
+                 */
+                'physical_handover_attested_at' => now(),
                 'status' => 'ACTIVE',
             ]);
 
@@ -1258,16 +1490,83 @@ class CustodyService
             });
 
             /*
-             * A zero-total line simply means that item is not part of this
-             * inspection yet. Once any quantity is entered for an item, the
-             * COMPLETE outstanding quantity for that item must be accounted in
-             * the same inspection. This prevents 8-now / 2-later returns while
-             * still allowing different item lines (and the Laundry branch) to
-             * reach SPMU at different times under the single overall
-             * RETURN_PROCESSING state.
+             * NO PARTIAL PHYSICAL RETURN — COMPLETE BRANCH RULE
+             * -------------------------------------------------
+             * A custody can have two legitimate physical return channels:
+             *
+             *   1) NON-LINEN -> direct AO physical inspection at SPMU
+             *   2) LINEN     -> Laundry Area first, then AO encodes the fully
+             *                   accomplished Laundry Form
+             *
+             * Mixed custodies may complete those two branches at different
+             * times, because linen must not block a valid non-linen return.
+             * Within either branch, however, ALL still-outstanding item types
+             * must be fully accounted together. This prevents both quantity
+             * splitting (8 now / 2 later) and item-type splitting (Table now /
+             * Chair later) inside the same return channel.
              */
             $returnableLines = $eligibleLines->filter(
                 fn ($line) => array_sum($normalizedBreakdowns[$line->id]) > 0
+            );
+
+            $eligibleNonLinenLines = $eligibleLines->reject(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $eligibleLinenLines = $eligibleLines->filter(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $selectedNonLinenLines = $returnableLines->reject(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $selectedLinenLines = $returnableLines->filter(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+
+            /*
+             * Keep the two physical channels as separate ReturnTransactions so
+             * each one keeps the correct authoritative return timestamp:
+             * AO inspection time for non-linen, Laundry RECEIVED BY for linen.
+             */
+            if ($selectedNonLinenLines->isNotEmpty() && $selectedLinenLines->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'return' => 'Record one complete return branch at a time. Submit the complete non-linen AO inspection separately from the complete linen findings encoded from the accomplished Laundry Form.',
+                ]);
+            }
+
+            $assertCompleteBranch = static function ($eligibleBranch, $selectedBranch, string $branchLabel): void {
+                if ($selectedBranch->isEmpty()) {
+                    return;
+                }
+
+                $selectedIds = $selectedBranch->pluck('id')->map(fn ($id) => (int) $id);
+                $missing = $eligibleBranch->reject(
+                    fn ($line) => $selectedIds->contains((int) $line->id)
+                );
+
+                if ($missing->isEmpty()) {
+                    return;
+                }
+
+                $missingNames = $missing
+                    ->map(fn ($line) => $line->requestItem?->description_snapshot ?: 'Borrowed item')
+                    ->implode(', ');
+
+                throw ValidationException::withMessages([
+                    'return' => $branchLabel
+                        .' must be recorded as one complete return branch. Account for every still-outstanding item type in this branch before submitting. Missing: '
+                        .$missingNames.'.',
+                ]);
+            };
+
+            $assertCompleteBranch(
+                $eligibleNonLinenLines,
+                $selectedNonLinenLines,
+                'Non-linen return'
+            );
+            $assertCompleteBranch(
+                $eligibleLinenLines,
+                $selectedLinenLines,
+                'Linen return'
             );
 
             foreach ($custody->lines as $line) {
@@ -1321,12 +1620,13 @@ class CustodyService
             }
 
             /*
-             * When this inspection contains only linen, use the physical
-             * Laundry receipt date written on the accomplished form as the
-             * return compliance timestamp. SPMU may encode the form later;
-             * that administrative delay must not make an on-time return late.
-             * Mixed submissions use the actual SPMU inspection time because
-             * non-linen is physically received by the Action Officer here.
+             * A return submission belongs to exactly one complete physical
+             * channel. Linen uses the physical Laundry RECEIVED BY date written
+             * on the accomplished form; non-linen uses the Action Officer's
+             * Return Inspection timestamp. Mixed linen/non-linen custody is
+             * never combined in one submission: each channel must be completed
+             * in full, and LateReturnService later uses the later authoritative
+             * date when the whole custody has been physically completed.
              */
             $returnReceivedAt = now();
 
@@ -1364,10 +1664,20 @@ class CustodyService
                     ->except('FINE')
                     ->sum();
 
-                if ($nonFine > 0
+                $isLinenLine = (bool) $line->requestItem?->inventoryItem?->laundry_required;
+
+                /*
+                 * Linen condition findings are transcribed from the accomplished
+                 * Laundry Form, which is already the authoritative documentary
+                 * evidence. Extra photos/files remain optional for linen. A
+                 * direct AO non-linen adverse finding still requires supporting
+                 * evidence because the AO is the physical inspector there.
+                 */
+                if (! $isLinenLine
+                    && $nonFine > 0
                     && empty($evidenceFileIds[$line->id])) {
                     throw ValidationException::withMessages([
-                        'evidence_files' => 'Supporting evidence is required for every item with damaged, destroyed, missing, lost, or stolen quantity.',
+                        'evidence_files' => 'Supporting evidence is required for every non-linen item with damaged, destroyed, missing, lost, or stolen quantity.',
                     ]);
                 }
 
@@ -1379,8 +1689,20 @@ class CustodyService
                 }
             }
 
+            /*
+             * return_no must be unique per ReturnTransaction, not per
+             * custody+second: the COMPLETE BRANCH RULE above means the same
+             * custody legitimately produces two separate ReturnTransactions
+             * (non-linen, then linen) that can be submitted back-to-back,
+             * easily landing in the same wall-clock second - and tests that
+             * travel/freeze time make that collision certain, not just
+             * possible. A trailing random token keeps the human-readable
+             * prefix while making the collision that would otherwise throw
+             * an uncaught UniqueConstraintViolationException (and silently
+             * roll back this entire return) practically impossible.
+             */
             $return = ReturnTransaction::query()->create([
-                'return_no' => 'RET-'.now()->format('YmdHis').'-'.$custody->id,
+                'return_no' => 'RET-'.now()->format('YmdHis').'-'.$custody->id.'-'.Str::upper(Str::random(4)),
                 'custody_transaction_id' => $custody->id,
                 'received_by_user_id' => $spmu->id,
                 'return_type' => $isEarlyReturn ? 'EARLY' : ($isOverdueReturn ? 'OVERDUE' : 'NORMAL'),
@@ -1396,7 +1718,21 @@ class CustodyService
              * captured for Return Inspection — identity, timestamp, and the
              * audit trail are sufficient for this operational action.
              */
-            $transactionId = $this->transactionHeader('PHYSICAL_RETURN', $return, $spmu, $remarks ?: 'Physical return and full-quantity accountability inspection.');
+            $returnActivityNote = $linenLines->isNotEmpty()
+                ? 'Linen return findings encoded by the Action Officer from the accomplished Laundry Form; Laundry Personnel are the authoritative physical receiver/inspector.'
+                : 'Non-linen physical return and full-quantity inspection recorded by the Action Officer.';
+
+            $transactionId = $this->transactionHeader(
+                'PHYSICAL_RETURN',
+                $return,
+                $spmu,
+                $remarks ?: $returnActivityNote
+            );
+
+            // Keep the incidents created by this single inspection so the
+            // borrower can be notified only after the return itself has been
+            // fully persisted and the custody status has been reconciled.
+            $openedIncidents = collect();
 
             foreach ($returnableLines as $line) {
                 $item = $line->requestItem->inventoryItem;
@@ -1493,6 +1829,7 @@ class CustodyService
 
                         BorrowerRestriction::query()->firstOrCreate([
                             'borrower_user_id' => $custody->borrower_user_id,
+                            'custody_transaction_id' => $custody->id,
                             'incident_id' => $incident->id,
                             'status' => 'ACTIVE',
                         ], [
@@ -1505,6 +1842,8 @@ class CustodyService
                         if (SystemSetting::value('rslddp_template_status') === 'APPROVED') {
                             $this->documents->rslddp($incident->fresh());
                         }
+
+                        $openedIncidents->push($incident);
                     }
                 }
 
@@ -1720,44 +2059,27 @@ class CustodyService
 
             if ($allReturned) {
                 /*
-                 * PENDING_RETURN means that physical property is still
-                 * outstanding. Once every released quantity for this custody
-                 * has been physically returned, lift that restriction unless
-                 * the same borrower still has another custody with an
-                 * outstanding issued quantity.
+                 * PENDING_RETURN is now source-specific. Returning this
+                 * custody lifts only this custody's outstanding-property
+                 * control; another open borrowing keeps its own restriction.
                  */
-                $hasOtherOutstandingCustody = CustodyTransaction::query()
-                    ->where('borrower_user_id', $custody->borrower_user_id)
-                    ->whereKeyNot($custody->id)
-                    ->whereHas(
-                        'lines',
-                        fn ($query) =>
-                            $query->whereColumn(
-                                'returned_quantity',
-                                '<',
-                                'actual_released_quantity'
-                            )
-                    )
-                    ->exists();
-
-                if (! $hasOtherOutstandingCustody) {
-                    BorrowerRestriction::query()
-                        ->where('borrower_user_id', $custody->borrower_user_id)
-                        ->where('restriction_type', 'PENDING_RETURN')
-                        ->where('status', 'ACTIVE')
-                        ->update([
-                            'status' => 'LIFTED',
-                            'effective_to' => now(),
-                            'lifted_by_user_id' => $spmu->id,
-                        ]);
-                }
+                BorrowerRestriction::query()
+                    ->forCustody($custody)
+                    ->where('restriction_type', 'PENDING_RETURN')
+                    ->where('status', 'ACTIVE')
+                    ->update([
+                        'status' => 'LIFTED',
+                        'effective_to' => now(),
+                        'lifted_by_user_id' => $spmu->id,
+                    ]);
             }
 
             /*
              * Classify the return against its expected date. LateReturnService
              * reads the authoritative physical return date - the Laundry
-             * Personnel receipt for linen, the Return Inspection otherwise -
-             * and freezes the late days there. It is deliberately not now():
+             * Personnel receipt for linen, the Return Inspection for non-linen,
+             * or the later of both dates for mixed custody - and freezes late
+             * days there. It is deliberately not now():
              * the borrower must not be charged for the time SPMU takes to
              * process the return, and an on-time return opens no case at all.
              */
@@ -1816,7 +2138,53 @@ class CustodyService
                 ])
             );
 
-            $this->notifications->send('RETURN_INSPECTED', collect([$custody->borrower]), "Return {$return->return_no} was physically counted and inspected. Status: {$status}.", $custody, ['SYSTEM', 'EMAIL']);
+            $borrowerReturnMessage = $linenLines->isNotEmpty()
+                ? "Linen return {$return->return_no} was recorded by SPMU from the accomplished Laundry Form. Status: {$status}."
+                : "Return {$return->return_no} was physically counted and inspected by SPMU. Status: {$status}.";
+
+            /*
+             * A clean return is already communicated by TRANSACTION_CLOSED
+             * inside reconcileTransactionStatus(). Do not send a second,
+             * later RETURN_INSPECTED email that can make the sequence look
+             * reversed. If the custody remains open, send the inspection
+             * result first and then any newly opened accountability case(s).
+             */
+            if ($status !== 'CLOSED') {
+                $this->notifications->send(
+                    'RETURN_INSPECTED',
+                    collect([$custody->borrower]),
+                    $borrowerReturnMessage,
+                    $custody->fresh([
+                        'borrower',
+                        'request.currentVersion',
+                        'lines.requestItem.inventoryItem.unit',
+                        'returns.lines.custodyLine.requestItem.inventoryItem.unit',
+                        'incidents',
+                        'laundryJob',
+                    ]),
+                    ['SYSTEM', 'EMAIL']
+                );
+            }
+
+            foreach ($openedIncidents as $openedIncident) {
+                $openedIncident->loadMissing('borrower');
+
+                if (! $openedIncident->borrower) {
+                    continue;
+                }
+
+                $this->notifications->send(
+                    'ACCOUNTABILITY_OPENED',
+                    collect([$openedIncident->borrower]),
+                    "Property accountability case {$openedIncident->incident_no} was opened from the recorded return inspection. No final decision or charge has been issued yet; the case is awaiting SPMU Head/Admin review.",
+                    $openedIncident->fresh([
+                        'borrower',
+                        'custody.request',
+                        'lines.custodyLine.requestItem.inventoryItem.unit',
+                    ]),
+                    ['SYSTEM', 'EMAIL']
+                );
+            }
 
             return $return->fresh(['receivedBy', 'inspectionSignature.file']);
         }, 3);
@@ -1922,7 +2290,7 @@ class CustodyService
                 $this->spmuRecipients()
                     ->merge([$borrower])
                     ->unique('id'),
-                "Early Return {$earlyReturn->early_return_no} was requested for {$custody->custody_no}. This is coordination only; actual returned quantities and conditions are recorded by SPMU during physical Return & Inspection.",
+                "Early Return {$earlyReturn->early_return_no} was requested for {$custody->custody_no}. This is coordination only; actual return quantities and conditions are recorded through the applicable SPMU or Laundry Area return workflow.",
                 $custody,
                 ['SYSTEM', 'EMAIL']
             );
@@ -2170,6 +2538,12 @@ class CustodyService
             $hasOpenLinkedRestriction = BorrowerRestriction::query()
                 ->where('borrower_user_id', $custody->borrower_user_id)
                 ->where('status', 'ACTIVE')
+                ->where(function ($query): void {
+                    $query->whereNull('effective_from')->orWhere('effective_from', '<=', now());
+                })
+                ->where(function ($query): void {
+                    $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
+                })
                 ->where(function ($query) use ($incidentIds, $penaltyIds, $billingIds): void {
                     $hasClause = false;
 

@@ -133,9 +133,6 @@ class LinenReturnInspectionFormTest extends TestCase
             [$lines['linen']->id => ['FINE' => 2, 'DAMAGED' => 1]],
             [
                 'remarks' => 'One table cloth reported stained by Laundry Personnel upon physical return.',
-                'evidence_files' => [
-                    $lines['linen']->id => UploadedFile::fake()->image('stained-linen.jpg'),
-                ],
             ]
         )->assertSessionHasNoErrors();
 
@@ -259,7 +256,7 @@ class LinenReturnInspectionFormTest extends TestCase
         );
     }
 
-    public function test_mixed_custody_reconciles_linen_and_non_linen_in_one_return(): void
+    public function test_mixed_custody_records_non_linen_and_linen_as_separate_complete_return_branches(): void
     {
         ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
             linen: true,
@@ -268,21 +265,160 @@ class LinenReturnInspectionFormTest extends TestCase
 
         $this->uploadAccomplishedForm($job)->assertSessionHasNoErrors();
 
+        // The two physical channels keep different authoritative timestamps,
+        // so they may not be collapsed into one ReturnTransaction.
         $this->recordReturn($custody, [
             $lines['linen']->id => ['FINE' => 3],
             $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasErrors('return');
+
+        $this->assertSame(0.0, (float) $lines['linen']->fresh()->returned_quantity);
+        $this->assertSame(0.0, (float) $lines['non_linen']->fresh()->returned_quantity);
+
+        // Complete the AO-inspected non-linen branch first.
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        // Then encode the complete linen branch from the accomplished form.
+        $this->recordReturn($custody, [
+            $lines['linen']->id => ['FINE' => 3],
         ])->assertSessionHasNoErrors();
 
         $this->assertSame(3.0, (float) $lines['linen']->fresh()->returned_quantity);
         $this->assertSame(2.0, (float) $lines['non_linen']->fresh()->returned_quantity);
 
-        // One return transaction, no duplicated custody quantities.
         $this->assertSame(
-            1,
+            2,
             ReturnTransaction::query()
                 ->where('custody_transaction_id', $custody->id)
                 ->count()
         );
+
+        // Not double-counted: exactly one ReturnLine per branch, each for the
+        // exact quantity submitted - never a duplicate row and never the
+        // released quantity applied twice.
+        $this->assertSame(1, ReturnLine::query()->where('custody_line_id', $lines['linen']->id)->count());
+        $this->assertSame(
+            3.0,
+            (float) ReturnLine::query()->where('custody_line_id', $lines['linen']->id)->sum('quantity_received')
+        );
+        $this->assertSame(1, ReturnLine::query()->where('custody_line_id', $lines['non_linen']->id)->count());
+
+        // The linen ReturnLine is recorded against LAUNDRY, not directly
+        // AVAILABLE - restoration to Available only happens through the
+        // authorized Laundry completion path this test already drove via
+        // uploadAccomplishedForm() beforehand, never as a side effect of the
+        // non-linen branch or of encoding by itself.
+        $linenReturnLine = ReturnLine::query()->where('custody_line_id', $lines['linen']->id)->firstOrFail();
+        $this->assertSame('LAUNDRY', $linenReturnLine->disposition_state);
+
+        $jobLine = LaundryJobLine::query()->where('laundry_job_id', $job->id)->firstOrFail();
+        $this->assertSame('LAUNDRY_COMPLETED', $job->fresh()->status);
+        $this->assertSame(3, (int) $jobLine->fresh()->completed_quantity);
+    }
+
+    public function test_repeated_linen_return_submission_does_not_duplicate_quantity(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
+            linen: true,
+            nonLinen: false
+        );
+
+        $this->uploadAccomplishedForm($job)->assertSessionHasNoErrors();
+
+        $this->recordReturn($custody, [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(3.0, (float) $lines['linen']->fresh()->returned_quantity);
+
+        // Replaying the exact same submission is caught by
+        // PreventDuplicateSubmission (an identical fingerprint within its
+        // completed-action window) before the request ever reaches the
+        // controller/service again - it redirects back with a "status" notice
+        // rather than an 'errors' bag, and applies nothing a second time.
+        $this->recordReturn($custody, [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors()
+            ->assertSessionHas('status', 'This action was already completed. No duplicate transaction was created.');
+
+        $this->assertSame(3.0, (float) $lines['linen']->fresh()->returned_quantity);
+        $this->assertSame(1, ReturnLine::query()->where('custody_line_id', $lines['linen']->id)->count());
+        $this->assertSame(
+            3.0,
+            (float) ReturnLine::query()->where('custody_line_id', $lines['linen']->id)->sum('quantity_received')
+        );
+    }
+
+    public function test_adverse_non_linen_finding_creates_incident_without_waiting_for_linen_completion(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
+            linen: true,
+            nonLinen: true
+        );
+
+        $this->uploadAccomplishedForm($job)->assertSessionHasNoErrors();
+
+        // Complete only the non-linen branch, with an adverse finding. The
+        // linen branch is left entirely untouched.
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['DAMAGED' => 2],
+        ], [
+            'evidence_files' => [$lines['non_linen']->id => UploadedFile::fake()->create('damage.pdf', 10, 'application/pdf')],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(2.0, (float) $lines['non_linen']->fresh()->returned_quantity);
+        $this->assertSame(0.0, (float) $lines['linen']->fresh()->returned_quantity);
+
+        // Accountability for the non-linen damage fires immediately - it must
+        // not wait for the still-outstanding linen branch to be completed.
+        $this->assertSame(
+            1,
+            Incident::query()
+                ->where('custody_transaction_id', $custody->id)
+                ->where('incident_type', 'DAMAGED')
+                ->count()
+        );
+
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'custody_transaction_id' => $custody->id,
+            'status' => 'ACTIVE',
+        ]);
+
+        // The linen branch, still outstanding, has not been auto-completed or
+        // auto-restored by the unrelated non-linen incident.
+        $this->assertSame('FOR_LAUNDRY', $job->fresh()->status);
+    }
+
+    public function test_non_linen_branch_cannot_split_outstanding_item_types_across_returns(): void
+    {
+        ['custody' => $custody, 'lines' => $lines] = $this->outstandingCustody(linen: false);
+
+        $version = $custody->request->currentVersion;
+        $secondLine = $this->custodyLine(
+            $custody,
+            $version,
+            $this->inventoryItem(false),
+            1
+        );
+
+        // Completing only one of two outstanding non-linen item types is a
+        // partial branch return and must be rejected.
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasErrors('return');
+
+        $this->assertSame(0.0, (float) $lines['non_linen']->fresh()->returned_quantity);
+        $this->assertSame(0.0, (float) $secondLine->fresh()->returned_quantity);
+
+        $this->recordReturn($custody, [
+            $lines['non_linen']->id => ['FINE' => 2],
+            $secondLine->id => ['FINE' => 1],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(2.0, (float) $lines['non_linen']->fresh()->returned_quantity);
+        $this->assertSame(1.0, (float) $secondLine->fresh()->returned_quantity);
     }
 
     public function test_mixed_custody_allows_non_linen_inspection_while_laundry_form_is_pending_without_partial_status(): void
@@ -365,6 +501,53 @@ class LinenReturnInspectionFormTest extends TestCase
                 ->where('status', '!=', 'RESOLVED')
                 ->exists()
         );
+    }
+
+    public function test_mixed_custody_lateness_uses_the_later_authoritative_physical_return_date(): void
+    {
+        ['custody' => $custody, 'lines' => $lines, 'job' => $job] = $this->outstandingCustody(
+            linen: true,
+            nonLinen: true
+        );
+
+        $custody->update([
+            'released_at' => now()->subDays(2)->setTime(9, 0),
+            'due_at' => now()->subDay()->endOfDay(),
+        ]);
+
+        $lateFee = SystemSetting::query()
+            ->where('setting_key', 'daily_overdue_tariff')
+            ->firstOrFail();
+        $lateFee->value_json = 50;
+        $lateFee->save();
+
+        /*
+         * Laundry received its COMPLETE linen channel on the due date, but the
+         * COMPLETE AO-inspected non-linen channel comes back one day later.
+         * This is not a quantity/item-type partial return: mixed custody has two
+         * distinct authoritative physical channels and each channel is complete.
+         */
+        $this->uploadAccomplishedForm(
+            $job->fresh(),
+            $custody->due_at->copy()->startOfDay()->toDateString()
+        )->assertSessionHasNoErrors();
+
+        $this->recordReturn($custody->fresh(), [
+            $lines['linen']->id => ['FINE' => 3],
+        ])->assertSessionHasNoErrors();
+
+        $this->recordReturn($custody->fresh(), [
+            $lines['non_linen']->id => ['FINE' => 2],
+        ])->assertSessionHasNoErrors();
+
+        $case = OverdueCase::query()
+            ->where('custody_transaction_id', $custody->id)
+            ->firstOrFail();
+
+        $this->assertSame(now()->toDateString(), $case->actual_return_date?->toDateString());
+        $this->assertSame('MIXED_RETURN_COMPLETION', $case->return_date_source);
+        $this->assertSame(1, (int) $case->late_days);
+        $this->assertSame(50.0, (float) $case->accrued_amount);
     }
 
     public function test_actual_linen_return_date_can_be_after_due_date_once_that_date_has_arrived(): void

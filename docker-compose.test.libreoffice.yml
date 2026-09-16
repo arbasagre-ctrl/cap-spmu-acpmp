@@ -1,0 +1,23 @@
+# Phase 5 verification only. Additive file - does not modify
+# docker-compose.test.yml or the "test" service it defines. Run with:
+#   docker compose -f docker-compose.test.libreoffice.yml build test-libreoffice
+#   docker compose -f docker-compose.test.libreoffice.yml run --rm test-libreoffice php vendor/bin/phpunit --colors=never tests/Feature/OfficeTemplateLibreOfficeEndToEndTest.php
+services:
+  test-libreoffice:
+    build:
+      context: .
+      dockerfile: Dockerfile.test.libreoffice
+    environment:
+      APP_ENV: testing
+      APP_DEBUG: "true"
+      APP_KEY: "base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ":memory:"
+      DB_URL: ""
+      CACHE_STORE: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+      BCRYPT_ROUNDS: "4"
+      SEED_DEMO_USERS: "true"
+    command: ["php", "vendor/bin/phpunit", "--testdox"]

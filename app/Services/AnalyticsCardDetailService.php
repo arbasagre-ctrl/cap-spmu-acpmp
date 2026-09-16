@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\AnalyticsDrilldown;
 use Carbon\CarbonInterface;
 
 /**
@@ -37,6 +38,7 @@ class AnalyticsCardDetailService
             /* Overview */
             'overview.trend' => $this->trend($scope, 'Borrowing Activity Trend'),
             'overview.insights' => $this->overviewInsights($scope),
+            'overview.return-compliance' => $this->returnCompliance($scope),
             'overview.released' => $this->releasedItems($scope, 'Top Released Items'),
             'overview.units' => $this->unitRankings($scope),
             'overview.snapshot' => $this->snapshot($scope),
@@ -107,6 +109,12 @@ class AnalyticsCardDetailService
             .'reporting period, and narrowed by the borrower group and unit selected above.';
     }
 
+    private function inventoryCurrentNote(): string
+    {
+        return 'Institution-wide current inventory snapshot: measured as of today. '
+            .'Reporting Period, Division, Office / Unit, and Borrower filters do not change physical stock totals.';
+    }
+
     /** @return array<string, mixed> */
     private function unknown(string $key): array
     {
@@ -127,7 +135,7 @@ class AnalyticsCardDetailService
     private function trend(array $scope, string $title): array
     {
         $trend = $this->analytics->trend(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['period']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['period'], $scope['borrower'] ?? null
         );
 
         $total = array_sum(array_column($trend['points'], 'count'));
@@ -149,6 +157,9 @@ class AnalyticsCardDetailService
                 $trend['points']
             ),
             'empty' => $total === 0 ? 'No borrowing requests were filed during this period.' : null,
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -156,34 +167,125 @@ class AnalyticsCardDetailService
     private function overviewInsights(array $scope): array
     {
         $overview = $this->analytics->overview(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
         $low = $this->analytics->lowAvailability($this->inventory);
         $returns = $this->analytics->returns(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+        $units = $this->analytics->unitRankings(
             $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
+        $equipment = $this->analytics->equipment(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 1, $scope['borrower'] ?? null
+        );
+
+        $rankedUnits = collect($units['columns'] ?? [])
+            ->flatMap(fn (array $column): array => collect($column['units'] ?? [])
+                ->map(fn (array $row): array => $row + [
+                    'division_label' => $column['label'] ?? '',
+                ])
+                ->all())
+            ->sortByDesc('count')
+            ->values();
+
+        $leadUnit = $rankedUnits->first();
+        $leadItem = $equipment['items'][0] ?? null;
+        $signals = [];
+
+        if (($overview['needs_follow_up'] ?? 0) > 0) {
+            $signals[] = [
+                'weight' => 10,
+                'label' => 'Currently overdue',
+                'value' => (string) $overview['needs_follow_up'],
+            ];
+        }
+
+        if (($low['count'] ?? 0) > 0) {
+            $signals[] = [
+                'weight' => 20,
+                'label' => 'Low availability',
+                'value' => $low['count'].' item '.($low['count'] === 1 ? 'type' : 'types'),
+            ];
+        }
+
+        if ($leadUnit) {
+            $signals[] = [
+                'weight' => 30,
+                'label' => 'Top borrowing unit',
+                'value' => $leadUnit['name'].' · '.$leadUnit['count'].' '
+                    .($leadUnit['count'] === 1 ? 'request' : 'requests'),
+            ];
+        }
+
+        if ($leadItem) {
+            $signals[] = [
+                'weight' => 35,
+                'label' => 'Top released item',
+                'value' => $leadItem['name'].' · '.($leadItem['released'] + 0).' '.$leadItem['unit'],
+            ];
+        }
+
+        if (($low['count'] ?? 0) === 0) {
+            $signals[] = [
+                'weight' => 36,
+                'label' => 'Inventory availability',
+                'value' => 'No item below threshold',
+            ];
+        }
+
+        $signals[] = [
+            'weight' => 40,
+            'label' => 'Return compliance',
+            'value' => $returns['on_time_rate'] === null
+                ? 'Not measurable'
+                : $returns['on_time'].' of '.$returns['completed'].' on time · '.$returns['on_time_rate'].'%',
+        ];
+
+        usort($signals, static fn (array $a, array $b): int => $a['weight'] <=> $b['weight']);
 
         return [
             'title' => 'Priority Insights',
             'value' => null,
-            'context' => 'Signals ordered by operational weight',
-            'note' => 'The panel mixes two kinds of reading. Currently overdue and low '
-                .'availability are current-state figures, true as of today. The top borrowing '
-                .'unit, the top released item and return compliance are period-scoped, measured '
-                .'over the selected reporting period. Rows are ordered so a live risk always '
-                .'outranks an informational pattern, and a reading with no data is omitted '
-                .'rather than shown as zero.',
-            'stats' => [
-                ['label' => 'Currently overdue', 'value' => $overview['needs_follow_up']],
-                ['label' => 'Item types low on stock', 'value' => $low['count']],
-                ['label' => 'Completed returns', 'value' => $returns['completed']],
-                [
-                    'label' => 'On-time return rate',
-                    'value' => $returns['on_time_rate'] === null
-                        ? 'Not measurable'
-                        : $returns['on_time_rate'].'%',
+            'context' => 'Key operational signals',
+            'note' => null,
+            'stats' => array_map(
+                static fn (array $signal): array => [
+                    'label' => $signal['label'],
+                    'value' => $signal['value'],
                 ],
+                array_slice($signals, 0, 4)
+            ),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function returnCompliance(array $scope): array
+    {
+        $returns = $this->analytics->returns(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+
+        $completed = (int) $returns['completed'];
+
+        return [
+            'title' => 'Return Compliance',
+            'value' => $returns['on_time_rate'] === null ? null : $returns['on_time_rate'].'%',
+            'value_label' => $returns['on_time_rate'] === null ? null : 'on-time return rate',
+            'context' => 'Completed returns in this reporting period',
+            'note' => null,
+            'stats' => [
+                ['label' => 'Completed returns', 'value' => $completed],
+                ['label' => 'Returned on time', 'value' => (int) $returns['on_time']],
+                ['label' => 'Returned late', 'value' => (int) $returns['late']],
             ],
+            'empty' => $completed === 0
+                ? 'No completed returns in this reporting period.'
+                : null,
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'COMPLETED']
+            ),
         ];
     }
 
@@ -191,7 +293,7 @@ class AnalyticsCardDetailService
     private function releasedItems(array $scope, string $title = 'Top Released Items'): array
     {
         $equipment = $this->analytics->equipment(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10, $scope['borrower'] ?? null
         );
 
         return [
@@ -214,6 +316,9 @@ class AnalyticsCardDetailService
             'empty' => $equipment['items'] === []
                 ? 'No equipment was physically released during this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::utilization(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -221,7 +326,7 @@ class AnalyticsCardDetailService
     private function requestedItems(array $scope): array
     {
         $requested = $this->analytics->requestedEquipment(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10, $scope['borrower'] ?? null
         );
 
         return [
@@ -235,7 +340,7 @@ class AnalyticsCardDetailService
             'bars' => $requested['items'] === [] ? null : array_map(
                 static fn (array $row): array => [
                     'label' => $row['name'],
-                    'value' => ($row['requested'] ?? 0) + 0 .' '.($row['unit'] ?? ''),
+                    'value' => ($row['quantity'] ?? 0) + 0 .' '.($row['unit'] ?? ''),
                     'share' => $row['share'] ?? 0,
                 ],
                 $requested['items']
@@ -243,6 +348,9 @@ class AnalyticsCardDetailService
             'empty' => $requested['items'] === []
                 ? 'No equipment was requested during this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -285,6 +393,9 @@ class AnalyticsCardDetailService
                 $bars
             ),
             'empty' => $bars === [] ? 'No borrowing unit activity was recorded for this period.' : null,
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -292,10 +403,10 @@ class AnalyticsCardDetailService
     private function snapshot(array $scope): array
     {
         $overview = $this->analytics->overview(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
         $returns = $this->analytics->returns(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         return [
@@ -323,13 +434,19 @@ class AnalyticsCardDetailService
     private function requestedQuantity(array $scope): array
     {
         $requested = $this->analytics->requestedEquipment(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10, $scope['borrower'] ?? null
         );
 
-        $total = array_sum(array_map(
-            static fn (array $row): float => (float) ($row['requested'] ?? 0),
-            $requested['items']
-        ));
+        /*
+         * The headline figure comes from the same demandTotals() aggregate the
+         * KPI card itself reads, so the detail can never disagree with the
+         * number the reader just clicked. requestedEquipment() is only the
+         * top-10 breakdown behind the bars below.
+         */
+        $totals = $this->analytics->demandTotals(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+        $total = (float) ($totals['requested_quantity'] ?? 0);
 
         return [
             'title' => 'Requested Quantity',
@@ -343,12 +460,15 @@ class AnalyticsCardDetailService
             'bars' => $requested['items'] === [] ? null : array_map(
                 static fn (array $row): array => [
                     'label' => $row['name'],
-                    'value' => (($row['requested'] ?? 0) + 0).' '.($row['unit'] ?? ''),
+                    'value' => (($row['quantity'] ?? 0) + 0).' '.($row['unit'] ?? ''),
                     'share' => $row['share'] ?? 0,
                 ],
                 $requested['items']
             ),
             'empty' => $total <= 0 ? 'No equipment was requested during this period.' : null,
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -356,13 +476,13 @@ class AnalyticsCardDetailService
     private function releasedQuantity(array $scope): array
     {
         $equipment = $this->analytics->equipment(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10, $scope['borrower'] ?? null
         );
 
-        $total = array_sum(array_map(
-            static fn (array $row): float => (float) $row['released'],
-            $equipment['items']
-        ));
+        $totals = $this->analytics->demandTotals(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+        $total = (float) ($totals['released_quantity'] ?? 0);
 
         return [
             'title' => 'Released Quantity',
@@ -381,6 +501,9 @@ class AnalyticsCardDetailService
                 $equipment['items']
             ),
             'empty' => $total <= 0 ? 'No equipment was physically released during this period.' : null,
+            'reports_url' => AnalyticsDrilldown::utilization(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -420,13 +543,18 @@ class AnalyticsCardDetailService
             'empty' => $groups['total'] === 0
                 ? 'No borrowing requests were filed during this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
     /** @return array<string, mixed> */
     private function lowUsage(array $scope): array
     {
-        $slow = $this->analytics->slowMovingItems($scope['from'], $scope['to'], 10);
+        $slow = $this->analytics->slowMovingItems(
+            $scope['from'], $scope['to'], 10, $scope['division'], $scope['unit']
+        );
         $rows = $slow['items'] ?? [];
 
         return [
@@ -446,6 +574,9 @@ class AnalyticsCardDetailService
                 $rows
             ),
             'empty' => $rows === [] ? 'No catalogue items are available to rank yet.' : null,
+            'reports_url' => AnalyticsDrilldown::utilization(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -471,6 +602,9 @@ class AnalyticsCardDetailService
                 ['label' => 'Minimum required', 'value' => AnalyticsService::PEAK_MINIMUM_OBSERVATIONS],
             ],
             'empty' => $available ? null : ($peak['summary'] ?? 'Not enough borrowing activity to identify a peak period yet.'),
+            'reports_url' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -483,11 +617,24 @@ class AnalyticsCardDetailService
     {
         $inventory = $this->analytics->inventory($this->inventory);
 
+        /*
+         * inventory() nests its figures under 'totals' and has no 'attention'
+         * key of its own - the KPI cards derive it from maintenance + problem
+         * (inventory-health.blade.php). Reading straight off $inventory here
+         * used to miss both, silently falling through to the ?? 0 default and
+         * showing every facet as zero regardless of the true stock position.
+         */
+        $totals = $inventory['totals'] ?? [];
+        $available = (float) ($totals['available'] ?? 0);
+        $allocated = (float) ($totals['allocated'] ?? 0);
+        $onCustody = (float) ($totals['on_custody'] ?? 0);
+        $attention = (float) ($totals['attention'] ?? $totals['problem'] ?? 0);
+
         [$title, $value, $context] = match ($facet) {
-            'available' => ['Available Units', $inventory['available'] ?? 0, 'Usable and free to allocate'],
-            'reserved' => ['Reserved / Allocated', $inventory['reserved'] ?? 0, 'Committed to an approved request'],
-            'custody' => ['On Custody', $inventory['on_custody'] ?? 0, 'Released and not yet returned'],
-            default => ['Attention Needed', $inventory['attention'] ?? 0, 'Held out of circulation'],
+            'available' => ['Available Units', $available, 'Usable and free to allocate'],
+            'reserved' => ['Reserved / Allocated', $allocated, 'Committed to an approved request'],
+            'custody' => ['On Custody', $onCustody, 'Released and not yet returned'],
+            default => ['Attention Needed', $attention, 'Held out of circulation'],
         };
 
         return [
@@ -495,15 +642,27 @@ class AnalyticsCardDetailService
             'value' => $value,
             'value_label' => 'units',
             'context' => $context,
-            'note' => $this->currentNote()
+            'note' => $this->inventoryCurrentNote()
                 .' Inventory figures describe stock as it stands now, so they do not move when '
                 .'the reporting period changes.',
             'stats' => [
-                ['label' => 'Available', 'value' => $inventory['available'] ?? 0],
-                ['label' => 'Reserved / allocated', 'value' => $inventory['reserved'] ?? 0],
-                ['label' => 'On custody', 'value' => $inventory['on_custody'] ?? 0],
-                ['label' => 'Attention needed', 'value' => $inventory['attention'] ?? 0],
+                ['label' => 'Available', 'value' => $available],
+                ['label' => 'Reserved / allocated', 'value' => $allocated],
+                ['label' => 'On custody', 'value' => $onCustody],
+                ['label' => 'Attention needed', 'value' => $attention],
             ],
+            'reports_url' => match ($facet) {
+                'available' => AnalyticsDrilldown::inventory(
+                    $scope['period'], ['availability_status' => 'AVAILABLE']
+                ),
+                'reserved' => AnalyticsDrilldown::inventory(
+                    $scope['period'], ['availability_status' => 'ALLOCATED']
+                ),
+                'custody' => AnalyticsDrilldown::inventory(
+                    $scope['period'], ['availability_status' => 'ON_CUSTODY']
+                ),
+                default => null,
+            },
         ];
     }
 
@@ -516,8 +675,9 @@ class AnalyticsCardDetailService
             'title' => $title,
             'value' => null,
             'context' => 'How stock is split across states',
-            'note' => $this->currentNote()
+            'note' => $this->inventoryCurrentNote()
                 .' Every unit sits in exactly one state, so the states sum to the serviceable total.',
+            'reports_url' => AnalyticsDrilldown::inventory($scope['period']),
         ]);
     }
 
@@ -531,7 +691,7 @@ class AnalyticsCardDetailService
             'value' => $low['count'],
             'value_label' => $low['count'] === 1 ? 'item type' : 'item types',
             'context' => 'At or below '.(int) ($low['threshold'] * 100).'% usable stock',
-            'note' => $this->currentNote()
+            'note' => $this->inventoryCurrentNote()
                 .' An item is listed when its usable stock falls to or below '
                 .(int) ($low['threshold'] * 100).'% of its serviceable total. Units out on '
                 .'custody, in laundry or held by an incident are excluded from what counts as usable.',
@@ -546,6 +706,9 @@ class AnalyticsCardDetailService
             'empty' => $low['count'] === 0
                 ? 'No item type is currently below the availability threshold.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::inventory(
+                $scope['period'], ['availability_status' => 'LOW_AVAILABILITY']
+            ),
         ];
     }
 
@@ -553,19 +716,20 @@ class AnalyticsCardDetailService
     private function operationalInventory(array $scope): array
     {
         $inventory = $this->analytics->inventory($this->inventory);
+        $totals = $inventory['totals'] ?? [];
 
         return [
             'title' => 'Operational Inventory Status',
             'value' => null,
-            'context' => 'Stock held outside normal circulation',
-            'note' => $this->currentNote()
-                .' These units are serviceable but unavailable: they are in laundry, held for '
-                .'maintenance, or tied to an unresolved incident.',
+            'context' => 'Stock held outside normal allocation',
+            'note' => $this->inventoryCurrentNote()
+                .' Laundry is shown separately from condition/incident follow-up. '
+                .' Breakdown values describe the same current inventory snapshot as the KPI cards.',
             'stats' => [
-                ['label' => 'In laundry', 'value' => $inventory['laundry'] ?? 0],
-                ['label' => 'Maintenance', 'value' => $inventory['maintenance'] ?? 0],
-                ['label' => 'Held by incident', 'value' => $inventory['incident'] ?? 0],
-                ['label' => 'Attention needed', 'value' => $inventory['attention'] ?? 0],
+                ['label' => 'In laundry', 'value' => $totals['laundry'] ?? 0],
+                ['label' => 'Maintenance', 'value' => $totals['maintenance'] ?? 0],
+                ['label' => 'Held by incident', 'value' => $totals['incident'] ?? 0],
+                ['label' => 'Attention needed', 'value' => $totals['attention'] ?? $totals['problem'] ?? 0],
             ],
         ];
     }
@@ -574,7 +738,7 @@ class AnalyticsCardDetailService
     private function coverage(array $scope): array
     {
         $coverage = $this->analytics->stockCoverage(
-            $this->inventory, $scope['from'], $scope['to'], 10
+            $this->inventory, $scope['from'], $scope['to'], 10, $scope['division'], $scope['unit']
         );
 
         $rows = $coverage['items'] ?? [];
@@ -606,7 +770,7 @@ class AnalyticsCardDetailService
     private function returnTrend(array $scope): array
     {
         $trend = $this->analytics->returnTrend(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['period']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['period'], $scope['borrower'] ?? null
         );
 
         $stats = [];
@@ -631,6 +795,10 @@ class AnalyticsCardDetailService
             'empty' => $trend['plotted'] === 0
                 ? 'No completed returns during this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'COMPLETED']
+            ),
         ];
     }
 
@@ -638,7 +806,7 @@ class AnalyticsCardDetailService
     private function returnOutcome(array $scope): array
     {
         $returns = $this->analytics->returns(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         $completed = $returns['completed'];
@@ -667,6 +835,10 @@ class AnalyticsCardDetailService
             'empty' => $completed === 0
                 ? 'Return outcome cannot yet be measured because no returns were completed in this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'COMPLETED']
+            ),
         ];
     }
 
@@ -674,7 +846,7 @@ class AnalyticsCardDetailService
     private function lifecycle(array $scope): array
     {
         $stages = $this->analytics->lifecycle(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         $highest = max(1, max(array_column($stages, 'value')));
@@ -694,13 +866,21 @@ class AnalyticsCardDetailService
                 ],
                 $stages
             ),
+            /*
+             * Each stage's records live in a different place - awaiting/
+             * preparing release are Borrowing Activity Report rows, on custody
+             * belongs to Release & Custody, and returned belongs to Return &
+             * Accountability - so no single report reproduces this strip. A
+             * link to any one of them would look right for one stage and
+             * wrong for the other three, so none is offered here.
+             */
         ];
     }
 
     /** @return array<string, mixed> */
     private function overdueFollowUp(array $scope): array
     {
-        $overdue = $this->analytics->currentOverdue($scope['division'], $scope['unit'], 25);
+        $overdue = $this->analytics->currentOverdue($scope['division'], $scope['unit'], 25, $scope['borrower'] ?? null);
 
         return [
             'title' => 'Current Overdue Follow-up',
@@ -724,6 +904,10 @@ class AnalyticsCardDetailService
                 ),
             ],
             'empty' => $overdue['total'] === 0 ? 'No borrowings are currently overdue.' : null,
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'CURRENTLY_OVERDUE']
+            ),
         ];
     }
 
@@ -731,7 +915,7 @@ class AnalyticsCardDetailService
     private function returnCondition(array $scope): array
     {
         $conditions = $this->analytics->returnConditions(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         return [
@@ -754,6 +938,15 @@ class AnalyticsCardDetailService
             'empty' => $conditions['rows'] === []
                 ? 'No return inspections were recorded during this period.'
                 : null,
+            /*
+             * Condition is recorded on a return line, which only exists for a
+             * completed physical return, so COMPLETED is exactly the record
+             * population the condition breakdown above is summed from.
+             */
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'COMPLETED']
+            ),
         ];
     }
 
@@ -761,7 +954,7 @@ class AnalyticsCardDetailService
     private function returnSummary(array $scope): array
     {
         $returns = $this->analytics->returns(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         $duration = $returns['average_duration'] ?? [];
@@ -790,6 +983,10 @@ class AnalyticsCardDetailService
                     'value' => $duration['label'] ?? 'Not available',
                 ],
             ],
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit'],
+                ['return_status' => 'COMPLETED']
+            ),
         ];
     }
 
@@ -797,10 +994,10 @@ class AnalyticsCardDetailService
     private function returnIssues(array $scope): array
     {
         $returns = $this->analytics->returns(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
         $incidents = $this->analytics->incidentSummary(
-            $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
 
         $stats = [
@@ -832,6 +1029,9 @@ class AnalyticsCardDetailService
             'empty' => $nothing
                 ? 'No accountability or return-condition issues were recorded during this period.'
                 : null,
+            'reports_url' => AnalyticsDrilldown::returns(
+                $scope['period'], $scope['division'], $scope['unit']
+            ),
         ];
     }
 
@@ -880,25 +1080,19 @@ class AnalyticsCardDetailService
     private function scheduled(array $scope): array
     {
         [$forecastFrom, $forecastTo] = $this->forecasts->forecastWindow($scope['from'], $scope['to']);
-
-        $count = $this->analytics
-            ->requestScope($forecastFrom, $forecastTo, $scope['division'], $scope['unit'])
-            ->count('borrowing_requests.id');
-
-        $groups = $this->analytics->borrowerGroups(
-            $forecastFrom, $forecastTo, $scope['division'], $scope['unit']
+        $scheduled = $this->analytics->scheduledDemand(
+            $forecastFrom, $forecastTo, $scope['division'], $scope['unit'], $scope['borrower'] ?? null
         );
+        $count = (int) ($scheduled['requests'] ?? 0);
+        $groups = collect($scheduled['divisions']['groups'] ?? []);
 
         return [
             'title' => 'Scheduled Demand',
             'value' => $count,
             'value_label' => $count === 1 ? 'request already filed' : 'requests already filed',
             'context' => 'Known bookings for '.$forecastFrom->format('d M Y').' – '.$forecastTo->format('d M Y'),
-            'note' => 'Scheduled demand is a count of requests that already exist for the next '
-                .'period. It is a record, not a projection, and it is never merged with the '
-                .'forecasted demand produced by the weighted average - the two answer different '
-                .'questions and can legitimately disagree.',
-            'bars' => $groups['groups']->isEmpty() ? null : $groups['groups']->map(
+            'note' => null,
+            'bars' => $groups->isEmpty() ? null : $groups->map(
                 static fn (array $group): array => [
                     'label' => $group['label'],
                     'value' => $group['count'].' · '.$group['percentage'].'%',
@@ -945,7 +1139,9 @@ class AnalyticsCardDetailService
     /** @return array<string, mixed> */
     private function forecastDivision(array $scope): array
     {
-        $forecast = $this->forecasts->divisionDemand($this->analytics, $scope['from'], $scope['to']);
+        $forecast = $this->forecasts->divisionDemand(
+            $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+        );
 
         return $this->forecastBreakdown($scope, $forecast, 'Demand by Division', 'division');
     }
@@ -953,7 +1149,9 @@ class AnalyticsCardDetailService
     /** @return array<string, mixed> */
     private function forecastUnit(array $scope): array
     {
-        $forecast = $this->forecasts->unitDemand($this->analytics, $scope['from'], $scope['to']);
+        $forecast = $this->forecasts->unitDemand(
+            $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+        );
 
         return $this->forecastBreakdown($scope, $forecast, 'Demand by Unit', 'unit');
     }
@@ -992,8 +1190,15 @@ class AnalyticsCardDetailService
     /** @return array<string, mixed> */
     private function forecastEquipment(array $scope): array
     {
-        $forecast = $this->forecasts->equipment($scope['from'], $scope['to']);
+        $forecast = $this->forecasts->equipment(
+            $scope['from'], $scope['to'], ForecastService::EQUIPMENT_LIMIT,
+            $scope['division'], $scope['unit']
+        );
         $rows = $forecast['items'] ?? [];
+        $highest = $rows === [] ? 0 : max(array_map(
+            static fn (array $row): float => (float) ($row['demand'] ?? 0),
+            $rows
+        ));
 
         return [
             'title' => 'Equipment Demand & Availability',
@@ -1001,20 +1206,20 @@ class AnalyticsCardDetailService
             'value_label' => 'items assessed',
             'context' => 'Projected demand against expected availability',
             'note' => 'Expected availability excludes units already reserved, equipment still out '
-                .'on custody, linen in laundry, and units held by an incident, because none of '
-                .'those can be handed to a new borrower. An item is only projected when its own '
-                .'history is long enough; otherwise its scheduled bookings are shown instead.',
+                .'on custody, linen in laundry, and units held by an incident.',
             'bars' => $rows === [] ? null : array_map(
                 static fn (array $row): array => [
                     'label' => (string) ($row['name'] ?? ''),
-                    'value' => (($row['forecast'] ?? 0) + 0).' needed · '
-                        .(($row['available'] ?? 0) + 0).' expected',
-                    'share' => (int) ($row['share'] ?? 0),
+                    'value' => (($row['demand'] ?? 0) + 0).' needed · '
+                        .(($row['expected_available'] ?? 0) + 0).' expected',
+                    'share' => $highest > 0
+                        ? (int) round(((float) ($row['demand'] ?? 0)) / $highest * 100)
+                        : 0,
                 ],
                 $rows
             ),
             'empty' => $rows === []
-                ? ($forecast['summary'] ?? 'No equipment has enough recorded movement to project yet.')
+                ? ($forecast['summary'] ?? $forecast['reason'] ?? 'No equipment has enough recorded movement to project yet.')
                 : null,
         ];
     }
@@ -1022,7 +1227,9 @@ class AnalyticsCardDetailService
     /** @return array<string, mixed> */
     private function busyPeriod(array $scope): array
     {
-        $busy = $this->forecasts->busyPeriod($this->analytics, $scope['from'], $scope['to']);
+        $busy = $this->forecasts->busyPeriod(
+            $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
+        );
         $available = (bool) ($busy['available'] ?? false);
 
         return [

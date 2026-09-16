@@ -12,6 +12,7 @@
         'academic_period' => $periodSelection,
         'group' => $selectedDivision !== 'all' ? $selectedDivision : null,
         'unit' => $selectedUnit !== 'all' ? $selectedUnit : null,
+        'borrower' => $selectedBorrower ?? null,
     ]);
 @endphp
 
@@ -57,10 +58,10 @@
 
             <label for="analytics-group">
                 <span class="analytics-filter-label">
-                    Borrower group
+                    Division
                 </span>
                 <select id="analytics-group" name="group" onchange="this.form.submit()">
-                    <option value="all" @selected($selectedDivision === 'all')>All groups</option>
+                    <option value="all" @selected($selectedDivision === 'all')>All divisions</option>
                     @foreach($divisions as $code => $label)
                         <option value="{{ $code }}" @selected($selectedDivision === $code)>{{ $label }}</option>
                     @endforeach
@@ -69,7 +70,7 @@
 
             <label for="analytics-unit">
                 <span class="analytics-filter-label">
-                    Unit
+                    Office / Unit
                 </span>
                 <select id="analytics-unit" name="unit" onchange="this.form.submit()">
                     <option value="all" @selected($selectedUnit === 'all')>All units</option>
@@ -78,6 +79,8 @@
                     @endforeach
                 </select>
             </label>
+
+            @include('analytics.partials.borrower-picker')
 
             <p class="analytics-period-note">
                 Showing {{ $from->format('d M Y') }} to {{ $to->format('d M Y') }}.
@@ -104,12 +107,15 @@
         @endif
 
 
-        @include('analytics.partials.'.$sectionPartial)
-
-        {{-- The detail opens over the section that produced the figure. --}}
+        {{--
+            Analytics detail stays inside the dashboard flow. It appears directly
+            below the active scope instead of covering the page with a drawer.
+        --}}
         @if($detail)
             @include('analytics.partials.detail-panel')
         @endif
+
+        @include('analytics.partials.'.$sectionPartial)
     </div>
 </section>
 @endsection

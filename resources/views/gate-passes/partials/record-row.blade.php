@@ -10,7 +10,7 @@
     $statusKey = $statusMeta['key'];
     $releasedAt = $gatePass->guard_signed_at ?: $custody?->released_at;
     $hasFinalDocument = in_array($gatePass->status, ['READY_FOR_PRINTING', 'VERIFIED'], true) && $gatePass->passDocument;
-    $hasMoreActions = $custody || $hasFinalDocument || $gatePass->accomplishedFile;
+    $hasMoreActions = $hasFinalDocument || $gatePass->accomplishedFile;
     $search = implode(' ', [
         $requestRecord?->request_no,
         $custody?->custody_no,
@@ -24,7 +24,7 @@
 <tr data-gate-pass-record data-search="{{ $search }}" data-status="{{ $statusKey }}" data-date="{{ $gatePass->updated_at?->timestamp ?? 0 }}">
     <td><a class="gate-pass-request-link" href="{{ route('gate-passes.show', $gatePass) }}">{{ $requestRecord?->request_no ?: 'Gate Pass #'.$gatePass->id }}</a></td>
     <td><strong>{{ $borrower?->full_name ?: '—' }}</strong><small>{{ $borrower?->organizationalUnit?->unit_name ?: '—' }}</small></td>
-    <td class="gate-pass-destination">{{ $destination }}</td>
+    <td class="gate-pass-destination"><strong>{{ $gatePass->purpose ?: '—' }}</strong><small>{{ $destination }}</small></td>
     <td class="gate-pass-release-date">
         @if($releasedAt)
             <time datetime="{{ $releasedAt->toIso8601String() }}">{{ $releasedAt->format('M d, Y') }}</time>
@@ -35,7 +35,7 @@
     <td><span class="status-badge status-{{ $statusTone }}" title="{{ $statusLabel }}">{{ $statusLabel }}</span></td>
     <td>
         <div class="gate-pass-row-actions">
-            <a class="button secondary small gate-pass-view" href="{{ route('gate-passes.show', $gatePass) }}">View details</a>
+            <a class="button secondary small gate-pass-view" href="{{ route('gate-passes.show', $gatePass) }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a>
             @if($hasMoreActions)
                 <details class="gate-pass-more" name="gate-pass-record-actions">
                     <summary aria-label="More actions for {{ $requestRecord?->request_no ?: 'Gate Pass #'.$gatePass->id }}">
@@ -47,9 +47,6 @@
                         @endif
                         @if($gatePass->accomplishedFile)
                             <a href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">View accomplished scan</a>
-                        @endif
-                        @if($custody)
-                            <a href="{{ route('custody.show', $custody) }}">Open custody record</a>
                         @endif
                     </div>
                 </details>

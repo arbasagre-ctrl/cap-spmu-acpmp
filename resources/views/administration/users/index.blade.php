@@ -179,7 +179,8 @@
                                 class="button secondary ictu-user-manage-button"
                                 href="{{ route('administration.users.edit', $user) }}"
                             >
-                                Manage
+                                <span>Manage</span>
+                                <x-icon name="arrow-right" size="14" />
                             </a>
                         </td>
                     </tr>

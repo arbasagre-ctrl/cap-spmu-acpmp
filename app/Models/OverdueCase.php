@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class OverdueCase extends Model
 {
@@ -60,5 +61,10 @@ class OverdueCase extends Model
     public function penalties(): HasMany
     {
         return $this->hasMany(Penalty::class);
+    }
+
+    public function documents(): MorphMany
+    {
+        return $this->morphMany(GeneratedDocument::class, 'subject');
     }
 }

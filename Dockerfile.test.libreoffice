@@ -1,0 +1,60 @@
+# Phase 5 verification only: same as Dockerfile.test (full dev dependencies,
+# PHPUnit), but with LibreOffice added so tests/Feature/*LibreOffice*.php can
+# exercise the real OfficeDraftTemplateRenderer soffice conversion instead of
+# mocking it. Dockerfile.test itself is untouched and stays LibreOffice-free
+# for the fast, existing CI/test loop.
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+
+RUN composer install \
+    --prefer-dist \
+    --no-interaction \
+    --no-progress \
+    --no-scripts
+
+
+FROM php:8.4-cli
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libicu-dev \
+        libonig-dev \
+        libzip-dev \
+        libpng-dev \
+        libjpeg62-turbo-dev \
+        libfreetype6-dev \
+        libsqlite3-dev \
+        libxml2-dev \
+        libreoffice-calc \
+        libreoffice-writer \
+        poppler-utils \
+        fonts-dejavu-core \
+        fonts-liberation \
+    && docker-php-ext-configure gd \
+        --with-freetype \
+        --with-jpeg \
+    && docker-php-ext-install \
+        dom \
+        gd \
+        intl \
+        mbstring \
+        pcntl \
+        pdo_mysql \
+        pdo_sqlite \
+        xml \
+        xmlwriter \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /var/www/html
+
+COPY . .
+
+COPY --from=vendor /app/vendor ./vendor
+
+RUN php artisan package:discover --ansi
+
+CMD ["php", "vendor/bin/phpunit", "--testdox"]

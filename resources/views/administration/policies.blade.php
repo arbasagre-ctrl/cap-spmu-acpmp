@@ -193,7 +193,7 @@
                     <strong>Transaction Schedule</strong>
                     <span>Weekly request, pickup, release &amp; return hours</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('policies.index', ['section' => 'special-dates']) }}">
@@ -202,7 +202,7 @@
                     <strong>Special Dates &amp; Closures</strong>
                     <span>Closures and special working days</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
         </div>
     </div>
@@ -217,7 +217,7 @@
                     <strong>Academic Period</strong>
                     <span>Semester and academic year</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'late-return-fee']) }}">
@@ -226,7 +226,7 @@
                     <strong>Late Return Policy</strong>
                     <span>Late-return fee and assessment</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('policies.index', ['section' => 'sanction-rules']) }}">
@@ -235,7 +235,7 @@
                     <strong>Sanction Rules</strong>
                     <span>Confirmed offense rules</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
         </div>
     </div>
@@ -250,7 +250,7 @@
                     <strong>Borrower's Slip Template</strong>
                     <span>Approved Borrower's Slip</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-laundry-form']) }}">
@@ -259,7 +259,7 @@
                     <strong>Laundry Form Template</strong>
                     <span>Approved Laundry Form</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-gate-pass']) }}">
@@ -268,7 +268,7 @@
                     <strong>Gate Pass Template</strong>
                     <span>Approved Gate Pass</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-billing-statement']) }}">
@@ -277,7 +277,7 @@
                     <strong>Billing Statement Template</strong>
                     <span>Approved Billing Statement</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-accountability-compliance-notice']) }}">
@@ -286,7 +286,7 @@
                     <strong>Compliance Notice Template</strong>
                     <span>Approved compliance notice</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-administrative-sanction-notice']) }}">
@@ -295,7 +295,7 @@
                     <strong>Sanction Notice Template</strong>
                     <span>Approved administrative sanction notice</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
 
             <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-rslddp']) }}">
@@ -304,7 +304,7 @@
                     <strong>RSLDDP Template</strong>
                     <span>Approved accountability report</span>
                 </span>
-                <x-icon name="chevron-right" size="20" class="operational-config-card-chevron" />
+                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>
         </div>
     </div>

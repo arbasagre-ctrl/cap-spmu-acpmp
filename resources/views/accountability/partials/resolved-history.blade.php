@@ -31,6 +31,7 @@
         @foreach($resolvedHistory as $row)
             @php
                 $case = $row['case'];
+                $incident = $row['incident'] ?? null;
                 $billing = $row['billing'];
                 $payment = $row['payment'];
                 $fromLaundry = $case?->return_date_source === 'LAUNDRY_RECEIPT';
@@ -46,8 +47,17 @@
                  * Late Return. Nothing here recomputes an outcome; it only
                  * labels the two sources the array already distinguishes.
                  */
-                $typeLabel = $case ? ($fromLaundry ? 'Laundry-Reported Late Return' : 'Late Return') : 'Property Accountability';
+                $typeLabel = $case
+                    ? (((int) ($case->late_days ?? 0)) > 0
+                        ? ($fromLaundry ? 'Laundry-Reported Late Return' : 'Late Return')
+                        : 'Overdue Record Cleared')
+                    : 'Property Accountability';
                 $amountLabel = $billing ? 'PHP '.number_format((float) $billing->total_amount, 2) : 'No charge';
+                $lateReturnNotice = $case?->documents
+                    ?->where('document_type', 'LATE_RETURN_NOTICE')
+                    ->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'])
+                    ->sortByDesc('generated_at')
+                    ->first();
 
                 /*
                  * This partial is shared by the AO/Head Accountability
@@ -80,7 +90,28 @@
                 </div>
 
                 <details class="accountability-case-details">
-                    <summary>View details</summary>
+                    <summary class="resolved-history-detail-toggle"><span>View details</span><x-icon name="chevron-down" size="14" class="resolved-history-chevron" /></summary>
+
+                    @if($incident)
+                        <dl class="accountability-case-facts top-gap">
+                            <div>
+                                <dt>Incident</dt>
+                                <dd>{{ $incident->incident_no ?: '—' }}</dd>
+                            </div>
+                            <div>
+                                <dt>Finding</dt>
+                                <dd>{{ str($incident->incident_type)->replace('_', ' ')->title() }}</dd>
+                            </div>
+                            <div>
+                                <dt>Custody</dt>
+                                <dd>{{ $incident->custody?->custody_no ?: '—' }}</dd>
+                            </div>
+                            <div>
+                                <dt>Final Status</dt>
+                                <dd>{{ str($incident->status)->replace('_', ' ')->title() }}</dd>
+                            </div>
+                        </dl>
+                    @endif
 
                     @if($case)
                         <dl class="accountability-case-facts top-gap">
@@ -166,12 +197,19 @@
                         </section>
                     </div>
 
-                    @if($billing || $payment?->evidence_file_id)
+                    @if($lateReturnNotice || $billing || $payment?->evidence_file_id)
                         <div class="resolved-history-links">
-                            @foreach(($billing?->documents ?? collect()) as $document)
+                            @if($lateReturnNotice)
+                                <a href="{{ route('documents.view', $lateReturnNotice) }}" target="_blank" rel="noopener">
+                                    <x-icon name="external-link" size="15" />
+                                    View Late Return Notice
+                                </a>
+                            @endif
+
+                            @foreach(($billing?->documents ?? collect())->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']) as $document)
                                 <a href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
                                     <x-icon name="external-link" size="15" />
-                                    View Late Return Fee Form
+                                    View Billing Statement
                                 </a>
                             @endforeach
 
@@ -204,6 +242,10 @@
 }
 
 .resolved-history-card > .accountability-case-details { margin-top: 12px; }
+.resolved-history-detail-toggle { display:inline-flex; align-items:center; gap:6px; list-style:none; }
+.resolved-history-detail-toggle::-webkit-details-marker { display:none; }
+.resolved-history-chevron { transition:transform .16s ease; }
+.accountability-case-details[open] > .resolved-history-detail-toggle .resolved-history-chevron { transform:rotate(180deg); }
 
 .resolved-history-detail {
     display: grid;

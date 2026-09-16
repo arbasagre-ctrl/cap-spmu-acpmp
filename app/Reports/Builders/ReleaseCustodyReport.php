@@ -29,6 +29,8 @@ class ReleaseCustodyReport implements ReportBuilder
 {
     public function build(ReportFilters $filters): ReportDataset
     {
+        $borrower = $filters->get('borrower');
+
         /*
          * currentVersion and lines.requestItem are eager loaded because the
          * row loop reads the version snapshot for every record and the
@@ -49,6 +51,7 @@ class ReleaseCustodyReport implements ReportBuilder
                     ->orWhereBetween('released_at', [$filters->from, $filters->to])
                     ->orWhereBetween('closed_at', [$filters->from, $filters->to]);
             })
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', (int) $borrower))
             ->latest('created_at')
             ->get();
 
@@ -66,6 +69,7 @@ class ReleaseCustodyReport implements ReportBuilder
                     : (string) $custody->status;
 
                 return [
+                    '_borrower_user_id' => (int) $custody->borrower_user_id,
                     '_status' => $status,
                     /*
                      * CustodyService writes return_type EARLY when the physical

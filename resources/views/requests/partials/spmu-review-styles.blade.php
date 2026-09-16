@@ -101,6 +101,8 @@
     flex-direction: column;
     width: 100%;
     min-width: 0;
+    height: 100%;
+    min-height: 0 !important;
 }
 
 .spmu-scan-slot .scanned-document-header {
@@ -118,11 +120,18 @@
  * the full page - signatures, footer and all - stays reachable. It is never
  * clipped with overflow:hidden.
  */
+/*
+ * The document pane follows the actual height of the Review / Decide panel.
+ * No fixed preview height is imposed here: the two grid columns stretch to
+ * the same row height, and only the document stage scrolls when needed.
+ */
 .spmu-scan-slot .scanned-pdf-stage,
 .spmu-scan-slot .scanned-image-stage {
-    flex: 1 1 auto;
-    height: auto;
-    min-height: clamp(560px, 64vh, 720px);
+    flex: 1 1 0;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: auto;
 }
 
 .spmu-scan-slot .scanned-image-viewer {
@@ -188,6 +197,8 @@
 .spmu-checklist-panel {
     display: flex;
     flex-direction: column;
+    height: 100%;
+    min-height: 0;
 }
 
 .spmu-checklist-panel > .empty-state { margin: 18px 20px; }
@@ -528,9 +539,14 @@ html[data-theme="dark"] .spmu-decision-actions .button[data-decision-trigger="RE
 @media (max-width: 1180px) {
     .spmu-review-top-row { grid-template-columns: 1fr; }
 
+    /* Once the panels stack, they no longer need equal heights. */
+    .spmu-scan-slot > .scanned-document-card { height: auto; }
+
     .spmu-scan-slot .scanned-pdf-stage,
     .spmu-scan-slot .scanned-image-stage {
-        min-height: clamp(460px, 60vh, 620px);
+        height: clamp(460px, 60vh, 620px) !important;
+        min-height: 460px !important;
+        max-height: 620px !important;
     }
 }
 

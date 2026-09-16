@@ -1,6 +1,11 @@
 @php
     $balance = $balances[$item->id] ?? [];
 
+    /*
+     * The operational list shows PHYSICAL availability, matching the
+     * Inventory Status Report. Reserved stock is still physically in SPMU and is shown separately
+     * from currently available units.
+     */
     $available = (float) (
         $balance['current_available']
         ?? $balance['borrower_available']
@@ -8,11 +13,20 @@
         ?? 0
     );
 
-    $allocated = (float) ($balance['allocated'] ?? $balance['reserved'] ?? 0);
+    $reserved = (float) ($balance['reserved'] ?? $balance['allocated'] ?? 0);
     $borrowed = (float) ($balance['borrowed'] ?? 0);
     $laundry = (float) ($balance['laundry'] ?? 0);
     $incident = (float) ($balance['incident'] ?? 0);
     $totalStock = (float) $item->total_quantity;
+    $unavailable = max(0, $totalStock - $available - $reserved - $borrowed);
+
+    $damagedMaintenance = min($totalStock, (float) ($balance['damaged_maintenance'] ?? 0));
+    $lost = min($totalStock, (float) ($balance['lost'] ?? 0));
+    $stolen = min($totalStock, (float) ($balance['stolen'] ?? 0));
+    $destroyed = min($totalStock, (float) ($balance['destroyed'] ?? 0));
+    $condemned = min($totalStock, (float) ($balance['condemned'] ?? 0));
+    $knownNonGood = min($totalStock, $damagedMaintenance + $lost + $stolen + $destroyed + $condemned);
+    $good = max(0, $totalStock - $knownNonGood);
 
     $itemCode = 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT);
     $categoryName = $item->category?->category_name ?: 'Uncategorized';
@@ -45,19 +59,31 @@
 
     <td class="is-numeric"><span class="spmu-inventory-count">{{ $available + 0 }}</span></td>
 
-    <td class="is-numeric"><span class="spmu-inventory-count">{{ $allocated + 0 }}</span></td>
+    <td class="is-numeric"><span class="spmu-inventory-count">{{ $reserved + 0 }}</span></td>
 
     <td class="is-numeric"><span class="spmu-inventory-count">{{ $borrowed + 0 }}</span></td>
 
     <td>
         <span class="spmu-inventory-states">
-            <span class="{{ $laundry > 0 ? 'has-open' : '' }}">{{ $laundry + 0 }} laundry</span>
-            <span class="{{ $incident > 0 ? 'has-open' : '' }}">{{ $incident + 0 }} issue</span>
+            <strong>{{ $unavailable + 0 }} unavailable</strong>
+            @if($laundry > 0)
+                <span class="has-open">{{ $laundry + 0 }} in laundry</span>
+            @endif
+            @if($incident > 0)
+                <span class="has-open">{{ $incident + 0 }} condition / incident hold</span>
+            @endif
         </span>
     </td>
 
     <td data-condition="{{ $item->condition_code }}">
-        <x-status-badge :status="$item->condition_code" />
+        <span class="spmu-condition-summary">
+            <strong>{{ $good + 0 }} good / serviceable</strong>
+            @if($damagedMaintenance > 0)<small>{{ $damagedMaintenance + 0 }} damaged / under repair</small>@endif
+            @if($lost > 0)<small>{{ $lost + 0 }} lost</small>@endif
+            @if($stolen > 0)<small>{{ $stolen + 0 }} stolen</small>@endif
+            @if($destroyed > 0)<small>{{ $destroyed + 0 }} destroyed</small>@endif
+            @if($condemned > 0)<small>{{ $condemned + 0 }} condemned</small>@endif
+        </span>
     </td>
 
     <td class="spmu-inventory-use">

@@ -143,6 +143,9 @@
         @case('arrow-left')
             <path d="M20 12H4" /><path d="m10 6-6 6 6 6" />
             @break
+        @case('arrow-right')
+            <path d="M4 12h16" /><path d="m14 6 6 6-6 6" />
+            @break
         @case('lightbulb')
             <path d="M9 18h6" /><path d="M10 21.5h4" /><path d="M12 2.5a6.5 6.5 0 0 0-3.7 11.84c.5.35.8.9.85 1.5l.05.66h5.6l.05-.66c.05-.6.35-1.15.85-1.5A6.5 6.5 0 0 0 12 2.5Z" />
             @break

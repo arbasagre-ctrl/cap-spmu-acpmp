@@ -26,12 +26,16 @@ use Illuminate\Validation\ValidationException;
  * This service does not perform returns. It reads the authoritative result of
  * the existing return workflows and classifies it:
  *
- *   linen      the Laundry Personnel receipt (laundry_jobs.worker_received_at)
- *   otherwise  the Return Inspection (return_transactions.received_at)
+ *   linen       the Laundry Personnel receipt (laundry_jobs.worker_received_at)
+ *   non-linen   the AO Return Inspection (return_transactions.received_at)
+ *   mixed       the later of those two authoritative physical-return dates
  *
  * For linen the Action Officer's later attestation of the accomplished Laundry
  * Form is a document step, not a physical return, so it must never add late
- * days. A borrower is not charged for internal document forwarding.
+ * days. For mixed custody, however, the custody is not physically complete
+ * until BOTH return channels are complete, so lateness is measured using the
+ * later authoritative date. A borrower is never charged for internal document
+ * forwarding itself.
  */
 class LateReturnService
 {
@@ -89,28 +93,70 @@ class LateReturnService
      */
     public function actualReturn(CustodyTransaction $custody): array
     {
-        $custody->loadMissing(['lines.requestItem.inventoryItem', 'laundryJob', 'returns']);
+        $custody->loadMissing([
+            'lines.requestItem.inventoryItem',
+            'laundryJob',
+            'returns.lines.custodyLine.requestItem.inventoryItem',
+        ]);
 
-        if ($this->isLinen($custody)) {
-            $receivedAt = $custody->laundryJob?->worker_received_at;
+        $hasLinen = $custody->lines->contains(
+            fn ($line): bool => (bool) $line->requestItem?->inventoryItem?->laundry_required
+        );
+        $hasNonLinen = $custody->lines->contains(
+            fn ($line): bool => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
+        );
 
-            if ($receivedAt) {
-                return [Carbon::parse($receivedAt)->startOfDay(), 'LAUNDRY_RECEIPT'];
-            }
-
-            /*
-             * Linen with no recorded Laundry receipt has not completed its
-             * physical return path yet, even if a return row exists.
-             */
-            return [null, null];
+        $linenReceivedAt = null;
+        if ($hasLinen && $custody->laundryJob?->worker_received_at) {
+            $linenReceivedAt = Carbon::parse($custody->laundryJob->worker_received_at)->startOfDay();
         }
 
-        $receivedAt = $custody->returns
-            ->filter(fn ($return): bool => $return->received_at !== null)
-            ->max('received_at');
+        $nonLinenReceivedAt = null;
+        if ($hasNonLinen) {
+            $nonLinenDates = $custody->returns
+                ->filter(function ($return): bool {
+                    if ($return->received_at === null) {
+                        return false;
+                    }
 
-        return $receivedAt
-            ? [Carbon::parse($receivedAt)->startOfDay(), 'RETURN_INSPECTION']
+                    return $return->lines->contains(
+                        fn ($line): bool => ! (bool) $line->custodyLine?->requestItem?->inventoryItem?->laundry_required
+                    );
+                })
+                ->map(fn ($return) => Carbon::parse($return->received_at)->startOfDay());
+
+            if ($nonLinenDates->isNotEmpty()) {
+                $nonLinenReceivedAt = $nonLinenDates->sortByDesc(fn (Carbon $date) => $date->timestamp)->first();
+            }
+        }
+
+        /*
+         * A mixed custody has two valid physical channels, but it still has one
+         * due date. The property is completely returned only when BOTH channels
+         * have completed, so the later authoritative physical-return date is
+         * the correct date for late-return assessment. Missing either date means
+         * the physical return is not authoritative yet.
+         */
+        if ($hasLinen && $hasNonLinen) {
+            if (! $linenReceivedAt || ! $nonLinenReceivedAt) {
+                return [null, null];
+            }
+
+            $completedAt = $linenReceivedAt->greaterThan($nonLinenReceivedAt)
+                ? $linenReceivedAt
+                : $nonLinenReceivedAt;
+
+            return [$completedAt, 'MIXED_RETURN_COMPLETION'];
+        }
+
+        if ($hasLinen) {
+            return $linenReceivedAt
+                ? [$linenReceivedAt, 'LAUNDRY_RECEIPT']
+                : [null, null];
+        }
+
+        return $nonLinenReceivedAt
+            ? [$nonLinenReceivedAt, 'RETURN_INSPECTION']
             : [null, null];
     }
 
@@ -309,6 +355,7 @@ class LateReturnService
         BorrowerRestriction::query()->firstOrCreate(
             [
                 'borrower_user_id' => $custody->borrower_user_id,
+                'custody_transaction_id' => $custody->id,
                 'restriction_type' => 'OVERDUE_RETURN',
                 'status' => 'ACTIVE',
             ],

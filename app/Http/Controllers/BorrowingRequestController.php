@@ -77,7 +77,7 @@ class BorrowingRequestController extends Controller
     public function index(Request $request): View
     {
         $query = BorrowingRequest::query()
-            ->with(['borrower', 'currentVersion.items', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
+            ->with(['borrower', 'currentVersion.items', 'currentVersion.approvalSteps', 'custody.lines', 'custody.incidents', 'custody.overdueCase'])
             ->latest();
 
         $workspace = strtoupper(
@@ -191,29 +191,23 @@ class BorrowingRequestController extends Controller
                  */
                 $query->where(function ($query): void {
                     $query
-                        ->where(
-                            'status',
-                            '!=',
-                            RequestStatus::UnderSpmu
-                        )
+                        ->where(function ($historical): void {
+                            $historical
+                                ->where('status', '!=', RequestStatus::UnderSpmu)
+                                ->where(function ($visible): void {
+                                    $visible->whereNotNull('final_approved_at')
+                                        ->orWhereHas(
+                                            'currentVersion.approvalSteps',
+                                            fn ($step) => $step->where('stage_code', 'SPMU')
+                                        );
+                                });
+                        })
                         ->orWhereHas(
                             'currentVersion.approvalSteps',
                             fn ($step) => $step
-                                ->where(
-                                    'stage_code',
-                                    'SPMU'
-                                )
-                                ->where(
-                                    'sequence_no',
-                                    2
-                                )
-                                ->whereIn(
-                                    'decision',
-                                    [
-                                        'PENDING',
-                                        'RECEIVED',
-                                    ]
-                                )
+                                ->where('stage_code', 'SPMU')
+                                ->where('sequence_no', 2)
+                                ->whereIn('decision', ['PENDING', 'RECEIVED'])
                         );
                 });
             }
@@ -449,8 +443,15 @@ class BorrowingRequestController extends Controller
             'custody.lines.requestItem.inventoryItem',
             'custody.incidents',
             'custody.overdueCase',
+            'custody.pickupScheduledBy',
+            'custody.preparedBy',
+            'custody.releasedBy',
+            'custody.returns.receivedBy',
             'custody.returns.lines.custodyLine.requestItem.inventoryItem',
+            'custody.laundryJob.formVerifier',
             'custody.laundryJob.latestEvidence.file',
+            'custody.gatePass.uploadedBy',
+            'custody.gatePass.verifiedBy',
             'custody.gatePass.accomplishedFile',
         ]);
 
@@ -1530,8 +1531,14 @@ class BorrowingRequestController extends Controller
         /*
          * Head/Admin keeps historical oversight after the active review stage.
          */
+        $hasSpmuWorkflowHistory = $borrowingRequest->final_approved_at !== null
+            || (bool) $borrowingRequest->currentVersion?->approvalSteps()
+                ->where('stage_code', 'SPMU')
+                ->exists();
+
         $isHistoricalDecisionViewer =
             $borrowingRequest->status !== RequestStatus::UnderSpmu
+            && $hasSpmuWorkflowHistory
             && ($isSpmuHead || $isDelegatedOfficer);
 
         abort_unless(

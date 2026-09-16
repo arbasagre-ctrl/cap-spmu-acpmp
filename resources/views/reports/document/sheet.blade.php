@@ -14,13 +14,13 @@
     @include('reports.document.title')
     @include('reports.document.metadata')
 
-    <div class="doc-table-scroll">
-        @include('reports.document.table')
-    </div>
-
     @if($options['summary'] ?? true)
         @include('reports.document.summary')
     @endif
+
+    <div class="doc-table-scroll">
+        @include('reports.document.table')
+    </div>
 
     @if($options['footer'] ?? true)
         @include('reports.document.footer')

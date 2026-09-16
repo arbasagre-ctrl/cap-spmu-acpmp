@@ -1219,7 +1219,7 @@
         </section>
 
         <div class="stage-actions request-picker-actions" data-stage-panel="2">
-            <button type="button" class="button secondary ui-pressable" data-stage-back="1"><x-icon name="chevron-right" class="request-back-icon" size="16" />Back</button>
+            <button type="button" class="button secondary ui-pressable" data-stage-back="1"><x-icon name="arrow-left" size="16" />Back</button>
             <button type="button" class="button primary ui-pressable" data-stage-next="3" disabled>
                 Confirm Items &amp; Continue
                 <svg class="ui-icon request-continue-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
@@ -1434,7 +1434,7 @@
 
         <div class="sticky-actions request-review-actions" data-stage-panel="3">
             <button type="button" class="button secondary ui-pressable" data-stage-back="2">
-                <x-icon name="chevron-right" class="request-back-icon" size="16" />
+                <x-icon name="arrow-left" size="16" />
                 Back
             </button>
 

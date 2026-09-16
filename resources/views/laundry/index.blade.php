@@ -8,12 +8,37 @@
         'custody.returns',
     ]);
     $hasLaundryCases = $jobs->total() > 0;
-    $laundryStatusLabels = [
-        'FOR_LAUNDRY' => 'Laundry Processing / Form Pending',
-        'TURNED_OVER_TO_LAUNDRY' => 'Availability Reconciliation Pending',
-    ];
-    $laundryStatuses = collect(array_keys($laundryStatusLabels))
-        ->merge($jobs->pluck('status'))->unique();
+
+    /*
+     * Filter state follows the borrower-facing Laundry workflow, including the
+     * important distinction between a pending form and an accomplished form
+     * that is already ready for SPMU encoding.
+     */
+    $laundryFilterStatus = static function ($job): array {
+        return match (true) {
+            $job->status === 'FOR_LAUNDRY' && $job->hasVerifiedAccomplishedForm()
+                => ['key' => 'READY_FOR_SPMU_ENCODING', 'label' => 'Ready for SPMU Encoding'],
+            $job->status === 'FOR_LAUNDRY'
+                => ['key' => 'LAUNDRY_FORM_PENDING', 'label' => 'Laundry Form Pending'],
+            $job->status === 'TURNED_OVER_TO_LAUNDRY'
+                => ['key' => 'RECONCILIATION_PENDING', 'label' => 'Reconciliation Pending'],
+            $job->status === 'LAUNDRY_COMPLETED'
+                => ['key' => 'AVAILABLE', 'label' => 'Available'],
+            default
+                => ['key' => strtoupper((string) $job->status), 'label' => $job->displayStatusLabel()],
+        };
+    };
+
+    /*
+     * Active Laundry Operations has a fixed filter vocabulary. Completed /
+     * Available records live in the separate Completed view, so they are not
+     * mixed into this active-work queue.
+     */
+    $laundryStatuses = collect([
+        ['key' => 'LAUNDRY_FORM_PENDING', 'label' => 'Laundry Form Pending'],
+        ['key' => 'READY_FOR_SPMU_ENCODING', 'label' => 'Ready for SPMU Encoding'],
+        ['key' => 'RECONCILIATION_PENDING', 'label' => 'Reconciliation Pending'],
+    ]);
 @endphp
 
 @include('laundry.partials.operations-styles')
@@ -25,7 +50,10 @@
             <h1>Laundry Operations</h1>
             <p>Monitor linen cases handled physically by Laundry Personnel. The accomplished physical Laundry Form is later delivered to SPMU for recording and historical retention.</p>
         </div>
-        <a class="button secondary ui-pressable laundry-completed-link" href="{{ route('laundry.completed') }}">Completed</a>
+        <a class="button secondary ui-pressable laundry-completed-link" href="{{ route('laundry.completed') }}">
+            <span>Completed Records</span>
+            <x-icon name="arrow-right" size="15" />
+        </a>
     </section>
 
     @if($hasLaundryCases)
@@ -40,14 +68,14 @@
                 <select id="laundry-status" data-laundry-status>
                     <option value="">All statuses</option>
                     @foreach($laundryStatuses as $status)
-                        <option value="{{ $status }}">{{ $laundryStatusLabels[$status] ?? str($status)->replace('_', ' ')->title() }}</option>
+                        <option value="{{ $status['key'] }}">{{ $status['label'] }}</option>
                     @endforeach
                 </select>
             </label>
             <label for="laundry-sort">Sort
                 <select id="laundry-sort" data-laundry-sort>
-                    <option value="newest">Newest</option>
-                    <option value="oldest">Oldest</option>
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
                 </select>
             </label>
             @if($jobs->hasPages())
@@ -77,6 +105,7 @@
                                 // has already received and signed for the linen.
                                 $statusText = $job->displayStatusLabel();
                                 $statusDescription = $job->displayStatusDescription();
+                                $filterStatus = $laundryFilterStatus($job);
                                 $caseSearch = implode(' ', [
                                     $job->id,
                                     $caseRequest?->request_no,
@@ -87,14 +116,14 @@
                                     $job->lines->map(fn ($line) => $line->custodyLine?->requestItem?->description_snapshot)->implode(' '),
                                 ]);
                             @endphp
-                            <tr data-laundry-record data-search="{{ $caseSearch }}" data-status="{{ $job->status }}" data-date="{{ $job->updated_at?->timestamp ?? 0 }}">
+                            <tr data-laundry-record data-search="{{ $caseSearch }}" data-status="{{ $filterStatus['key'] }}" data-date="{{ $job->updated_at?->timestamp ?? 0 }}">
                                 <td><a class="laundry-request-link" href="{{ route('laundry.show', $job) }}">{{ $caseRequest?->request_no ?: 'Laundry case #'.$job->id }}</a></td>
                                 <td><strong>{{ $caseBorrower?->full_name ?: '—' }}</strong><small>{{ $caseBorrower?->organizationalUnit?->unit_name ?: '—' }}</small></td>
                                 <td>{{ $casePurpose ?: '—' }}</td>
                                 <td>{{ $caseCustody?->custody_no ?: '—' }}</td>
                                 <td><x-status-badge :status="$job->status" :label="$statusText" :title="$statusDescription" /></td>
                                 <td class="laundry-returned-date">{{ $job->updated_at?->format('M d, Y') ?: '—' }}</td>
-                                <td><a class="button secondary small ui-pressable laundry-view-link" href="{{ route('laundry.show', $job) }}">View details</a></td>
+                                <td><a class="button secondary small ui-pressable laundry-view-link" href="{{ route('laundry.show', $job) }}"><span>View details</span><x-icon name="arrow-right" size="14" /></a></td>
                             </tr>
                         @endforeach
                     </tbody>

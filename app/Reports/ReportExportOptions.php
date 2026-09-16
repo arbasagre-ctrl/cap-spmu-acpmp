@@ -25,11 +25,11 @@ final class ReportExportOptions
 
     /** The primary button label changes with the chosen format. */
     public const ACTION_LABELS = [
-        'pdf' => 'Generate PDF',
-        'docx' => 'Download Word',
-        'xlsx' => 'Export XLSX',
+        'pdf' => 'Export PDF',
+        'docx' => 'Export Word',
+        'xlsx' => 'Export Excel',
         'csv' => 'Export CSV',
-        'print' => 'Print Report',
+        'print' => 'Open Print Preview',
     ];
 
     public const PAGE_SIZES = [
@@ -39,6 +39,7 @@ final class ReportExportOptions
     ];
 
     public const ORIENTATIONS = [
+        'automatic' => 'Automatic (Recommended)',
         'portrait' => 'Portrait',
         'landscape' => 'Landscape',
     ];
@@ -85,9 +86,9 @@ final class ReportExportOptions
          * Each report declares the orientation its columns actually fit in;
          * the dialog may override it, but the default is never guesswork.
          */
-        $orientation = strtolower((string) $request->input('orientation', ''));
-        $orientation = array_key_exists($orientation, self::ORIENTATIONS)
-            ? $orientation
+        $orientationChoice = strtolower((string) $request->input('orientation', 'automatic'));
+        $orientation = in_array($orientationChoice, ['portrait', 'landscape'], true)
+            ? $orientationChoice
             : ReportCatalogue::orientation($reportKey);
 
         $preset = strtolower((string) $request->input('margins', 'normal'));
@@ -116,11 +117,10 @@ final class ReportExportOptions
             $preset,
             $margins,
             self::flag($request, 'include_summary', true),
-            self::flag($request, 'include_generated_by', true),
-            self::flag($request, 'include_filters', true),
-            self::flag($request, 'include_footer', true),
-            in_array($format, ['pdf', 'print'], true)
-                && self::flag($request, 'repeat_headers', true),
+            true,
+            true,
+            true,
+            in_array($format, ['pdf', 'docx', 'print'], true),
             $fontSize,
         );
     }

@@ -7,6 +7,7 @@ use App\Reports\ReportBuilder;
 use App\Reports\ReportCatalogue;
 use App\Reports\ReportDataset;
 use App\Reports\ReportFilters;
+use App\Services\AnalyticsService;
 use App\Services\InventoryService;
 use Illuminate\Support\Collection;
 
@@ -59,7 +60,7 @@ class InventoryStatusReport implements ReportBuilder
             ->map(function (InventoryItem $item) use ($balances): array {
                 $balance = $balances[$item->id] ?? [];
 
-                $available = (float) ($balance['current_available'] ?? $balance['available'] ?? 0);
+                $available = (float) ($balance['borrower_available'] ?? $balance['current_available'] ?? $balance['available'] ?? 0);
                 $allocated = (float) ($balance['allocated'] ?? $balance['reserved'] ?? 0);
                 $borrowed = (float) ($balance['borrowed'] ?? 0);
                 $laundry = (float) ($balance['laundry'] ?? 0);
@@ -76,6 +77,8 @@ class InventoryStatusReport implements ReportBuilder
                     '_borrowed' => $borrowed,
                     '_laundry' => $laundry,
                     '_unserviceable' => $unserviceable,
+                    '_serviceable_total' => (float) ($balance['serviceable_total'] ?? 0),
+                    '_borrowable' => (bool) $item->borrowable,
 
                     'item' => (string) $item->unique_description,
                     'category' => (string) ($item->category?->category_name ?? ''),
@@ -134,7 +137,7 @@ class InventoryStatusReport implements ReportBuilder
             rows: $rows,
             summary: [
                 'Tracked inventory items' => $rows->count(),
-                'Physical available' => (int) $rows->sum(fn (array $row): float => $row['_available']),
+                'Available to allocate' => (int) $rows->sum(fn (array $row): float => $row['_available']),
                 'Allocated' => (int) $rows->sum(fn (array $row): float => $row['_allocated']),
                 'On custody' => (int) $rows->sum(fn (array $row): float => $row['_borrowed']),
             ],
@@ -148,6 +151,9 @@ class InventoryStatusReport implements ReportBuilder
     {
         return match ($availability) {
             'AVAILABLE' => $row['_available'] > 0,
+            'LOW_AVAILABILITY' => $row['_borrowable']
+                && $row['_serviceable_total'] > 0
+                && ($row['_available'] / $row['_serviceable_total']) <= AnalyticsService::LOW_AVAILABILITY_RATIO,
             'FULLY_COMMITTED' => $row['_available'] <= 0,
             'ALLOCATED' => $row['_allocated'] > 0,
             'ON_CUSTODY' => $row['_borrowed'] > 0,

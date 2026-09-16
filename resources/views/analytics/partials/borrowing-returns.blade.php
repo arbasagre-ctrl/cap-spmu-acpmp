@@ -116,7 +116,7 @@
         <span class="analytics-kpi-card-label">Returned On Time</span>
         <strong class="analytics-kpi-card-value">{{ $returns['on_time'] }}</strong>
         <span class="analytics-kpi-card-note">Returned on or before the due date</span>
-        <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -127,7 +127,7 @@
         <span class="analytics-kpi-card-label">Returned Late</span>
         <strong class="analytics-kpi-card-value">{{ $returns['late'] }}</strong>
         <span class="analytics-kpi-card-note">Returned after the due date</span>
-        <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -138,7 +138,7 @@
         <span class="analytics-kpi-card-label">Currently Overdue</span>
         <strong class="analytics-kpi-card-value">{{ $returns['overdue'] }}</strong>
         <span class="analytics-kpi-card-note">Still out past the return date</span>
-        <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
     <a
@@ -149,7 +149,7 @@
         <span class="analytics-kpi-card-label">Open Accountability</span>
         <strong class="analytics-kpi-card-value">{{ $returns['open_cases'] }}</strong>
         <span class="analytics-kpi-card-note">Unresolved accountability cases</span>
-        <x-icon name="chevron-right" size="16" class="analytics-kpi-card-arrow" />
+        <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 </div>
 
@@ -164,7 +164,7 @@
                 <h2>Return Performance Trend</h2>
                 <p>Completed returns per {{ $returnTrend['granularity'] }}, split into on time and late.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.trend']) }}" aria-label="View Return Performance Trend details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.trend']) }}" aria-label="View Return Performance Trend details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         @if($returnTrendMode === 'empty')
@@ -205,14 +205,14 @@
 
     <section
         data-card-detail="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.outcome']) }}"
-        class="analytics-card">
+        class="analytics-card analytics-return-outcome">
         <header class="analytics-card-head">
             <span class="analytics-card-mark" aria-hidden="true"><x-icon name="check-circle" size="15" /></span>
             <div>
                 <h2>Return Outcome</h2>
                 <p>Completed returns only.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.outcome']) }}" aria-label="View Return Outcome details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.outcome']) }}" aria-label="View Return Outcome details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         @if($completed === 0)
@@ -273,11 +273,17 @@
                 <dl class="analytics-donut-legend">
                     <div class="is-ontime">
                         <dt>On time</dt>
-                        <dd>{{ $returns['on_time'] }} <span>&middot; {{ $onTimePct }}%</span></dd>
+                        <dd>
+                            <strong class="analytics-outcome-count">{{ $returns['on_time'] }}</strong>
+                            <span class="analytics-outcome-rate">{{ $onTimePct }}%</span>
+                        </dd>
                     </div>
                     <div class="is-late">
                         <dt>Late</dt>
-                        <dd>{{ $returns['late'] }} <span>&middot; {{ $latePct }}%</span></dd>
+                        <dd>
+                            <strong class="analytics-outcome-count">{{ $returns['late'] }}</strong>
+                            <span class="analytics-outcome-rate">{{ $latePct }}%</span>
+                        </dd>
                     </div>
                 </dl>
             </div>
@@ -294,7 +300,7 @@
         <div>
             <h2>Borrowing Lifecycle</h2>
         </div>
-        <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.lifecycle']) }}" aria-label="View Borrowing Lifecycle details"><x-icon name="chevron-right" size="15" /></a>
+        <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.lifecycle']) }}" aria-label="View Borrowing Lifecycle details"><x-icon name="arrow-right" size="15" /></a>
     </header>
 
     <div class="analytics-lifecycle-strip">
@@ -311,7 +317,7 @@
             </div>
 
             @unless($loop->last)
-                <span class="analytics-lifecycle-link" aria-hidden="true"><x-icon name="chevron-right" size="15" /></span>
+                <span class="analytics-lifecycle-link" aria-hidden="true"><x-icon name="arrow-right" size="15" /></span>
             @endunless
         @endforeach
     </div>
@@ -330,10 +336,10 @@
             @if($currentOverdue['total'] > $currentOverdue['shown'])
                 <a class="analytics-card-action" href="{{ AnalyticsDetailLink::to('follow-up', 'returns', $periodSelection, $division, $unit) }}">
                     View all {{ $currentOverdue['total'] }}
-                    <x-icon name="chevron-right" size="13" />
+                    <x-icon name="arrow-right" size="13" />
                 </a>
             @endif
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.followup']) }}" aria-label="View Current Overdue Follow-up details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.followup']) }}" aria-label="View Current Overdue Follow-up details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -382,7 +388,7 @@
                 <h2>Return Condition</h2>
                 <p>Recorded at return inspection, by quantity received.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.condition']) }}" aria-label="View Return Condition details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.condition']) }}" aria-label="View Return Condition details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -392,34 +398,41 @@
                     No return inspections were recorded during this period.
                 </p>
             @else
-                <ol class="analytics-rank">
-                    @foreach($conditionRows as $row)
-                        <li>
+                @php
+                    $conditionTotal = max(1, (float) $returnConditions['total']);
+                @endphp
+                <div class="analytics-condition-composition" role="img" aria-label="Return condition composition">
+                    <div class="analytics-condition-bar">
+                        @foreach($conditionRows as $row)
+                            @php $pct = round(((float) $row['quantity'] / $conditionTotal) * 100, 1); @endphp
                             <span
-                                class="analytics-rank-row is-static"
+                                class="analytics-condition-segment {{ $row['is_fine'] ? 'is-good' : 'is-issue' }}"
+                                style="width: {{ $pct }}%"
                                 tabindex="0"
                                 role="img"
                                 data-chart-tip
                                 data-tip-title="{{ $row['label'] }}"
                                 data-tip-rows="{{ json_encode([
                                     ['Quantity received', (string) $row['quantity']],
+                                    ['Share of returned quantity', $pct.'%'],
                                 ]) }}"
-                                aria-label="{{ $row['label'] }}: {{ $row['quantity'] }} received"
-                            >
-                                <span class="analytics-rank-main">
-                                    <span class="analytics-rank-name">{{ $row['label'] }}</span>
-                                    <span class="analytics-rank-track">
-                                        <span
-                                            class="analytics-rank-fill {{ $row['is_fine'] ? 'is-good' : 'is-issue' }}"
-                                            style="width: {{ max(3, $row['share']) }}%"
-                                        ></span>
-                                    </span>
-                                </span>
-                                <span class="analytics-rank-value">{{ $row['quantity'] }}</span>
-                            </span>
-                        </li>
-                    @endforeach
-                </ol>
+                                aria-label="{{ $row['label'] }}: {{ $row['quantity'] }} received, {{ $pct }} percent"
+                            ></span>
+                        @endforeach
+                    </div>
+
+                    <ul class="analytics-condition-legend">
+                        @foreach($conditionRows as $row)
+                            @php $pct = round(((float) $row['quantity'] / $conditionTotal) * 100, 1); @endphp
+                            <li>
+                                <span class="analytics-condition-key {{ $row['is_fine'] ? 'is-good' : 'is-issue' }}" aria-hidden="true"></span>
+                                <span>{{ $row['label'] }}</span>
+                                <strong>{{ $row['quantity'] }}</strong>
+                                <small>{{ $pct }}%</small>
+                            </li>
+                        @endforeach
+                    </ul>
+                </div>
             @endif
         </div>
     </section>
@@ -435,7 +448,7 @@
             <div>
                 <h2>Return Performance Summary</h2>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.summary']) }}" aria-label="View Return Performance Summary details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.summary']) }}" aria-label="View Return Performance Summary details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -459,7 +472,7 @@
                 <h2>Accountability &amp; Return Issues</h2>
                 <p>Recorded against this period's borrowings.</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.issues']) }}" aria-label="View Accountability and Return Issues details"><x-icon name="chevron-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.issues']) }}" aria-label="View Accountability and Return Issues details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">

@@ -38,7 +38,7 @@ class AccountabilityController extends Controller
     {
         $incidentQuery = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines', 'documents'])->latest('reported_at');
         $billingQuery = BillingStatement::with(['borrower', 'lines.penalty', 'payments.verifiedBy', 'documents'])->latest('issued_at');
-        $restrictionQuery = BorrowerRestriction::latest('effective_from');
+        $restrictionQuery = BorrowerRestriction::with(['custody.request'])->latest('effective_from');
         $overdueQuery = OverdueCase::with([
             'borrower',
             'custody.lines',
@@ -47,6 +47,7 @@ class AccountabilityController extends Controller
             'custody.laundryJob',
             'penalties',
             'confirmedBy',
+            'documents',
         ])->latest('overdue_started_at');
         $violationQuery = BorrowerViolation::with(['borrower', 'custody.request', 'academicPeriod', 'sanction'])
             ->latest('detected_at');
@@ -91,7 +92,7 @@ class AccountabilityController extends Controller
             'sanctions' => $sanctions,
             'incidentOffensePreviews' => $incidentOffensePreviews,
             'violationOffensePreviews' => $violationOffensePreviews,
-            'resolvedHistory' => $this->resolvedHistory($billings, $overdueCases),
+            'resolvedHistory' => $this->resolvedHistory($billings, $overdueCases, $incidents),
         ]);
     }
 
@@ -112,11 +113,12 @@ class AccountabilityController extends Controller
      *
      * @param  \Illuminate\Support\Collection<int, BillingStatement>  $billings
      * @param  \Illuminate\Support\Collection<int, OverdueCase>  $overdueCases
+     * @param  \Illuminate\Support\Collection<int, Incident>  $incidents
      * @return \Illuminate\Support\Collection<int, array<string, mixed>>
      */
-    private function resolvedHistory(Collection $billings, Collection $overdueCases): Collection
+    private function resolvedHistory(Collection $billings, Collection $overdueCases, Collection $incidents): Collection
     {
-        return app(BorrowerObligationService::class)->resolvedHistory($billings, $overdueCases);
+        return app(BorrowerObligationService::class)->resolvedHistory($billings, $overdueCases, $incidents);
     }
 
     /**
@@ -281,7 +283,7 @@ class AccountabilityController extends Controller
             ]);
 
             BorrowerRestriction::query()
-                ->where('borrower_user_id', $overdue->borrower_user_id)
+                ->forCustody($overdue->custody)
                 ->where('restriction_type', 'OVERDUE_RETURN')
                 ->where('status', 'ACTIVE')
                 ->update([
@@ -305,6 +307,13 @@ class AccountabilityController extends Controller
             );
 
             $billingDocument = $documents->billingStatement($billing, $billingSignature);
+            $lateReturnNotice = $documents->lateReturnNotice(
+                $overdue,
+                $request->user(),
+                'Billing Required',
+                $data['basis'],
+                $billingSignature
+            );
 
             $audit->record(
                 'LATE_RETURN_FEE_BILLED',
@@ -316,15 +325,25 @@ class AccountabilityController extends Controller
                     'sanction_created' => false,
                     'head_signature_snapshot_id' => $billingSignature->id,
                     'generated_document_id' => $billingDocument->id,
+                    'late_return_notice_document_id' => $lateReturnNotice->id,
                 ]
             );
 
             $billing->loadMissing('borrower');
             if ($billing->borrower) {
                 $notifications->send(
+                    'LATE_RETURN_NOTICE_ISSUED',
+                    collect([$billing->borrower]),
+                    "SPMU completed the late-return assessment for {$overdue->custody?->custody_no}. {$this->lateReturnBorrowerContext($overdue)} The formal Late Return Notice is available under My Obligations.",
+                    $overdue,
+                    ['SYSTEM', 'EMAIL'],
+                    ['SYSTEM', 'EMAIL']
+                );
+
+                $notifications->send(
                     'LATE_RETURN_BILLING_STATEMENT_ISSUED',
                     collect([$billing->borrower]),
-                    "Billing Statement {$billing->billing_no} has been issued for the late return under {$overdue->custody?->custody_no}. Review/download it in My Obligations and present it to the CSPC Cashier for payment.",
+                    "Billing Statement {$billing->billing_no} has been issued for the late return under {$overdue->custody?->custody_no}. {$this->lateReturnBorrowerContext($overdue)} Review/download it in My Obligations, pay through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.",
                     $billing,
                     ['SYSTEM', 'EMAIL']
                 );
@@ -333,7 +352,7 @@ class AccountabilityController extends Controller
             return $billing;
         }, 3);
 
-        return back()->with('status', "Billing Statement {$billing->billing_no} issued by the SPMU Head/Admin. The borrower was notified and can present it to the CSPC Cashier.");
+        return back()->with('status', "Late Return Notice and Billing Statement {$billing->billing_no} were issued by the SPMU Head/Admin. The borrower was notified to pay through the CSPC Cashier and present the official receipt to the SPMU Action Officer afterward.");
     }
 
     public function billIncident(
@@ -396,6 +415,7 @@ class AccountabilityController extends Controller
             BorrowerRestriction::query()->updateOrCreate(
                 [
                     'borrower_user_id' => $incident->borrower_user_id,
+                    'custody_transaction_id' => $incident->custody_transaction_id,
                     'incident_id' => $incident->id,
                     'status' => 'ACTIVE',
                 ],
@@ -428,7 +448,7 @@ class AccountabilityController extends Controller
             $notifications->send(
                 'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED',
                 collect([$incident->borrower]),
-                "Billing Statement {$billing->billing_no} has been issued for accountability case {$incident->incident_no}. Review/download it in My Obligations and present it to the CSPC Cashier for payment.",
+                "Billing Statement {$billing->billing_no} has been issued for accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} Review/download it in My Obligations, pay through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.",
                 $billing,
                 ['SYSTEM', 'EMAIL']
             );
@@ -517,7 +537,7 @@ class AccountabilityController extends Controller
                 'rejection_reason' => null,
             ]);
 
-            $settled = $this->settleBillingIfFullyPaid($billing, $request->user()->id);
+            $settled = $this->settleBillingIfFullyPaid($billing, $request->user()->id, $audit);
             $confirmedAfter = (float) $billing->payments()
                 ->where('status', 'VERIFIED')
                 ->sum('amount');
@@ -548,9 +568,10 @@ class AccountabilityController extends Controller
         $billing->refresh()->loadMissing('borrower');
 
         if ($billing->borrower) {
+            $billingContext = $this->billingBorrowerContext($billing);
             $message = $settled
-                ? "Payment for {$billing->billing_no} was confirmed by SPMU. The billing is now settled."
-                : "Payment for {$billing->billing_no} was confirmed by SPMU. Remaining balance: PHP "
+                ? "Payment for {$billing->billing_no} was recorded and confirmed by the SPMU Action Officer. {$billingContext} The billing is now settled."
+                : "Payment for {$billing->billing_no} was recorded and confirmed by the SPMU Action Officer. {$billingContext} Remaining balance: PHP "
                     .number_format($remainingBalance, 2).'.';
 
             $notifications->send(
@@ -559,6 +580,10 @@ class AccountabilityController extends Controller
                 $message,
                 $billing
             );
+        }
+
+        if ($settled) {
+            $this->notifyResolvedPropertyBilling($billing, $notifications, 'Cashier payment settled');
         }
 
         return back()->with(
@@ -623,7 +648,7 @@ class AccountabilityController extends Controller
                 'rejection_reason' => null,
             ]);
 
-            $this->settleBillingIfFullyPaid($billing, $request->user()->id);
+            $legacySettled = $this->settleBillingIfFullyPaid($billing, $request->user()->id, $audit);
 
             $audit->record(
                 'CASHIER_PAYMENT_VERIFIED',
@@ -642,9 +667,13 @@ class AccountabilityController extends Controller
                 $notifications->send(
                     'PAYMENT_VERIFIED',
                     collect([$billing->borrower]),
-                    "CSPC Cashier receipt {$payment->official_receipt_no} for {$billing->billing_no} was confirmed by SPMU.",
+                    "CSPC Cashier receipt {$payment->official_receipt_no} for {$billing->billing_no} was confirmed by the SPMU Action Officer. {$this->billingBorrowerContext($billing)}",
                     $billing
                 );
+            }
+
+            if ($legacySettled) {
+                $this->notifyResolvedPropertyBilling($billing->fresh(), $notifications, 'Legacy Cashier payment settled');
             }
         }, 3);
 
@@ -656,12 +685,13 @@ class AccountabilityController extends Controller
     public function waive(
         Request $request,
         BillingStatement $billing,
-        AuditService $audit
+        AuditService $audit,
+        NotificationService $notifications
     ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
             403,
-            'Only the SPMU Head may authorize a billing waiver.'
+            'Only the SPMU Head/Admin may authorize a billing waiver.'
         );
 
         $data = $request->validate([
@@ -680,6 +710,32 @@ class AccountabilityController extends Controller
                 'remarks' => trim(($billing->remarks ? $billing->remarks."\n" : '').'Authorized waiver: '.$data['reason']),
             ]);
 
+            $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
+            $penaltyIds = $billing->lines()->whereNotNull('penalty_id')->pluck('penalty_id');
+
+            $propertyIncidents = Incident::query()
+                ->whereKey($incidentIds)
+                ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+                ->get();
+
+            foreach ($propertyIncidents as $propertyIncident) {
+                $previousStatus = $propertyIncident->status;
+                $propertyIncident->update(['status' => 'RESOLVED']);
+
+                $audit->record(
+                    'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                    $propertyIncident,
+                    reason: 'Billing Statement waived by the SPMU Head/Admin. '.$data['reason'],
+                    before: ['status' => $previousStatus],
+                    after: [
+                        'status' => 'RESOLVED',
+                        'resolution_outcome' => 'BILLING_WAIVED',
+                        'billing_statement_id' => $billing->id,
+                        'resolved_by_user_id' => $request->user()->id,
+                    ]
+                );
+            }
+
             BorrowerRestriction::query()
                 ->where('billing_statement_id', $billing->id)
                 ->where('status', 'ACTIVE')
@@ -689,9 +745,6 @@ class AccountabilityController extends Controller
                     'lifted_by_user_id' => $request->user()->id,
                 ]);
 
-            $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
-            $penaltyIds = $billing->lines()->whereNotNull('penalty_id')->pluck('penalty_id');
-            Incident::query()->whereKey($incidentIds)->update(['status' => 'RESOLVED']);
             Penalty::query()->whereKey($penaltyIds)->update(['status' => 'WAIVED']);
             OverdueCase::query()
                 ->whereHas('penalties', fn ($query) => $query->whereIn('penalties.id', $penaltyIds))
@@ -708,13 +761,18 @@ class AccountabilityController extends Controller
             $audit->record('BILLING_STATEMENT_WAIVED', $billing, reason: $data['reason']);
         }, 3);
 
-        return back()->with('status', 'Authorized waiver recorded and related financial restriction re-evaluated.');
+        $billing->refresh();
+        $this->notifyResolvedPropertyBilling($billing, $notifications, 'Authorized billing waiver');
+
+        return back()->with('status', 'Authorized waiver recorded. Related property accountability and financial restrictions were re-evaluated; any separate administrative sanction remains unchanged.');
     }
 
     /**
-     * Final Head-level resolution for a property accountability case that does
-     * not require an open Billing Statement. Financial cases must continue
-     * through billing settlement or an authorized billing waiver instead.
+     * Accountability case action endpoint. Head/Admin records the formal
+     * decision; when that decision requires repair/replacement/compliance, the
+     * Action Officer later uses the same endpoint only to verify completion.
+     * Financial cases continue through billing settlement or an authorized
+     * billing waiver instead of a manual compliance closeout.
      */
     public function resolveIncident(
         Request $request,
@@ -725,16 +783,39 @@ class AccountabilityController extends Controller
         DocumentService $documents,
         SignatureService $signatures
     ): RedirectResponse {
+        $requestedOutcome = strtoupper(trim((string) $request->input('resolution_outcome')));
+
+        /*
+         * Property compliance is an operational verification step. The SPMU
+         * Head/Admin already made the decision that repair/replacement or
+         * another compliance action is required; the Action Officer is the
+         * staff member who physically checks the completed requirement.
+         */
+        if ($requestedOutcome === 'COMPLIANCE_COMPLETED') {
+            return $this->completeIncidentCompliance(
+                $request,
+                $incident,
+                $audit,
+                $notifications
+            );
+        }
+
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
             403,
-            'Only the SPMU Head may record the final resolution of a property accountability case.'
+            'Only the SPMU Head/Admin may record the accountability decision.'
         );
 
+        $offensePreview = $policy->incidentOffensePreview($incident);
+        $requiresOffenseDecision = $offensePreview['is_eligible']
+            && ! $offensePreview['existing_sanction'];
+
         $data = $request->validate([
-            'resolution_outcome' => ['required', 'in:NO_BORROWER_CHARGE,COMPLIANCE_REQUIRED,BILLING_REQUIRED,COMPLIANCE_COMPLETED,ADMINISTRATIVELY_CLEARED'],
+            'resolution_outcome' => ['required', 'in:NO_BORROWER_CHARGE,COMPLIANCE_REQUIRED,BILLING_REQUIRED,ADMINISTRATIVELY_CLEARED'],
             'resolution_remarks' => ['required', 'string', 'max:2000'],
-            'count_as_offense' => ['nullable', 'boolean'],
+            'count_as_offense' => [$requiresOffenseDecision ? 'required' : 'nullable', 'boolean'],
+        ], [
+            'count_as_offense.required' => 'Choose whether this eligible incident should count as an administrative offense.',
         ]);
 
         $countAsOffense = $request->boolean('count_as_offense');
@@ -753,7 +834,6 @@ class AccountabilityController extends Controller
             'NO_BORROWER_CHARGE' => 'No borrower liability / no charge',
             'COMPLIANCE_REQUIRED' => 'Repair / replacement / compliance required',
             'BILLING_REQUIRED' => 'Billing / payment required',
-            'COMPLIANCE_COMPLETED' => 'Required compliance completed',
             'ADMINISTRATIVELY_CLEARED' => 'Administratively cleared',
         };
 
@@ -841,9 +921,10 @@ class AccountabilityController extends Controller
 
                 $incident->loadMissing('borrower');
                 if ($incident->borrower) {
+                    $incidentContext = $this->incidentBorrowerContext($incident);
                     $borrowerMessage = $nextStatus === 'FOR_BILLING'
-                        ? "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head and requires billing/payment processing. The Billing Statement will appear in My Obligations after the Action Officer records the approved assessment. Your linked borrowing restriction remains active until settlement or formal waiver."
-                        : "Property accountability case {$incident->incident_no} requires repair, replacement, or other compliance. Your Accountability / Compliance Notice is available in My Obligations. The linked borrowing restriction remains active until SPMU verifies completion.";
+                        ? "Property accountability case {$incident->incident_no} was reviewed by the SPMU Head/Admin and requires billing/payment processing. {$incidentContext} The Billing Statement will appear in My Obligations after the approved assessment is generated and issued. After paying at the CSPC Cashier, present the official receipt to the SPMU Action Officer for recording. Your linked borrowing restriction remains active until settlement or formal waiver."
+                        : "Property accountability case {$incident->incident_no} requires repair, replacement, or other compliance. {$incidentContext} Review the Accountability / Compliance Notice in My Obligations, complete the required action, then present the repaired/replaced property or required compliance to the SPMU Action Officer for physical verification. The linked borrowing restriction remains active until that verification is completed.";
 
                     $notifications->send(
                         'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
@@ -895,12 +976,16 @@ class AccountabilityController extends Controller
                 $notifications->send(
                     'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
                     collect([$incident->borrower]),
-                    "Property accountability case {$incident->incident_no} has been resolved by SPMU. The restriction linked to this case has been lifted. Any other active obligation or restriction on your account still applies.",
+                    "Property accountability case {$incident->incident_no} has been resolved by the SPMU Head/Admin. {$this->incidentBorrowerContext($incident)} The restriction linked to this property case has been lifted. Any separate administrative sanction or other active obligation/restriction still applies according to its own status.",
                     $incident,
                     ['SYSTEM', 'EMAIL']
                 );
             }
         }, 3);
+
+        if ($recordedSanction) {
+            $this->notifyAdministrativeSanction($notifications, $recordedSanction);
+        }
 
         $sanctionSuffix = $recordedSanction
             ? ' Administrative offense recorded: '.$recordedSanction->offense_no.' offense — '.$recordedSanction->sanction_label.'.'
@@ -908,11 +993,93 @@ class AccountabilityController extends Controller
 
         if ($isInterimDecision) {
             return back()->with('status', ($data['resolution_outcome'] === 'BILLING_REQUIRED'
-                ? 'Head decision recorded. The case is now for billing/payment processing and the linked restriction remains active.'
-                : 'Head decision recorded. Required compliance remains open and the linked restriction stays active until SPMU verifies completion.').$sanctionSuffix);
+                ? 'Head decision recorded. The case is now for Billing Statement preparation/issuance by the SPMU Head/Admin; Cashier receipt recording will be handled by the Action Officer after payment.'
+                : 'Head decision recorded. Required property compliance remains open and the linked restriction stays active until the SPMU Action Officer verifies completion.').$sanctionSuffix);
         }
 
-        return back()->with('status', 'Property accountability case resolved. Its linked borrowing restriction was lifted.'.$sanctionSuffix);
+        return back()->with('status', 'Property accountability case resolved. Its linked property restriction was lifted. Any separate sanction remains governed by the configured sanction rule.'.$sanctionSuffix);
+    }
+
+    /**
+     * The SPMU Action Officer physically verifies repair/replacement or another
+     * Head-required property compliance. The officer does not re-decide the
+     * administrative offense or sanction; those remain Head-level records.
+     */
+    private function completeIncidentCompliance(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may verify completed property compliance.'
+        );
+
+        $data = $request->validate([
+            'resolution_outcome' => ['required', 'in:COMPLIANCE_COMPLETED'],
+            'resolution_remarks' => ['required', 'string', 'max:2000'],
+        ]);
+
+        DB::transaction(function () use ($incident, $request, $data, $audit): void {
+            $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
+
+            if ($incident->status !== 'COMPLIANCE_REQUIRED') {
+                throw ValidationException::withMessages([
+                    'incident' => 'This property case is not awaiting Action Officer compliance verification.',
+                ]);
+            }
+
+            $previousStatus = $incident->status;
+            $existingRemarks = trim((string) $incident->remarks);
+            $verificationNote = 'SPMU Action Officer compliance verification: '.$data['resolution_remarks'];
+
+            $incident->update([
+                'status' => 'RESOLVED',
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$verificationNote),
+            ]);
+
+            BorrowerRestriction::query()
+                ->where('incident_id', $incident->id)
+                ->where('status', 'ACTIVE')
+                ->update([
+                    'status' => 'LIFTED',
+                    'effective_to' => now(),
+                    'lifted_by_user_id' => $request->user()->id,
+                ]);
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED',
+                $incident,
+                reason: $data['resolution_remarks'],
+                before: ['status' => $previousStatus],
+                after: [
+                    'status' => 'RESOLVED',
+                    'resolution_outcome' => 'COMPLIANCE_COMPLETED',
+                    'verified_by_user_id' => $request->user()->id,
+                    'verification_role' => 'SPMU_ACTION_OFFICER',
+                ]
+            );
+
+            $this->attemptCloseCustody((int) $incident->custody_transaction_id);
+        }, 3);
+
+        $incident->refresh()->loadMissing('borrower');
+        if ($incident->borrower) {
+            $notifications->send(
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                collect([$incident->borrower]),
+                "The SPMU Action Officer physically verified the required repair, replacement, or compliance for property accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} The property case is now resolved and its linked property restriction has been lifted. Any separate administrative sanction or other active obligation/restriction remains subject to its own status.",
+                $incident,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
+
+        return back()->with(
+            'status',
+            'Property compliance verified by the SPMU Action Officer. The property case was resolved and its linked property restriction was lifted; any separate sanction remains unchanged.'
+        );
     }
 
     public function reviewViolation(
@@ -920,7 +1087,8 @@ class AccountabilityController extends Controller
         BorrowerViolation $violation,
         PolicyService $policy,
         DocumentService $documents,
-        SignatureService $signatures
+        SignatureService $signatures,
+        NotificationService $notifications
     ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
@@ -952,6 +1120,7 @@ class AccountabilityController extends Controller
 
         if ($sanction) {
             $documents->administrativeSanctionNotice($sanction);
+            $this->notifyAdministrativeSanction($notifications, $sanction);
         }
 
         return back()->with(
@@ -961,11 +1130,157 @@ class AccountabilityController extends Controller
     }
 
     /**
+     * Send one official borrower notice for a confirmed administrative sanction.
+     * SYSTEM and EMAIL are required channels because this is an official
+     * accountability decision, while the generated PDF remains the full notice.
+     */
+    private function notifyAdministrativeSanction(
+        NotificationService $notifications,
+        Sanction $sanction
+    ): void {
+        $alreadyNotified = DB::table('notification_events')
+            ->where('event_code', 'ADMINISTRATIVE_SANCTION_RECORDED')
+            ->where('source_type', $sanction->getMorphClass())
+            ->where('source_id', $sanction->getKey())
+            ->exists();
+
+        if ($alreadyNotified) {
+            return;
+        }
+
+        $sanction->loadMissing(['borrower', 'violation']);
+
+        if (! $sanction->borrower) {
+            return;
+        }
+
+        $reasons = collect(
+            is_array($sanction->violation?->details_json['reasons'] ?? null)
+                ? $sanction->violation->details_json['reasons']
+                : []
+        )
+            ->map(fn ($reason) => str((string) $reason)->replace('_', ' ')->title()->toString())
+            ->filter()
+            ->unique()
+            ->values();
+
+        $reasonText = $reasons->isNotEmpty()
+            ? $reasons->implode(', ')
+            : 'Confirmed borrowing accountability offense';
+
+        $offenseLabel = match ((int) $sanction->offense_no) {
+            1 => '1st Offense',
+            2 => '2nd Offense',
+            3 => '3rd Offense',
+            default => $sanction->offense_no.'th Offense',
+        };
+
+        $effectiveUntil = strtoupper((string) $sanction->sanction_code) === 'BORROWING_SUSPENSION'
+            && $sanction->effective_to
+                ? ' Effective until: '.$sanction->effective_to->copy()->timezone('Asia/Manila')->format('d F Y').'.'
+                : '';
+
+        $message = 'Administrative sanction recorded. '
+            .'Reason: '.$reasonText.'. '
+            .'Offense: '.$offenseLabel.'. '
+            .'Sanction: '.$sanction->sanction_label.'.'
+            .$effectiveUntil
+            .' View the complete notice under My Obligations.';
+
+        $notifications->send(
+            'ADMINISTRATIVE_SANCTION_RECORDED',
+            collect([$sanction->borrower]),
+            $message,
+            $sanction,
+            ['SYSTEM', 'EMAIL'],
+            ['SYSTEM', 'EMAIL']
+        );
+    }
+
+    /**
+     * Borrower-facing context for a property accountability case. Keeps the
+     * in-system notification useful without forcing the borrower to open the
+     * Billing Statement just to learn which property/finding is involved.
+     */
+    private function incidentBorrowerContext(Incident $incident): string
+    {
+        $incident->loadMissing('lines.custodyLine.requestItem.inventoryItem');
+
+        $items = $incident->lines
+            ->map(function ($line) use ($incident): string {
+                $requestItem = $line->custodyLine?->requestItem;
+                $inventoryItem = $requestItem?->inventoryItem;
+                $name = trim((string) ($requestItem?->description_snapshot ?: $inventoryItem?->unique_description ?: 'Property item'));
+                $finding = str((string) ($line->observed_condition ?: $incident->incident_type ?: 'accountability finding'))
+                    ->replace('_', ' ')
+                    ->title()
+                    ->toString();
+                $quantity = max(0, (int) $line->quantity);
+
+                return $name.' — '.$finding.' ('.$quantity.')';
+            })
+            ->filter()
+            ->values();
+
+        if ($items->isNotEmpty()) {
+            return 'Affected property: '.$items->implode('; ').'.';
+        }
+
+        return 'Finding: '.str((string) $incident->incident_type)
+            ->replace('_', ' ')
+            ->title()
+            ->toString().'.';
+    }
+
+    /** Borrower-facing summary for a finalized late return. */
+    private function lateReturnBorrowerContext(OverdueCase $overdue): string
+    {
+        $expected = $overdue->grace_expires_at
+            ? $overdue->grace_expires_at->copy()->timezone('Asia/Manila')->format('d M Y')
+            : 'Not recorded';
+        $actual = $overdue->actual_return_date
+            ? $overdue->actual_return_date->copy()->timezone('Asia/Manila')->format('d M Y')
+            : 'Not recorded';
+        $days = max(0, (int) $overdue->late_days);
+
+        return 'Expected return: '.$expected.'; actual return: '.$actual.'; final late days: '.$days.'.';
+    }
+
+    /**
+     * Borrower-facing context for payment notifications, preserving the
+     * distinction between property accountability and late-return billing.
+     */
+    private function billingBorrowerContext(BillingStatement $billing): string
+    {
+        $billing->loadMissing([
+            'lines.incident.lines.custodyLine.requestItem.inventoryItem',
+            'lines.penalty.overdueCase',
+        ]);
+
+        $incident = $billing->lines->first(fn ($line) => filled($line->incident_id))?->incident;
+        if ($incident) {
+            return $this->incidentBorrowerContext($incident);
+        }
+
+        $lateCase = $billing->lines
+            ->first(fn ($line) => $line->penalty?->overdueCase)?->penalty?->overdueCase;
+
+        if ($lateCase) {
+            return $this->lateReturnBorrowerContext($lateCase);
+        }
+
+        return 'Accountability billing reference: '.$billing->billing_no.'.';
+    }
+
+    /**
      * Settle a Billing Statement once confirmed payments cover the full amount.
      * Financial settlement and administrative sanctions remain separate.
      */
-    private function settleBillingIfFullyPaid(BillingStatement $billing, int $actorUserId): bool
-    {
+    private function settleBillingIfFullyPaid(
+        BillingStatement $billing,
+        int $actorUserId,
+        AuditService $audit
+    ): bool {
         $confirmedAmount = (float) $billing->payments()
             ->where('status', 'VERIFIED')
             ->sum('amount');
@@ -976,6 +1291,29 @@ class AccountabilityController extends Controller
 
         $billing->update(['status' => 'SETTLED']);
 
+        $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
+        $propertyIncidents = Incident::query()
+            ->whereKey($incidentIds)
+            ->where('status', 'BILLING_PENDING')
+            ->get();
+
+        foreach ($propertyIncidents as $propertyIncident) {
+            $propertyIncident->update(['status' => 'RESOLVED']);
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                $propertyIncident,
+                reason: 'Billing fully settled through a confirmed CSPC Cashier payment.',
+                before: ['status' => 'BILLING_PENDING'],
+                after: [
+                    'status' => 'RESOLVED',
+                    'resolution_outcome' => 'BILLING_SETTLED',
+                    'billing_statement_id' => $billing->id,
+                    'settled_by_user_id' => $actorUserId,
+                ]
+            );
+        }
+
         BorrowerRestriction::query()
             ->where('billing_statement_id', $billing->id)
             ->where('status', 'ACTIVE')
@@ -984,12 +1322,6 @@ class AccountabilityController extends Controller
                 'effective_to' => now(),
                 'lifted_by_user_id' => $actorUserId,
             ]);
-
-        $incidentIds = $billing->lines()->whereNotNull('incident_id')->pluck('incident_id');
-        Incident::query()
-            ->whereKey($incidentIds)
-            ->where('status', 'BILLING_PENDING')
-            ->update(['status' => 'RESOLVED']);
 
         $penaltyIds = $billing->lines()->whereNotNull('penalty_id')->pluck('penalty_id');
         Penalty::query()->whereKey($penaltyIds)->update(['status' => 'SETTLED']);
@@ -1006,6 +1338,59 @@ class AccountabilityController extends Controller
         }
 
         return true;
+    }
+
+    /**
+     * Billing settlement closes the property case automatically after the AO
+     * records a verified Cashier receipt. Notify the borrower about that case
+     * closure separately from the payment-confirmation notice so the record
+     * sequence remains explicit and auditable.
+     */
+    private function notifyResolvedPropertyBilling(
+        BillingStatement $billing,
+        NotificationService $notifications,
+        string $resolutionSource
+    ): void {
+        $incidentIds = $billing->lines()
+            ->whereNotNull('incident_id')
+            ->pluck('incident_id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($incidentIds->isEmpty()) {
+            return;
+        }
+
+        $incidents = Incident::query()
+            ->with(['borrower', 'custody.request', 'lines.custodyLine.requestItem.inventoryItem.unit'])
+            ->whereKey($incidentIds)
+            ->where('status', 'RESOLVED')
+            ->get();
+
+        foreach ($incidents as $incident) {
+            $alreadyNotified = DB::table('notification_events')
+                ->where('event_code', 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED')
+                ->where('source_type', $incident->getMorphClass())
+                ->where('source_id', $incident->getKey())
+                ->exists();
+
+            if ($alreadyNotified || ! $incident->borrower) {
+                continue;
+            }
+
+            $resolutionText = $billing->status === 'WAIVED'
+                ? "Billing Statement {$billing->billing_no} was formally waived by the SPMU Head/Admin"
+                : "Billing Statement {$billing->billing_no} was fully settled through a Cashier payment recorded and confirmed by the SPMU Action Officer";
+
+            $notifications->send(
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                collect([$incident->borrower]),
+                "Property accountability case {$incident->incident_no} has been resolved after {$resolutionText}. {$this->incidentBorrowerContext($incident)} The linked property/billing restriction has been lifted. Any separate administrative sanction or other active obligation/restriction remains subject to its own status. Resolution source: {$resolutionSource}.",
+                $incident,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
     }
 
     private function attemptCloseCustody(int $custodyId): void

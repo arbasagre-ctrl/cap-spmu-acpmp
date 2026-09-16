@@ -8,10 +8,23 @@
         'custody.laundryJob.latestEvidence.file',
     ]);
 
-    $statuses = $gatePasses
-        ->map(fn ($gatePass) => $gatePass->workflowStatus())
-        ->unique('key')
-        ->values();
+    /*
+     * Keep Gate Pass filters stable even when a particular stage currently has
+     * zero records. These keys mirror GatePass::workflowStatus().
+     */
+    $statuses = collect([
+        ['key' => 'PENDING', 'label' => 'Pending Gate Pass'],
+        ['key' => 'PICKUP_SCHEDULING', 'label' => 'For Pickup Scheduling'],
+        ['key' => 'ITEM_PREPARATION', 'label' => 'For Item Preparation'],
+        ['key' => 'PICKUP_SCHEDULED', 'label' => 'Pickup Scheduled'],
+        ['key' => 'READY_FOR_RELEASE', 'label' => 'Ready for Release'],
+        ['key' => 'PREPARING_RELEASE', 'label' => 'Preparing for Release'],
+        ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Missed'],
+        ['key' => 'READY_FOR_PRINTING', 'label' => 'Approved / Ready for Release'],
+        ['key' => 'AWAITING_ACCOMPLISHED_GATE_PASS', 'label' => 'Awaiting Accomplished Gate Pass'],
+        ['key' => 'VERIFIED', 'label' => 'Completed'],
+        ['key' => 'VOID', 'label' => 'Voided'],
+    ]);
 @endphp
 
 @include('gate-passes.partials.index-styles')
@@ -41,7 +54,7 @@
             </label>
             <label for="gate-pass-status">Status
                 <select id="gate-pass-status" data-gate-pass-status>
-                    <option value="">All Statuses</option>
+                    <option value="">All statuses</option>
                     @foreach($statuses as $status)
                         <option value="{{ $status['key'] }}">{{ $status['label'] }}</option>
                     @endforeach
@@ -56,7 +69,10 @@
         </section>
 
         <section class="card gate-pass-records-card" aria-labelledby="gate-pass-records-title">
-            <h2 id="gate-pass-records-title">Gate Pass Records</h2>
+            <div class="gate-pass-records-heading">
+                <h2 id="gate-pass-records-title">Gate Pass Records</h2>
+                <p data-gate-pass-count role="status" aria-live="polite">Showing 1 to {{ min(10, $gatePasses->count()) }} of {{ $gatePasses->count() }} records</p>
+            </div>
             <div class="gate-pass-table-wrap">
                 <table class="gate-pass-table" aria-labelledby="gate-pass-records-title">
                     <thead>
@@ -84,11 +100,10 @@
                 </table>
             </div>
             <div class="gate-pass-footer">
-                <p data-gate-pass-count role="status" aria-live="polite">Showing 1 to {{ $gatePasses->count() }} of {{ $gatePasses->count() }} records</p>
                 <nav class="gate-pass-pagination" aria-label="Gate Pass records pagination" data-gate-pass-pagination hidden>
-                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="previous" aria-label="Previous page" disabled><x-icon name="chevron-right" class="gate-pass-previous-icon" size="16" /></button>
+                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="previous" aria-label="Previous page" disabled><x-icon name="arrow-left" size="16" /></button>
                     <div class="gate-pass-page-numbers" data-gate-pass-page-numbers></div>
-                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="next" aria-label="Next page" disabled><x-icon name="chevron-right" size="16" /></button>
+                    <button class="icon-button gate-pass-page" type="button" data-gate-pass-page="next" aria-label="Next page" disabled><x-icon name="arrow-right" size="16" /></button>
                 </nav>
             </div>
         </section>
@@ -96,4 +111,5 @@
 </div>
 
 @include('gate-passes.partials.index-interactions')
+
 @endsection

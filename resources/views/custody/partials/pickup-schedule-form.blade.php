@@ -15,7 +15,7 @@
             || $systemPickupWindowExpired
         );
     $scheduleDeliveries = collect($pickupScheduleNotification?->deliveries ?? [])->keyBy('channel');
-    $missedDeliveries = collect($pickupMissedNotification?->deliveries ?? [])->keyBy('channel');
+    $missedDeliveryRows = collect($pickupMissedDeliveries ?? $pickupMissedNotification?->deliveries ?? []);
 
     $deliveryFailed = static function ($delivery): bool {
         return $delivery && strtoupper((string) $delivery->delivery_status) === 'FAILED';
@@ -23,8 +23,6 @@
 
     $scheduleNotificationFailed = $deliveryFailed($scheduleDeliveries->get('SYSTEM'))
         || $deliveryFailed($scheduleDeliveries->get('EMAIL'));
-    $missedNotificationFailed = $deliveryFailed($missedDeliveries->get('SYSTEM'))
-        || $deliveryFailed($missedDeliveries->get('EMAIL'));
 @endphp
 
 <div id="pickup-schedule">
@@ -76,58 +74,48 @@
 </div>
 
 @if($pickupMissed)
+    @php
+        $missedNotificationFailed = $missedDeliveryRows->contains(
+            fn ($delivery) => strtoupper((string) $delivery->delivery_status) === 'FAILED'
+        );
+        $missedNotificationSent = $missedDeliveryRows->contains(
+            fn ($delivery) => strtoupper((string) $delivery->delivery_status) === 'SENT'
+        );
+    @endphp
+
     <div class="notice warning compact release-pickup-exception-actions">
-        <strong>Pickup schedule passed</strong>
-        <p>
-            The borrower did not complete pickup within the scheduled window. The approved request and reservation remain active. The borrower has been notified and must choose whether to request rescheduling or cancel the unreleased request.
-        </p>
+        <div>
+            <strong>{{ $pickupRescheduleRequested ? 'Reschedule requested' : 'Pickup missed' }}</strong>
 
-        @if($pickupMissedNotification)
+            @if($pickupRescheduleRequested)
+                <p>The borrower requested a new pickup schedule.</p>
+            @else
+                <p>Waiting for borrower action: <strong>Request Reschedule</strong> or <strong>Cancel Request</strong>.</p>
+            @endif
+
             @if($missedNotificationFailed)
-                <div class="notice warning compact">
-                    <strong>Borrower notification needs attention</strong>
-                    <p>The pickup-passed notice was recorded, but at least one notification channel failed.</p>
-                </div>
-            @else
-                <p><strong>✓ Borrower notified that the pickup schedule passed.</strong></p>
+                <p class="meta">Notification needs attention.</p>
+            @elseif($missedNotificationSent)
+                <p class="meta">Borrower notified.</p>
             @endif
-        @else
-            <p><strong>Pickup-passed notification is pending.</strong></p>
-        @endif
 
-        @if($pickupRescheduleRequested)
-            <div class="notice info compact">
-                <strong>Borrower requested rescheduling.</strong>
-                <p>
-                    Keep the same approved request and reservation. SPMU may now move the pickup to the next valid operating window strictly before the approved Expected Return Date.
-                </p>
-            </div>
-
-            @if($pickupRescheduleAvailable)
-                <div class="release-form-actions">
-                    <form method="post" action="{{ route('custody.reschedule-pickup', $custody) }}">
-                        @csrf
-                        <button class="button primary ui-pressable release-primary" type="submit">
-                            Set Next Valid Pickup Schedule
-                        </button>
-                    </form>
-                </div>
-            @else
-                <div class="notice warning compact">
-                    <strong>No valid rescheduled pickup remains.</strong>
-                    <p>
-                        The next pickup cannot be on or after the approved Expected Return Date. The borrowing dates must be revised and approved, or the unreleased request must be cancelled.
-                    </p>
-                </div>
+            @if($pickupRescheduleRequested)
+                @if($pickupRescheduleAvailable)
+                    <div class="release-form-actions">
+                        <form method="post" action="{{ route('custody.reschedule-pickup', $custody) }}">
+                            @csrf
+                            <button class="button primary ui-pressable release-primary" type="submit">
+                                Set Next Valid Pickup Schedule
+                            </button>
+                        </form>
+                    </div>
+                @else
+                    <p class="meta">No valid pickup window remains before the Expected Return Date.</p>
+                @endif
+            @elseif(!$pickupRescheduleAvailable)
+                <p class="meta">No valid pickup window remains before the Expected Return Date.</p>
             @endif
-        @else
-            <div class="notice info compact">
-                <strong>Waiting for borrower response</strong>
-                <p>
-                    Do not assign another pickup schedule yet. If the borrower still needs the items, they must select <strong>Request Reschedule</strong> in My Borrowings. If they no longer need the items, they may cancel the unreleased request.
-                </p>
-            </div>
-        @endif
+        </div>
     </div>
 @elseif($scheduleException)
     <div class="notice warning compact release-pickup-exception-actions">

@@ -31,7 +31,7 @@ class BorrowerObligationService
      */
     public function recordsForBorrower(int $borrowerUserId): array
     {
-        $incidents = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem', 'lines', 'documents'])
+        $incidents = Incident::with(['borrower', 'evidenceFile', 'custody.request', 'custody.lines.requestItem.inventoryItem', 'lines.custodyLine.requestItem.inventoryItem', 'documents'])
             ->where('borrower_user_id', $borrowerUserId)
             ->latest('reported_at')
             ->get();
@@ -42,18 +42,20 @@ class BorrowerObligationService
             ->get();
 
         $restrictions = BorrowerRestriction::query()
+            ->with('custody')
             ->where('borrower_user_id', $borrowerUserId)
             ->latest('effective_from')
             ->get();
 
         $overdueCases = OverdueCase::with([
             'borrower',
-            'custody.lines',
+            'custody.lines.requestItem.inventoryItem',
             'custody.request',
             'custody.returns',
             'custody.laundryJob',
             'penalties',
             'confirmedBy',
+            'documents',
         ])
             ->where('borrower_user_id', $borrowerUserId)
             ->latest('overdue_started_at')
@@ -80,11 +82,15 @@ class BorrowerObligationService
 
         $openIncidents = $records['incidents']->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
         $openBillings = $records['billings']->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
-        $activeRestrictions = $records['restrictions']->where('status', 'ACTIVE');
+        $activeRestrictions = $records['restrictions']->filter(
+            fn ($restriction) => $restriction->status === 'ACTIVE'
+                && ($restriction->effective_from === null || $restriction->effective_from->lte(now()))
+                && ($restriction->effective_to === null || $restriction->effective_to->gt(now()))
+        );
         $openOverdueCases = $records['overdueCases']->whereNotIn('status', [LateReturnService::STATUS_RESOLVED]);
 
         $rows = $this->buildRows($openIncidents, $openOverdueCases, $openBillings, $activeRestrictions);
-        $resolvedHistory = $this->resolvedHistory($records['billings'], $records['overdueCases']);
+        $resolvedHistory = $this->resolvedHistory($records['billings'], $records['overdueCases'], $records['incidents']);
 
         $rowCollection = collect($rows);
 
@@ -145,8 +151,17 @@ class BorrowerObligationService
             $custody = $incident->custody;
             $recordDate = $incident->reported_at ?: $incident->created_at;
             $incidentType = (string) str($incident->incident_type)->replace('_', ' ')->title();
-            $itemName = $custody?->lines?->first()?->requestItem?->description_snapshot
-                ?: $incidentType.' property';
+            $incidentItemNames = $incident->lines
+                ?->map(fn ($line) => $line->custodyLine?->requestItem?->description_snapshot)
+                ->filter()
+                ->unique()
+                ->values()
+                ?? collect();
+            $itemName = match (true) {
+                $incidentItemNames->count() === 1 => (string) $incidentItemNames->first(),
+                $incidentItemNames->count() > 1 => $incidentItemNames->implode(', '),
+                default => $incidentType.' property',
+            };
 
             $linkedBilling = $openBillings->first(
                 fn ($billing) => $billing->lines->contains(
@@ -181,7 +196,7 @@ class BorrowerObligationService
             if ($incident->status === 'COMPLIANCE_REQUIRED') {
                 $statusLabel = 'Compliance Required';
                 $statusTone = 'warning';
-                $nextAction = 'Complete the required repair, replacement, or compliance with SPMU.';
+                $nextAction = 'Complete the required repair, replacement, or compliance, then present it to the SPMU Action Officer for physical verification.';
                 $nextTone = 'warning';
                 $actionState = self::ACTION_BORROWER;
             } elseif ($linkedBilling) {
@@ -189,20 +204,20 @@ class BorrowerObligationService
                     $statusLabel = 'Payment Verification';
                     $statusTone = 'info';
                     $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
-                    $nextAction = 'No borrower action is required while SPMU verifies the official CSPC Cashier receipt.';
+                    $nextAction = 'No borrower action is required while the SPMU Action Officer verifies the official CSPC Cashier receipt.';
                     $actionState = self::ACTION_PROCESSING;
                 } else {
                     $statusLabel = 'Payment Required';
                     $statusTone = 'warning';
                     $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
-                    $nextAction = 'Settle the issued Billing Statement through the CSPC Cashier and present the official receipt to SPMU.';
+                    $nextAction = 'Settle the issued Billing Statement through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.';
                     $nextTone = 'warning';
                     $actionState = self::ACTION_BORROWER;
                 }
             } elseif (in_array($incident->status, ['FOR_BILLING', 'BILLING_PENDING'], true)) {
                 $statusLabel = 'Billing Statement Pending';
                 $statusTone = 'warning';
-                $nextAction = 'No borrower action is required until the SPMU Head/Administrator issues the Billing Statement.';
+                $nextAction = 'No borrower action is required until the SPMU Head/Admin generates and issues the Billing Statement.';
                 $nextTone = 'warning';
                 $actionState = self::ACTION_PROCESSING;
             }
@@ -228,10 +243,15 @@ class BorrowerObligationService
                 ['Custody', $custody?->custody_no ?: '—'],
             ];
 
+            if ($incident->status === 'COMPLIANCE_REQUIRED') {
+                $facts[] = ['Verification by', 'SPMU Action Officer'];
+            }
+
             if ($linkedBilling) {
                 $facts[] = ['Billing Statement', $linkedBilling->billing_no];
                 $facts[] = ['Amount', '₱'.number_format((float) $linkedBilling->total_amount, 2)];
                 $facts[] = ['Payment due', optional($linkedBilling->due_at)->format('d M Y') ?: 'Not specified'];
+                $facts[] = ['Receipt recording', 'SPMU Action Officer'];
             }
 
             if ($linkedRestriction) {
@@ -300,8 +320,13 @@ class BorrowerObligationService
                 $claimedBillingIds->push((int) $linkedBilling->id);
             }
 
-            $linkedRestriction = $activeRestrictions->first(function ($restriction) use ($penaltyIds, $linkedBilling) {
-                return ($restriction->penalty_id && $penaltyIds->contains((int) $restriction->penalty_id))
+            $linkedRestriction = $activeRestrictions->first(function ($restriction) use ($penaltyIds, $linkedBilling, $custody) {
+                $sameCustodyReturnControl = $custody
+                    && (int) ($restriction->custody_transaction_id ?? 0) === (int) $custody->id
+                    && in_array((string) $restriction->restriction_type, ['PENDING_RETURN', 'OVERDUE_RETURN'], true);
+
+                return $sameCustodyReturnControl
+                    || ($restriction->penalty_id && $penaltyIds->contains((int) $restriction->penalty_id))
                     || ($linkedBilling
                         && (int) ($restriction->billing_statement_id ?? 0) === (int) $linkedBilling->id);
             });
@@ -311,8 +336,23 @@ class BorrowerObligationService
             }
 
             $lines = $custody?->lines ?? collect();
-            $firstLine = $lines->first();
-            $itemName = $firstLine?->requestItem?->description_snapshot ?: 'Borrowed items';
+            $outstandingLines = $lines->filter(
+                fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+            );
+            $hasOutstandingLinen = $outstandingLines->contains(
+                fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $hasOutstandingNonLinen = $outstandingLines->contains(
+                fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
+            );
+            $itemNames = $lines
+                ->map(fn ($line) => $line->requestItem?->description_snapshot)
+                ->filter()
+                ->unique()
+                ->values();
+            $itemName = $itemNames->count() === 1
+                ? (string) $itemNames->first()
+                : 'Borrowed items';
 
             $actualReturnAt = $custody?->returns
                 ?->pluck('received_at')
@@ -330,16 +370,23 @@ class BorrowerObligationService
                 : 0;
 
             $document = $billingDocument($linkedBilling);
+            $lateReturnNotice = $activeDocument($overdue->documents, 'LATE_RETURN_NOTICE');
 
-            $isPhysicallyOutstanding = $overdue->status === LateReturnService::STATUS_OVERDUE;
+            // Physical outstanding quantity, not only the case-status word,
+            // determines whether the borrower still has a return action.
+            $isPhysicallyOutstanding = $outstandingLines->isNotEmpty();
             $statusLabel = $isPhysicallyOutstanding ? 'Return Required' : 'Late Return Processing';
             $statusTone = $isPhysicallyOutstanding ? 'danger' : 'warning';
             $statusMeta = $daysLate > 0
                 ? $daysLate.' '.($daysLate === 1 ? 'day' : 'days').' late'
                 : null;
-            $nextAction = $isPhysicallyOutstanding
-                ? 'Return all outstanding items to SPMU for official return processing.'
-                : 'No borrower action is required while the final late-return assessment is being completed.';
+
+            $nextAction = match (true) {
+                ! $isPhysicallyOutstanding => 'No borrower action is required while the final late-return assessment is being completed.',
+                $hasOutstandingLinen && $hasOutstandingNonLinen => 'Return every outstanding non-linen item to SPMU and every outstanding linen item, with the same printed Laundry Form, to the Laundry Area immediately. Each return branch must be complete.',
+                $hasOutstandingLinen => 'Return every outstanding linen item and the same printed Laundry Form to the Laundry Area immediately. Laundry RECEIVED BY is the physical return date used for timeliness.',
+                default => 'Return every outstanding non-linen item to SPMU immediately for official return inspection. The complete outstanding non-linen branch must be presented together.',
+            };
             $nextTone = $isPhysicallyOutstanding ? 'danger' : 'info';
             $actionState = $isPhysicallyOutstanding ? self::ACTION_BORROWER : self::ACTION_PROCESSING;
 
@@ -347,12 +394,12 @@ class BorrowerObligationService
                 if ($linkedBilling->status === 'RECEIPT_SUBMITTED') {
                     $statusLabel = 'Payment Verification';
                     $statusTone = 'info';
-                    $nextAction = 'No borrower action is required while SPMU verifies the official CSPC Cashier receipt.';
+                    $nextAction = 'No borrower action is required while the SPMU Action Officer verifies the official CSPC Cashier receipt.';
                     $actionState = self::ACTION_PROCESSING;
                 } else {
                     $statusLabel = 'Payment Required';
                     $statusTone = 'warning';
-                    $nextAction = 'Settle the issued late-return Billing Statement through the CSPC Cashier and present the official receipt to SPMU.';
+                    $nextAction = 'Settle the issued late-return Billing Statement through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.';
                     $nextTone = 'warning';
                     $actionState = self::ACTION_BORROWER;
                 }
@@ -361,6 +408,11 @@ class BorrowerObligationService
             }
 
             $actions = [];
+
+            if ($lateReturnNotice) {
+                $actions[] = ['View Late Return Notice', route('documents.view', $lateReturnNotice), true, $linkedBilling ? 'secondary' : 'primary'];
+                $actions[] = ['Download Notice', route('documents.download', $lateReturnNotice), false, 'secondary'];
+            }
 
             if ($document) {
                 $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
@@ -454,8 +506,8 @@ class BorrowerObligationService
                 : 'Payment Required';
 
             $nextAction = $billing->status === 'RECEIPT_SUBMITTED'
-                ? 'No borrower action is required while SPMU verifies the official CSPC Cashier receipt.'
-                : 'Settle the issued Billing Statement through the CSPC Cashier and present the official receipt to SPMU.';
+                ? 'No borrower action is required while the SPMU Action Officer verifies the official CSPC Cashier receipt.'
+                : 'Settle the issued Billing Statement through the CSPC Cashier and present the official receipt to the SPMU Action Officer for recording and confirmation.';
 
             $actionState = $billing->status === 'RECEIPT_SUBMITTED'
                 ? self::ACTION_PROCESSING
@@ -594,14 +646,17 @@ class BorrowerObligationService
      * @param  Collection<int, OverdueCase>  $overdueCases
      * @return Collection<int, array<string, mixed>>
      */
-    public function resolvedHistory(Collection $billings, Collection $overdueCases): Collection
+    public function resolvedHistory(Collection $billings, Collection $overdueCases, ?Collection $incidents = null): Collection
     {
         $casesById = $overdueCases->keyBy('id');
+        $incidents = $incidents ?? collect();
+        $incidentsById = $incidents->keyBy('id');
         $billedCaseIds = [];
+        $billedIncidentIds = [];
 
         $rows = $billings
             ->whereIn('status', ['SETTLED', 'WAIVED', 'VOID'])
-            ->map(function (BillingStatement $billing) use ($casesById, &$billedCaseIds): array {
+            ->map(function (BillingStatement $billing) use ($casesById, $incidentsById, &$billedCaseIds, &$billedIncidentIds): array {
                 /* Only a verified payment proves a case was paid. A stored
                    receipt file on its own never counts as settlement. */
                 $payment = $billing->payments
@@ -614,10 +669,20 @@ class BorrowerObligationService
                     ->filter()
                     ->first();
 
+                $incidentId = $billing->lines
+                    ->pluck('incident_id')
+                    ->filter()
+                    ->first();
+
                 $case = $caseId ? $casesById->get($caseId) : null;
+                $incident = $incidentId ? $incidentsById->get($incidentId) : null;
 
                 if ($case) {
                     $billedCaseIds[] = $case->id;
+                }
+
+                if ($incident) {
+                    $billedIncidentIds[] = $incident->id;
                 }
 
                 return [
@@ -631,9 +696,12 @@ class BorrowerObligationService
                     'borrower' => $billing->borrower,
                     'reference' => $case?->custody?->custody_no
                         ?? $case?->custody?->request?->request_no
+                        ?? $incident?->incident_no
+                        ?? $incident?->custody?->custody_no
                         ?? $billing->billing_no,
                     'billing' => $billing,
                     'case' => $case,
+                    'incident' => $incident,
                     'payment' => $billing->status === 'SETTLED' ? $payment : null,
                     'resolved_at' => $billing->status === 'SETTLED'
                         ? $payment?->verified_at
@@ -642,12 +710,8 @@ class BorrowerObligationService
             })
             ->values();
 
-        /*
-         * A case can resolve without ever being billed - an on-time return
-         * closing an overdue case, for example - and still belongs in
-         * history.
-         */
-        $unbilled = $overdueCases
+        /* A late-return case can resolve without ever being billed. */
+        $unbilledLateReturns = $overdueCases
             ->where('status', LateReturnService::STATUS_RESOLVED)
             ->reject(fn (OverdueCase $case): bool => in_array($case->id, $billedCaseIds, true))
             ->map(fn (OverdueCase $case): array => [
@@ -658,13 +722,39 @@ class BorrowerObligationService
                 'reference' => $case->custody?->custody_no ?? $case->custody?->request?->request_no ?? '-',
                 'billing' => null,
                 'case' => $case,
+                'incident' => null,
                 'payment' => null,
                 'resolved_at' => $case->updated_at,
             ])
             ->values();
 
+        /*
+         * Property incidents may be resolved by no-liability clearance,
+         * compliance/repair/replacement, or another non-billing outcome. They
+         * still belong in Resolved History. A billed incident is already
+         * represented by its billing row and is rejected here to avoid a
+         * duplicate resolved record.
+         */
+        $unbilledPropertyIncidents = $incidents
+            ->whereIn('status', ['RESOLVED', 'CLOSED'])
+            ->reject(fn (Incident $incident): bool => in_array($incident->id, $billedIncidentIds, true))
+            ->map(fn (Incident $incident): array => [
+                'key' => 'incident-'.$incident->id,
+                'outcome' => 'Resolved',
+                'tone' => 'success',
+                'borrower' => $incident->borrower,
+                'reference' => $incident->incident_no ?: ($incident->custody?->custody_no ?? '-'),
+                'billing' => null,
+                'case' => null,
+                'incident' => $incident,
+                'payment' => null,
+                'resolved_at' => $incident->updated_at,
+            ])
+            ->values();
+
         return $rows
-            ->concat($unbilled)
+            ->concat($unbilledLateReturns)
+            ->concat($unbilledPropertyIncidents)
             ->sortByDesc(fn (array $row) => $row['resolved_at'])
             ->values();
     }
