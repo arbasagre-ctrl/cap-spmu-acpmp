@@ -180,7 +180,7 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->where('custody_transaction_id', $custody->id)
             ->firstOrFail();
 
-        $this->assertSame('RETURNED_PENDING_SETTLEMENT', $lateReturn->status);
+        $this->assertSame('FOR_HEAD_APPROVAL', $lateReturn->status);
         $this->assertSame(now()->toDateString(), $lateReturn->actual_return_date?->toDateString());
         $this->assertSame('LAUNDRY_RECEIPT', $lateReturn->return_date_source);
     }

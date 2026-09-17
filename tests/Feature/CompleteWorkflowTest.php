@@ -860,7 +860,7 @@ class CompleteWorkflowTest extends TestCase
         $this->assertDatabaseHas('overdue_cases', [
             'custody_transaction_id' => $custody->id,
             'accrued_amount' => 75,
-            'status' => 'RETURNED_PENDING_SETTLEMENT',
+            'status' => 'FOR_HEAD_APPROVAL',
         ]);
 
         /*
@@ -891,14 +891,11 @@ class CompleteWorkflowTest extends TestCase
             ->firstOrFail();
 
         /*
-         * A late return is confirmed by the Action Officer before the SPMU
-         * Head approves the assessment; the Head cannot bill straight from a
-         * detected late return.
+         * The late-return assessment is entirely system-derived from the
+         * recorded physical return, so it is already finalized for the SPMU
+         * Head to decide - there is no separate Action Officer confirmation
+         * step.
          */
-        $this->actingAs($spmuOfficer)
-            ->post(route('overdue.confirm-late-return', $overdue))
-            ->assertSessionHasNoErrors();
-
         $this->actingAs($spmu)
             ->post(
                 route('overdue.bill', $overdue->fresh()),

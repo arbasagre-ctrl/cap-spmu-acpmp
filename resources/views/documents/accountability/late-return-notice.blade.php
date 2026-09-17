@@ -37,7 +37,7 @@
         </tr>
     </table>
 
-    <div class="section-title">Confirmed Late-Return Assessment</div>
+    <div class="section-title">Finalized Late-Return Assessment</div>
     <table class="info-grid" role="presentation">
         <tr>
             <td><span class="field-label">Expected Return Date</span><span class="field-value">{{ $expectedReturnDate }}</span></td>
@@ -78,11 +78,11 @@
     </table>
 
     <div class="section-title">Assessment Basis / Remarks</div>
-    <p class="decision-copy">{{ $decisionBasis ?: 'Confirmed late-return assessment based on the recorded expected and actual physical return dates.' }}</p>
+    <p class="decision-copy">{{ $decisionBasis ?: 'Finalized late-return assessment based on the recorded expected and actual physical return dates.' }}</p>
 
     <div class="notice-box {{ $amount > 0 ? 'warning-box' : '' }}">
         <strong>Document Purpose</strong>
-        <p>This Late Return Notice is the formal record of the confirmed late-return assessment.</p>
+        <p>This Late Return Notice is the formal record of the finalized late-return assessment.</p>
         @if($amount > 0)
             <p>A separate Billing Statement is the financial document used for CSPC Cashier settlement. This Late Return Notice is not an Official Receipt.</p>
         @else
@@ -91,10 +91,10 @@
         <p>Any administrative offense or sanction is handled separately and is not created automatically by this notice.</p>
     </div>
 
-    <div class="section-title">Workflow Confirmation</div>
+    <div class="section-title">Assessment Finalization</div>
     <table class="info-grid" role="presentation">
         <tr>
-            <td><span class="field-label">AO Confirmation</span><span class="field-value">{{ $aoConfirmedBy ?: 'SPMU Action Officer' }}{{ $aoConfirmedAt ? ' · '.$aoConfirmedAt : '' }}</span></td>
+            <td><span class="field-label">Finalized By</span><span class="field-value">{{ $aoConfirmedAt ? ($aoConfirmedBy.' · '.$aoConfirmedAt) : 'Automatically, from the recorded physical return' }}</span></td>
             <td><span class="field-label">Generated</span><span class="field-value">{{ $generatedAt }}</span></td>
         </tr>
     </table>

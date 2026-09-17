@@ -15,7 +15,7 @@
     );
     $openOverdueCases = $overdueCases->whereNotIn('status', ['RESOLVED']);
 
-    /* Only an AO-confirmed late-return assessment is waiting on the SPMU Head. */
+    /* Only a finalized late-return assessment is waiting on the SPMU Head. */
     $headReviewOverdueCases = $overdueCases->where(
         'status',
         App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL
@@ -1037,7 +1037,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
     $caseShortLabels = [
         App\Services\LateReturnService::STATUS_OVERDUE => 'Overdue',
         App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION => 'Late Return',
-        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL => 'For Head Approval',
+        App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL => 'For Head Review',
         App\Services\LateReturnService::STATUS_AWAITING_PAYMENT => 'Awaiting Payment',
     ];
 @endphp
@@ -1118,13 +1118,26 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                             $assessment = $lateReturns->assessment($overdue);
 
                             $isStillOverdue = $overdue->status === App\Services\LateReturnService::STATUS_OVERDUE;
-                            $forOfficerConfirmation = $overdue->status === App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION;
+                            /*
+                             * The assessment is entirely system-derived, so there is no
+                             * Action Officer confirmation step. This status is legacy
+                             * only - no action anywhere can put a case here anymore,
+                             * since no route ever existed to correct an authoritative
+                             * physical return record. Kept read-only so any pre-existing
+                             * row still renders instead of erroring.
+                             */
+                            $returnedForCorrection = $overdue->status === App\Services\LateReturnService::STATUS_FOR_AO_CONFIRMATION;
                             $forHeadApproval = $overdue->status === App\Services\LateReturnService::STATUS_FOR_HEAD_APPROVAL;
                             $hasBilling = $overdue->status === App\Services\LateReturnService::STATUS_AWAITING_PAYMENT;
                             $fromLaundry = $assessment['return_date_source'] === 'LAUNDRY_RECEIPT';
 
-                            /* The Head's two forms are too large for a cell, so they sit in the detail row. */
-                            $headCanDecide = $isHead && $forHeadApproval;
+                            /*
+                             * Approve/Bill is the Head's only decision - reachable
+                             * whether the case is freshly finalized or (for a legacy
+                             * row only) already sitting in the retired correction
+                             * status. There is no "return for correction" action.
+                             */
+                            $headCanDecide = $isHead && ($forHeadApproval || $returnedForCorrection);
                         @endphp
 
                         <tr
@@ -1159,12 +1172,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                             <td>{{ $assessment['rate'] === null ? 'Not set' : 'PHP '.number_format($assessment['rate'], 2).'/day' }}</td>
                             <td class="is-numeric">{{ $assessment['late_days'] }}</td>
                             <td>
-                                @if($isOfficer && $forOfficerConfirmation)
-                                    <form method="post" action="{{ route('overdue.confirm-late-return', $overdue) }}">
-                                        @csrf
-                                        <button class="button primary ui-pressable accountability-row-action">Confirm Late Return</button>
-                                    </form>
-                                @elseif($headCanDecide)
+                                @if($headCanDecide)
                                     <span class="accountability-row-note">Decide below</span>
                                 @else
                                     <span class="accountability-row-none">&mdash;</span>
@@ -1184,17 +1192,17 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                                                 Awaiting borrower return. The fee shown may increase
                                                 for each additional late day.
                                             </p>
-                                            <small>A formal Late Return Notice cannot be issued until the physical return is recorded and the assessment is confirmed.</small>
+                                            <small>A formal Late Return Notice cannot be issued until the physical return is recorded and the SPMU Head approves the assessment.</small>
                                         </div>
                                     </div>
-                                @elseif($forOfficerConfirmation)
+                                @elseif($returnedForCorrection)
                                     <div class="accountability-detail-panel is-info">
                                         <x-icon name="information" size="17" />
                                         <div>
-                                            <strong>Late return recorded &mdash; figures are final for this return date.</strong>
+                                            <strong>Returned for correction &mdash; read-only for the Action Officer.</strong>
                                             <p>
-                                                {{ $fromLaundry ? 'The return date is the date Laundry Operations received the linen, not the date the accomplished Laundry Form reached SPMU.' : '' }}
-                                                Confirm the assessment so the SPMU Head can approve it.
+                                                {{ $fromLaundry ? 'The return date is the date Laundry Operations received the linen, not the date the accomplished Laundry Form reached SPMU. ' : '' }}
+                                                The assessment was calculated from the recorded physical return and is awaiting SPMU Head review.
                                             </p>
                                             @if($overdue->correction_remarks)
                                                 <small>Returned for correction: {{ $overdue->correction_remarks }}</small>
@@ -1211,13 +1219,19 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                                     <div class="accountability-detail-panel is-info">
                                         <x-icon name="information" size="17" />
                                         <div>
-                                            <strong>Awaiting Head approval.</strong>
+                                            <strong>Awaiting Head review.</strong>
                                             <p>
-                                                Action by: SPMU Head/Admin. Confirmed by {{ $overdue->confirmedBy?->full_name ?? 'the Action Officer' }}
-                                                on {{ $overdue->ao_confirmed_at?->format('d M Y, h:i A') }}.
+                                                Action by: SPMU Head/Admin.
+                                                {{ $overdue->ao_confirmed_at
+                                                    ? 'Confirmed by '.($overdue->confirmedBy?->full_name ?? 'the Action Officer').' on '.$overdue->ao_confirmed_at->format('d M Y, h:i A').'.'
+                                                    : 'The assessment was automatically finalized from the recorded physical return.' }}
                                                 Approving generates the formal Late Return Notice and, when payment is required, the separate Billing Statement for the recorded amount.
                                             </p>
-                                            <small>Returned {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}.</small>
+                                            <small>
+                                                Expected Return: {{ $overdue->custody->due_at->format('d M Y') }}
+                                                &middot; {{ $fromLaundry ? 'Laundry Received' : 'Actual Return' }}: {{ $assessment['actual_return_date']?->format('d M Y') ?? 'date not recorded' }}
+                                                &middot; Late Days: {{ $assessment['late_days'] }}
+                                            </small>
                                         </div>
                                     </div>
                                 @elseif($hasBilling)
@@ -1245,15 +1259,6 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                                                 <input type="date" name="due_at">
                                             </label>
                                             <button class="button primary ui-pressable accountability-primary-action">Approve Late Return Assessment</button>
-                                        </form>
-
-                                        <form method="post" action="{{ route('overdue.return-for-correction', $overdue) }}" class="form-grid">
-                                            @csrf
-                                            <label>
-                                                Reason for Correction
-                                                <textarea name="remarks" required placeholder="State what the Action Officer must recheck."></textarea>
-                                            </label>
-                                            <button class="button secondary ui-pressable">Return for Correction</button>
                                         </form>
                                     </div>
                                 @endif

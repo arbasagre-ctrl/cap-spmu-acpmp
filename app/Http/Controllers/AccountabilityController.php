@@ -124,60 +124,18 @@ class AccountabilityController extends Controller
 
     /**
      * Financial late-return assessment. This is separate from sanctions.
-     */
-    /**
-     * The Action Officer confirms a detected late return.
      *
-     * The officer is confirming that the recorded physical return date is
-     * correct and that the system's late classification follows from it. They
-     * are not choosing the number of late days.
-     */
-    public function confirmLateReturn(
-        Request $request,
-        OverdueCase $overdue,
-        LateReturnService $lateReturns
-    ): RedirectResponse {
-        $this->authorizeSpmu($request);
-
-        abort_unless(
-            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
-            403
-        );
-
-        $lateReturns->confirm($overdue, $request->user());
-
-        return back()->with(
-            'status',
-            'Late-return assessment confirmed and forwarded to the SPMU Head for approval.'
-        );
-    }
-
-    /**
-     * The SPMU Head sends an assessment back to the Action Officer.
+     * The assessment itself is entirely system-derived from the recorded
+     * physical return, so it is finalized straight to the SPMU Head by
+     * LateReturnService::assess() when the return is recorded - there is no
+     * separate Action Officer confirmation action.
      *
-     * The case is preserved with its history; only the stage moves back.
+     * There is also no "return for correction" action: no route anywhere
+     * edits an authoritative physical return record after it is recorded
+     * (the Return Inspection form has nothing left to submit once a custody
+     * is fully returned), so such an action could never lead anywhere. The
+     * Head's only meaningful decision on a finalized assessment is below.
      */
-    public function returnLateReturnForCorrection(
-        Request $request,
-        OverdueCase $overdue,
-        LateReturnService $lateReturns
-    ): RedirectResponse {
-        $this->authorizeSpmu($request);
-
-        abort_unless(
-            $request->user()?->access_classification === AccessClassification::SpmuHead,
-            403
-        );
-
-        $data = $request->validate([
-            'remarks' => ['required', 'string', 'max:1000'],
-        ]);
-
-        $lateReturns->returnForCorrection($overdue, $request->user(), $data['remarks']);
-
-        return back()->with('status', 'The late-return assessment was returned to the Action Officer for correction.');
-    }
-
     public function billOverdue(
         Request $request,
         OverdueCase $overdue,
@@ -208,24 +166,24 @@ class AccountabilityController extends Controller
         }
 
         /*
-         * A Late Return Fee Form is only ever produced from an assessment the
-         * Action Officer has already confirmed.
+         * The assessment is entirely system-derived from the recorded
+         * physical return, so the Head may decide from either pre-final
+         * stage: a freshly finalized assessment, or one the Head previously
+         * returned for correction. There is no separate Action Officer
+         * confirmation gate.
          */
-        if ($overdue->status === LateReturnService::STATUS_FOR_AO_CONFIRMATION) {
-            return back()->withErrors([
-                'overdue' => 'The Action Officer has not confirmed this late-return assessment yet.',
-            ]);
-        }
-
-        if ($overdue->status !== LateReturnService::STATUS_FOR_HEAD_APPROVAL) {
+        if (! in_array($overdue->status, [
+            LateReturnService::STATUS_FOR_AO_CONFIRMATION,
+            LateReturnService::STATUS_FOR_HEAD_APPROVAL,
+        ], true)) {
             return back()->withErrors([
                 'overdue' => 'This late-return case is not ready for a new Billing Statement.',
             ]);
         }
 
-        if ($overdue->actual_return_date === null || $overdue->ao_confirmed_at === null) {
+        if ($overdue->actual_return_date === null) {
             return back()->withErrors([
-                'overdue' => 'A confirmed physical return date is required before the Late Return Fee Form can be generated.',
+                'overdue' => 'A recorded physical return date is required before the Late Return Fee Form can be generated.',
             ]);
         }
 

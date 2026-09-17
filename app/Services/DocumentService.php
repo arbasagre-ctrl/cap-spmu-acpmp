@@ -2908,7 +2908,7 @@ HTML;
             'amount' => (float) ($case->accrued_amount ?? 0),
             'disposition' => $disposition,
             'decisionBasis' => trim($decisionBasis),
-            'aoConfirmedBy' => (string) ($case->confirmedBy?->full_name ?? 'SPMU Action Officer'),
+            'aoConfirmedBy' => $case->ao_confirmed_at ? (string) ($case->confirmedBy?->full_name ?? 'SPMU Action Officer') : null,
             'aoConfirmedAt' => $case->ao_confirmed_at?->copy()->timezone('Asia/Manila')->format('d F Y, g:i A'),
             'headName' => (string) ($spmuHead->full_name ?: 'SPMU Head/Admin'),
             'headDesignation' => $this->templatePrintedDesignation($spmuHead),

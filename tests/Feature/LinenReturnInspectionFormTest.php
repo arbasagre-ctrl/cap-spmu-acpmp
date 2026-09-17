@@ -626,7 +626,7 @@ class LinenReturnInspectionFormTest extends TestCase
             ->where('custody_transaction_id', $custody->id)
             ->firstOrFail();
 
-        $this->assertSame('RETURNED_PENDING_SETTLEMENT', $overdue->status);
+        $this->assertSame('FOR_HEAD_APPROVAL', $overdue->status);
         $this->assertSame(50.0, (float) $overdue->rate_snapshot);
         $this->assertSame(50.0, (float) $overdue->accrued_amount);
         $this->assertSame(
@@ -697,7 +697,7 @@ class LinenReturnInspectionFormTest extends TestCase
             ->where('custody_transaction_id', $custody->id)
             ->firstOrFail();
 
-        $this->assertSame('RETURNED_PENDING_SETTLEMENT', $overdue->status);
+        $this->assertSame('FOR_HEAD_APPROVAL', $overdue->status);
         $this->assertSame(25.0, (float) $overdue->rate_snapshot);
         $this->assertSame(300.0, (float) $overdue->accrued_amount);
         $this->assertSame('OBLIGATION_OPEN', $custody->fresh()->status);

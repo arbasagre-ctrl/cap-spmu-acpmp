@@ -322,7 +322,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->assertDatabaseCount('overdue_cases', 0);
     }
 
-    public function test_a_late_return_is_classified_for_action_officer_confirmation(): void
+    public function test_a_late_return_is_automatically_finalized_for_head_review(): void
     {
         $custody = $this->custody($this->borrower());
         $this->overdueCase($custody);
@@ -334,11 +334,34 @@ class LateReturnAccountabilityTest extends TestCase
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
 
         $this->assertNotNull($case);
-        $this->assertSame(LateReturnService::STATUS_FOR_AO_CONFIRMATION, $case->status);
+        $this->assertSame(
+            LateReturnService::STATUS_FOR_HEAD_APPROVAL,
+            $case->status,
+            'The figures are entirely system-derived, so the case goes straight to Head review with no Action Officer confirmation step.'
+        );
         $this->assertSame('2026-09-04', $case->actual_return_date->toDateString());
         $this->assertSame('RETURN_INSPECTION', $case->return_date_source);
         $this->assertSame(3, (int) $case->late_days);
         $this->assertSame(225.0, (float) $case->accrued_amount, '3 late days x 75.');
+        $this->assertNull($case->ao_confirmed_by_user_id, 'Nobody confirms an automatically finalized assessment.');
+        $this->assertNull($case->ao_confirmed_at);
+    }
+
+    public function test_reassessing_an_already_finalized_case_does_not_change_its_frozen_figures(): void
+    {
+        $custody = $this->custody($this->borrower());
+        $this->overdueCase($custody);
+        $officer = $this->officer();
+
+        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
+        $first = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
+
+        $second = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
+
+        $this->assertSame($first->id, $second->id, 'No duplicate case is created.');
+        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $second->status);
+        $this->assertSame(3, (int) $second->late_days);
+        $this->assertDatabaseCount('overdue_cases', 1);
     }
 
     public function test_the_fee_stops_growing_after_the_physical_return(): void
@@ -360,65 +383,60 @@ class LateReturnAccountabilityTest extends TestCase
         $this->assertSame(225.0, $assessment['amount']);
     }
 
-    public function test_confirmation_is_refused_while_the_item_is_still_unreturned(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $case = $this->overdueCase($custody);
-
-        $this->expectException(ValidationException::class);
-
-        $this->lateReturns->confirm($case, $this->officer());
-    }
-
-    public function test_confirmation_forwards_the_assessment_to_the_head(): void
+    public function test_the_head_can_bill_immediately_once_the_return_is_recorded(): void
     {
         $custody = $this->custody($this->borrower());
         $this->overdueCase($custody);
         $officer = $this->officer();
-
-        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
-        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-
-        $confirmed = $this->lateReturns->confirm($case, $officer);
-
-        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $confirmed->status);
-        $this->assertSame($officer->id, $confirmed->ao_confirmed_by_user_id);
-        $this->assertNotNull($confirmed->ao_confirmed_at);
-    }
-
-    public function test_confirming_twice_does_not_forward_twice(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $this->overdueCase($custody);
-        $officer = $this->officer();
-
-        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
-        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-
-        $first = $this->lateReturns->confirm($case, $officer);
-        $confirmedAt = $first->ao_confirmed_at;
-
-        $second = $this->lateReturns->confirm($first, $this->officer());
-
-        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $second->status);
-        $this->assertEquals($confirmedAt, $second->ao_confirmed_at, 'The first confirmation stands.');
-    }
-
-    public function test_the_head_cannot_bill_before_the_officer_confirms(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $this->overdueCase($custody);
-        $officer = $this->officer();
+        $head = $this->spmuHead();
+        $this->registerSignature($head);
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
 
         $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($this->spmuHead())
-            ->post(route('overdue.bill', $case), ['basis' => 'Premature.'])
-            ->assertSessionHasErrors('overdue');
+            ->actingAs($head)
+            ->post(route('overdue.bill', $case), ['basis' => 'Three late calendar days at the configured tariff.'])
+            ->assertSessionHasNoErrors();
 
-        $this->assertDatabaseCount('billing_statements', 0);
+        $this->assertSame(LateReturnService::STATUS_AWAITING_PAYMENT, $case->fresh()->status);
+    }
+
+    /**
+     * There is no "return for correction" action anymore: no route anywhere
+     * can correct an authoritative physical return record once it is
+     * recorded, so the action was a dead end and has been removed. This test
+     * builds the retired status directly (bypassing the deleted action) to
+     * confirm any pre-existing row at that status still renders read-only
+     * for the Action Officer and remains decidable by the Head, rather than
+     * erroring or offering a dead-end control.
+     */
+    public function test_a_legacy_case_at_the_retired_correction_status_is_read_only_for_the_officer(): void
+    {
+        $custody = $this->custody($this->borrower());
+        $this->overdueCase($custody);
+        $officer = $this->officer();
+        $head = $this->spmuHead();
+
+        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
+        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
+        $case->update([
+            'status' => LateReturnService::STATUS_FOR_AO_CONFIRMATION,
+            'correction_remarks' => 'Recheck the recorded date.',
+        ]);
+
+        $this->accountability($officer)
+            ->assertOk()
+            ->assertSee('Late Return - Returned for Correction')
+            ->assertSee('Recheck the recorded date.')
+            ->assertDontSee('Confirm Late Return')
+            ->assertDontSee('Confirm Late Return Assessment');
+
+        $this->accountability($head)
+            ->assertOk()
+            ->assertSee('Late Return - Returned for Correction')
+            ->assertSee('Approve Late Return Assessment')
+            ->assertDontSee('Return for Correction');
     }
 
     public function test_the_head_cannot_bill_a_case_that_is_still_overdue(): void
@@ -434,26 +452,26 @@ class LateReturnAccountabilityTest extends TestCase
         $this->assertDatabaseCount('billing_statements', 0);
     }
 
-    public function test_returning_for_correction_preserves_the_case_and_sends_it_back(): void
+    /** A legacy row at the retired correction status can still be billed - no dead end. */
+    public function test_the_head_can_still_bill_a_legacy_case_at_the_retired_correction_status(): void
     {
         $custody = $this->custody($this->borrower());
         $this->overdueCase($custody);
         $officer = $this->officer();
+        $head = $this->spmuHead();
+        $this->registerSignature($head);
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-        $this->lateReturns->confirm($case, $officer);
+        $case->update(['status' => LateReturnService::STATUS_FOR_AO_CONFIRMATION]);
 
-        $returned = $this->lateReturns->returnForCorrection(
-            $case->fresh(),
-            $this->spmuHead(),
-            'The recorded return date needs rechecking.'
-        );
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->post(route('overdue.bill', $case->fresh()), ['basis' => 'Rechecked and confirmed correct.'])
+            ->assertSessionHasNoErrors();
 
-        $this->assertSame(LateReturnService::STATUS_FOR_AO_CONFIRMATION, $returned->status);
-        $this->assertNull($returned->ao_confirmed_at);
-        $this->assertStringContainsString('rechecking', $returned->correction_remarks);
-        /* The case is preserved with its history, not replaced. */
+        $this->assertSame(LateReturnService::STATUS_AWAITING_PAYMENT, $case->fresh()->status);
+        /* The same case is reused, not replaced. */
         $this->assertDatabaseCount('overdue_cases', 1);
     }
 
@@ -538,23 +556,25 @@ class LateReturnAccountabilityTest extends TestCase
         $this->assertSame(LateReturnService::STATUS_OVERDUE, $case->fresh()->status);
     }
 
-    public function test_late_linen_still_requires_officer_confirmation_before_the_head(): void
+    public function test_late_linen_is_also_automatically_finalized_for_head_review(): void
     {
         $custody = $this->custody($this->borrower(), linen: true);
         $this->overdueCase($custody);
         $officer = $this->officer();
+        $head = $this->spmuHead();
+        $this->registerSignature($head);
 
         $this->laundryJob($custody, Carbon::create(2026, 9, 3, 11));
         $this->recordReturn($custody, Carbon::create(2026, 9, 3, 11), $officer);
 
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns', 'laundryJob']), $officer);
 
-        $this->assertSame(LateReturnService::STATUS_FOR_AO_CONFIRMATION, $case->status);
+        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $case->status);
 
         $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($this->spmuHead())
-            ->post(route('overdue.bill', $case), ['basis' => 'Too early.'])
-            ->assertSessionHasErrors('overdue');
+            ->actingAs($head)
+            ->post(route('overdue.bill', $case), ['basis' => 'Confirmed against the Laundry receipt date.'])
+            ->assertSessionHasNoErrors();
     }
 
     /* ================================================================== */
@@ -704,38 +724,6 @@ class LateReturnAccountabilityTest extends TestCase
     /* HTTP actions                                                       */
     /* ================================================================== */
 
-    public function test_the_officer_confirms_through_the_http_action(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $this->overdueCase($custody);
-        $officer = $this->officer();
-
-        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
-        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($officer)
-            ->post(route('overdue.confirm-late-return', $case))
-            ->assertSessionHasNoErrors();
-
-        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $case->fresh()->status);
-    }
-
-    public function test_the_head_cannot_use_the_officer_confirmation_action(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $this->overdueCase($custody);
-        $officer = $this->officer();
-
-        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
-        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($this->spmuHead())
-            ->post(route('overdue.confirm-late-return', $case))
-            ->assertForbidden();
-    }
-
     public function test_the_head_approves_and_the_fee_form_is_generated_once(): void
     {
         $custody = $this->custody($this->borrower());
@@ -746,7 +734,6 @@ class LateReturnAccountabilityTest extends TestCase
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-        $this->lateReturns->confirm($case, $officer);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
@@ -787,7 +774,6 @@ class LateReturnAccountabilityTest extends TestCase
 
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-        $this->lateReturns->confirm($case, $officer);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
@@ -955,14 +941,14 @@ class LateReturnAccountabilityTest extends TestCase
             ->assertSee('Overdue - Item Not Returned')
             ->assertSee('Estimated Fee So Far')
             ->assertSee('Still overdue', false)
-            ->assertSee('A formal Late Return Notice cannot be issued until the physical return is recorded and the assessment is confirmed.')
+            ->assertSee('A formal Late Return Notice cannot be issued until the physical return is recorded and the SPMU Head approves the assessment.')
             ->assertSee('Awaiting borrower return')
             /* No confirmation or approval control while it is merely overdue. */
             ->assertDontSee('Confirm Late Return')
             ->assertDontSee('Approve Late Return Assessment');
     }
 
-    public function test_a_detected_late_return_offers_confirmation_to_the_officer_only(): void
+    public function test_a_detected_late_return_is_read_only_for_the_officer_and_decidable_by_the_head(): void
     {
         $custody = $this->custody($this->borrower());
         $this->overdueCase($custody);
@@ -971,41 +957,27 @@ class LateReturnAccountabilityTest extends TestCase
         $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
         $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
 
+        /* The Action Officer sees the finalized figures but cannot act on them. */
         $this->accountability($officer)
             ->assertOk()
-            ->assertSee('Late Return - For AO Confirmation')
+            ->assertSee('For Head Review')
             ->assertSee('Final Late Return Fee')
             ->assertSee('Actual Return')
             ->assertSee('Late Days')
-            ->assertSee('Confirm Late Return');
-
-        /* The Head sees the case but cannot approve before confirmation. */
-        $this->accountability($this->spmuHead())
-            ->assertOk()
-            ->assertSee('Late Return - For AO Confirmation')
+            ->assertDontSee('Confirm Late Return')
+            ->assertDontSee('Confirm Late Return Assessment')
             ->assertDontSee('Approve Late Return Assessment');
-    }
 
-    public function test_a_confirmed_assessment_offers_approval_to_the_head_only(): void
-    {
-        $custody = $this->custody($this->borrower());
-        $this->overdueCase($custody);
-        $officer = $this->officer();
-
-        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
-        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
-        $this->lateReturns->confirm($case, $officer);
-
+        /*
+         * The Head can decide immediately - no Action Officer confirmation
+         * gates it, and there is no "return for correction" dead end since
+         * no route anywhere can correct an authoritative physical return.
+         */
         $this->accountability($this->spmuHead())
             ->assertOk()
-            ->assertSee('For Head Approval')
+            ->assertSee('For Head Review')
             ->assertSee('Approve Late Return Assessment')
-            ->assertSee('Return for Correction');
-
-        $this->accountability($officer)
-            ->assertOk()
-            ->assertSee('For Head Approval')
-            ->assertDontSee('Approve Late Return Assessment');
+            ->assertDontSee('Return for Correction');
     }
 
     public function test_an_approved_case_reads_as_awaiting_payment(): void
@@ -1120,7 +1092,8 @@ class LateReturnAccountabilityTest extends TestCase
             /* Gone from the open billing queue. */
             ->assertDontSee($billing->billing_no)
             /* And from the active late-return queue. */
-            ->assertDontSee('Late Return - For AO Confirmation')
+            ->assertDontSee('Late Return - Returned for Correction')
+            ->assertDontSee('For Head Review')
             ->assertDontSee('Approved - Awaiting Payment');
     }
 
@@ -1132,7 +1105,7 @@ class LateReturnAccountabilityTest extends TestCase
             ->actingAs($head)
             ->get(route('accountability.index', ['view' => 'head_review']))
             ->assertOk()
-            ->assertDontSee('For Head Approval')
+            ->assertDontSee('For Head Review')
             ->assertDontSee('Approve Late Return Assessment');
     }
 
@@ -1150,8 +1123,8 @@ class LateReturnAccountabilityTest extends TestCase
             ->actingAs($officer)
             ->get(route('accountability.index'))
             ->assertOk()
-            ->assertSee('Late Return - For AO Confirmation')
-            ->assertSee('Confirm Late Return');
+            ->assertSee('For Head Review')
+            ->assertDontSee('Confirm Late Return');
     }
 
     public function test_a_waived_billing_is_never_relabelled_as_paid(): void
@@ -1198,7 +1171,7 @@ class LateReturnAccountabilityTest extends TestCase
 
         $this->assertNotSame($overdueCase->status, $lateCase->status);
         $this->assertSame('Overdue - Item Not Returned', LateReturnService::label($overdueCase->status));
-        $this->assertSame('Late Return - For AO Confirmation', LateReturnService::label($lateCase->status));
+        $this->assertSame('For Head Review', LateReturnService::label($lateCase->status));
 
         /* Only the returned one carries a frozen assessment. */
         $this->assertNull($overdueCase->actual_return_date);

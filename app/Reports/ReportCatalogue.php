@@ -265,7 +265,7 @@ final class ReportCatalogue
                     'CLOSED' => 'Closed',
                     'VOID_CORRECTION' => 'Void Correction',
                     'OVERDUE' => 'Overdue',
-                    'RETURNED_PENDING_SETTLEMENT' => 'Pending AO Confirmation',
+                    'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction',
                     'FOR_HEAD_APPROVAL' => 'For Head/Admin Decision',
                     'BILLED' => 'Awaiting Payment',
                 ],

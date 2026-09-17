@@ -8,7 +8,6 @@ use App\Models\OverdueCase;
 use App\Models\SystemSetting;
 use App\Models\User;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -43,14 +42,21 @@ class LateReturnService
     public const STATUS_OVERDUE = 'OVERDUE';
 
     /**
-     * Returned late, waiting for the Action Officer to confirm the assessment.
+     * Legacy stage, no longer reachable from any code path.
      *
-     * The existing status name is kept so historical rows stay readable; the
-     * presentation label is "Late Return - For AO Confirmation".
+     * There is no mechanism anywhere in the system to correct an authoritative
+     * physical return record once it is recorded (the Return Inspection form
+     * itself has nothing left to submit once every line is fully returned), so
+     * a "send back for correction" action could never lead anywhere - it was a
+     * dead end. The action that used to reach this status has been removed.
+     *
+     * The existing status name/column value is kept only so any historical row
+     * already at this status keeps rendering read-only, with the presentation
+     * label "Late Return - Returned for Correction", instead of erroring.
      */
     public const STATUS_FOR_AO_CONFIRMATION = 'RETURNED_PENDING_SETTLEMENT';
 
-    /** Confirmed by the Action Officer, waiting for the SPMU Head. */
+    /** The assessment is finalized and waiting for the SPMU Head's decision. */
     public const STATUS_FOR_HEAD_APPROVAL = 'FOR_HEAD_APPROVAL';
 
     /** Head-approved: the Late Return Fee Form exists and payment is due. */
@@ -62,8 +68,8 @@ class LateReturnService
     /** Presentation labels for each stage of the lifecycle. */
     public const LABELS = [
         self::STATUS_OVERDUE => 'Overdue - Item Not Returned',
-        self::STATUS_FOR_AO_CONFIRMATION => 'Late Return - For AO Confirmation',
-        self::STATUS_FOR_HEAD_APPROVAL => 'For Head Approval',
+        self::STATUS_FOR_AO_CONFIRMATION => 'Late Return - Returned for Correction',
+        self::STATUS_FOR_HEAD_APPROVAL => 'For Head Review',
         self::STATUS_AWAITING_PAYMENT => 'Approved - Awaiting Payment',
         self::STATUS_RESOLVED => 'Resolved',
     ];
@@ -319,6 +325,15 @@ class LateReturnService
             return $case;
         }
 
+        /*
+         * The figures above are entirely system-derived from the
+         * authoritative physical return record, the configured daily rate,
+         * and the expected return date - there is nothing left for the
+         * Action Officer to confirm. The assessment is finalized directly
+         * to the SPMU Head, whether this is a fresh detection or a
+         * reassessment of a case the Head previously returned for
+         * correction.
+         */
         $case->fill([
             'borrower_user_id' => $custody->borrower_user_id,
             'overdue_started_at' => $case->overdue_started_at
@@ -328,7 +343,7 @@ class LateReturnService
             'late_days' => $lateDays,
             'rate_snapshot' => is_numeric($rate) ? (float) $rate : null,
             'accrued_amount' => $amount,
-            'status' => self::STATUS_FOR_AO_CONFIRMATION,
+            'status' => self::STATUS_FOR_HEAD_APPROVAL,
         ])->save();
 
         $this->audit->record('LATE_RETURN_DETECTED', $case, after: [
@@ -341,10 +356,10 @@ class LateReturnService
         ]);
 
         $this->notifications->send(
-            'LATE_RETURN_FOR_CONFIRMATION',
-            $this->actionOfficers(),
+            'LATE_RETURN_FOR_HEAD_APPROVAL',
+            $this->spmuHeads(),
             "Custody {$custody->custody_no} was returned {$lateDays} day(s) after its expected return date. "
-                .'Confirm the late-return assessment so it can go to the SPMU Head.',
+                .'The late-return assessment was automatically finalized from the recorded physical return and is ready for approval.',
             $case
         );
 
@@ -367,93 +382,6 @@ class LateReturnService
         );
 
         return $case;
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Action Officer confirmation                                         */
-    /* ------------------------------------------------------------------ */
-
-    /**
-     * The Action Officer confirms the recorded return date and the system's
-     * late classification. This is the only route to Head approval.
-     */
-    public function confirm(OverdueCase $case, User $officer): OverdueCase
-    {
-        /* An unreturned item can never be confirmed as returned late. */
-        if ($case->actual_return_date === null) {
-            throw ValidationException::withMessages([
-                'overdue' => 'The item has not been returned yet. Record the physical return before confirming a late return.',
-            ]);
-        }
-
-        if ($case->status === self::STATUS_OVERDUE) {
-            throw ValidationException::withMessages([
-                'overdue' => 'This case is still awaiting the physical return.',
-            ]);
-        }
-
-        /* Confirming twice is a no-op rather than a second forward. */
-        if ($case->status !== self::STATUS_FOR_AO_CONFIRMATION) {
-            return $case;
-        }
-
-        DB::transaction(function () use ($case, $officer): void {
-            $case->update([
-                'ao_confirmed_by_user_id' => $officer->id,
-                'ao_confirmed_at' => now(),
-                'correction_remarks' => null,
-                'status' => self::STATUS_FOR_HEAD_APPROVAL,
-            ]);
-
-            $this->audit->record('LATE_RETURN_CONFIRMED_BY_AO', $case, after: [
-                'expected_return_date' => $case->grace_expires_at?->toDateString(),
-                'actual_return_date' => $case->actual_return_date,
-                'late_days' => $case->late_days,
-                'amount' => (float) $case->accrued_amount,
-            ]);
-        }, 3);
-
-        $this->notifications->send(
-            'LATE_RETURN_FOR_HEAD_APPROVAL',
-            $this->spmuHeads(),
-            "A late-return assessment for {$case->custody?->custody_no} is ready for approval: "
-                ."{$case->late_days} late day(s).",
-            $case
-        );
-
-        return $case->fresh();
-    }
-
-    /**
-     * The SPMU Head sends an assessment back to the Action Officer.
-     *
-     * The case is preserved with its history; only the stage moves back.
-     */
-    public function returnForCorrection(OverdueCase $case, User $head, string $remarks): OverdueCase
-    {
-        if ($case->status !== self::STATUS_FOR_HEAD_APPROVAL) {
-            throw ValidationException::withMessages([
-                'overdue' => 'Only an assessment waiting for Head approval can be returned for correction.',
-            ]);
-        }
-
-        $case->update([
-            'status' => self::STATUS_FOR_AO_CONFIRMATION,
-            'ao_confirmed_by_user_id' => null,
-            'ao_confirmed_at' => null,
-            'correction_remarks' => $remarks,
-        ]);
-
-        $this->audit->record('LATE_RETURN_RETURNED_FOR_CORRECTION', $case, reason: $remarks);
-
-        $this->notifications->send(
-            'LATE_RETURN_FOR_CONFIRMATION',
-            $this->actionOfficers(),
-            "The late-return assessment for {$case->custody?->custody_no} was returned for correction: {$remarks}",
-            $case
-        );
-
-        return $case->fresh();
     }
 
     /* ------------------------------------------------------------------ */

@@ -115,6 +115,22 @@
     $returnAccountability = $custody->activeAccountabilityIndicator();
 
     /*
+     * A late-return assessment is entirely system-derived from this recorded
+     * physical return, so as soon as it exists there is nothing further for
+     * the Action Officer to do here - it is already finalized (or, if the
+     * SPMU Head returned it for correction, still shows the same recorded
+     * figures). Point straight to Accountability Processing rather than
+     * duplicate the case detail on this page.
+     */
+    $lateReturnCase = $custody->overdueCase;
+    $lateReturnRecorded = $lateReturnCase
+        && $lateReturnCase->actual_return_date !== null
+        && ! in_array($lateReturnCase->status, [
+            App\Services\LateReturnService::STATUS_OVERDUE,
+            App\Services\LateReturnService::STATUS_RESOLVED,
+        ], true);
+
+    /*
      * The Return workspace only shows documents that are actually required
      * for this transaction. Billing receipts belong to Accountability
      * Processing, not to the normal physical-return document checklist.
@@ -322,6 +338,20 @@
         </div>
 
         <div class="return-status-scroll">
+            @if($lateReturnRecorded)
+                <div class="callout info return-next-callout">
+                    <x-icon name="information" size="24" />
+                    <div>
+                        <strong>Late Return Recorded</strong>
+                        <p>The physical return has been recorded and the late-return assessment is ready for SPMU Head review.</p>
+                        <a class="button primary small ui-pressable top-gap return-navigation-action" href="{{ route('accountability.index') }}">
+                            <span>View Accountability</span>
+                            <span aria-hidden="true">→</span>
+                        </a>
+                    </div>
+                </div>
+            @endif
+
             @if($gatePassDocumentationPending)
                 <div class="callout warning return-next-callout">
                     <x-icon name="information" size="24" />
