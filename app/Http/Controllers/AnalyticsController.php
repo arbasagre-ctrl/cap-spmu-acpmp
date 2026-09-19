@@ -374,15 +374,14 @@ class AnalyticsController extends Controller
                 'units' => $units,
                 'equipment' => $equipment,
                 'trend' => $trend,
+                /*
+                 * Period-over-period context for the period-scoped readings
+                 * only. Currently Out, Currently Overdue and Low Availability
+                 * describe today and are never compared with a past window.
+                 */
+                'demandComparison' => $analytics->demandComparison($from, $to, $division, $unit, $borrower),
+                'returnComparison' => $analytics->returnComparison($from, $to, $division, $unit, $borrower),
                 'lowAvailability' => $analytics->lowAvailability($inventory),
-                'insights' => $analytics->insights(
-                    $overview,
-                    $groups,
-                    $units,
-                    $equipment,
-                    $trend,
-                    $returns
-                ),
                 'returns' => $returns,
                 'demandSummary' => $demandSummary,
                 'peakSummary' => $peakSummary,
@@ -401,6 +400,13 @@ class AnalyticsController extends Controller
             return [
                 /* Headline figures: filed demand, expressed demand, actual release. */
                 'totals' => $analytics->demandTotals($from, $to, $division, $unit, $borrower),
+                'totalsComparison' => $analytics->demandComparison($from, $to, $division, $unit, $borrower),
+                /*
+                 * Cohort of requests filed in the period by current workflow
+                 * outcome. Its own scope: unlike Requests Filed it keeps the
+                 * requests that were filed and later cancelled or expired.
+                 */
+                'outcomes' => $analytics->requestOutcomes($from, $to, $division, $unit, $borrower),
                 'trend' => $analytics->trend($from, $to, $division, $unit, $periodSelection, $borrower),
                 'requested' => $analytics->requestedEquipment($from, $to, $division, $unit, 10, $borrower),
                 'released' => $analytics->equipment($from, $to, $division, $unit, 10, $borrower),
@@ -430,9 +436,16 @@ class AnalyticsController extends Controller
              */
             return [
                 'returns' => $analytics->returns($from, $to, $division, $unit, $borrower),
+                /* Completed-return outcomes against the previous period; overdue is not compared. */
+                'returnComparison' => $analytics->returnComparison($from, $to, $division, $unit, $borrower),
                 'returnTrend' => $analytics->returnTrend($from, $to, $division, $unit, $periodSelection, $borrower),
                 'lifecycle' => $analytics->lifecycle($from, $to, $division, $unit, $borrower),
                 'currentOverdue' => $analytics->currentOverdue($division, $unit, 5, $borrower),
+                /* The same current backlog as Currently Overdue, by days past due; no period, no comparison. */
+                'overdueAging' => $analytics->overdueAging($division, $unit, $borrower),
+                /* Late share of the period's completed returns, by organisation; the same records as the KPIs above. */
+                'lateRatesByDivision' => $analytics->lateReturnRates($from, $to, $division, $unit, $borrower, 'division'),
+                'lateRatesByUnit' => $analytics->lateReturnRates($from, $to, $division, $unit, $borrower, 'unit'),
                 'returnConditions' => $analytics->returnConditions($from, $to, $division, $unit, $borrower),
                 'incidents' => $analytics->incidentSummary($from, $to, $division, $unit, $borrower),
             ];
@@ -464,7 +477,6 @@ class AnalyticsController extends Controller
             'unitForecast' => $forecasts->unitDemand($analytics, $from, $to, $division, $unit),
             'equipmentForecast' => $forecasts->equipment($from, $to, ForecastService::EQUIPMENT_LIMIT, $division, $unit),
             'busyPeriod' => $forecasts->busyPeriod($analytics, $from, $to, $division, $unit),
-            'coverage' => $analytics->stockCoverage($inventory, $from, $to, 5, $division, $unit),
             'forecastBasis' => $forecasts->basis(),
         ];
     }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\AnalyticsDrilldown;
+use App\Support\PeriodComparison;
 use Carbon\CarbonInterface;
 
 /**
@@ -113,6 +114,32 @@ class AnalyticsCardDetailService
     {
         return 'Institution-wide current inventory snapshot: measured as of today. '
             .'Reporting Period, Organizational Classification, Office / College / Unit, and Borrower filters do not change physical stock totals.';
+    }
+
+    /** The previous period's dates as the panel prints them. */
+    private function previousWindowLabel(array $scope): string
+    {
+        [$from, $to] = $this->analytics->previousWindow($scope['from'], $scope['to']);
+
+        return $from->format('d M Y').' – '.$to->format('d M Y');
+    }
+
+    /**
+     * Bar width for a detail row, as a share of the largest value in the
+     * rows being drawn.
+     *
+     * Visualisation geometry only: it exists so a bar's width is proportional
+     * to the figure printed beside it, and it is never a business metric of
+     * its own. A set with no positive value draws no width rather than
+     * dividing by zero.
+     */
+    private function width(float $value, float $highest): int
+    {
+        if ($highest <= 0 || $value <= 0) {
+            return 0;
+        }
+
+        return (int) round(min($value, $highest) / $highest * 100);
     }
 
     /** @return array<string, mixed> */
@@ -279,6 +306,13 @@ class AnalyticsCardDetailService
                 ['label' => 'Returned on time', 'value' => (int) $returns['on_time']],
                 ['label' => 'Returned late', 'value' => (int) $returns['late']],
             ],
+            /* The rate itself, in percentage points against the previous period. */
+            'comparison' => PeriodComparison::block(
+                $this->analytics->returnComparison(
+                    $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+                )['on_time_rate'],
+                $this->previousWindowLabel($scope)
+            ),
             'empty' => $completed === 0
                 ? 'No completed returns in this reporting period.'
                 : null,
@@ -329,18 +363,26 @@ class AnalyticsCardDetailService
             $scope['from'], $scope['to'], $scope['division'], $scope['unit'], 10, $scope['borrower'] ?? null
         );
 
+        /*
+         * The same reading as the Most Requested Items card: ranked by how
+         * many requests contained the item, with the requested quantity
+         * stated beside it as the secondary figure. `share` here is the
+         * service's request-count share, so the bar measures the ranking
+         * and never the quantity.
+         */
         return [
             'title' => 'Most Requested Items',
             'value' => count($requested['items']),
             'value_label' => 'items requested',
-            'context' => 'Ranked by requested quantity',
+            'context' => 'Ranked by number of requests',
             'note' => $this->periodNote($scope)
                 .' A request that was never approved or released still expresses demand, so it '
                 .'is counted here. Physical usage is the separate released measure.',
             'bars' => $requested['items'] === [] ? null : array_map(
                 static fn (array $row): array => [
                     'label' => $row['name'],
-                    'value' => ($row['quantity'] ?? 0) + 0 .' '.($row['unit'] ?? ''),
+                    'value' => $row['requests'].' '.($row['requests'] === 1 ? 'request' : 'requests')
+                        .' · Requested quantity: '.(($row['quantity'] ?? 0) + 0),
                     'share' => $row['share'] ?? 0,
                 ],
                 $requested['items']
@@ -417,7 +459,7 @@ class AnalyticsCardDetailService
                 .' Each figure follows the borrowings filed inside the window, so it describes '
                 .'what this period produced rather than what is true right now.',
             'stats' => [
-                ['label' => 'Approved for release', 'value' => $overview['approved']],
+                ['label' => 'Approved requests', 'value' => $overview['approved']],
                 ['label' => 'Completed returns', 'value' => $returns['completed']],
                 ['label' => 'Returned on time', 'value' => $returns['on_time']],
                 ['label' => 'Returned late', 'value' => $returns['late']],
@@ -448,6 +490,26 @@ class AnalyticsCardDetailService
         );
         $total = (float) ($totals['requested_quantity'] ?? 0);
 
+        /*
+         * This detail is about quantity, so its bars are drawn against the
+         * largest requested quantity in the rows shown - never the service's
+         * `share`, which is the request-count ranking behind Most Requested
+         * Items and would make a bar disagree with the number printed on it.
+         * The rows are the ten most frequently requested items, listed here
+         * by quantity so the bars read in order; the request count stays a
+         * secondary field.
+         */
+        $rows = collect($requested['items'])
+            ->sortByDesc(fn (array $row): float => (float) ($row['quantity'] ?? 0))
+            ->values();
+
+        $highest = (float) ($rows->max(fn (array $row): float => (float) ($row['quantity'] ?? 0)) ?: 0);
+
+        /* Filing-date scope in both windows, same filters; only the dates move. */
+        $comparison = $this->analytics->demandComparison(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+
         return [
             'title' => 'Requested Quantity',
             'value' => $total + 0,
@@ -457,14 +519,18 @@ class AnalyticsCardDetailService
                 .' Summed from request items, including requests that were never approved or '
                 .'released, because an unmet request is still demand. Released quantity is the '
                 .'separate measure of what physically went out.',
-            'bars' => $requested['items'] === [] ? null : array_map(
-                static fn (array $row): array => [
-                    'label' => $row['name'],
-                    'value' => (($row['quantity'] ?? 0) + 0).' '.($row['unit'] ?? ''),
-                    'share' => $row['share'] ?? 0,
-                ],
-                $requested['items']
+            'comparison' => PeriodComparison::block(
+                $comparison['requested_quantity'], $this->previousWindowLabel($scope), 'units'
             ),
+            'bars' => $rows->isEmpty() ? null : $rows->map(
+                fn (array $row): array => [
+                    'label' => $row['name'],
+                    'value' => (($row['quantity'] ?? 0) + 0).' '.($row['unit'] ?? '')
+                        .' · '.$row['requests'].' '.($row['requests'] === 1 ? 'request' : 'requests'),
+                    'share' => $this->width((float) ($row['quantity'] ?? 0), $highest),
+                ]
+            )->all(),
+            'bars_title' => 'Requested quantity by item (ten most frequently requested)',
             'empty' => $total <= 0 ? 'No equipment was requested during this period.' : null,
             'reports_url' => AnalyticsDrilldown::borrowing(
                 $scope['period'], $scope['division'], $scope['unit']
@@ -484,6 +550,11 @@ class AnalyticsCardDetailService
         );
         $total = (float) ($totals['released_quantity'] ?? 0);
 
+        /* released_at in both windows - never the filing date. */
+        $comparison = $this->analytics->demandComparison(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+
         return [
             'title' => 'Released Quantity',
             'value' => $total + 0,
@@ -492,6 +563,9 @@ class AnalyticsCardDetailService
             'note' => $this->periodNote($scope)
                 .' Summed from actual released quantities on custody lines, so it measures real '
                 .'asset usage rather than demand.',
+            'comparison' => PeriodComparison::block(
+                $comparison['released_quantity'], $this->previousWindowLabel($scope), 'units'
+            ),
             'bars' => $equipment['items'] === [] ? null : array_map(
                 static fn (array $row): array => [
                     'label' => $row['name'],
@@ -557,6 +631,16 @@ class AnalyticsCardDetailService
         );
         $rows = $slow['items'] ?? [];
 
+        /*
+         * slowMovingItems() ranks by released quantity ascending and carries
+         * no share of its own. When something in the list did move, a bar is
+         * drawn against the largest released quantity shown; when nothing
+         * did, every bar would be a fabricated zero, so the rows are listed
+         * plainly instead and the state says so.
+         */
+        $highest = (float) (collect($rows)->max(fn (array $row): float => (float) ($row['released'] ?? 0)) ?: 0);
+        $anyMoved = $highest > 0;
+
         return [
             'title' => 'Low / No Usage Items',
             'value' => count($rows),
@@ -565,15 +649,35 @@ class AnalyticsCardDetailService
             'note' => $this->periodNote($scope)
                 .' The list starts from the catalogue rather than from custody records, so an '
                 .'item that never moved still appears - which is the point of the question.',
-            'bars' => $rows === [] ? null : array_map(
-                static fn (array $row): array => [
+            'stats' => $rows === [] ? [] : [
+                ['label' => 'Items with no release', 'value' => (int) ($slow['never_moved'] ?? 0)],
+                ['label' => 'Borrowable items in catalogue', 'value' => (int) ($slow['catalogue'] ?? 0)],
+            ],
+            'bars' => ! $anyMoved ? null : array_map(
+                fn (array $row): array => [
                     'label' => (string) ($row['name'] ?? ''),
-                    'value' => (($row['released'] ?? 0) + 0).' released',
-                    'share' => (int) ($row['share'] ?? 0),
+                    'value' => (($row['released'] ?? 0) + 0).' released · '
+                        .(int) ($row['transactions'] ?? 0).' '
+                        .((int) ($row['transactions'] ?? 0) === 1 ? 'release' : 'releases'),
+                    'share' => $this->width((float) ($row['released'] ?? 0), $highest),
                 ],
                 $rows
             ),
-            'empty' => $rows === [] ? 'No catalogue items are available to rank yet.' : null,
+            'bars_title' => $anyMoved ? 'Released quantity, least first' : null,
+            'table' => ($rows === [] || $anyMoved) ? null : [
+                'columns' => ['Item', 'Released', 'Release transactions'],
+                'rows' => array_map(
+                    static fn (array $row): array => [
+                        (string) ($row['name'] ?? ''),
+                        'No release',
+                        (string) (int) ($row['transactions'] ?? 0),
+                    ],
+                    $rows
+                ),
+            ],
+            'empty' => $rows === []
+                ? 'No catalogue items are available to rank yet.'
+                : ($anyMoved ? null : 'None of the listed items was released during this period.'),
             'reports_url' => AnalyticsDrilldown::utilization(
                 $scope['period'], $scope['division'], $scope['unit']
             ),
@@ -587,21 +691,55 @@ class AnalyticsCardDetailService
             $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
 
+        /*
+         * peakBorrowing() decides availability and names the peak itself:
+         * `peak_day` / `peak_hour` are null below the minimum, and `total` is
+         * the number of filed requests the reading was drawn from. The detail
+         * reads those keys and nothing else, so it can never show a peak the
+         * card withheld or a zero the service did not measure.
+         */
         $available = (bool) ($peak['available'] ?? false);
+        $peakDay = $available ? ($peak['peak_day'] ?? null) : null;
+        $peakHour = $available ? ($peak['peak_hour'] ?? null) : null;
+        $observed = (int) ($peak['total'] ?? 0);
+        $required = (int) ($peak['requirement'] ?? AnalyticsService::PEAK_MINIMUM_OBSERVATIONS);
+
+        $stats = [
+            ['label' => 'Requests observed', 'value' => $observed],
+            ['label' => 'Minimum required', 'value' => $required],
+        ];
+
+        if ($peakDay !== null) {
+            $stats[] = ['label' => 'Busiest weekday', 'value' => $peakDay];
+        }
+
+        if ($peakHour !== null) {
+            $stats[] = ['label' => 'Busiest hour', 'value' => $peakHour];
+        }
+
+        /* The weekday spread the card draws, so the detail shows the same counts. */
+        $days = $available ? collect($peak['days'] ?? []) : collect();
+        $busiest = (float) ($days->max('count') ?: 0);
 
         return [
             'title' => 'Peak Borrowing Periods',
-            'value' => $available ? ($peak['peak_label'] ?? null) : null,
+            'value' => $peakDay,
+            'value_label' => $peakDay !== null ? 'busiest weekday' : null,
             'context' => 'When borrowing concentrates',
             'note' => 'Peak analysis needs a minimum number of recorded requests before a busiest '
                 .'period can be distinguished from ordinary variation. Below that threshold the '
                 .'reading is withheld rather than estimated from too little data. '
                 .$this->periodNote($scope),
-            'stats' => [
-                ['label' => 'Requests observed', 'value' => $peak['observations'] ?? 0],
-                ['label' => 'Minimum required', 'value' => AnalyticsService::PEAK_MINIMUM_OBSERVATIONS],
-            ],
-            'empty' => $available ? null : ($peak['summary'] ?? 'Not enough borrowing activity to identify a peak period yet.'),
+            'stats' => $stats,
+            'bars' => $days->isEmpty() ? null : $days->map(
+                fn (array $day): array => [
+                    'label' => (string) $day['label'],
+                    'value' => (string) (int) $day['count'],
+                    'share' => $this->width((float) $day['count'], $busiest),
+                ]
+            )->all(),
+            'bars_title' => $days->isEmpty() ? null : 'Requests filed by weekday',
+            'empty' => $available ? null : ($peak['summary'] ?? 'Not enough activity to determine a reliable peak.'),
             'reports_url' => AnalyticsDrilldown::borrowing(
                 $scope['period'], $scope['division'], $scope['unit']
             ),
@@ -959,6 +1097,23 @@ class AnalyticsCardDetailService
 
         $duration = $returns['average_duration'] ?? [];
 
+        /*
+         * Two readings against the previous period in one block: the completed
+         * count (bars and rows) and the on-time rate (rows, in percentage
+         * points). Both come from returnComparison(), which classifies the
+         * previous window by physical completion date exactly as this period.
+         */
+        $comparison = $this->analytics->returnComparison(
+            $scope['from'], $scope['to'], $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+        );
+        $completedBlock = PeriodComparison::block($comparison['completed'], $this->previousWindowLabel($scope), 'returns');
+        $rateBlock = PeriodComparison::block($comparison['on_time_rate'], $this->previousWindowLabel($scope));
+
+        $completedBlock['rows'] = array_merge(
+            array_map(static fn (array $row): array => ['Completed returns · '.$row[0], $row[1]], $completedBlock['rows']),
+            array_map(static fn (array $row): array => ['On-time rate · '.$row[0], $row[1]], $rateBlock['rows'])
+        );
+
         return [
             'title' => 'Return Performance Summary',
             'value' => $returns['completed'],
@@ -968,15 +1123,12 @@ class AnalyticsCardDetailService
                 .' A rate needs a denominator. With no completed returns the honest reading is '
                 .'"not measurable", which is a different statement from 0%. No service defines a '
                 .'compliance threshold, so the measured rate is reported without being graded.',
+            'comparison' => $completedBlock,
             'stats' => [
                 ['label' => 'Completed returns', 'value' => $returns['completed']],
                 [
                     'label' => 'On-time return rate',
                     'value' => $returns['on_time_rate'] === null ? 'Not measurable' : $returns['on_time_rate'].'%',
-                ],
-                [
-                    'label' => 'Late return rate',
-                    'value' => $returns['late_rate'] === null ? 'Not measurable' : $returns['late_rate'].'%',
                 ],
                 [
                     'label' => 'Average borrowing duration',
@@ -1004,7 +1156,6 @@ class AnalyticsCardDetailService
             ['label' => 'Open accountability cases', 'value' => $returns['open_cases']],
             ['label' => 'Incidents recorded', 'value' => $incidents['total']],
             ['label' => 'Incidents still open', 'value' => $incidents['open']],
-            ['label' => 'Late returns recorded', 'value' => $returns['late']],
         ];
 
         foreach ($incidents['types'] as $type) {
@@ -1015,8 +1166,7 @@ class AnalyticsCardDetailService
         }
 
         $nothing = $returns['open_cases'] === 0
-            && $incidents['total'] === 0
-            && $returns['late'] === 0;
+            && $incidents['total'] === 0;
 
         return [
             'title' => 'Accountability & Return Issues',
@@ -1047,32 +1197,40 @@ class AnalyticsCardDetailService
         );
 
         $available = (bool) ($demand['available'] ?? false);
-        $history = $demand['history'] ?? [];
+
+        /*
+         * The readiness facts are the two conditions hasEnoughHistory() itself
+         * tests, reported by the service alongside the decision. history rows
+         * are generated for every window whether or not it has finished, so
+         * counting them would call an unfinished period complete; the facts
+         * count only the windows that have actually ended.
+         */
+        $readiness = $demand['readiness'] ?? [];
+
+        $periodsComplete = (int) ($readiness['periods_complete'] ?? 0);
+        $periodsRequired = (int) ($readiness['periods_required'] ?? ForecastService::HISTORY_PERIODS);
+        $observations = (int) ($readiness['observations'] ?? 0);
+        $observationsRequired = (int) ($readiness['observations_required'] ?? ForecastService::MINIMUM_OBSERVATIONS);
 
         $stats = [
-            ['label' => 'Completed periods required', 'value' => ForecastService::HISTORY_PERIODS],
-            ['label' => 'Completed periods available', 'value' => count($history)],
-            ['label' => 'Minimum observations', 'value' => ForecastService::MINIMUM_OBSERVATIONS],
-            [
-                'label' => 'Observations recorded',
-                'value' => array_sum(array_map(
-                    static fn (array $row): int => (int) ($row['count'] ?? 0),
-                    $history
-                )),
-            ],
+            ['label' => 'Completed periods', 'value' => $periodsComplete.' / '.$periodsRequired],
+            ['label' => 'Recorded requests', 'value' => $observations.' / '.$observationsRequired],
+            ['label' => 'Method', 'value' => (string) ($readiness['method'] ?? 'Weighted Moving Average')],
         ];
 
         return [
             'title' => 'Forecast Readiness',
             'value' => $available ? 'Ready' : 'Not ready',
             'context' => 'Whether a statistical forecast can be produced',
-            'note' => 'A forecast is only offered once there are '.ForecastService::HISTORY_PERIODS
-                .' completed comparable periods carrying at least '.ForecastService::MINIMUM_OBSERVATIONS
+            'note' => 'A forecast is only offered once there are '.$periodsRequired
+                .' completed comparable periods carrying at least '.$observationsRequired
                 .' recorded requests in total. Below that the projection is withheld rather than '
                 .'estimated from too little history, because a weighted average over one or two '
                 .'observations states more confidence than the data supports.',
             'stats' => $stats,
-            'empty' => $available ? null : ($demand['summary'] ?? 'Not enough completed history to forecast yet.'),
+            'empty' => $available
+                ? null
+                : (trim(($demand['reason'] ?? '').' '.($demand['requirement'] ?? '')) ?: 'Not enough completed history to forecast yet.'),
         ];
     }
 
@@ -1115,6 +1273,39 @@ class AnalyticsCardDetailService
         $history = $demand['history'] ?? [];
         $available = (bool) ($demand['available'] ?? false);
 
+        /*
+         * The same series the Outlook card plots: the history windows, the
+         * selected period, and - only when the service produced one - the
+         * projection, labelled as such. historyRows() carries counts and
+         * weights but no share, so bar widths are drawn against the largest
+         * value in this series; nothing here re-derives the projection.
+         */
+        $series = [];
+
+        foreach ($history as $row) {
+            $series[] = [
+                'label' => (string) ($row['label'] ?? ''),
+                'count' => (int) ($row['count'] ?? 0),
+                'suffix' => 'observed · weight '.(int) ($row['weight'] ?? 1),
+            ];
+        }
+
+        $series[] = [
+            'label' => 'This period',
+            'count' => (int) ($demand['current'] ?? 0),
+            'suffix' => 'observed so far',
+        ];
+
+        if ($available) {
+            $series[] = [
+                'label' => 'Next period',
+                'count' => (int) $demand['forecast'],
+                'suffix' => 'projected',
+            ];
+        }
+
+        $highest = (float) max(array_column($series, 'count') ?: [0]);
+
         return [
             'title' => 'Borrowing Demand Outlook',
             'value' => $available ? $demand['forecast'] : null,
@@ -1125,65 +1316,181 @@ class AnalyticsCardDetailService
                 .'weighted '.implode(' - ', ForecastService::WEIGHTS).' so the most recent period '
                 .'counts most. Results are rounded to whole requests and never fall below zero.',
             'bars' => $history === [] ? null : array_map(
-                static fn (array $row): array => [
-                    'label' => (string) ($row['label'] ?? ''),
-                    'value' => (string) ($row['count'] ?? 0),
-                    'share' => (int) ($row['share'] ?? 0),
+                fn (array $point): array => [
+                    'label' => $point['label'],
+                    'value' => $point['count'].' '.($point['count'] === 1 ? 'request' : 'requests')
+                        .' · '.$point['suffix'],
+                    'share' => $this->width((float) $point['count'], $highest),
                 ],
-                $history
+                $series
             ),
-            'empty' => $available ? null : ($demand['summary'] ?? 'Not enough completed history to project demand yet.'),
+            'bars_title' => 'Requests per period',
+            'empty' => $available
+                ? null
+                : (trim(($demand['reason'] ?? '').' '.($demand['requirement'] ?? '')) ?: 'Not enough completed history to project demand yet.'),
         ];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The same rows the Forecast & Planning card draws for divisions.
+     *
+     * divisionDemand() returns `groups` (code, label, short_label, current,
+     * forecast). When it is unavailable the card falls back to scheduledDemand()
+     * - requests already filed for the next window - under a Scheduled
+     * heading, and so does this detail. The two are never merged.
+     *
+     * @return array<string, mixed>
+     */
     private function forecastDivision(array $scope): array
     {
         $forecast = $this->forecasts->divisionDemand(
             $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
 
-        return $this->forecastBreakdown($scope, $forecast, 'Demand by Organizational Classification', 'division');
+        $projected = (bool) ($forecast['available'] ?? false);
+
+        if ($projected) {
+            $rows = collect($forecast['groups'] ?? [])
+                ->map(static fn (array $row): array => [
+                    'label' => (string) ($row['short_label'] ?? $row['label'] ?? ''),
+                    'value' => (int) ($row['forecast'] ?? 0),
+                ])
+                ->sortByDesc('value')
+                ->values()
+                ->all();
+        } else {
+            [$forecastFrom, $forecastTo] = $this->forecasts->forecastWindow($scope['from'], $scope['to']);
+            $scheduled = $this->analytics->scheduledDemand(
+                $forecastFrom, $forecastTo, $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+            );
+
+            $rows = collect($scheduled['divisions']['groups'] ?? [])
+                ->map(static fn (array $row): array => [
+                    'label' => (string) ($row['label'] ?? ''),
+                    'value' => (int) ($row['count'] ?? 0),
+                ])
+                ->sortByDesc('value')
+                ->values()
+                ->all();
+        }
+
+        return $this->forecastBreakdown(
+            $scope,
+            $rows,
+            $projected,
+            'Demand by Organizational Classification',
+            'organizational classification',
+            $projected
+                ? 'No organizational classification is expected to record borrowing activity next period.'
+                : 'No borrowing requests are recorded for the next period yet.'
+        );
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The same rows the Forecast & Planning card draws for units.
+     *
+     * unitDemand() returns `units` (unit, observations, current, forecast),
+     * already sorted by forecast; the card shows the top five. The scheduled
+     * fallback flattens scheduledDemand()'s per-division unit columns and
+     * ranks them by recorded requests, exactly as the card does.
+     *
+     * @return array<string, mixed>
+     */
     private function forecastUnit(array $scope): array
     {
         $forecast = $this->forecasts->unitDemand(
             $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
 
-        return $this->forecastBreakdown($scope, $forecast, 'Demand by Unit', 'unit');
+        $projected = (bool) ($forecast['available'] ?? false);
+
+        if ($projected) {
+            $rows = collect($forecast['units'] ?? [])
+                ->map(static fn (array $row): array => [
+                    'label' => (string) ($row['unit'] ?? ''),
+                    'value' => (int) ($row['forecast'] ?? 0),
+                ])
+                ->take(5)
+                ->values()
+                ->all();
+        } else {
+            [$forecastFrom, $forecastTo] = $this->forecasts->forecastWindow($scope['from'], $scope['to']);
+            $scheduled = $this->analytics->scheduledDemand(
+                $forecastFrom, $forecastTo, $scope['division'], $scope['unit'], $scope['borrower'] ?? null
+            );
+
+            $rows = collect($scheduled['units']['columns'] ?? [])
+                ->flatMap(static fn (array $column): array => collect($column['units'] ?? [])
+                    ->map(static fn (array $row): array => [
+                        'label' => (string) ($row['name'] ?? ''),
+                        'value' => (int) ($row['count'] ?? 0),
+                    ])
+                    ->all())
+                ->sortByDesc('value')
+                ->take(5)
+                ->values()
+                ->all();
+        }
+
+        return $this->forecastBreakdown(
+            $scope,
+            $rows,
+            $projected,
+            'Demand by Unit',
+            'unit',
+            $projected
+                ? 'No unit is expected to record borrowing activity next period.'
+                : 'No unit demand is recorded for the next period yet.'
+        );
     }
 
     /**
-     * @param  array<string, mixed>  $forecast
+     * One shape for both breakdowns. The heading, the wording and the bar
+     * label all follow $projected, so a scheduled count is never presented
+     * under a forecast heading.
+     *
+     * @param  list<array{label: string, value: int}>  $rows
      * @return array<string, mixed>
      */
-    private function forecastBreakdown(array $scope, array $forecast, string $title, string $noun): array
-    {
-        $rows = $forecast['rows'] ?? [];
+    private function forecastBreakdown(
+        array $scope,
+        array $rows,
+        bool $projected,
+        string $subject,
+        string $noun,
+        string $emptyMessage
+    ): array {
+        [$forecastFrom, $forecastTo] = $this->forecasts->forecastWindow($scope['from'], $scope['to']);
+        $window = $forecastFrom->format('d M').' – '.$forecastTo->format('d M Y');
+
+        /* A row set with nothing in it reads as empty, exactly as the card does. */
+        $highest = (float) max(array_column($rows, 'value') ?: [0]);
+        $listed = $highest > 0 ? $rows : [];
 
         return [
-            'title' => $title,
-            'value' => count($rows),
-            'value_label' => $noun.($rows === [] || count($rows) === 1 ? '' : 's').' listed',
-            'context' => 'Projected against recorded history',
-            'note' => 'Each '.$noun.' is guarded on its own history: one with too few completed '
-                .'observations shows its scheduled bookings instead of a projection, because a '
-                .'weighted average over one observation is not a forecast. '
-                .'Scheduled demand and forecasted demand are never merged.',
-            'bars' => $rows === [] ? null : array_map(
-                static fn (array $row): array => [
-                    'label' => (string) ($row['label'] ?? $row['name'] ?? ''),
-                    'value' => (string) ($row['forecast'] ?? $row['count'] ?? 0),
-                    'share' => (int) ($row['share'] ?? 0),
+            'title' => ($projected ? 'Forecasted ' : 'Scheduled ').$subject,
+            'value' => count($listed),
+            'value_label' => $noun.(count($listed) === 1 ? '' : 's').' listed',
+            'context' => $projected
+                ? 'Projected requests for '.$window
+                : 'Requests already recorded for '.$window.' (scheduled demand, not a forecast)',
+            'note' => $projected
+                ? 'A weighted moving average over the completed periods before the selected one, '
+                    .'computed for each '.$noun.' from its own filed history.'
+                : 'No statistical forecast is available yet, so this lists requests already filed '
+                    .'for the next period. These are recorded future requests, not a projection. '
+                    .'Scheduled demand and forecasted demand are never merged.',
+            'bars' => $listed === [] ? null : array_map(
+                fn (array $row): array => [
+                    'label' => $row['label'],
+                    'value' => $row['value'].' '.($row['value'] === 1 ? 'request' : 'requests')
+                        .($projected ? ' projected' : ' already recorded'),
+                    'share' => $this->width((float) $row['value'], $highest),
                 ],
-                $rows
+                $listed
             ),
-            'empty' => $rows === []
-                ? 'No '.$noun.' has enough recorded activity to report yet.'
-                : null,
+            'bars_title' => $projected ? 'Projected requests' : 'Requests already recorded',
+            'empty' => $listed === [] ? $emptyMessage : null,
         ];
     }
 
@@ -1230,22 +1537,52 @@ class AnalyticsCardDetailService
         $busy = $this->forecasts->busyPeriod(
             $this->analytics, $scope['from'], $scope['to'], $scope['division'], $scope['unit']
         );
+        /*
+         * busyPeriod() returns `buckets` (label, range, expected, level) and
+         * `busiest`, the bucket with the highest expected volume, or null when
+         * every slice is zero. The headline comes from that record; when the
+         * service withheld the reading there is no bucket to quote, so no
+         * figure is shown - an unmeasured slice is not "0 expected requests".
+         */
         $available = (bool) ($busy['available'] ?? false);
+        $busiest = $available ? ($busy['busiest'] ?? null) : null;
+        $buckets = $available ? collect($busy['buckets'] ?? []) : collect();
+        $peak = (float) ($buckets->max('expected') ?: 0);
+        $peaks = $peak > 0 ? $buckets->where('expected', $peak) : collect();
+        $tied = $peaks->count() > 1;
+
+        $stats = [];
+
+        if ($busiest !== null) {
+            $stats[] = [
+                'label' => $tied ? 'Tied busiest projected periods' : 'Busiest projected period',
+                'value' => $peaks->map(fn (array $bucket): string => $bucket['label'].' ('.$bucket['range'].')')->implode(', '),
+            ];
+            $stats[] = ['label' => $tied ? 'Expected requests per period' : 'Expected requests', 'value' => (int) $busiest['expected']];
+            $stats[] = ['label' => 'Level', 'value' => (string) ($busiest['level'] ?? 'High')];
+        }
 
         return [
             'title' => 'Expected Busy Period',
-            'value' => $available ? ($busy['label'] ?? null) : null,
+            'value' => $busiest !== null ? $peaks->pluck('label')->implode(', ') : null,
+            'value_label' => $busiest !== null ? ($tied ? 'tied busiest projected periods' : 'busiest projected period') : null,
             'context' => 'When the next period is expected to concentrate',
             'note' => 'The expected busy period is read from the same weighted history as the '
                 .'demand projection. It is withheld rather than guessed when the history is too '
                 .'short to separate a genuine peak from ordinary variation.',
-            'stats' => [
-                ['label' => 'Completed periods required', 'value' => ForecastService::HISTORY_PERIODS],
-                ['label' => 'Expected requests', 'value' => $busy['expected'] ?? 0],
-            ],
+            'stats' => $stats,
+            'bars' => $buckets->isEmpty() ? null : $buckets->map(
+                fn (array $bucket): array => [
+                    'label' => (string) $bucket['label'].' · '.(string) $bucket['range'],
+                    'value' => (int) $bucket['expected'].' '.((int) $bucket['expected'] === 1 ? 'request' : 'requests')
+                        .' · '.(string) ($bucket['level'] ?? 'Normal'),
+                    'share' => $this->width((float) $bucket['expected'], $peak),
+                ]
+            )->all(),
+            'bars_title' => $buckets->isEmpty() ? null : 'Projected requests per slice',
             'empty' => $available
-                ? null
-                : ($busy['summary'] ?? 'Not enough completed history to expect a busy period yet.'),
+                ? ($busiest === null ? ($busy['summary'] ?? 'Borrowing activity is expected to stay even across the next period.') : null)
+                : 'Insufficient history for busy-period forecasting.',
         ];
     }
 

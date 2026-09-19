@@ -52,7 +52,8 @@ class AnalyticsOverviewComparisonTest extends TestCase
         $response->assertSee('Requested quantity', false);
         $response->assertSee('Released quantity', false);
         $response->assertSee('Available units', false);
-        $response->assertSee('Approved for release', false);
+        $response->assertSee('Approved requests', false);
+        $response->assertDontSee('Approved for release', false);
         $response->assertSee('Completed returns', false);
         $response->assertSee('Returned on time / Late', false);
         $response->assertSee('Open accountability:', false);

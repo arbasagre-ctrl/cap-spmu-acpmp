@@ -149,6 +149,10 @@
         : collect();
 
     $busyPeak = $hasBusy ? (int) max(array_column($busyPeriod['buckets'], 'expected')) : 0;
+    $busyPeaks = $busyPeak > 0 ? collect($busyPeriod['buckets'])->where('expected', $busyPeak) : collect();
+    $busySummary = $busyPeaks->count() > 1
+        ? $busyPeaks->pluck('label')->implode(', ').' share the projected peak of '.$busyPeak.' '.($busyPeak === 1 ? 'request' : 'requests').' each.'
+        : ($busyPeriod['summary'] ?? null);
 
     /*
      | Planning notes.
@@ -186,9 +190,7 @@
         ];
     }
 
-    if (! $hasDemand) {
-        $notes[] = ['tone' => 'muted', 'icon' => 'information', 'text' => $demand['requirement'] ?? $demand['reason']];
-    } elseif (! $hasBusy) {
+    if ($hasDemand && ! $hasBusy) {
         $notes[] = ['tone' => 'muted', 'icon' => 'information', 'text' => 'A busy-period pattern is not yet available for this period.'];
     }
 
@@ -240,7 +242,7 @@
             <span class="analytics-kpi-card-note">Projected requests for the next period</span>
         @else
             <strong class="analytics-kpi-card-value is-text">Not available</strong>
-            <span class="analytics-kpi-card-note">Insufficient completed history</span>
+            <span class="analytics-kpi-card-note">See the readiness checklist below</span>
         @endif
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
@@ -288,9 +290,6 @@
                 <li><span class="analytics-outlook-key is-observed" aria-hidden="true"></span>Observed</li>
                 @if($forecastPoint)
                     <li><span class="analytics-outlook-key is-forecast" aria-hidden="true"></span>Forecast</li>
-                @endif
-                @if($scheduledTotal > 0)
-                    <li><span class="analytics-outlook-key is-scheduled" aria-hidden="true"></span>Scheduled</li>
                 @endif
             </ul>
 
@@ -401,11 +400,6 @@
                     </span>
                     <span class="analytics-check-label">Historical requests</span>
                     <span class="analytics-check-value">{{ $readiness['observations'] ?? 0 }} / {{ $readiness['observations_required'] ?? 3 }}</span>
-                </li>
-                <li class="is-met">
-                    <span class="analytics-check-mark" aria-hidden="true"><x-icon name="check-circle" size="15" /></span>
-                    <span class="analytics-check-label">Method</span>
-                    <span class="analytics-check-value">{{ $readiness['method'] ?? 'Weighted Moving Average' }}</span>
                 </li>
             </ul>
 
@@ -659,7 +653,7 @@
 
                 <p class="analytics-insight-strip">
                     <x-icon name="lightbulb" size="14" aria-hidden="true" />
-                    <span>{{ $busyPeriod['summary'] }}</span>
+                    <span>{{ $busySummary }}</span>
                 </p>
             @endif
         </div>

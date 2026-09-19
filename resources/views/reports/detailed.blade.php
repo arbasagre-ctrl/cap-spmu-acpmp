@@ -40,9 +40,6 @@
                         <div class="report-preview-meta">
                             <span>{{ $from->format('d M Y') }} – {{ $to->format('d M Y') }}</span>
                             <span>{{ number_format($reportCount) }} {{ $reportCount === 1 ? 'record' : 'records' }}</span>
-                            @if(! empty($dataset->meta['generated_long']))
-                                <span>Prepared {{ $dataset->meta['generated_long'] }}</span>
-                            @endif
                         </div>
 
                         @if(! empty($scopeRows))
@@ -80,7 +77,11 @@
 
                 @if($reportCount > 0)
                     <div class="report-preview-sheet report-preview-sheet--{{ App\Reports\ReportCatalogue::orientation($selectedReport) }}">
-                        @include('reports.document.sheet', ['rows' => $records, 'options' => ['interactive' => true]])
+                        @include('reports.document.sheet', ['rows' => $records, 'options' => [
+                            'interactive' => true,
+                            'header' => false,
+                            'metadata' => false,
+                        ]])
                     </div>
 
                     @if($records->hasPages())

@@ -10,7 +10,10 @@
     | Closing is a link back to the same Analytics state without ?detail, so
     | the reader returns to exactly the tab and filters they came from.
     */
-    $closeUrl = request()->fullUrlWithoutQuery(['detail', 'item', 'for', 'state', 'metric', 'bucket']);
+    $closeUrl = request()->fullUrlWithoutQuery(['detail', 'item', 'for', 'state', 'metric', 'bucket', 'outcome', 'level', 'segment']);
+    $hasBars = ! empty($detail['bars']);
+    $hasComparison = ! empty($detail['comparison']);
+    $comparisonNote = $hasComparison ? ($detail['comparison']['note'] ?? null) : null;
 @endphp
 
 <section
@@ -41,21 +44,25 @@
     </header>
 
     <div class="analytics-detail-inline-body">
-        @if($detail['value'] !== null)
-            <p class="analytics-detail-figure">
-                <strong>{{ is_numeric($detail['value']) ? number_format((float) $detail['value']) : $detail['value'] }}</strong>
-                @if(! empty($detail['value_label']))
-                    <span>{{ $detail['value_label'] }}</span>
+        @if($detail['value'] !== null || ($detail['note'] && ($detail['type'] ?? null) !== 'card'))
+            <div class="analytics-detail-lead">
+                @if($detail['value'] !== null)
+                    <p class="analytics-detail-figure">
+                        <strong>{{ is_numeric($detail['value']) ? number_format((float) $detail['value']) : $detail['value'] }}</strong>
+                        @if(! empty($detail['value_label']))
+                            <span>{{ $detail['value_label'] }}</span>
+                        @endif
+                    </p>
                 @endif
-            </p>
-        @endif
 
-        @if($detail['note'] && ($detail['type'] ?? null) !== 'card')
-            <p class="analytics-detail-note">{{ $detail['note'] }}</p>
+                @if($detail['note'] && ($detail['type'] ?? null) !== 'card')
+                    <p class="analytics-detail-note">{{ $detail['note'] }}</p>
+                @endif
+            </div>
         @endif
 
         @if($detail['stats'] !== [])
-            <div class="analytics-stat-grid">
+            <div class="analytics-stat-grid analytics-detail-stats">
                 @foreach($detail['stats'] as $stat)
                     <div class="analytics-stat is-static">
                         <span>{{ $stat['label'] }}</span>
@@ -68,7 +75,7 @@
         @endif
 
         @if(! empty($detail['formula']))
-            <details class="analytics-explain">
+            <details class="analytics-explain analytics-detail-explain">
                 <summary>How this was calculated</summary>
                 <div>
                     <p>Weighted moving average over the completed periods listed below.</p>
@@ -78,28 +85,56 @@
             </details>
         @endif
 
-        @if($detail['bars'])
-            @if(! empty($detail['bars_title']))
-                <h3 class="analytics-detail-subhead">{{ $detail['bars_title'] }}</h3>
-            @endif
+        @if($hasBars || $hasComparison)
+            <div @class(['analytics-detail-support', 'is-split' => $hasBars && $hasComparison])>
+                @if($hasBars)
+                    <section class="analytics-detail-block" aria-label="{{ $detail['bars_title'] ?? 'Breakdown' }}">
+                        @if(! empty($detail['bars_title']))
+                            <h3 class="analytics-detail-subhead">{{ $detail['bars_title'] }}</h3>
+                        @endif
 
-            <div class="analytics-bars">
-                @foreach($detail['bars'] as $bar)
-                    <div class="analytics-bar-row">
-                        <div class="analytics-bar-head">
-                            <span class="analytics-bar-name">{{ $bar['label'] }}</span>
-                            <span class="analytics-bar-value">{{ $bar['value'] }}</span>
+                        <div class="analytics-bars">
+                            @foreach($detail['bars'] as $bar)
+                                <div class="analytics-bar-row">
+                                    <div class="analytics-bar-head">
+                                        <span class="analytics-bar-name">{{ $bar['label'] }}</span>
+                                        <span class="analytics-bar-value">{{ $bar['value'] }}</span>
+                                    </div>
+                                    <div class="analytics-bar-track">
+                                        <span class="analytics-bar-fill" style="width: {{ $bar['share'] }}%"></span>
+                                    </div>
+                                </div>
+                            @endforeach
                         </div>
-                        <div class="analytics-bar-track">
-                            <span class="analytics-bar-fill" style="width: {{ $bar['share'] }}%"></span>
-                        </div>
-                    </div>
-                @endforeach
+                    </section>
+                @endif
+
+                @if($hasComparison)
+                    <section class="analytics-compare analytics-detail-block" aria-labelledby="analytics-compare-title">
+                        <h3 class="analytics-detail-subhead" id="analytics-compare-title">{{ $detail['comparison']['title'] }}</h3>
+                        <p class="analytics-compare-window">Previous period: {{ $detail['comparison']['window'] }}</p>
+
+                        {{--
+                            Keep one compact comparison presentation. The service still
+                            supplies display bars for compatibility, but the inline panel
+                            uses the labelled figures below so the same values are not
+                            repeated twice in a small drill-down.
+                        --}}
+                        <dl class="analytics-compare-rows">
+                            @foreach($detail['comparison']['rows'] as [$label, $value])
+                                <div>
+                                    <dt>{{ $label }}</dt>
+                                    <dd>{{ $value }}</dd>
+                                </div>
+                            @endforeach
+                        </dl>
+                    </section>
+                @endif
             </div>
         @endif
 
         @if($detail['table'])
-            <div class="analytics-table-scroll">
+            <div class="analytics-table-scroll analytics-detail-table">
                 <table class="analytics-table">
                     <thead>
                         <tr>
@@ -122,16 +157,27 @@
         @endif
 
         @if($detail['empty'])
-            <p class="analytics-empty">{{ $detail['empty'] }}</p>
+            <p class="analytics-empty analytics-detail-empty">{{ $detail['empty'] }}</p>
         @endif
     </div>
 
-    @if($detail['reports_url'])
+    @if($comparisonNote || $detail['reports_url'])
         <footer class="analytics-detail-inline-foot">
-            <a class="button secondary ui-pressable" href="{{ $detail['reports_url'] }}">
-                <span>View source records</span>
-                <x-icon name="arrow-right" size="15" />
-            </a>
+            @if($comparisonNote)
+                <p class="analytics-detail-footnote">
+                    <x-icon name="information" size="15" />
+                    <span>{{ $comparisonNote }}</span>
+                </p>
+            @else
+                <span class="analytics-detail-foot-spacer" aria-hidden="true"></span>
+            @endif
+
+            @if($detail['reports_url'])
+                <a class="button secondary ui-pressable" href="{{ $detail['reports_url'] }}">
+                    <span>View source records</span>
+                    <x-icon name="arrow-right" size="15" />
+                </a>
+            @endif
         </footer>
     @endif
 </section>

@@ -1,8 +1,8 @@
 {{--
     The CSPC institutional header.
 
-    One partial, used by the on-screen preview, the print view and the PDF, so
-    every formal report opens the same way. Deliberately plain: a document
+    One partial for the formal masthead used by print/export. The on-screen
+    preview can suppress it through the shared sheet options. Deliberately plain: a document
     masthead, not an interface element. No form/document code appears here.
 --}}
 <header class="doc-header">

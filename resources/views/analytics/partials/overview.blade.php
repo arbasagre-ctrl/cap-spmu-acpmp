@@ -207,6 +207,11 @@
             class="analytics-kpi-card-note"
             title="Filed borrowing demand and review workload, including requests that were rejected. This is not a measure of asset usage."
         >Requests filed this period</span>
+        {{--
+            Period-scoped, so it has a previous period to stand against. The
+            three cards beside it are current-state and deliberately do not.
+        --}}
+        @include('analytics.partials.period-delta', ['comparison' => $demandComparison['requests'], 'deltaClass' => 'analytics-kpi-card-meta'])
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -343,10 +348,12 @@
                 <div>
                     <dt>Requested quantity</dt>
                     <dd>{{ number_format((float) $demandSummary['requested_quantity']) }}</dd>
+                    @include('analytics.partials.period-delta', ['comparison' => $demandComparison['requested_quantity']])
                 </div>
                 <div>
                     <dt>Released quantity</dt>
                     <dd>{{ number_format((float) $demandSummary['released_quantity']) }}</dd>
+                    @include('analytics.partials.period-delta', ['comparison' => $demandComparison['released_quantity']])
                 </div>
                 <div>
                     <dt>Active borrowing units</dt>
@@ -375,16 +382,10 @@
                     <dt>On custody</dt>
                     <dd>{{ number_format((float) $inventorySummary['totals']['on_custody']) }}</dd>
                 </div>
-                <div>
-                    <dt>Low availability</dt>
-                    <dd>{{ number_format((int) $lowAvailability['count']) }}</dd>
-                </div>
             </dl>
 
             <span class="analytics-summary-status">
-                {{ $lowAvailability['count'] > 0
-                    ? $lowAvailability['count'].' item '.($lowAvailability['count'] === 1 ? 'type needs' : 'types need').' attention'
-                    : 'No item type is below the availability threshold' }}
+                Current physical stock across all organizational units
             </span>
         </a>
 
@@ -395,7 +396,7 @@
 
             <dl class="analytics-summary-metrics">
                 <div>
-                    <dt>Approved for release</dt>
+                    <dt>Approved requests</dt>
                     <dd>{{ number_format((int) $overview['approved']) }}</dd>
                 </div>
                 <div>
@@ -409,12 +410,14 @@
             </dl>
 
             <span class="analytics-summary-status">
-                Open accountability: {{ number_format((int) $returns['open_cases']) }}
+                <span title="Cases opened in the selected period that remain unresolved.">Open accountability: {{ number_format((int) $returns['open_cases']) }}</span>
                 <span aria-hidden="true"> · </span>
                 @if($returns['on_time_rate'] === null)
                     On-time return rate: not yet measurable
                 @else
                     On-time return rate: {{ $returns['on_time_rate'] }}%
+                    {{-- One rate, one comparison: the counts above are not repeated as deltas here. --}}
+                    @include('analytics.partials.period-delta', ['comparison' => $returnComparison['on_time_rate']])
                 @endif
             </span>
         </a>
@@ -449,4 +452,3 @@
         </a>
     </div>
 </section>
-

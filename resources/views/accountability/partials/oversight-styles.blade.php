@@ -584,4 +584,31 @@ html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5
     .accountability-overview-icon { width: 46px; height: 46px; margin-bottom: 12px; }
     .accountability-overview-value { font-size: 27px; }
 }
+
+/* Resolved History centered empty state */
+.accountability-empty.resolved-history-empty {
+    min-height: 125px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: nowrap;
+    gap: 5px;
+    padding: 22px 24px;
+    text-align: center;
+}
+
+.accountability-empty.resolved-history-empty strong {
+    color: var(--heading);
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.accountability-empty.resolved-history-empty span {
+    max-width: 560px;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.5;
+}
 </style>

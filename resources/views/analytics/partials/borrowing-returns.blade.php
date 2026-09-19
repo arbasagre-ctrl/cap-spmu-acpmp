@@ -68,10 +68,6 @@
         ];
     }
 
-    if ($returns['late'] > 0) {
-        $issueRows[] = ['label' => 'Late returns recorded', 'value' => $returns['late'], 'tone' => 'warn'];
-    }
-
     $resolvedIncidents = $incidents['total'] - $incidents['open'];
 
     if ($resolvedIncidents > 0) {
@@ -82,21 +78,24 @@
      * A rate needs a denominator. With no completed returns the honest reading
      * is "not measurable", which is a different statement from 0%.
      */
+    /*
+     * Completed returns and the on-time rate each carry one period-over-period
+     * line here and nowhere else on this tab: the KPI cards above compare the
+     * on-time and late counts, so the concepts are not repeated. The late
+     * rate is the on-time rate's complement and is not shown a second time.
+     */
     $summaryTiles = [
         [
             'label' => 'Completed returns',
             'value' => (string) $completed,
             'measurable' => true,
+            'comparison' => $returnComparison['completed'],
         ],
         [
             'label' => 'On-time return rate',
             'value' => $returns['on_time_rate'] === null ? 'Not measurable' : $returns['on_time_rate'].'%',
             'measurable' => $returns['on_time_rate'] !== null,
-        ],
-        [
-            'label' => 'Late return rate',
-            'value' => $returns['late_rate'] === null ? 'Not measurable' : $returns['late_rate'].'%',
-            'measurable' => $returns['late_rate'] !== null,
+            'comparison' => $returnComparison['on_time_rate'],
         ],
         [
             'label' => 'Average borrowing duration',
@@ -116,6 +115,13 @@
         <span class="analytics-kpi-card-label">Returned On Time</span>
         <strong class="analytics-kpi-card-value">{{ $returns['on_time'] }}</strong>
         <span class="analytics-kpi-card-note">Returned on or before the due date</span>
+        {{--
+            Completed returns are period outcomes, so they carry a previous
+            period. Currently Overdue and Open Accountability below do not:
+            one is today's backlog, the other a hybrid of opening date and
+            present status, and neither has an equivalent past reading.
+        --}}
+        @include('analytics.partials.period-delta', ['comparison' => $returnComparison['on_time'], 'deltaClass' => 'analytics-kpi-card-meta'])
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -127,6 +133,7 @@
         <span class="analytics-kpi-card-label">Returned Late</span>
         <strong class="analytics-kpi-card-value">{{ $returns['late'] }}</strong>
         <span class="analytics-kpi-card-note">Returned after the due date</span>
+        @include('analytics.partials.period-delta', ['comparison' => $returnComparison['late'], 'deltaClass' => 'analytics-kpi-card-meta'])
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -148,7 +155,7 @@
         <span class="analytics-kpi-card-icon" aria-hidden="true"><x-icon name="accountability" size="19" /></span>
         <span class="analytics-kpi-card-label">Open Accountability</span>
         <strong class="analytics-kpi-card-value">{{ $returns['open_cases'] }}</strong>
-        <span class="analytics-kpi-card-note">Unresolved accountability cases</span>
+        <span class="analytics-kpi-card-note">Cases opened in the selected period that remain unresolved.</span>
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 </div>
@@ -290,6 +297,131 @@
         @endif
     </section>
 </div>
+
+{{-- Where late returns concentrate ----------------------------------------- --}}
+@php
+    /*
+     | Late Return Patterns: the completed returns already counted above
+     | (Returned On Time + Returned Late, by physical completion date),
+     | split by the organisation recorded on the request at borrowing time.
+     | Each bar is a rate of that segment's own completed returns, so the
+     | track is 0-100 and a 20% rate fills a fifth of it; the counts are
+     | always printed beside it so the sample is never hidden. Every figure
+     | comes from AnalyticsService::lateReturnRates(); nothing is computed
+     | here, and no comparison with a previous period is drawn.
+     */
+    $lateRateLink = static fn (string $level, ?array $row = null): string => AnalyticsDetailLink::to(
+        'late-rate', 'returns', $periodSelection, $division, $unit,
+        ['level' => $level]
+            + ($row ? ['for' => $row['code'] ?? 'unspecified'] : [])
+            + ($row && $level === 'unit' ? ['segment' => $row['unit']] : [])
+    );
+
+    $rateText = static fn (?float $rate): string => $rate === null ? '—' : $rate.'%';
+
+    /* The card shows the leading rows; the detail lists every segment. */
+    $lateRatePanels = [
+        ['level' => 'division', 'title' => 'Late Return Rate by Organizational Classification', 'data' => $lateRatesByDivision, 'shown' => 4],
+        ['level' => 'unit', 'title' => 'Late Return Rate by Unit', 'data' => $lateRatesByUnit, 'shown' => 6],
+    ];
+@endphp
+<section
+        data-card-detail="{{ $lateRateLink('division') }}"
+        class="analytics-card analytics-laterate">
+    <header class="analytics-card-head">
+        <span class="analytics-card-mark" aria-hidden="true"><x-icon name="users" size="15" /></span>
+        <div>
+            <h2>Late Return Patterns</h2>
+            <p>Late-return share among completed returns in the selected period.</p>
+        </div>
+        <a class="analytics-card-open" href="{{ $lateRateLink('division') }}" aria-label="View Late Return Patterns details"><x-icon name="arrow-right" size="15" /></a>
+    </header>
+
+    @if(! $lateRatesByDivision['available'])
+        <div class="analytics-card-body">
+            <p class="analytics-blank">
+                <span class="analytics-blank-mark" aria-hidden="true"><x-icon name="users" size="19" /></span>
+                No completed returns are available for late-return rate analysis in this period.
+            </p>
+        </div>
+    @else
+        <div class="analytics-card-body analytics-laterate-body">
+            @foreach($lateRatePanels as $panel)
+                @php
+                    $rows = array_slice($panel['data']['groups'], 0, $panel['shown']);
+                    $hidden = count($panel['data']['groups']) - count($rows);
+                @endphp
+                <div class="analytics-laterate-panel">
+                    <h3 class="analytics-laterate-title">
+                        <a href="{{ $lateRateLink($panel['level']) }}">{{ $panel['title'] }}</a>
+                    </h3>
+
+                    @if($rows === [])
+                        <p class="analytics-laterate-none">
+                            {{ $panel['level'] === 'unit'
+                                ? 'No completed return in this period carries a recorded unit.'
+                                : 'No completed returns in this period.' }}
+                        </p>
+                    @else
+                        <ul class="analytics-laterate-rows" aria-label="{{ $panel['title'] }}">
+                            @foreach($rows as $row)
+                                <li>
+                                    <a
+                                        href="{{ $lateRateLink($panel['level'], $row) }}"
+                                        data-chart-tip
+                                        data-tip-title="{{ $row['label'] }}{{ $panel['level'] === 'unit' ? ' · '.$row['division_label'] : '' }}"
+                                        data-tip-rows="{{ json_encode([
+                                            ['Late return rate', $rateText($row['late_rate'])],
+                                            ['Returned late', (string) $row['late']],
+                                            ['Completed returns', (string) $row['completed']],
+                                        ]) }}"
+                                        aria-label="View details for {{ $row['label'] }}: late return rate {{ $rateText($row['late_rate']) }}, {{ $row['late'] }} late of {{ $row['completed'] }} completed returns"
+                                    >
+                                        <span class="analytics-laterate-head">
+                                            <span class="analytics-laterate-name">
+                                                {{ $row['label'] }}
+                                                @if($panel['level'] === 'unit')
+                                                    <small class="analytics-rank-tag is-{{ strtolower(explode('_', (string) ($row['code'] ?? 'unspecified'))[0]) }}">{{ $row['division_label'] }}</small>
+                                                @endif
+                                            </span>
+                                            <strong class="analytics-laterate-rate">{{ $rateText($row['late_rate']) }}</strong>
+                                        </span>
+                                        {{-- The track is 0-100: the fill is the rate itself, not a share of the largest row. --}}
+                                        <span class="analytics-laterate-track" aria-hidden="true">
+                                            <span class="analytics-laterate-fill" style="width: {{ $row['late_rate'] ?? 0 }}%"></span>
+                                        </span>
+                                        <span class="analytics-laterate-counts">{{ $row['late'] }} late · {{ $row['completed'] }} completed</span>
+                                    </a>
+                                </li>
+                            @endforeach
+                        </ul>
+
+                        @if($hidden > 0)
+                            <a class="analytics-laterate-more" href="{{ $lateRateLink($panel['level']) }}">
+                                View all {{ count($panel['data']['groups']) }} {{ $panel['level'] === 'unit' ? 'units' : 'classifications' }}
+                                <x-icon name="arrow-right" size="13" />
+                            </a>
+                        @endif
+                    @endif
+                </div>
+            @endforeach
+        </div>
+
+        <footer class="analytics-card-foot">
+            Rates are shown with their counts; a small count is a small sample.
+            @if($selectedBorrower)
+                Scoped to the selected borrower's completed returns.
+            @endif
+        </footer>
+
+        @if($lateRatesByDivision['summary'])
+            <p class="analytics-insight-strip">
+                <x-icon name="information" size="14" aria-hidden="true" />
+                <span>{{ $lateRatesByDivision['summary'] }}</span>
+            </p>
+        @endif
+    @endif
+</section>
 
 {{-- Lifecycle ---------------------------------------------------------- --}}
 <section
@@ -438,6 +570,97 @@
     </section>
 </div>
 
+{{-- Age of the current overdue backlog ---------------------------------- --}}
+@php
+    /*
+     | Overdue Aging: the Currently Overdue population - the same query as the
+     | KPI above and the follow-up list beside it - grouped by whole days past
+     | the effective due date. Current state only: no reporting period and no
+     | previous-period comparison apply, because today's backlog has no
+     | equivalent past reading. Every count, share and width comes from
+     | AnalyticsService::overdueAging(); nothing is recalculated here.
+     */
+    $agingLink = static fn (?string $bucket = null): string => AnalyticsDetailLink::to(
+        'overdue-aging', 'returns', $periodSelection, $division, $unit, $bucket ? ['bucket' => $bucket] : []
+    );
+@endphp
+<section
+        data-card-detail="{{ $agingLink() }}"
+        class="analytics-card analytics-aging">
+    <header class="analytics-card-head">
+        <span class="analytics-card-mark" aria-hidden="true"><x-icon name="clock" size="15" /></span>
+        <div>
+            <h2>Overdue Aging</h2>
+            <p>Current overdue borrowings grouped by days past due.</p>
+        </div>
+        @if($overdueAging['available'])
+            <span class="analytics-count-pill">{{ $overdueAging['total'] }} overdue</span>
+        @endif
+        <a class="analytics-card-open" href="{{ $agingLink() }}" aria-label="View Overdue Aging details"><x-icon name="arrow-right" size="15" /></a>
+    </header>
+
+    @if(! $overdueAging['available'])
+        <div class="analytics-card-body">
+            <p class="analytics-blank">
+                <span class="analytics-blank-mark is-good" aria-hidden="true"><x-icon name="check-circle" size="19" /></span>
+                No borrowings are currently overdue.
+            </p>
+        </div>
+    @else
+        <div class="analytics-card-body">
+            {{--
+                Three bands, counts first. Width is the band against the largest
+                band - geometry only - and the share beside it is the band's
+                part of the currently overdue backlog, labelled as such in the
+                tooltip. Each row opens that band's detail.
+            --}}
+            <ul class="analytics-aging-bands" aria-label="Currently overdue borrowings by days past due">
+                @foreach($overdueAging['groups'] as $row)
+                    <li class="{{ $row['count'] === 0 ? 'is-none' : '' }}">
+                        <a
+                            href="{{ $agingLink($row['key']) }}"
+                            data-chart-tip
+                            data-tip-title="{{ $row['label'] }} past due"
+                            data-tip-rows="{{ json_encode([
+                                [$row['count'] === 1 ? 'Borrowing' : 'Borrowings', (string) $row['count']],
+                                ['Share of currently overdue', $row['share'].'%'],
+                            ]) }}"
+                            aria-label="View details for {{ $row['label'] }} past due: {{ $row['count'] }} {{ $row['count'] === 1 ? 'borrowing' : 'borrowings' }}, {{ $row['share'] }} percent of currently overdue"
+                        >
+                            <span class="analytics-aging-label">{{ $row['label'] }}</span>
+                            <span class="analytics-aging-track" aria-hidden="true">
+                                <span class="analytics-aging-fill" style="width: {{ $row['width'] }}%"></span>
+                            </span>
+                            <span class="analytics-aging-value">
+                                {{ $row['count'] }}
+                                <small>{{ $row['share'] }}%</small>
+                            </span>
+                        </a>
+                    </li>
+                @endforeach
+            </ul>
+
+            @if($overdueAging['unbanded'] > 0)
+                <p class="analytics-aging-note">
+                    {{ $overdueAging['unbanded'] }} {{ $overdueAging['unbanded'] === 1 ? 'borrowing is' : 'borrowings are' }}
+                    flagged overdue but not yet a full day past due, and {{ $overdueAging['unbanded'] === 1 ? 'is' : 'are' }} counted in the total above.
+                </p>
+            @endif
+        </div>
+
+        <footer class="analytics-card-foot">
+            Current state as of today, not limited to the reporting period.
+        </footer>
+
+        @if($overdueAging['insight'])
+            <p class="analytics-insight-strip">
+                <x-icon name="information" size="14" aria-hidden="true" />
+                <span>{{ $overdueAging['insight'] }}</span>
+            </p>
+        @endif
+    @endif
+</section>
+
 {{-- Summary and issues ------------------------------------------------- --}}
 <div class="analytics-overview-rankings">
     <section
@@ -457,6 +680,9 @@
                     <div class="analytics-ministat{{ $tile['measurable'] ? '' : ' is-unmeasured' }}">
                         <span>{{ $tile['label'] }}</span>
                         <strong>{{ $tile['value'] }}</strong>
+                        @isset($tile['comparison'])
+                            @include('analytics.partials.period-delta', ['comparison' => $tile['comparison']])
+                        @endisset
                     </div>
                 @endforeach
             </div>

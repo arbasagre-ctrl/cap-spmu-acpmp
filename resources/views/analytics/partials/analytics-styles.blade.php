@@ -919,6 +919,17 @@ a.analytics-stat:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
 
 .analytics-detail-subhead { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 
+/* Period-over-period block inside a detail: compact, and no new visual vocabulary. */
+.analytics-compare { display: grid; gap: 9px; margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
+.analytics-compare .analytics-detail-subhead { margin: 0; }
+.analytics-compare-window { margin: -5px 0 0; color: var(--text-muted); font-size: 11.5px; }
+.analytics-compare-bars { gap: 8px; max-width: 420px; }
+.analytics-compare-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 14px; margin: 0; }
+.analytics-compare-rows > div { display: grid; gap: 2px; min-width: 0; }
+.analytics-compare-rows dt { margin: 0; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.analytics-compare-rows dd { margin: 0; color: var(--heading); font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.analytics-compare-note { margin: 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+
 .analytics-detail-body .analytics-stat-grid { margin-bottom: 0; }
 .analytics-detail-body .analytics-empty { margin: 0; }
 
@@ -2410,6 +2421,215 @@ html[data-theme="dark"] .analytics-kpi-card.tone-attention { --kpi-from: #991b1b
 
 .analytics-dist-figure small { color: var(--text-muted); font-weight: 700; }
 
+/* Late return patterns --------------------------------------------------- */
+
+/*
+| Two panels of rate bars. A bar is the segment's own late-return rate on a
+| 0-100 track - never normalised against the largest row - and its counts sit
+| beneath it so a 100% from one return reads as exactly that.
+*/
+.analytics-laterate-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px 24px;
+}
+
+.analytics-laterate-panel { min-width: 0; }
+
+.analytics-laterate-title { margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.analytics-laterate-title a { color: inherit; text-decoration: none; }
+.analytics-laterate-title a:hover, .analytics-laterate-title a:focus-visible { color: var(--heading); text-decoration: underline; }
+
+.analytics-laterate-rows { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+.analytics-laterate-rows li > a {
+    display: grid;
+    gap: 4px;
+    padding: 6px 6px;
+    border-radius: 8px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.analytics-laterate-rows li > a:hover,
+.analytics-laterate-rows li > a:focus-visible { background: var(--surface-subtle); }
+.analytics-laterate-rows li > a:focus-visible { outline: 2px solid var(--interactive); outline-offset: 1px; }
+
+.analytics-laterate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.analytics-laterate-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; color: var(--text-primary); font-size: 11.5px; font-weight: 600; overflow-wrap: anywhere; }
+.analytics-laterate-rate { color: var(--heading); font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.analytics-laterate-track {
+    display: block;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-subtle);
+}
+
+.analytics-laterate-fill { display: block; height: 100%; min-width: 0; border-radius: 999px; background: #c2410c; }
+
+.analytics-laterate-counts { color: var(--text-muted); font-size: 10.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.analytics-laterate-none { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+
+.analytics-laterate-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    color: var(--interactive);
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.analytics-laterate-more:hover, .analytics-laterate-more:focus-visible { text-decoration: underline; }
+
+@media (max-width: 760px) {
+    .analytics-laterate-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Overdue aging ---------------------------------------------------------- */
+
+/*
+| Three horizontal bands, counts first. Width is geometry against the largest
+| band; the share beside the count is the band's part of the current backlog.
+| One colour for all bands: age is stated by the label, not graded by hue.
+*/
+.analytics-aging-bands { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+
+.analytics-aging-bands li > a {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr) 84px;
+    align-items: center;
+    gap: 11px;
+    padding: 4px 4px;
+    border-radius: 7px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.analytics-aging-bands li > a:hover,
+.analytics-aging-bands li > a:focus-visible { background: var(--surface-subtle); }
+.analytics-aging-bands li > a:focus-visible { outline: 2px solid var(--interactive); outline-offset: 1px; }
+
+.analytics-aging-label { color: var(--text-primary); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+
+.analytics-aging-track {
+    height: 9px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-subtle);
+}
+
+.analytics-aging-fill { display: block; height: 100%; min-width: 0; border-radius: 999px; background: #c2410c; }
+
+.analytics-aging-value {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 6px;
+    color: var(--heading);
+    font-size: 12px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.analytics-aging-value small { color: var(--text-muted); font-weight: 700; }
+
+/* A band with nothing in it stays in the list, quietly, so the set reads complete. */
+.analytics-aging-bands li.is-none .analytics-aging-label,
+.analytics-aging-bands li.is-none .analytics-aging-value { color: var(--text-muted); font-weight: 600; }
+
+.analytics-aging-note { margin: 10px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+
+/* Request outcomes ------------------------------------------------------- */
+
+/*
+| One 100% bar and a complete legend. Colour tells the groups apart; it does
+| not grade them - each segment carries its label for assistive technology,
+| the legend names every group, and the tooltip states count and share.
+*/
+.analytics-outcomes-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px 22px;
+}
+
+.analytics-outcomes-composition { min-width: 0; }
+
+.analytics-outcome-bar {
+    display: flex;
+    height: 14px;
+    margin-top: 2px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-subtle);
+}
+
+.analytics-outcome-seg {
+    display: block;
+    height: 100%;
+    min-width: 3px;
+    text-decoration: none;
+    transition: filter var(--motion-fast, .12s) ease;
+}
+
+.analytics-outcome-seg:hover { filter: brightness(1.08); }
+.analytics-outcome-seg:focus-visible { outline: 2px solid var(--interactive); outline-offset: 2px; }
+
+.analytics-outcome-legend { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+
+.analytics-outcome-legend li > a,
+.analytics-outcome-legend li > div {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    padding: 4px 4px;
+    border-radius: 7px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.analytics-outcome-legend li > a:hover,
+.analytics-outcome-legend li > a:focus-visible { background: var(--surface-subtle); }
+.analytics-outcome-legend li > a:focus-visible { outline: 2px solid var(--interactive); outline-offset: 1px; }
+
+/* A group with nothing in it is listed for completeness, quietly. */
+.analytics-outcome-legend li.is-none > div { color: var(--text-muted); }
+.analytics-outcome-legend li.is-none .analytics-outcome-key { opacity: .35; }
+.analytics-outcome-legend li.is-none .analytics-outcome-name,
+.analytics-outcome-legend li.is-none .analytics-outcome-figure { color: var(--text-muted); font-weight: 600; }
+
+.analytics-outcome-key { width: 10px; height: 10px; border-radius: 50%; background: var(--text-soft); }
+.analytics-outcome-name { min-width: 0; color: var(--text-primary); font-size: 11.5px; font-weight: 600; }
+
+.analytics-outcome-figure {
+    color: var(--heading);
+    font-size: 12px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.analytics-outcome-figure small { color: var(--text-muted); font-weight: 700; }
+
+.analytics-outcome-seg.is-approved,  .analytics-outcome-key.is-approved  { background: #0e7c66; }
+.analytics-outcome-seg.is-in_review, .analytics-outcome-key.is-in_review { background: #1769e0; }
+.analytics-outcome-seg.is-revision,  .analytics-outcome-key.is-revision  { background: #d08a16; }
+.analytics-outcome-seg.is-rejected,  .analytics-outcome-key.is-rejected  { background: #c4493d; }
+.analytics-outcome-seg.is-cancelled, .analytics-outcome-key.is-cancelled { background: #6b7280; }
+.analytics-outcome-seg.is-expired,   .analytics-outcome-key.is-expired   { background: #7a4bc4; }
+
+@media (max-width: 760px) {
+    .analytics-outcomes-body { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* What the bar deliberately leaves out, and why. */
 .analytics-dist-aside {
     display: grid;
@@ -2798,6 +3018,31 @@ html[data-theme="dark"] .analytics-return-outcome .analytics-donut-legend > div.
 /* "Not measurable" is a statement, not a number, so it is not styled as one. */
 .analytics-ministat.is-unmeasured strong { color: var(--text-muted); font-size: 12.5px; font-weight: 650; }
 
+/* Period-over-period line ------------------------------------------------ */
+
+/*
+| Deliberately quiet and deliberately neutral. It sits under the figure it
+| qualifies, never competes with it, and takes no colour from its direction:
+| whether a movement is good depends on the metric, and the sentence already
+| says which way it went.
+*/
+.analytics-delta {
+    display: block;
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 650;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+/* On a KPI card the line takes the card's own muted meta slot, wrapping rather than truncating. */
+.analytics-kpi-card .analytics-delta { font-size: 10.5px; white-space: normal; }
+
+/* Under a mini stat, the line is the tile's third row. */
+.analytics-ministat .analytics-delta { margin-top: 1px; font-size: 10px; }
+
 /* Issue breakdown -------------------------------------------------------- */
 
 .analytics-issues { display: grid; align-content: start; gap: 0; margin: 0; padding: 0; list-style: none; }
@@ -2900,7 +3145,6 @@ html[data-theme="dark"] .analytics-return-outcome .analytics-donut-legend > div.
 .analytics-outlook-key { width: 16px; height: 0; border-top: 2px solid var(--text-soft); }
 .analytics-outlook-key.is-observed { border-top-color: #2563eb; }
 .analytics-outlook-key.is-forecast { border-top-style: dashed; border-top-color: #7a4bc4; }
-.analytics-outlook-key.is-scheduled { height: 9px; width: 9px; border: 0; border-radius: 50%; background: #0e7c66; }
 
 .analytics-outlook { display: grid; gap: 6px; }
 .analytics-outlook-plot { position: relative; height: 150px; }
@@ -3759,14 +4003,14 @@ body.analytics-detail-open { overflow: hidden; }
 .analytics-kpi-card.tone-stock,
 .analytics-kpi-card.tone-attention { --kpi-accent: #d34b4b; }
 
-/* Inline detail replaces the right-side drawer. */
+/* Inline detail is a compact drill-down, not a second page or modal. */
 .analytics-detail-inline {
     margin: 0 0 14px;
     border: 1px solid color-mix(in srgb, var(--interactive) 22%, var(--border));
     border-left: 4px solid var(--interactive);
     border-radius: 12px;
-    background: color-mix(in srgb, var(--interactive) 3%, var(--surface-elevated));
-    box-shadow: 0 8px 24px rgba(15, 35, 58, .06);
+    background: var(--surface-elevated);
+    box-shadow: 0 7px 20px rgba(15, 35, 58, .055);
     overflow: hidden;
 }
 .analytics-detail-inline-head {
@@ -3774,38 +4018,158 @@ body.analytics-detail-open { overflow: hidden; }
     align-items: flex-start;
     justify-content: space-between;
     gap: 14px;
-    padding: 14px 16px 11px;
+    padding: 12px 16px 10px;
     border-bottom: 1px solid var(--border);
 }
 .analytics-detail-inline-head h2 {
     margin: 2px 0 0;
     color: var(--heading);
     font-size: 15.5px;
-    line-height: 1.3;
+    line-height: 1.25;
 }
 .analytics-detail-inline-body {
     display: grid;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 10px;
+    padding: 12px 16px;
 }
-.analytics-detail-inline-body .analytics-stat-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+
+/* Main figure + explanation stay together so a short detail does not become tall. */
+.analytics-detail-lead {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--interactive) 3%, var(--surface-subtle));
+}
+.analytics-detail-lead .analytics-detail-figure {
+    flex: 0 0 auto;
+    min-width: 66px;
+}
+.analytics-detail-lead .analytics-detail-figure strong { font-size: 27px; }
+.analytics-detail-lead .analytics-detail-note {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+/* Status figures are intentionally compact; two statuses should not fill a whole row. */
+.analytics-detail-inline-body .analytics-stat-grid,
+.analytics-detail-inline-body .analytics-detail-stats {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 240px));
+    justify-content: start;
+    gap: 10px;
     margin: 0;
 }
+.analytics-detail-inline-body .analytics-stat {
+    min-height: 66px;
+    padding: 9px 11px;
+}
+
+/* Breakdown + period comparison share one row when both exist. */
+.analytics-detail-support {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+}
+.analytics-detail-support.is-split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.analytics-detail-block {
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-elevated);
+}
+.analytics-detail-block .analytics-detail-subhead {
+    margin: 0 0 8px;
+}
+.analytics-detail-block .analytics-bars {
+    gap: 8px;
+}
+
+/* The inline panel shows comparison figures once; no duplicate bar + figure set. */
+.analytics-detail-inline .analytics-compare {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding-top: 11px;
+    border-top: 0;
+}
+.analytics-detail-inline .analytics-compare-window {
+    margin: -4px 0 2px;
+    font-size: 10.5px;
+}
+.analytics-detail-inline .analytics-compare-rows {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+}
+.analytics-detail-inline .analytics-compare-rows > div {
+    gap: 3px;
+    padding: 2px 10px;
+    border-left: 1px solid var(--border);
+}
+.analytics-detail-inline .analytics-compare-rows > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+}
+.analytics-detail-inline .analytics-compare-rows dt {
+    font-size: 10px;
+}
+.analytics-detail-inline .analytics-compare-rows dd {
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.analytics-detail-table {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.analytics-detail-empty { margin: 0 !important; }
+.analytics-detail-explain { margin: 0; }
+
 .analytics-detail-inline-foot {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 14px;
-    padding: 10px 16px;
+    padding: 9px 16px;
     border-top: 1px solid var(--border);
     background: var(--surface-subtle);
     color: var(--text-muted);
-    font-size: 11.5px;
+    font-size: 11px;
 }
+.analytics-detail-footnote {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    min-width: 0;
+    max-width: 760px;
+    margin: 0;
+    line-height: 1.45;
+}
+.analytics-detail-footnote .ui-icon {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    color: var(--interactive);
+}
+.analytics-detail-foot-spacer { min-width: 1px; }
 .analytics-detail-inline-foot .button {
     flex: 0 0 auto;
     min-height: 34px;
+    padding-inline: 12px;
     font-size: 11.5px;
 }
 
@@ -3918,8 +4282,12 @@ body.analytics-detail-open { overflow: hidden; }
     opacity: .78;
 }
 
-@media (max-width: 900px) {
-    .analytics-detail-inline-body .analytics-stat-grid {
+@media (max-width: 980px) {
+    .analytics-detail-support.is-split {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .analytics-detail-inline-body .analytics-stat-grid,
+    .analytics-detail-inline-body .analytics-detail-stats {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .analytics-peak-heat {
@@ -3927,13 +4295,31 @@ body.analytics-detail-open { overflow: hidden; }
     }
 }
 @media (max-width: 620px) {
+    .analytics-detail-lead {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 7px;
+    }
+    .analytics-detail-lead .analytics-detail-figure { min-width: 0; }
+    .analytics-detail-inline .analytics-compare-rows {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .analytics-detail-inline .analytics-compare-rows > div,
+    .analytics-detail-inline .analytics-compare-rows > div:first-child {
+        padding: 7px 0;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+    }
+    .analytics-detail-inline .analytics-compare-rows > div:first-child { border-top: 0; }
     .analytics-detail-inline-foot {
         align-items: stretch;
         flex-direction: column;
     }
-    .analytics-detail-inline-body .analytics-stat-grid {
+    .analytics-detail-inline-body .analytics-stat-grid,
+    .analytics-detail-inline-body .analytics-detail-stats {
         grid-template-columns: minmax(0, 1fr);
     }
+    .analytics-detail-inline-foot .button { justify-content: center; }
     .analytics-peak-heat {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }

@@ -160,9 +160,9 @@
 {{-- Headline figures --------------------------------------------------- --}}
 <div class="analytics-kpis">
     {{--
-        Requests Filed has an Analytics detail of its own, so it is a link.
-        The three beside it are readings without a record list to open, and
-        they stay plain cards rather than looking clickable and leading nowhere.
+        Requests Filed opens the record-backed Requests detail. The three
+        beside it open card-level details that restate the same aggregate the
+        card was rendered from, so every card here is a real link.
     --}}
     <a
         class="analytics-kpi-card tone-requests"
@@ -173,6 +173,7 @@
         <span class="analytics-kpi-card-label">Requests Filed</span>
         <strong class="analytics-kpi-card-value">{{ $totals['requests'] }}</strong>
         <span class="analytics-kpi-card-note">Valid borrowing requests</span>
+        @include('analytics.partials.period-delta', ['comparison' => $totalsComparison['requests'], 'deltaClass' => 'analytics-kpi-card-meta'])
         <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -184,6 +185,7 @@
         <span class="analytics-kpi-card-label">Requested Quantity</span>
         <strong class="analytics-kpi-card-value">{{ $qty($totals['requested_quantity']) }}</strong>
         <span class="analytics-kpi-card-note">Total quantity requested</span>
+        @include('analytics.partials.period-delta', ['comparison' => $totalsComparison['requested_quantity'], 'deltaClass' => 'analytics-kpi-card-meta'])
             <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -195,6 +197,7 @@
         <span class="analytics-kpi-card-label">Released Quantity</span>
         <strong class="analytics-kpi-card-value">{{ $qty($totals['released_quantity']) }}</strong>
         <span class="analytics-kpi-card-note">Quantity physically released</span>
+        @include('analytics.partials.period-delta', ['comparison' => $totalsComparison['released_quantity'], 'deltaClass' => 'analytics-kpi-card-meta'])
             <x-icon name="arrow-right" size="16" class="analytics-kpi-card-arrow" />
     </a>
 
@@ -346,6 +349,117 @@
         @endif
     </section>
 </div>
+
+{{-- What became of the requests ----------------------------------------- --}}
+@php
+    /*
+     | Request Outcomes is a cohort: requests FILED in the period, in the
+     | workflow state each holds now. It has its own population - unlike
+     | Requests Filed it keeps requests that were filed and later cancelled or
+     | expired - so its total is stated beside the bar with that difference.
+     | Every count and share comes from AnalyticsService::requestOutcomes();
+     | nothing here recalculates a business figure.
+     */
+    $outcomeLink = static fn (?string $group = null): string => AnalyticsDetailLink::to(
+        'outcomes', 'demand', $periodSelection, $division, $unit, $group ? ['outcome' => $group] : []
+    );
+
+    /* Only groups with a count are drawn; a zero segment has no width to draw. */
+    $drawnOutcomes = collect($outcomes['groups'])->filter(fn (array $row): bool => $row['count'] > 0)->values();
+@endphp
+<section
+        data-card-detail="{{ $outcomeLink() }}"
+        class="analytics-card analytics-outcomes">
+    <header class="analytics-card-head">
+        <span class="analytics-card-mark" aria-hidden="true"><x-icon name="clipboard-check" size="15" /></span>
+        <div>
+            <h2>Request Outcomes</h2>
+            <p>Current workflow outcome of requests filed in the selected period.</p>
+        </div>
+        <a class="analytics-card-open" href="{{ $outcomeLink() }}" aria-label="View Request Outcomes details"><x-icon name="arrow-right" size="15" /></a>
+    </header>
+
+    @if(! $outcomes['available'])
+        <div class="analytics-card-body">
+            <p class="analytics-blank">
+                <span class="analytics-blank-mark" aria-hidden="true"><x-icon name="clipboard-check" size="19" /></span>
+                No filed requests are available for outcome analysis in this period.
+            </p>
+        </div>
+    @else
+        <div class="analytics-card-body analytics-outcomes-body">
+            <div class="analytics-outcomes-composition">
+                <p class="analytics-dist-total">
+                    <strong>{{ $outcomes['total'] }}</strong>
+                    <span>
+                        filed {{ $outcomes['total'] === 1 ? 'request' : 'requests' }}@if($outcomes['closed_after_filing'] > 0), including {{ $outcomes['closed_after_filing'] }} later cancelled or expired @endif
+                    </span>
+                </p>
+
+                {{--
+                    A 100% bar: each segment's width is its share of filed
+                    requests. Segments are links, so a tap reveals the figure
+                    and a second tap opens the group; keyboard users reach each
+                    segment in turn and hear its label, count and share.
+                --}}
+                <div class="analytics-outcome-bar" role="list" aria-label="Request outcomes as a share of filed requests">
+                    @foreach($drawnOutcomes as $row)
+                        <a
+                            class="analytics-outcome-seg is-{{ $row['key'] }}"
+                            style="width: {{ $row['share'] }}%"
+                            role="listitem"
+                            href="{{ $outcomeLink($row['key']) }}"
+                            data-chart-tip
+                            data-tip-title="{{ $row['label'] }}"
+                            data-tip-rows="{{ json_encode([
+                                [$row['count'] === 1 ? 'Request' : 'Requests', (string) $row['count']],
+                                ['Share of filed requests', $row['share'].'%'],
+                            ]) }}"
+                            aria-label="View details for {{ $row['label'] }}: {{ $row['count'] }} {{ $row['count'] === 1 ? 'request' : 'requests' }}, {{ $row['share'] }} percent of filed requests"
+                        ><span class="visually-hidden">{{ $row['label'] }}</span></a>
+                    @endforeach
+                </div>
+            </div>
+
+            {{-- Every group is listed, including the ones at zero, so the set reads as complete. --}}
+            <ol class="analytics-outcome-legend">
+                @foreach($outcomes['groups'] as $row)
+                    <li class="{{ $row['count'] > 0 ? '' : 'is-none' }}">
+                        @if($row['count'] > 0)
+                            <a
+                                href="{{ $outcomeLink($row['key']) }}"
+                                data-chart-tip
+                                data-tip-title="{{ $row['label'] }}"
+                                data-tip-rows="{{ json_encode([
+                                    [$row['count'] === 1 ? 'Request' : 'Requests', (string) $row['count']],
+                                    ['Share of filed requests', $row['share'].'%'],
+                                ]) }}"
+                                aria-label="View details for {{ $row['label'] }}"
+                            >
+                                <span class="analytics-outcome-key is-{{ $row['key'] }}" aria-hidden="true"></span>
+                                <span class="analytics-outcome-name">{{ $row['label'] }}</span>
+                                <span class="analytics-outcome-figure">{{ $row['count'] }} <small>· {{ $row['share'] }}%</small></span>
+                            </a>
+                        @else
+                            <div>
+                                <span class="analytics-outcome-key is-{{ $row['key'] }}" aria-hidden="true"></span>
+                                <span class="analytics-outcome-name">{{ $row['label'] }}</span>
+                                <span class="analytics-outcome-figure">0 <small>· 0%</small></span>
+                            </div>
+                        @endif
+                    </li>
+                @endforeach
+            </ol>
+        </div>
+
+        @if($outcomes['summary'])
+            <p class="analytics-insight-strip">
+                <x-icon name="information" size="14" aria-hidden="true" />
+                <span>{{ $outcomes['summary'] }}</span>
+            </p>
+        @endif
+    @endif
+</section>
 
 {{-- What was asked for -------------------------------------------------- --}}
 <div class="analytics-demand-pair">
@@ -544,14 +658,9 @@
                 <p>Items with no releases during this period.</p>
             </div>
             {{--
-                No "View all" here.
-
-                The full catalogue reading lives in the Equipment Utilization
-                report, and Analytics has no list detail of its own for quiet
-                items. Reports currently answers every request with a 500 -
-                route [reports.print] is referenced but never registered - so a
-                link would be an offer the application cannot keep. The count in
-                the footer states the same fact without sending anyone nowhere.
+                No "View all" here. The card detail lists the ten least-moved
+                items and offers the Equipment Utilization report as its source
+                records; the footer count states the whole-catalogue reading.
             --}}
             <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'demand', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'demand.low-usage']) }}" aria-label="View Low / No Usage Items details"><x-icon name="arrow-right" size="15" /></a>
         </header>

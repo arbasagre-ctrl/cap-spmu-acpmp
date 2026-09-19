@@ -4,15 +4,21 @@
     |
     | The preview, the print view and the PDF all compose the document from
     | this single partial, which is what keeps the three looking identical.
-    | `$options` toggles only presentation — never the records.
+    | `$options` toggles only presentation â€” never the records.
     */
     $options = $options ?? [];
 @endphp
 
 <article class="doc-sheet">
-    @include('reports.document.header')
+    @if($options['header'] ?? true)
+        @include('reports.document.header')
+    @endif
+
     @include('reports.document.title')
-    @include('reports.document.metadata')
+
+    @if($options['metadata'] ?? true)
+        @include('reports.document.metadata')
+    @endif
 
     @if($options['summary'] ?? true)
         @include('reports.document.summary')
@@ -23,6 +29,8 @@
     </div>
 
     @if($options['footer'] ?? true)
-        @include('reports.document.footer')
+        @if($options['footer'] ?? true)
+    @include('reports.document.footer')
+@endif
     @endif
 </article>

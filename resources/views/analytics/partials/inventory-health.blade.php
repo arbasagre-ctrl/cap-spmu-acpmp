@@ -74,8 +74,9 @@
 {{-- Current position ---------------------------------------------------- --}}
 <div class="analytics-kpis">
     {{--
-        Current-state readings with no record list of their own, so none of the
-        four pretends to be clickable. The rows further down carry the links.
+        Current-state readings. Each card opens its own Analytics detail, which
+        restates the snapshot and offers the Inventory Status Report where one
+        matches; the rows further down link to per-item details.
     --}}
     <a
         class="analytics-kpi-card tone-available"

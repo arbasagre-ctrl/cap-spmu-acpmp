@@ -10,3 +10,11 @@ storage/framework/sessions/*
 storage/framework/views/*
 storage/logs/*
 work
+
+bootstrap/cache/*.php
+
+# Local source snapshots and generated backup directories never belong in an image.
+*.bak
+*.bak-*
+*.before-*
+BACKUP-*/

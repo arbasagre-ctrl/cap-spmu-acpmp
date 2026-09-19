@@ -732,12 +732,20 @@ class AnalyticsRestructureTest extends TestCase
 
         $out->assertOk();
         $out->assertSee('Current physical custody', false);
+
+        /*
+         * The Release & Custody Report cannot filter on "physically
+         * outstanding across custody states", so the source-record link
+         * carries the organisational scope only - never a custody_status
+         * that would silently list a different population - and says so.
+         */
         $out->assertSee(e(route('reports.index', [
             'report' => 'custody',
             'academic_period' => 'month',
             'generated' => 1,
-            'custody_status' => 'ACTIVE',
         ])), false);
+        $out->assertDontSee('custody_status=ACTIVE', false);
+        $out->assertSee('Source records open the custody report within the same organizational scope', false);
 
         $followUp = $this->actingAs($this->spmuHead())->get(route('analytics.index', [
             'section' => 'overview',

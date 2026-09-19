@@ -128,6 +128,11 @@
     overflow-wrap: anywhere;
 }
 
+/* A period-over-period line under a summary figure stays smaller than the figure. */
+.analytics-summary-metrics .analytics-delta { margin-top: 2px; font-size: 9.5px; font-weight: 600; }
+
+.analytics-summary-status .analytics-delta { display: inline; margin-left: 4px; font-size: 10.5px; }
+
 @media (max-width: 980px) {
     .analytics-summary-grid { grid-template-columns: minmax(0, 1fr); }
 }

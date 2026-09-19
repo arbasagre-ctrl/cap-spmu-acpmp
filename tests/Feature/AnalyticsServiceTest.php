@@ -630,47 +630,6 @@ class AnalyticsServiceTest extends TestCase
     }
 
     /* ------------------------------------------------------------------ */
-    /* Key insights                                                        */
-    /* ------------------------------------------------------------------ */
-
-    public function test_insights_are_capped_deduplicated_and_never_repeat_a_section_reading(): void
-    {
-        $this->seedRepresentativeDataset();
-
-        $overview = $this->analytics->overview($this->from, $this->to, null, null);
-        $groups = $this->analytics->borrowerGroups($this->from, $this->to, null, null);
-        $units = $this->analytics->unitRankings($this->from, $this->to, null, null);
-        $equipment = $this->analytics->equipment($this->from, $this->to, null, null);
-        $trend = $this->analytics->trend($this->from, $this->to, null, null, 'month');
-        $returns = $this->analytics->returns($this->from, $this->to, null, null);
-
-        $insights = $this->analytics->insights($overview, $groups, $units, $equipment, $trend, $returns);
-
-        $this->assertLessThanOrEqual(5, count($insights));
-        $this->assertSame(count($insights), count(array_unique($insights)));
-
-        foreach ([$overview['summary'], $groups['summary'], $equipment['summary'], $trend['summary'], $returns['summary']] as $reading) {
-            $this->assertNotContains($reading, $insights);
-        }
-
-        foreach ($units['summary'] as $reading) {
-            $this->assertNotContains($reading, $insights);
-        }
-    }
-
-    public function test_insights_are_empty_when_nothing_happened(): void
-    {
-        $overview = $this->analytics->overview($this->from, $this->to, null, null);
-        $groups = $this->analytics->borrowerGroups($this->from, $this->to, null, null);
-        $units = $this->analytics->unitRankings($this->from, $this->to, null, null);
-        $equipment = $this->analytics->equipment($this->from, $this->to, null, null);
-        $trend = $this->analytics->trend($this->from, $this->to, null, null, 'month');
-        $returns = $this->analytics->returns($this->from, $this->to, null, null);
-
-        $this->assertSame([], $this->analytics->insights($overview, $groups, $units, $equipment, $trend, $returns));
-    }
-
-    /* ------------------------------------------------------------------ */
     /* Reporting period                                                    */
     /* ------------------------------------------------------------------ */
 

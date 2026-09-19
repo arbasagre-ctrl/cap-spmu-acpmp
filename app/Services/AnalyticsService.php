@@ -8,6 +8,8 @@ use App\Models\CustodyTransaction;
 use App\Models\Incident;
 use App\Models\InventoryItem;
 use App\Support\OrganizationalStructure;
+use App\Support\PeriodComparison;
+use App\Support\RequestOutcomes;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -433,12 +435,55 @@ class AnalyticsService
     }
 
     /**
+     * Completed-return records already built in this request, by scope.
+     *
+     * Request-local only: the service instance lives for one request, so a
+     * scope resolved once - returns(), the previous-period comparison, the
+     * trend and both late-rate breakdowns all ask for the same window - is
+     * loaded and classified once. Nothing here outlives the request and no
+     * external cache store is involved.
+     *
+     * @var array<string, Collection<int, array{custody:CustodyTransaction,returned_at:Carbon,state:string}>>
+     */
+    private array $completedReturnRecordsCache = [];
+
+    /**
      * Completed returns whose authoritative physical-return date is inside the
      * selected period.
+     *
+     * The result is memoised per scope for the life of this service instance.
+     * Consumers read it - filter, map, group, count - and never mutate it;
+     * Collection operations return new collections, so the cached instance
+     * stays what it was when it was built.
      *
      * @return Collection<int, array{custody:CustodyTransaction,returned_at:Carbon,state:string}>
      */
     private function completedReturnRecords(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Collection {
+        $key = implode('|', [
+            Carbon::parse($from)->toDateTimeString(),
+            Carbon::parse($to)->toDateTimeString(),
+            ($division === null || $division === '' || $division === 'all') ? '' : $division,
+            ($unit === null || $unit === '' || $unit === 'all') ? '' : $unit,
+            $borrower === null ? '' : (string) $borrower,
+        ]);
+
+        return $this->completedReturnRecordsCache[$key] ??= $this->loadCompletedReturnRecords(
+            $from, $to, $division, $unit, $borrower
+        );
+    }
+
+    /**
+     * The uncached build behind completedReturnRecords().
+     *
+     * @return Collection<int, array{custody:CustodyTransaction,returned_at:Carbon,state:string}>
+     */
+    private function loadCompletedReturnRecords(
         CarbonInterface $from,
         CarbonInterface $to,
         ?string $division,
@@ -573,13 +618,76 @@ class AnalyticsService
         return $query->whereIn('request_version_id', $versionIds);
     }
 
-    /** Released, not yet closed - the assets physically out right now. */
+    /**
+     * Released and physically still out right now.
+     *
+     * Administrative closure is not the signal. After a physical return the
+     * accountability workflow legitimately keeps a custody OBLIGATION_OPEN or
+     * INCIDENT_OPEN with closed_at null until the case is settled, and that
+     * custody is a completed return, not property that is out. So beyond the
+     * released / not-closed guard, a custody counts only while the physical
+     * signal the rest of the system uses says so - see physicallyOutstanding().
+     */
     private function currentlyOutQuery(?string $division, ?string $unit, ?int $borrower = null): Builder
     {
-        return $this->currentCustodyScope($division, $unit, $borrower)
-            ->whereNotNull('released_at')
-            ->whereNull('closed_at')
-            ->whereNotIn('status', ['CLOSED', 'CANCELLED']);
+        return $this->physicallyOutstanding(
+            $this->currentCustodyScope($division, $unit, $borrower)
+                ->whereNotNull('released_at')
+                ->whereNull('closed_at')
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+        );
+    }
+
+    /**
+     * Narrow a custody query to property that has not physically come back.
+     *
+     * The facts ReturnMetricsService::completionMoment() reads, translated
+     * to SQL so the population is filtered in the database rather than by
+     * classifying every custody in PHP. A custody is still out when:
+     *
+     *  - a custody line still carries released quantity not accounted for
+     *    at return inspection (returned_quantity below actual_released_
+     *    quantity) - the rule the Dashboard, the submission gate, the
+     *    overdue scheduler and LateReturnService::assess() apply, so a
+     *    partial return stays out;
+     *  - or it carries linen whose authoritative physical receipt
+     *    (laundry_jobs.worker_received_at) has not been recorded. Linen is
+     *    accounted for at inspection from the Laundry Form but is out until
+     *    Laundry personnel physically receive it;
+     *  - or it carries no linen and no Return Inspection receipt exists at
+     *    all. Without that receipt there is no physical return event to
+     *    complete on, which is exactly how ReturnMetricsService reads it.
+     *
+     * Nothing here reads status, closed_at, accountability, billing or
+     * verification timestamps: administrative closure is not physical return.
+     */
+    private function physicallyOutstanding(Builder $query): Builder
+    {
+        $carriesLinen = static function (Builder $custody): void {
+            $custody->whereHas('lines.requestItem.inventoryItem', function ($items): void {
+                $items->where('laundry_required', true);
+            });
+        };
+
+        return $query->where(function (Builder $physical) use ($carriesLinen): void {
+            $physical
+                ->whereHas('lines', function ($lines): void {
+                    $lines->whereColumn('returned_quantity', '<', 'actual_released_quantity');
+                })
+                ->orWhere(function (Builder $linen) use ($carriesLinen): void {
+                    $carriesLinen($linen);
+                    $linen->whereDoesntHave('laundryJob', function ($jobs): void {
+                        $jobs->whereNotNull('worker_received_at');
+                    });
+                })
+                ->orWhere(function (Builder $unreceived) use ($carriesLinen): void {
+                    $unreceived
+                        ->whereNot($carriesLinen)
+                        ->whereDoesntHave('returns', function ($returns): void {
+                            $returns->whereNotNull('received_at');
+                        });
+                });
+        });
     }
 
     /**
@@ -942,73 +1050,318 @@ class AnalyticsService
         ];
     }
 
-    /**
-     * The equipment a single organisational unit asks for most.
-     *
-     * Counted the same way as requestedEquipment(): one per request the item
-     * appears in, with the total quantity shown alongside so the two readings
-     * are never confused.
-     *
-     * @return array<string, mixed>
-     */
-    public function equipmentForUnit(
-        CarbonInterface $from,
-        CarbonInterface $to,
-        string $unit,
-        int $limit = 5
-    ): array {
-        $result = $this->requestedEquipment($from, $to, null, $unit, $limit);
-
-        $result['unit'] = $unit;
-        $result['summary'] = $result['items'] === []
-            ? 'No borrowing requests were recorded for '.$unit.' during this period.'
-            : $unit.' most often requested '.$result['items'][0]['name'].', in '
-                .$result['items'][0]['requests'].' requests.';
-
-        return $result;
-    }
+    /* ------------------------------------------------------------------ */
+    /* Period-over-period comparison                                       */
+    /* ------------------------------------------------------------------ */
 
     /**
-     * The same request count for the period immediately before this one.
+     * The equal-length period immediately before the selected one.
      *
-     * Returned as a plain difference. A percentage is deliberately not offered
-     * when the previous period is zero, because "up 100%" from nothing is not
-     * a reading anyone should act on.
+     * This is the module's one definition of "the previous period", shared
+     * with ForecastService::historyWindows(): the same number of days,
+     * ending the day before the selected period starts. A calendar month is
+     * therefore compared with the same number of days before it, not with
+     * the previous calendar month; ReportingPeriodService offers no other
+     * equivalent-period rule, and inventing one here would put two
+     * definitions of "previous" on the same page.
      *
-     * @return array<string, mixed>
+     * @return array{0: Carbon, 1: Carbon}
      */
-    public function previousPeriod(
-        CarbonInterface $from,
-        CarbonInterface $to,
-        ?string $division,
-        ?string $unit
-    ): array {
+    public function previousWindow(CarbonInterface $from, CarbonInterface $to): array
+    {
         $days = max(1, Carbon::parse($from)->startOfDay()->diffInDays(Carbon::parse($to)->startOfDay()) + 1);
 
         $previousTo = Carbon::parse($from)->subDay()->endOfDay();
         $previousFrom = $previousTo->copy()->subDays($days - 1)->startOfDay();
 
-        $current = $this->requestScope($from, $to, $division, $unit)->count('borrowing_requests.id');
-        $previous = $this->requestScope($previousFrom, $previousTo, $division, $unit)
-            ->count('borrowing_requests.id');
+        return [$previousFrom, $previousTo];
+    }
 
-        $hasComparison = $previousTo->isPast();
-        $change = $current - $previous;
+    /**
+     * Filed demand and physical release, each against the previous period.
+     *
+     * Every figure is measured twice by demandTotals() - once over the
+     * selected period and once over previousWindow() - so each keeps its own
+     * event date: requests and requested quantity follow the filing date,
+     * released quantity follows released_at. The same division, unit and
+     * borrower scope applies to both windows; only the dates move.
+     *
+     * Nothing present-tense is compared here. Currently Out and Currently
+     * Overdue describe today and have no previous-period counterpart.
+     *
+     * @return array<string, mixed>
+     */
+    public function demandComparison(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): array {
+        [$previousFrom, $previousTo] = $this->previousWindow($from, $to);
+        $available = $previousTo->isPast();
+        $currentComplete = Carbon::parse($to)->isPast();
+
+        $current = $this->demandTotals($from, $to, $division, $unit, $borrower);
+        $previous = $available
+            ? $this->demandTotals($previousFrom, $previousTo, $division, $unit, $borrower)
+            : ['requests' => 0, 'requested_quantity' => 0, 'released_quantity' => 0];
 
         return [
-            'available' => $hasComparison,
-            'current' => $current,
-            'previous' => $previous,
-            'change' => $change,
             'from' => $previousFrom,
             'to' => $previousTo,
+            'available' => $available,
+            'current_complete' => $currentComplete,
+            'requests' => PeriodComparison::count(
+                $current['requests'], $previous['requests'], $available, $currentComplete
+            ),
+            'requested_quantity' => PeriodComparison::count(
+                $current['requested_quantity'], $previous['requested_quantity'], $available, $currentComplete
+            ),
+            'released_quantity' => PeriodComparison::count(
+                $current['released_quantity'], $previous['released_quantity'], $available, $currentComplete
+            ),
+        ];
+    }
+
+    /**
+     * Completed returns against the previous period.
+     *
+     * Both windows use completedReturnRecords(): a return belongs to the
+     * period its physical completion date falls in, classified by
+     * ReturnMetricsService exactly as the KPI cards are. The on-time rate is
+     * compared in percentage points and is only compared at all when both
+     * periods had a completed return to measure it from.
+     *
+     * Currently Overdue and open accountability are deliberately absent:
+     * one is today's backlog and the other is a hybrid of opening date and
+     * present status, and neither has an equivalent previous-period reading.
+     *
+     * @return array<string, mixed>
+     */
+    public function returnComparison(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): array {
+        [$previousFrom, $previousTo] = $this->previousWindow($from, $to);
+        $available = $previousTo->isPast();
+        $currentComplete = Carbon::parse($to)->isPast();
+
+        $current = $this->completedReturnCounts($from, $to, $division, $unit, $borrower);
+        $previous = $available
+            ? $this->completedReturnCounts($previousFrom, $previousTo, $division, $unit, $borrower)
+            : ['completed' => 0, 'on_time' => 0, 'late' => 0, 'on_time_rate' => null];
+
+        return [
+            'from' => $previousFrom,
+            'to' => $previousTo,
+            'available' => $available,
+            'current_complete' => $currentComplete,
+            'completed' => PeriodComparison::count(
+                $current['completed'], $previous['completed'], $available, $currentComplete
+            ),
+            'on_time' => PeriodComparison::count(
+                $current['on_time'], $previous['on_time'], $available, $currentComplete
+            ),
+            'late' => PeriodComparison::count(
+                $current['late'], $previous['late'], $available, $currentComplete
+            ),
+            'on_time_rate' => PeriodComparison::rate(
+                $current['on_time_rate'], $previous['on_time_rate'], $available, $currentComplete
+            ),
+        ];
+    }
+
+    /**
+     * Completed returns in the period, split by outcome, with the on-time
+     * rate. The single counting rule behind returns() and returnComparison().
+     *
+     * @return array{completed:int,on_time:int,late:int,on_time_rate:?float}
+     */
+    private function completedReturnCounts(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): array {
+        $completedRows = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
+
+        $onTime = $completedRows
+            ->where('state', ReturnMetricsService::RETURNED_ON_TIME)
+            ->count();
+
+        $late = $completedRows
+            ->where('state', ReturnMetricsService::RETURNED_LATE)
+            ->count();
+
+        $completed = $completedRows->count();
+
+        return [
+            'completed' => $completed,
+            'on_time' => $onTime,
+            'late' => $late,
+            'on_time_rate' => $completed > 0 ? round($onTime / $completed * 100, 1) : null,
+        ];
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Section D2 - Request outcomes                                       */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Filed requests needed before a leading outcome is stated as an
+     * insight. Below this, "most requests are approved" describes two
+     * records, not a pattern.
+     */
+    public const OUTCOME_INSIGHT_MINIMUM = 5;
+
+    /**
+     * Requests formally filed in the period, whatever became of them since.
+     *
+     * This is the Request Outcomes cohort and it is deliberately not
+     * requestScope(). The activity scope leaves CANCELLED and EXPIRED
+     * requests out because they are not work the unit carried out; for an
+     * outcome reading they are outcomes, so a request that was filed and
+     * later cancelled or expired belongs in the denominator.
+     *
+     * FILING
+     * ------
+     * The filing event is request_versions.submitted_at on the current
+     * version - the stamp submit() writes when a draft or a returned request
+     * goes to SPMU. The same legacy fallback requestScope() uses is kept for
+     * older rows without that stamp, but only for statuses that prove filing
+     * on their own (RequestOutcomes::legacyFilingProofStatuses()): a
+     * cancelled or expired row with no submitted_at cannot be shown to have
+     * been filed and is left out rather than assumed. A DRAFT never enters,
+     * including a returned request whose corrected version has not been
+     * resubmitted yet; it rejoins the cohort of its resubmission date.
+     *
+     * One request is one observation: the join is on the current version,
+     * exactly as everywhere else in this class.
+     */
+    public function requestOutcomeScope(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null,
+        ?int $borrower = null
+    ): Builder {
+        $legacyProof = array_map(
+            static fn (RequestStatus $status): string => $status->value,
+            RequestOutcomes::legacyFilingProofStatuses()
+        );
+
+        $query = BorrowingRequest::query()
+            ->join('request_versions', function ($join): void {
+                $join->on('request_versions.request_id', '=', 'borrowing_requests.id')
+                    ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
+            })
+            ->where('borrowing_requests.status', '!=', RequestStatus::Draft->value)
+            ->where(function ($filed) use ($from, $to, $legacyProof): void {
+                $filed->whereBetween('request_versions.submitted_at', [$from, $to])
+                    ->orWhere(function ($legacy) use ($from, $to, $legacyProof): void {
+                        $legacy->whereNull('request_versions.submitted_at')
+                            ->whereBetween('borrowing_requests.created_at', [$from, $to])
+                            ->whereIn('borrowing_requests.status', $legacyProof);
+                    });
+            });
+
+        if ($division !== null && $division !== '' && $division !== 'all') {
+            $query->where('request_versions.division_code', $division);
+        }
+
+        if ($unit !== null && $unit !== '' && $unit !== 'all') {
+            $query->where('request_versions.office_unit', $unit);
+        }
+
+        if ($borrower !== null) {
+            $query->where('borrowing_requests.borrower_user_id', $borrower);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Current workflow outcome of the requests filed in the period.
+     *
+     * A cohort reading, not a decision log: a request filed in September and
+     * approved in October is Approved in September's cohort. Every request
+     * in the cohort lands in exactly one group through RequestOutcomes, and
+     * the groups sum to the total by construction. Shares are shares of the
+     * filed total - never of quantity, approvals or active requests.
+     *
+     * @return array<string, mixed>
+     */
+    public function requestOutcomes(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division = null,
+        ?string $unit = null,
+        ?int $borrower = null
+    ): array {
+        $counts = $this->requestOutcomeScope($from, $to, $division, $unit, $borrower)
+            ->select('borrowing_requests.status')
+            ->selectRaw('COUNT(borrowing_requests.id) AS total')
+            ->groupBy('borrowing_requests.status')
+            ->pluck('total', 'status');
+
+        $byGroup = array_fill_keys(array_keys(RequestOutcomes::GROUPS), 0);
+
+        foreach ($counts as $status => $count) {
+            $case = $status instanceof RequestStatus ? $status : RequestStatus::from((string) $status);
+            $group = RequestOutcomes::groupFor($case);
+
+            /* The scope already excludes drafts; a null here would be a scope fault. */
+            if ($group !== null) {
+                $byGroup[$group] += (int) $count;
+            }
+        }
+
+        $total = array_sum($byGroup);
+
+        $groups = [];
+
+        foreach (RequestOutcomes::GROUPS as $key => $label) {
+            $groups[] = [
+                'key' => $key,
+                'label' => $label,
+                'phrase' => RequestOutcomes::PHRASES[$key],
+                'count' => $byGroup[$key],
+                /* Guarded: an empty cohort has no shares, not 0% shares. */
+                'share' => $total > 0 ? round($byGroup[$key] / $total * 100, 1) : null,
+                'statuses' => array_map(
+                    static fn (RequestStatus $status): string => $status->label(),
+                    RequestOutcomes::statusesFor($key)
+                ),
+            ];
+        }
+
+        /*
+         * The cohort is the activity scope plus the requests it leaves out,
+         * so the reader can reconcile the total with Requests Filed.
+         */
+        $closedAfterFiling = $byGroup['cancelled'] + $byGroup['expired'];
+
+        $ranked = collect($groups)->filter(fn (array $g): bool => $g['count'] > 0)->sortByDesc('count')->values();
+        $leader = $ranked->first();
+        $runnerUp = $ranked->get(1);
+        $tied = $leader !== null && $runnerUp !== null && $runnerUp['count'] === $leader['count'];
+
+        return [
+            'total' => $total,
+            'available' => $total > 0,
+            'closed_after_filing' => $closedAfterFiling,
+            'groups' => $groups,
+            'leader' => $leader,
             'summary' => match (true) {
-                ! $hasComparison => 'No previous period data',
-                $previous === 0 && $current === 0 => 'No requests in either period',
-                $previous === 0 => 'First period with recorded requests',
-                $change > 0 => '+'.$change.' from the previous period',
-                $change < 0 => $change.' from the previous period',
-                default => 'Unchanged from the previous period',
+                $total === 0 => 'No filed requests are available for outcome analysis in this period.',
+                $total < self::OUTCOME_INSIGHT_MINIMUM || $tied || $leader === null => null,
+                default => 'Most filed requests are currently '.$leader['phrase']
+                    .' ('.$leader['count'].' of '.$total.').',
             },
         ];
     }
@@ -1136,15 +1489,10 @@ class AnalyticsService
         ?string $unit,
         ?int $borrower = null
     ): array {
-        $completedRows = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
-
-        $onTime = $completedRows
-            ->where('state', ReturnMetricsService::RETURNED_ON_TIME)
-            ->count();
-
-        $late = $completedRows
-            ->where('state', ReturnMetricsService::RETURNED_LATE)
-            ->count();
+        $counts = $this->completedReturnCounts($from, $to, $division, $unit, $borrower);
+        $onTime = $counts['on_time'];
+        $late = $counts['late'];
+        $completed = $counts['completed'];
 
         /* Still out and past due is a present-tense measure. */
         $overdue = $this->currentlyOverdueQuery($division, $unit, $borrower)->count();
@@ -1156,8 +1504,6 @@ class AnalyticsService
          */
         $openCases = $this->openAccountabilityCount($from, $to, $division, $unit, $borrower);
 
-        $completed = $completedRows->count();
-
         return [
             'on_time' => $onTime,
             'late' => $late,
@@ -1165,7 +1511,7 @@ class AnalyticsService
             'open_cases' => $openCases,
             'completed' => $completed,
 
-            'on_time_rate' => $completed > 0 ? round($onTime / $completed * 100, 1) : null,
+            'on_time_rate' => $counts['on_time_rate'],
             'late_rate' => $completed > 0 ? round($late / $completed * 100, 1) : null,
 
             'average_duration' => $this->averageCustodyDuration($from, $to, $division, $unit, $borrower),
@@ -1400,78 +1746,6 @@ class AnalyticsService
                 : $watch['name'].' has '.($watch['available'] + 0).' of '.($watch['stock'] + 0)
                     .' units available. Review upcoming bookings before approving additional requests.',
         ];
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Key insights                                                        */
-    /* ------------------------------------------------------------------ */
-
-    /**
-     * Three to five sentences, each built from a figure already shown above.
-     *
-     * @return list<string>
-     */
-    public function insights(
-        array $overview,
-        array $groups,
-        array $units,
-        array $equipment,
-        array $trend,
-        array $returns
-    ): array {
-        $insights = [];
-
-        if ($overview['total'] > 0 && $groups['groups']->isNotEmpty()) {
-            $leader = $groups['groups']->sortByDesc('count')->first();
-            $insights[] = $leader['label'].' units generated '.$leader['percentage']
-                .'% of borrowing requests during this period.';
-        }
-
-        foreach (array_slice($units['summary'], 0, 2) as $sentence) {
-            $insights[] = $sentence;
-        }
-
-        if ($equipment['items'] !== []) {
-            $top = $equipment['items'][0];
-            $insights[] = $top['name'].' had the highest utilisation with '
-                .$top['released'].' units released.';
-        }
-
-        if ($trend['points'] !== [] && $overview['total'] > 0) {
-            $insights[] = $trend['summary'];
-        }
-
-        if ($returns['overdue'] > 0) {
-            $insights[] = $returns['overdue'].' active '
-                .($returns['overdue'] === 1 ? 'borrowing requires' : 'borrowings require')
-                .' return follow-up.';
-        } elseif ($returns['open_cases'] > 0) {
-            $insights[] = $returns['open_cases'].' accountability '
-                .($returns['open_cases'] === 1 ? 'case remains' : 'cases remain').' open.';
-        }
-
-        /*
-         * Each section already prints its own reading, so an insight that
-         * repeats one word for word adds nothing. Exact repeats are dropped
-         * rather than padding the list to five.
-         */
-        $alreadySaid = array_merge(
-            array_filter([
-                $overview['summary'] ?? null,
-                $groups['summary'] ?? null,
-                $equipment['summary'] ?? null,
-                $trend['summary'] ?? null,
-                $returns['summary'] ?? null,
-            ]),
-            $units['summary'] ?? []
-        );
-
-        $insights = array_values(array_filter(
-            array_unique($insights),
-            fn (string $insight): bool => ! in_array($insight, $alreadySaid, true)
-        ));
-
-        return array_slice($insights, 0, 5);
     }
 
     /* ------------------------------------------------------------------ */
@@ -1893,6 +2167,198 @@ class AnalyticsService
     /* Section F2 - Return performance detail                              */
     /* ------------------------------------------------------------------ */
 
+    /**
+     * Late-return share among completed returns, by division or by unit.
+     *
+     * The population is completedReturnRecords() - the very records behind
+     * Returned On Time, Returned Late and the return trend: physically
+     * completed returns whose authoritative completion date (Return
+     * Inspection receipt, or the laundry receipt for linen) falls in the
+     * period, classified by ReturnMetricsService. Nothing still out is in
+     * it, so a currently overdue custody can never enter a denominator,
+     * while a late return whose accountability is still open is a completed
+     * return and does. Requests filed, quantities released and current
+     * backlog play no part.
+     *
+     *     late_rate = returned late / completed returns in the same segment
+     *
+     * Attribution follows the request-version snapshot the custody carries
+     * (division_code / office_unit at borrowing time), the same source the
+     * filters and Reports use, never the borrower's present-day profile. A
+     * unit is identified by division code plus unit name, as unitRankings()
+     * identifies it, so like-named units in two divisions stay apart.
+     *
+     * Every segment with at least one completed return is listed; a segment
+     * with none is absent rather than shown at 0%. Rows are ordered by late
+     * rate, then completed returns, then label - a stable order, not a
+     * grading, and each rate is always accompanied by its counts.
+     *
+     * @param  'division'|'unit'  $level
+     * @return array<string, mixed>
+     */
+    public function lateReturnRates(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null,
+        string $level = 'division'
+    ): array {
+        $records = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
+
+        /* One query for every custody's borrowing-time snapshot. */
+        $custodies = new \Illuminate\Database\Eloquent\Collection(
+            $records->map(fn (array $row): CustodyTransaction => $row['custody'])->all()
+        );
+        $custodies->loadMissing('requestVersion');
+
+        $labels = self::divisions();
+        $segments = [];
+
+        foreach ($records as $row) {
+            /** @var CustodyTransaction $custody */
+            $custody = $row['custody'];
+            $version = $custody->requestVersion;
+            $code = trim((string) ($version?->division_code ?? ''));
+            $unitName = trim((string) ($version?->office_unit ?? ''));
+
+            if ($level === 'unit') {
+                /* A unit is a division plus a name; a nameless snapshot has no unit to report. */
+                if ($unitName === '') {
+                    continue;
+                }
+
+                $key = ($code !== '' ? $code : 'unspecified').'|'.$unitName;
+                $label = $unitName;
+            } else {
+                $key = $code !== '' ? $code : 'unspecified';
+                $label = $code !== '' ? ($labels[$code] ?? OrganizationalStructure::label($code)) : 'Unspecified';
+            }
+
+            $segments[$key] ??= [
+                'key' => $key,
+                'code' => $code !== '' ? $code : null,
+                'division_label' => $code !== '' ? ($labels[$code] ?? OrganizationalStructure::label($code)) : 'Unspecified',
+                'unit' => $level === 'unit' ? $unitName : null,
+                'label' => $label,
+                'completed' => 0,
+                'on_time' => 0,
+                'late' => 0,
+            ];
+
+            $segments[$key]['completed']++;
+
+            if ($row['state'] === ReturnMetricsService::RETURNED_LATE) {
+                $segments[$key]['late']++;
+            } else {
+                $segments[$key]['on_time']++;
+            }
+        }
+
+        $groups = collect($segments)
+            ->map(function (array $segment): array {
+                $segment['late_rate'] = $segment['completed'] > 0
+                    ? round($segment['late'] / $segment['completed'] * 100, 1)
+                    : null;
+
+                return $segment;
+            })
+            ->sortBy([
+                fn (array $a, array $b): int => ($b['late_rate'] ?? -1) <=> ($a['late_rate'] ?? -1),
+                fn (array $a, array $b): int => $b['completed'] <=> $a['completed'],
+                fn (array $a, array $b): int => strcmp($a['label'], $b['label']),
+            ])
+            ->values();
+
+        $completed = $records->count();
+        $late = $records->where('state', ReturnMetricsService::RETURNED_LATE)->count();
+
+        /*
+         * The one-line reading names the segment with the most late returns,
+         * a count, not the highest rate: a rate over a handful of returns
+         * says less than a count, and the bars already rank the rates. Two
+         * segments with the same count are a tie, and a tie is not a reading.
+         */
+        $byLate = $groups->sortBy([
+            fn (array $a, array $b): int => $b['late'] <=> $a['late'],
+            fn (array $a, array $b): int => strcmp($a['label'], $b['label']),
+        ])->values();
+        $leader = $byLate->first();
+        $runnerUp = $byLate->get(1);
+        $tied = $leader !== null && $runnerUp !== null && $runnerUp['late'] === $leader['late'];
+
+        return [
+            'level' => $level,
+            'available' => $completed > 0,
+            'completed' => $completed,
+            'on_time' => $completed - $late,
+            'late' => $late,
+            'late_rate' => $completed > 0 ? round($late / $completed * 100, 1) : null,
+            'groups' => $groups->all(),
+            'summary' => match (true) {
+                $completed === 0 => 'No completed returns are available for late-return rate analysis in this period.',
+                $leader === null || $leader['late'] === 0 || $tied => null,
+                default => $leader['label'].' recorded '.$leader['late'].' late '
+                    .($leader['late'] === 1 ? 'return' : 'returns').' among '
+                    .$leader['completed'].' completed '.($leader['completed'] === 1 ? 'return' : 'returns').'.',
+            },
+        ];
+    }
+
+    /**
+     * The completed returns behind one late-rate segment, for a detail table.
+     *
+     * The same records lateReturnRates() counted, narrowed to the segment,
+     * late returns first, then most recent completion, then custody number
+     * so the order is stable.
+     *
+     * @return array{completed:int,late:int,rows:Collection<int, array<string, mixed>>}
+     */
+    public function lateReturnRateRecords(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null,
+        ?string $segmentDivision = null,
+        ?string $segmentUnit = null,
+        int $limit = 25
+    ): array {
+        $records = $this->completedReturnRecords($from, $to, $division, $unit, $borrower);
+
+        $custodies = new \Illuminate\Database\Eloquent\Collection(
+            $records->map(fn (array $row): CustodyTransaction => $row['custody'])->all()
+        );
+        $custodies->loadMissing('requestVersion');
+
+        $matching = $records->filter(function (array $row) use ($segmentDivision, $segmentUnit): bool {
+            $version = $row['custody']->requestVersion;
+            $code = trim((string) ($version?->division_code ?? ''));
+            $unitName = trim((string) ($version?->office_unit ?? ''));
+
+            if ($segmentDivision !== null && ($segmentDivision === 'unspecified' ? $code !== '' : $code !== $segmentDivision)) {
+                return false;
+            }
+
+            return $segmentUnit === null || $unitName === $segmentUnit;
+        });
+
+        $sorted = $matching
+            ->sortBy([
+                fn (array $a, array $b): int =>
+                    (int) ($b['state'] === ReturnMetricsService::RETURNED_LATE) <=> (int) ($a['state'] === ReturnMetricsService::RETURNED_LATE),
+                fn (array $a, array $b): int => $b['returned_at']->timestamp <=> $a['returned_at']->timestamp,
+                fn (array $a, array $b): int => strcmp((string) $a['custody']->custody_no, (string) $b['custody']->custody_no),
+            ])
+            ->values();
+
+        return [
+            'completed' => $matching->count(),
+            'late' => $matching->where('state', ReturnMetricsService::RETURNED_LATE)->count(),
+            'rows' => $sorted->take($limit)->values(),
+        ];
+    }
+
         /**
      * Completed physical returns per bucket, split into on-time and late.
      *
@@ -2023,6 +2489,216 @@ class AnalyticsService
     }
 
     /**
+     * Whole operational days a custody is past its effective due date.
+     *
+     * The effective due date is custody_transactions.due_at - the same date
+     * LateReturnService::expectedReturn() enforces and currentlyOverdueQuery()
+     * tests. Counted in calendar days from the due date's day to today's
+     * day, never negative, and null only for a custody with no due date at
+     * all. This is the one arithmetic behind every "days overdue" figure.
+     */
+    public function daysOverdue(CustodyTransaction $custody): ?int
+    {
+        if (! $custody->due_at) {
+            return null;
+        }
+
+        return max(0, (int) $custody->due_at->copy()->startOfDay()->diffInDays(now()->startOfDay()));
+    }
+
+    /**
+     * The aging bands for the current overdue backlog, in display order.
+     *
+     * No other part of the application defines overdue-age bands, so these
+     * are declared once here. They are exact and exclusive: a custody with
+     * 7 days is in the first band, with 8 in the second, with 31 in the
+     * third. The bounds are inclusive; `max` null means open-ended.
+     */
+    public const OVERDUE_AGING_BANDS = [
+        ['key' => '1-7', 'label' => '1–7 days', 'min' => 1, 'max' => 7],
+        ['key' => '8-30', 'label' => '8–30 days', 'min' => 8, 'max' => 30],
+        ['key' => '31-plus', 'label' => '31+ days', 'min' => 31, 'max' => null],
+    ];
+
+    /**
+     * The band a days-overdue figure falls in.
+     *
+     * The overdue population is defined by status or due date, not by this
+     * arithmetic, so a custody the workflow has flagged OVERDUE but which is
+     * not yet a full day past due (or has no due date) is banded as
+     * 'unbanded' rather than forced into 1–7. That keeps every band exact and
+     * still lets the bands sum to the Currently Overdue count.
+     */
+    public function overdueAgingBand(?int $days): string
+    {
+        if ($days === null || $days < 1) {
+            return 'unbanded';
+        }
+
+        foreach (self::OVERDUE_AGING_BANDS as $band) {
+            if ($days >= $band['min'] && ($band['max'] === null || $days <= $band['max'])) {
+                return $band['key'];
+            }
+        }
+
+        return 'unbanded';
+    }
+
+    /**
+     * The current overdue backlog grouped by how long it has been overdue.
+     *
+     * Current state only: the population is currentlyOverdueQuery() - the
+     * very query behind the Currently Overdue KPI - under the same division,
+     * unit and borrower scope and with no reporting-period condition, so the
+     * groups always sum to that KPI. One custody transaction is one
+     * observation. A custody that has physically come back, however late,
+     * is not in this query and so never appears here.
+     *
+     * @return array<string, mixed>
+     */
+    public function overdueAging(?string $division, ?string $unit, ?int $borrower = null): array
+    {
+        /* Only the columns the banding needs; the backlog is read once. */
+        $rows = $this->currentlyOverdueQuery($division, $unit, $borrower)
+            ->get(['id', 'due_at', 'status']);
+
+        $counts = array_fill_keys(array_column(self::OVERDUE_AGING_BANDS, 'key'), 0) + ['unbanded' => 0];
+
+        foreach ($rows as $custody) {
+            $counts[$this->overdueAgingBand($this->daysOverdue($custody))]++;
+        }
+
+        $total = $rows->count();
+        /* The guard reconciles the total but is not a drawn band. */
+        $highest = max(array_map(static fn (array $band): int => $counts[$band['key']], self::OVERDUE_AGING_BANDS));
+
+        $groups = [];
+
+        foreach (self::OVERDUE_AGING_BANDS as $band) {
+            $count = $counts[$band['key']];
+
+            $groups[] = [
+                'key' => $band['key'],
+                'label' => $band['label'],
+                'min' => $band['min'],
+                'max' => $band['max'],
+                'count' => $count,
+                /* Share of the currently overdue backlog; none when there is no backlog. */
+                'share' => $total > 0 ? round($count / $total * 100, 1) : null,
+                /* Display geometry only: width against the largest band. */
+                'width' => $highest > 0 ? (int) round($count / $highest * 100) : 0,
+            ];
+        }
+
+        $ranked = collect($groups)->filter(fn (array $g): bool => $g['count'] > 0)->sortByDesc('count')->values();
+        $leader = $ranked->first();
+        $tied = $leader !== null && $ranked->get(1) !== null && $ranked->get(1)['count'] === $leader['count'];
+        $longest = $counts['31-plus'];
+
+        return [
+            'total' => $total,
+            'available' => $total > 0,
+            'groups' => $groups,
+            'unbanded' => $counts['unbanded'],
+            'leader' => $leader,
+            'insight' => match (true) {
+                $total === 0 => null,
+                $longest > 0 => $longest.' current overdue '.($longest === 1 ? 'borrowing has' : 'borrowings have')
+                    .' been overdue for more than 30 days.',
+                $leader !== null && ! $tied => 'Most currently overdue borrowings are within '.$leader['label'].' past due.',
+                default => null,
+            },
+        ];
+    }
+
+    /**
+     * The custody physically out right now, soonest due first, for a detail
+     * listing - the Currently Out KPI's own population.
+     *
+     * @return array{total:int,rows:Collection<int, CustodyTransaction>}
+     */
+    public function currentlyOutRecords(
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null,
+        int $limit = 25
+    ): array {
+        return [
+            'total' => $this->currentlyOutQuery($division, $unit, $borrower)->count(),
+            'rows' => $this->currentlyOutQuery($division, $unit, $borrower)
+                ->with(['borrower', 'request', 'lines'])
+                ->orderBy('due_at')
+                ->orderBy('custody_no')
+                ->limit($limit)
+                ->get(),
+        ];
+    }
+
+    /**
+     * The custody physically out past its due date right now, oldest due
+     * first, for a detail listing - the Currently Overdue KPI's own population.
+     *
+     * @return array{total:int,rows:Collection<int, CustodyTransaction>}
+     */
+    public function currentlyOverdueRecords(
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null,
+        int $limit = 25
+    ): array {
+        return [
+            'total' => $this->currentlyOverdueQuery($division, $unit, $borrower)->count(),
+            'rows' => $this->currentlyOverdueQuery($division, $unit, $borrower)
+                ->with(['borrower', 'request'])
+                ->orderBy('due_at')
+                ->orderBy('custody_no')
+                ->limit($limit)
+                ->get(),
+        ];
+    }
+
+    /**
+     * The currently overdue custodies in one aging band (or all of them),
+     * longest overdue first, for a detail listing.
+     *
+     * The same currentlyOverdueQuery() population as the KPI and the aging
+     * groups; the band is applied with the same daysOverdue() arithmetic, so
+     * a listing can never show a custody its band did not count. Ties on age
+     * fall back to custody number so the order is stable.
+     *
+     * @return array{total:int,count:int,rows:Collection<int, CustodyTransaction>}
+     */
+    public function overdueAgingRecords(
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null,
+        ?string $band = null,
+        int $limit = 25
+    ): array {
+        $all = $this->currentlyOverdueQuery($division, $unit, $borrower)
+            ->with(['borrower', 'request', 'requestVersion'])
+            ->get();
+
+        $matching = $all
+            ->filter(fn (CustodyTransaction $custody): bool =>
+                $band === null || $this->overdueAgingBand($this->daysOverdue($custody)) === $band
+            )
+            ->sortBy([
+                fn (CustodyTransaction $a, CustodyTransaction $b): int =>
+                    ($this->daysOverdue($b) ?? -1) <=> ($this->daysOverdue($a) ?? -1),
+                fn (CustodyTransaction $a, CustodyTransaction $b): int =>
+                    strcmp((string) $a->custody_no, (string) $b->custody_no),
+            ])
+            ->values();
+
+        return [
+            'total' => $all->count(),
+            'count' => $matching->count(),
+            'rows' => $matching->take($limit)->values(),
+        ];
+    }
+
+    /**
      * The borrowings that are out past their due date right now.
      *
      * Present tense on purpose, and filtered by borrower exactly as the other
@@ -2047,9 +2723,7 @@ class AnalyticsService
             'shown' => $rows->count(),
             'cases' => $rows->map(function ($custody): array {
                 /* Whole calendar days after the due date, never negative. */
-                $days = $custody->due_at
-                    ? max(0, (int) $custody->due_at->startOfDay()->diffInDays(now()->startOfDay()))
-                    : null;
+                $days = $this->daysOverdue($custody);
 
                 return [
                     'custody_id' => $custody->id,
