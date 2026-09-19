@@ -561,16 +561,12 @@ class RoleBasedSignatureTest extends TestCase
     }
 
     /**
-     * When a return mixes Fine/Good and adverse quantities across different
-     * items, only the structured adverse item/quantity finding may appear in
-     * the printed remarks -- the Fine/Good item must be omitted entirely
-     * (even though its quantity is still persisted), and the generic
-     * ReturnTransaction.remarks free text must NEVER be rendered, even
-     * though an adverse finding exists and that field is genuinely filled
-     * in and persisted. Return Type and both Action Officer E-signatures
-     * remain absent.
+     * The approved Borrower Slip is the single travelling physical copy.
+     * Return conditions remain fully persisted in the system, but the PDF
+     * generated before pickup must keep the supply-staff return fields blank
+     * so SPMU can complete Date Returned / Remarks by hand on that same sheet.
      */
-    public function test_borrower_slip_remarks_show_only_the_adverse_item_and_omit_the_fine_item(): void
+    public function test_borrower_slip_keeps_return_remarks_blank_while_findings_remain_in_the_system(): void
     {
         $this->travelTo(
             app(OperationalCalendarService::class)
@@ -719,7 +715,7 @@ class RoleBasedSignatureTest extends TestCase
             'returns.receivedBy',
         ]));
 
-        $this->assertStringContainsString('Microphones — 1 damaged', $html);
+        $this->assertStringNotContainsString('1 damaged', $html);
 
         foreach ([
             'Round Table —',
@@ -747,6 +743,11 @@ class RoleBasedSignatureTest extends TestCase
         $this->assertDatabaseHas('return_lines', [
             'custody_line_id' => $lines['Round Table']->id,
             'condition_code' => 'FINE',
+            'quantity_received' => 1,
+        ]);
+        $this->assertDatabaseHas('return_lines', [
+            'custody_line_id' => $lines['Microphones']->id,
+            'condition_code' => 'DAMAGED',
             'quantity_received' => 1,
         ]);
         $this->assertDatabaseHas('return_transactions', [
@@ -804,15 +805,12 @@ class RoleBasedSignatureTest extends TestCase
     }
 
     /**
-     * release() regenerates the Borrower Slip (CustodyService.php ~line
-     * 1206) so the controlled copy reflects the issued transaction state.
-     * DocumentService::supersede() must mark the pre-release copy SUPERSEDED
-     * rather than deleting or mutating it, and exactly one FINAL copy must
-     * exist afterward -- proving release never produces a duplicate active
-     * Borrower Slip, and that superseding a document leaves its historical
-     * content untouched.
+     * Physical release must keep the Borrower Slip generated at final
+     * approval as the one official travelling paper copy. Confirm Release
+     * records the officer/timestamp in the system but must not supersede or
+     * regenerate the PDF, otherwise the borrower would need a second print.
      */
-    public function test_release_regenerates_the_borrower_slip_without_leaving_a_duplicate_final_copy(): void
+    public function test_release_preserves_the_original_approved_borrower_slip_without_regenerating_it(): void
     {
         $this->travelTo(
             app(OperationalCalendarService::class)
@@ -830,25 +828,24 @@ class RoleBasedSignatureTest extends TestCase
 
         app(CustodyService::class)->release($custody, $officer, 'Physical handover completed.');
 
-        $finalCopies = GeneratedDocument::query()
+        $copies = GeneratedDocument::query()
             ->where('subject_type', CustodyTransaction::class)
             ->where('subject_id', $custody->id)
             ->where('document_type', 'BORROWER_SLIP')
-            ->where('status', 'FINAL')
             ->get();
 
-        $this->assertCount(1, $finalCopies, 'Exactly one FINAL Borrower Slip must exist after release, never a duplicate.');
-        $this->assertNotSame($preRelease->id, $finalCopies->first()->id);
+        $this->assertCount(1, $copies, 'Confirm Release must not create a second Borrower Slip.');
+        $this->assertSame($preRelease->id, $copies->first()->id);
 
-        $superseded = $preRelease->fresh();
-        $this->assertSame('SUPERSEDED', $superseded->status);
-        $this->assertNotNull($superseded->invalidated_at);
+        $sameSlip = $preRelease->fresh();
+        $this->assertSame('FINAL', $sameSlip->status);
+        $this->assertNull($sameSlip->invalidated_at);
         $this->assertSame(
             $preReleaseSha256,
-            $superseded->sha256,
-            'Superseding the pre-release copy must not delete or mutate its stored historical file.'
+            $sameSlip->sha256,
+            'The approved printed Borrower Slip must remain the exact same stored file after release.'
         );
-        $this->assertDatabaseHas('stored_files', ['id' => $superseded->stored_file_id]);
+        $this->assertDatabaseHas('stored_files', ['id' => $sameSlip->stored_file_id]);
     }
 
     /** The Gate Pass renders the earlier Action Officer verification signature. */

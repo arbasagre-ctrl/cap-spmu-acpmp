@@ -6,12 +6,10 @@ use App\Enums\AccessClassification;
 use App\Models\DocumentTemplate;
 use App\Models\User;
 use App\Services\DocumentTemplateLayoutService;
-use App\Services\DocumentTemplateRenderer;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use Mockery;
 use Tests\TestCase;
 use ZipArchive;
 
@@ -65,39 +63,6 @@ class DynamicOfficeTemplateRuntimeTest extends TestCase
         $this->assertSame('landscape', $schema['document_structure']['worksheets'][0]['page_setup']['orientation']);
         $this->assertSame('Billing!$A$1:$C$20', $schema['document_structure']['worksheets'][0]['print_area']);
         $this->assertSame('PENDING_RUNTIME_CLASSIFICATION', $schema['regions']['data'][0]['classification']);
-    }
-
-    public function test_office_draft_upload_stores_schema_without_changing_the_existing_active_template(): void
-    {
-        $current = DocumentTemplate::query()
-            ->where('document_type', 'BORROWER_SLIP')
-            ->where('status', 'ACTIVE')
-            ->firstOrFail();
-        $renderer = Mockery::mock(DocumentTemplateRenderer::class);
-        $renderer->shouldReceive('renderRepresentation')
-            ->once()
-            ->andReturn(['bytes' => "%PDF-1.4\nphase-one\n", 'representation' => 'NORMALIZED_PDF']);
-        $this->app->instance(DocumentTemplateRenderer::class, $renderer);
-
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($this->head)
-            ->post(route('administration.document-templates.draft.store', 'borrower-slip'), [
-                'version_label' => 'v1.1',
-                'reason' => 'Phase 1 Office schema foundation test.',
-                'template_file' => UploadedFile::fake()->createWithContent('borrower-slip-v4.docx', $this->docxBytes()),
-            ])
-            ->assertRedirect();
-
-        $draft = DocumentTemplate::query()
-            ->where('document_type', 'BORROWER_SLIP')
-            ->where('version_label', 'v1.1')
-            ->firstOrFail();
-
-        $this->assertSame('NEEDS_PREPARATION', $draft->status);
-        $this->assertIsArray($draft->dynamic_schema);
-        $this->assertSame('DOCX', $draft->dynamic_schema['source']['format']);
-        $this->assertSame($draft->stored_file_id, $draft->dynamic_schema['source']['stored_file_id']);
-        $this->assertSame('ACTIVE', $current->fresh()->status);
     }
 
     public function test_office_archive_with_excessive_entry_count_is_rejected_before_schema_reading(): void

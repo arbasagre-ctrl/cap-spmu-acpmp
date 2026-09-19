@@ -25,50 +25,36 @@
         || $deliveryFailed($scheduleDeliveries->get('EMAIL'));
 @endphp
 
-<div id="pickup-schedule">
+<div id="pickup-schedule" class="release-schedule-details">
     @if(!$pickupWasScheduled)
-        <div class="release-schedule-suggestion">
-            <div>
-                <strong>System Pickup &amp; Issuance Schedule</strong>
-                <span>
-                    @if($custody->scheduled_release_at && $custody->pickup_expires_at)
-                        {{ $custody->scheduled_release_at->format('F j, Y') }} ·
-                        {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}
-                    @else
-                        Schedule requires SPMU follow-up
-                    @endif
-                </span>
-                <small>Automatically generated from the SPMU Operational Calendar. No Action Officer confirmation is required.</small>
-            </div>
+        <div class="release-schedule-detail-row">
+            <span class="release-schedule-detail-label">Schedule status</span>
+            <span class="release-schedule-detail-value">
+                {{ $custody->scheduled_release_at && $custody->pickup_expires_at
+                    ? 'Waiting for automatic schedule activation'
+                    : 'SPMU follow-up required' }}
+            </span>
         </div>
     @elseif(!$pickupMissed)
-        <div class="release-schedule-suggestion">
-            <div>
-                <strong>Pickup &amp; Issuance Schedule</strong>
-                <span>
-                    {{ $custody->scheduled_release_at?->format('F j, Y') }} ·
-                    {{ $custody->scheduled_release_at?->format('g:i A') }} – {{ $custody->pickup_expires_at?->format('g:i A') }}
-                </span>
-                <small>Scheduled automatically from the SPMU Operational Calendar.</small>
-            </div>
+        <div class="release-schedule-detail-row">
+            <span class="release-schedule-detail-label">Borrower notification</span>
+            <span class="release-schedule-detail-value">
+                @if($pickupScheduleNotification)
+                    {{ $scheduleNotificationFailed ? 'Needs attention' : 'Sent' }}
+                @else
+                    Pending
+                @endif
+            </span>
         </div>
 
-        @if($pickupScheduleNotification)
-            @if($scheduleNotificationFailed)
-            <div class="notice warning compact">
-                <strong>Borrower notification needs attention</strong>
-                <p>The automatic pickup schedule is active, but at least one notification channel failed. Check the notification history before release.</p>
-            </div>
-        @else
-            <div class="notice success compact">
-                <strong>✓ Borrower notified</strong>
-            </div>
-            @endif
-        @else
-            <div class="notice warning compact">
-                <strong>Borrower notification pending</strong>
-                <p>The automatic schedule is active, but no pickup notification record is available yet.</p>
-            </div>
+        @if($pickupScheduleNotification && $scheduleNotificationFailed)
+            <p class="release-schedule-detail-help">
+                At least one notification channel failed. Check Notification History before physical release.
+            </p>
+        @elseif(!$pickupScheduleNotification)
+            <p class="release-schedule-detail-help">
+                The pickup schedule is active, but no pickup notification record is available yet.
+            </p>
         @endif
     @endif
 </div>
@@ -83,7 +69,7 @@
         );
     @endphp
 
-    <div class="notice warning compact release-pickup-exception-actions">
+    <div class="release-schedule-exception release-pickup-exception-actions">
         <div>
             <strong>{{ $pickupRescheduleRequested ? 'Reschedule requested' : 'Pickup missed' }}</strong>
 
@@ -94,7 +80,7 @@
             @endif
 
             @if($missedNotificationFailed)
-                <p class="meta">Notification needs attention.</p>
+                <p class="meta">Borrower notification needs attention.</p>
             @elseif($missedNotificationSent)
                 <p class="meta">Borrower notified.</p>
             @endif
@@ -118,10 +104,10 @@
         </div>
     </div>
 @elseif($scheduleException)
-    <div class="notice warning compact release-pickup-exception-actions">
+    <div class="release-schedule-exception release-pickup-exception-actions">
         <strong>Pickup schedule needs SPMU follow-up</strong>
         <p>
-            The system could not keep a usable pickup window from the SPMU Operational Calendar. This is an SPMU schedule exception, not a borrower missed pickup. Use the same approved request and move it to the next valid SPMU operating window when permitted.
+            The system could not keep a usable pickup window from the SPMU Operational Calendar. This is an SPMU schedule exception, not a borrower missed pickup.
         </p>
         @if($pickupRescheduleAvailable)
             <form method="post" action="{{ route('custody.reschedule-pickup', $custody) }}">
@@ -133,12 +119,9 @@
                 </div>
             </form>
         @else
-            <div class="notice warning compact">
+            <div class="release-schedule-exception-note">
                 <strong>No valid pickup window remains inside the approved period.</strong>
-                <p>
-                    A new pickup cannot be scheduled on or after the Expected Return Date.
-                    Cancel the unreleased request or revise the borrowing dates for approval.
-                </p>
+                <p>A new pickup cannot be scheduled on or after the Expected Return Date. Cancel the unreleased request or revise the borrowing dates for approval.</p>
             </div>
         @endif
     </div>

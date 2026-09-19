@@ -43,10 +43,10 @@
                     </summary>
                     <div class="gate-pass-more-links">
                         @if($hasFinalDocument)
-                            <a href="{{ route('documents.download', $gatePass->passDocument) }}" target="_blank" rel="noopener">Open Final Gate Pass</a>
+                            <a href="{{ route('documents.preview', $gatePass->passDocument) }}">Preview</a>
                         @endif
                         @if($gatePass->accomplishedFile)
-                            <a href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">Open Accomplished Scan</a>
+                            <a href="{{ route('files.preview', $gatePass->accomplishedFile, false) }}">Preview</a>
                         @endif
                     </div>
                 </details>

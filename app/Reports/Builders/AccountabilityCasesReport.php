@@ -106,7 +106,7 @@ class AccountabilityCasesReport implements ReportBuilder
                 affectedQuantity: $lines->isNotEmpty() ? (string) $lines->sum('quantity') : '',
                 offenseSanction: $this->offenseSanction($violation),
                 restrictionStatus: $restriction ? $this->titleCase((string) $restriction->status) : '',
-                finalOutcome: $this->titleCase((string) $incident->status),
+                finalOutcome: $this->propertyOutcomeLabel((string) $incident->status),
                 dateReported: $incident->reported_at,
                 findingCode: (string) $incident->incident_type,
                 statusCode: (string) $incident->status,
@@ -265,10 +265,29 @@ class AccountabilityCasesReport implements ReportBuilder
     {
         return match ($status) {
             'OVERDUE' => 'Overdue',
-            'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction',
+            'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction (Legacy)',
             'FOR_HEAD_APPROVAL' => 'For Head/Admin Decision',
             'BILLED' => 'Awaiting Payment',
             'RESOLVED' => 'Resolved',
+            default => $this->titleCase($status),
+        };
+    }
+
+    private function propertyOutcomeLabel(string $status): string
+    {
+        return match ($status) {
+            'OPEN' => 'Open',
+            'COMPLIANCE_REQUIRED' => 'Compliance Required',
+            'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
+            'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
+            'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
+            'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
+            'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
+            'RESOLVED' => 'Resolved',
+            'CLOSED' => 'Closed',
+            'VOID_CORRECTION' => 'Void Correction',
+            'FOR_BILLING' => 'Billing Statement Pending (Legacy)',
+            'BILLING_PENDING' => 'Billing Pending (Legacy)',
             default => $this->titleCase($status),
         };
     }

@@ -987,7 +987,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->accountability($officer)
             ->assertOk()
             ->assertSee('Approved - Awaiting Payment')
-            ->assertSee('The Late Return Notice and Billing Statement have been issued.');
+            ->assertSee('The Late Return Notice and Late Return Billing Statement have been issued.');
     }
 
     public function test_linen_awaiting_its_laundry_receipt_shows_the_attestation_field(): void
@@ -1089,9 +1089,11 @@ class LateReturnAccountabilityTest extends TestCase
             ->get(route('accountability.index'));
 
         $response->assertOk()
-            /* Gone from the open billing queue. */
-            ->assertDontSee($billing->billing_no)
-            /* And from the active late-return queue. */
+            /*
+             * Gone from the active late-return queue - Resolved History is
+             * now always on the same page (no more tab to hide behind), so
+             * the billing reference legitimately still appears there.
+             */
             ->assertDontSee('Late Return - Returned for Correction')
             ->assertDontSee('For Head Review')
             ->assertDontSee('Approved - Awaiting Payment');

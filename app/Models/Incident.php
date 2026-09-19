@@ -9,11 +9,16 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Incident extends Model
 {
-    protected $fillable = ['incident_no', 'custody_transaction_id', 'borrower_user_id', 'reported_by_user_id', 'head_decision_signature_snapshot_id', 'head_decided_by_user_id', 'head_decided_at', 'supporting_evidence_file_id', 'incident_type', 'reported_at', 'police_blotter_reference', 'appraisal_amount', 'rslddp_reference', 'status', 'remarks'];
+    protected $fillable = ['incident_no', 'custody_transaction_id', 'borrower_user_id', 'reported_by_user_id', 'head_decision_signature_snapshot_id', 'head_decided_by_user_id', 'head_decided_at', 'supporting_evidence_file_id', 'incident_type', 'reported_at', 'police_blotter_reference', 'appraisal_amount', 'rslddp_reference', 'requires_rslddp', 'compliance_action', 'rslddp_evidence_submission_id', 'status', 'remarks'];
 
     protected function casts(): array
     {
-        return ['reported_at' => 'datetime', 'head_decided_at' => 'datetime', 'appraisal_amount' => 'decimal:2'];
+        return [
+            'reported_at' => 'datetime',
+            'head_decided_at' => 'datetime',
+            'appraisal_amount' => 'decimal:2',
+            'requires_rslddp' => 'boolean',
+        ];
     }
 
     public function borrower(): BelongsTo
@@ -58,5 +63,15 @@ class Incident extends Model
     public function documents(): MorphMany
     {
         return $this->morphMany(GeneratedDocument::class, 'subject');
+    }
+
+    /**
+     * The accomplished/notarized RSLDDP scan the borrower returns after
+     * external signing. Notarization itself never happens in-system; this
+     * only tracks the uploaded evidence of it.
+     */
+    public function rslddpEvidence(): BelongsTo
+    {
+        return $this->belongsTo(EvidenceSubmission::class, 'rslddp_evidence_submission_id');
     }
 }

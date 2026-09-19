@@ -11,6 +11,7 @@
         const staticEmptyRow = browser.querySelector('[data-spmu-static-empty-row]');
         const search = document.getElementById('spmu-inventory-search');
         const category = document.getElementById('spmu-inventory-category');
+        const status = document.getElementById('spmu-inventory-status');
         const noResults = document.getElementById('spmu-inventory-no-results');
         const footer = document.getElementById('spmu-inventory-footer');
         const pagination = document.getElementById('spmu-inventory-pagination');
@@ -28,12 +29,15 @@
         const matchingRows = () => {
             const query = (search?.value || '').trim().toLowerCase();
             const selected = (category?.value || '').trim().toLowerCase();
+            const selectedStatus = (status?.value || 'active').trim().toLowerCase();
 
             return rows.filter((row) => {
                 const matchesSearch = !query || (row.dataset.search || '').includes(query);
                 const matchesCategory = !selected || (row.dataset.category || '') === selected;
+                const matchesStatus = selectedStatus === 'all'
+                    || (row.dataset.status || 'active') === selectedStatus;
 
-                return matchesSearch && matchesCategory;
+                return matchesSearch && matchesCategory && matchesStatus;
             });
         };
 
@@ -174,6 +178,11 @@
         });
 
         category?.addEventListener('change', () => {
+            currentPage = 1;
+            render();
+        });
+
+        status?.addEventListener('change', () => {
             currentPage = 1;
             render();
         });

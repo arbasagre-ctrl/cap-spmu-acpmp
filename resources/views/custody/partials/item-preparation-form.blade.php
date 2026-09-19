@@ -1,53 +1,55 @@
-<form
-    method="post"
-    action="{{ route('custody.prepare', $custody) }}"
-    class="form-grid release-preparation-form"
-    data-item-preparation-form
->
-    @csrf
-    @if(!$preparationComplete)
-        <p>
-            Prepare the approved items for the scheduled pickup, then enter the actual quantity prepared for each item.
-            The system compares each entry with the approved quantity. Enter these quantities once; all items must match
-            before preparation can be confirmed.
-        </p>
+@php
+    $preparationIssueRecords = collect($preparationIssues ?? []);
+    $openPreparationIssues = $preparationIssueRecords
+        ->where('is_resolved', false)
+        ->values();
+    $reportPreparationPanelOpen = $errors->hasAny([
+        'custody_line_id',
+        'issue_type',
+        'observed_usable_quantity',
+        'condition_observed',
+        'details',
+        'preparation_issue',
+    ]);
+@endphp
 
+<div class="release-preparation-form" data-item-preparation-form>
+    @if(!$preparationComplete)
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
                         <th>Item</th>
-                        <th>Approved Qty</th>
-                        <th>Actual Prepared</th>
-                        <th>Result</th>
+                        <th>Qty to Prepare</th>
+                        <th>Preparation Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($custody->lines as $line)
+                        @php
+                            $openLineIssue = $openPreparationIssues->firstWhere('custody_line_id', $line->id);
+                            $latestLineIssue = $preparationIssueRecords->firstWhere('custody_line_id', $line->id);
+                            $lineStatus = $openLineIssue
+                                ? 'Inventory Review Required'
+                                : ($latestLineIssue && $latestLineIssue['is_resolved']
+                                    ? 'Pending Recheck'
+                                    : 'Pending Preparation');
+                            $lineTone = $openLineIssue
+                                ? 'is-issue'
+                                : ($latestLineIssue && $latestLineIssue['is_resolved']
+                                    ? 'is-recheck'
+                                    : 'is-pending');
+                        @endphp
                         <tr>
                             <td>
                                 <strong>{{ $line->requestItem->description_snapshot }}</strong>
                                 <small>{{ $line->requestItem->unit_snapshot }}</small>
                             </td>
-                            <td data-approved-display>{{ $line->approved_quantity + 0 }}</td>
+                            <td>{{ $line->approved_quantity + 0 }}</td>
                             <td>
-                                <input
-                                    type="text"
-                                    inputmode="numeric"
-                                    pattern="[0-9]*"
-                                    autocomplete="off"
-                                    class="actual-prepared-quantity"
-                                    name="quantities[{{ $line->id }}]"
-                                    value="{{ old('quantities.'.$line->id) }}"
-                                    placeholder="Enter actual count"
-                                    data-prepared-quantity
-                                    data-approved="{{ (float) $line->approved_quantity }}"
-                                    aria-label="Actual prepared quantity for {{ $line->requestItem->description_snapshot }}"
-                                    required
-                                >
-                            </td>
-                            <td>
-                                <strong data-preparation-result class="is-unchecked">Not Checked</strong>
+                                <span class="release-preparation-status {{ $lineTone }}">
+                                    {{ $lineStatus }}
+                                </span>
                             </td>
                         </tr>
                     @endforeach
@@ -55,113 +57,151 @@
             </table>
         </div>
 
-        <div class="callout info preparation-match-message" data-preparation-message role="status">
-            Enter the actual prepared quantity for every item. Confirmation stays disabled until all entries match.
-        </div>
+        @if($preparationIssueRecords->isNotEmpty())
+            <div class="release-preparation-issue-list" aria-label="Inventory discrepancy history">
+                @foreach($preparationIssueRecords as $issue)
+                    <div class="release-preparation-issue-row {{ $issue['is_resolved'] ? 'is-resolved' : 'is-open' }}">
+                        <div>
+                            <strong>{{ $issue['item_name'] }}</strong>
+                            <span>{{ $issue['issue_label'] }}</span>
+                            @if($issue['observed_usable_quantity'] !== null)
+                                <small>
+                                    Physically ready: {{ $issue['observed_usable_quantity'] + 0 }}
+                                    of {{ $issue['approved_quantity'] + 0 }} {{ $issue['unit'] }}
+                                </small>
+                            @endif
+                            @if(!empty($issue['condition_observed']))
+                                <small>{{ $issue['condition_observed'] }}</small>
+                            @endif
+                            @if(!empty($issue['details']))
+                                <small>{{ $issue['details'] }}</small>
+                            @endif
+                        </div>
+                        <span class="release-preparation-status {{ $issue['is_resolved'] ? 'is-resolved' : 'is-issue' }}">
+                            {{ $issue['is_resolved'] ? 'Inventory Reviewed — Recheck Item' : 'Inventory Review Required' }}
+                        </span>
+                    </div>
+                @endforeach
+            </div>
+        @endif
 
-        <div class="release-form-actions">
-            <button class="button primary ui-pressable release-primary" data-confirm-preparation disabled>
-                Confirm Preparation
-            </button>
+        <div class="release-preparation-actions">
+            <div class="release-preparation-action-row">
+                <button
+                    class="button release-outline ui-pressable release-preparation-report-toggle"
+                    type="button"
+                    data-release-panel-toggle
+                    aria-controls="release-preparation-report-panel"
+                    aria-expanded="{{ $reportPreparationPanelOpen ? 'true' : 'false' }}"
+                    aria-label="Show or hide inventory discrepancy report"
+                >
+                    <span>Report Inventory Discrepancy</span>
+                    <x-icon name="chevron-down" size="16" />
+                </button>
+
+                <form method="post" action="{{ route('custody.prepare', $custody) }}">
+                    @csrf
+                    <button
+                        class="button primary ui-pressable release-primary"
+                        type="submit"
+                        @disabled($openPreparationIssues->isNotEmpty())
+                    >
+                        Confirm Items Prepared
+                    </button>
+                </form>
+            </div>
+
+            <div
+                class="release-preparation-report-panel"
+                id="release-preparation-report-panel"
+                @if(!$reportPreparationPanelOpen) hidden @endif
+            >
+                <form
+                    method="post"
+                    action="{{ route('custody.report-preparation-issue', $custody) }}"
+                    class="form-grid release-preparation-report-form"
+                >
+                    @csrf
+
+                    <label>
+                        Affected item
+                        <select name="custody_line_id" required>
+                            <option value="">Select item</option>
+                            @foreach($custody->lines as $line)
+                                <option value="{{ $line->id }}" @selected((string) old('custody_line_id') === (string) $line->id)>
+                                    {{ $line->requestItem->description_snapshot }} — {{ $line->approved_quantity + 0 }} {{ $line->requestItem->unit_snapshot }}
+                                </option>
+                            @endforeach
+                        </select>
+                        @error('custody_line_id')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <label>
+                        Discrepancy
+                        <select name="issue_type" required data-preparation-issue-type>
+                            <option value="">Select issue</option>
+                            <option value="ITEM_NOT_READY" @selected(old('issue_type') === 'ITEM_NOT_READY')>Item not found / not ready</option>
+                            <option value="QUANTITY_AVAILABILITY" @selected(old('issue_type') === 'QUANTITY_AVAILABILITY')>Physical quantity is short</option>
+                            <option value="PHYSICAL_CONDITION" @selected(old('issue_type') === 'PHYSICAL_CONDITION')>Physical condition issue</option>
+                            <option value="OTHER" @selected(old('issue_type') === 'OTHER')>Other inventory discrepancy</option>
+                        </select>
+                        @error('issue_type')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <label data-preparation-quantity-field hidden>
+                        Physically ready quantity
+                        <input
+                            type="number"
+                            name="observed_usable_quantity"
+                            min="0"
+                            step="0.001"
+                            value="{{ old('observed_usable_quantity') }}"
+                            placeholder="Enter quantity"
+                            disabled
+                        >
+                        @error('observed_usable_quantity')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <label data-preparation-condition-field hidden>
+                        Condition observed
+                        <input
+                            type="text"
+                            name="condition_observed"
+                            maxlength="500"
+                            value="{{ old('condition_observed') }}"
+                            placeholder="Describe the physical condition"
+                            disabled
+                        >
+                        @error('condition_observed')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <label data-preparation-details-field hidden>
+                        <span data-preparation-details-label>Remarks (Optional)</span>
+                        <textarea
+                            name="details"
+                            maxlength="1000"
+                            placeholder="Add a short note only if needed."
+                            disabled
+                            data-preparation-details-input
+                        >{{ old('details') }}</textarea>
+                        @error('details')<small class="field-error">{{ $message }}</small>@enderror
+                        @error('preparation_issue')<small class="field-error">{{ $message }}</small>@enderror
+                    </label>
+
+                    <div class="release-form-actions">
+                        <button class="button primary ui-pressable release-primary" type="submit">
+                            Submit Discrepancy Report
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     @else
         <div class="empty-state compact">
-            <strong>Preparation confirmed.</strong>
+            <strong>Items prepared.</strong>
             <span>
-                The actual prepared quantities were confirmed once against the approved quantities.
-                No quantity re-entry is required for the scheduled release.
+                Physical readiness was confirmed for every approved item. No quantity re-entry is required.
             </span>
         </div>
     @endif
-</form>
-
-<script>
-(() => {
-    const form = document.querySelector('[data-item-preparation-form]');
-    if (!form || form.dataset.preparationInitialized === '1') return;
-    form.dataset.preparationInitialized = '1';
-
-    const inputs = [...form.querySelectorAll('[data-prepared-quantity]')];
-    const confirmButton = form.querySelector('[data-confirm-preparation]');
-    const message = form.querySelector('[data-preparation-message]');
-
-    if (inputs.length === 0 || !confirmButton) return;
-
-    const epsilon = 0.0005;
-
-    const normalizeQuantity = (input) => {
-        const digitsOnly = input.value.replace(/[^0-9]/g, '');
-        if (input.value !== digitsOnly) input.value = digitsOnly;
-    };
-
-    const refreshPreparation = () => {
-        let allEntered = true;
-        let allMatched = true;
-
-        inputs.forEach((input) => {
-            const row = input.closest('tr');
-            const result = row?.querySelector('[data-preparation-result]');
-            if (!result) return;
-
-            const rawValue = input.value.trim();
-            result.classList.remove('is-unchecked', 'is-match', 'is-mismatch');
-
-            if (rawValue === '') {
-                allEntered = false;
-                allMatched = false;
-                result.textContent = 'Not Checked';
-                result.classList.add('is-unchecked');
-                return;
-            }
-
-            const actual = Number.parseFloat(rawValue);
-            const approved = Number.parseFloat(input.dataset.approved || '0');
-            const matched = Number.isFinite(actual)
-                && Number.isFinite(approved)
-                && Math.abs(actual - approved) <= epsilon;
-
-            if (matched) {
-                result.textContent = '✓ Match';
-                result.classList.add('is-match');
-            } else {
-                result.textContent = 'Mismatch';
-                result.classList.add('is-mismatch');
-                allMatched = false;
-            }
-        });
-
-        const canConfirm = allEntered && allMatched;
-        confirmButton.disabled = !canConfirm;
-
-        if (!message) return;
-        message.classList.remove('info', 'warning', 'success');
-
-        if (canConfirm) {
-            message.classList.add('success');
-            message.textContent = 'All prepared quantities match the approved quantities. You may confirm preparation and continue to the physical documents step.';
-        } else if (!allEntered) {
-            message.classList.add('info');
-            message.textContent = 'Enter the actual prepared quantity for every item. Confirmation stays disabled until all entries are entered and match the approved quantities.';
-        } else {
-            message.classList.add('warning');
-            message.textContent = 'Preparation discrepancy: one or more physical counts do not match the approved quantities. Recheck the physical stock before confirming preparation.';
-        }
-    };
-
-    inputs.forEach((input) => {
-        input.addEventListener('input', () => {
-            normalizeQuantity(input);
-            refreshPreparation();
-        });
-
-        input.addEventListener('paste', () => {
-            window.requestAnimationFrame(() => {
-                normalizeQuantity(input);
-                refreshPreparation();
-            });
-        });
-    });
-
-    refreshPreparation();
-})();
-</script>
+</div>

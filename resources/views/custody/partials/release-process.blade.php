@@ -23,16 +23,28 @@
             && $custody->pickup_expires_at
             && now()->gt($custody->pickup_expires_at));
 
-    $pickupMissed = ! $custody->released_at
+    $releasePreparationIssues = collect($preparationIssues ?? []);
+    $openPreparationIssues = $releasePreparationIssues->where('is_resolved', false)->values();
+    $hasOpenPreparationIssue = $openPreparationIssues->isNotEmpty();
+    $hasPreparationExceptionPendingRelease = $custody->status === 'PREPARING_RELEASE'
+        && ! $custody->released_at
+        && ! $custody->prepared_at
+        && $releasePreparationIssues->isNotEmpty();
+    $pickupHeldForPreparationIssue = $hasPreparationExceptionPendingRelease
+        && $pickupWindowPassed;
+
+    $pickupMissed = ! $pickupHeldForPreparationIssue
+        && ! $custody->released_at
         && (bool) $custody->pickup_scheduled_at
         && ((bool) $custody->pickup_expired_at || $pickupWindowPassed);
 
-    $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed || $pickupMissed;
+    $releaseScheduleAttention = ! $hasPickupSchedule || $pickupWindowPassed || $pickupMissed || $pickupHeldForPreparationIssue;
     $releaseScheduleEditorOpen = $releaseScheduleAttention || $errors->has('pickup');
     $releaseCurrentDocuments = $documents->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']);
     $releaseDocumentsReady = $releaseCurrentDocuments->contains('document_type', 'BORROWER_SLIP')
         && (! $hasOffCampusItem || $releaseCurrentDocuments->contains('document_type', 'GATE_PASS'))
         && (! $hasLaundryItem || $releaseCurrentDocuments->contains('document_type', 'LAUNDRY_FORM'));
+
 @endphp
 
 <x-request-progress-tracker :request="$custody->request" :show-current-status="false" :compact="true" :release-view="true" />
@@ -89,7 +101,9 @@
                         <h3>Pickup &amp; Issuance Schedule</h3>
                         @if($hasSystemPickupWindow)
                             <p class="release-step-schedule"><x-icon name="calendar" size="16" />{{ $custody->scheduled_release_at->format('M j, Y') }} · {{ $custody->scheduled_release_at->format('g:i A') }} – {{ $custody->pickup_expires_at->format('g:i A') }}</p>
-                            @if($pickupMissed)
+                            @if($pickupHeldForPreparationIssue)
+                                <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup could not proceed because an inventory discrepancy is still under SPMU review. This is not a borrower missed pickup.</p>
+                            @elseif($pickupMissed)
                                 <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup window passed. Waiting for borrower action.</p>
                             @elseif($hasPickupSchedule)
                                 <p class="release-step-notified"><x-icon name="approval" size="16" />Scheduled automatically from the SPMU Operational Calendar.</p>
@@ -101,22 +115,44 @@
                         @endif
                     </div>
                     <div class="release-schedule-status">
-                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $pickupMissed ? 'Pickup Missed' : ($pickupWindowPassed ? 'Schedule Passed' : ($hasPickupSchedule ? 'Scheduled' : 'Schedule Exception')) }}</span>
+                        <span class="release-step-badge {{ $releaseScheduleAttention ? 'is-pending' : 'is-complete' }}">{{ $pickupHeldForPreparationIssue ? 'Release On Hold' : ($pickupMissed ? 'Pickup Missed' : ($pickupWindowPassed ? 'Schedule Passed' : ($hasPickupSchedule ? 'Scheduled' : 'Schedule Exception'))) }}</span>
                     </div>
                     <div class="release-step-actions release-schedule-actions">
                         <button class="icon-button release-step-toggle release-schedule-toggle" type="button" data-release-panel-toggle aria-controls="release-schedule-editor" aria-expanded="{{ $releaseScheduleEditorOpen ? 'true' : 'false' }}" aria-label="Toggle pickup schedule details" title="Show or hide pickup schedule details"><x-icon name="chevron-down" size="18" /></button>
                     </div>
                 </div>
                 <div class="release-step-panel" id="release-schedule-editor" @if(!$releaseScheduleEditorOpen) hidden @endif>
-                    @include('custody.partials.pickup-schedule-form')
+                    @if($pickupHeldForPreparationIssue)
+                        <div class="callout warning" role="alert">
+                            <strong>Release is on hold because of an SPMU-side inventory discrepancy.</strong>
+                            <span>The approved pickup schedule will not be changed automatically. Head/Admin must resolve the Step 2 discrepancy or close the unreleased approved request as Unable to Fulfill.</span>
+                        </div>
+                    @else
+                        @include('custody.partials.pickup-schedule-form')
+                    @endif
                 </div>
             </li>
 
             <li class="release-process-step {{ $preparationComplete ? 'is-complete' : ($hasPickupSchedule ? 'is-current' : 'is-pending') }}" id="item-preparation">
                 <span class="release-step-number" aria-hidden="true">2</span>
                 <div class="release-step-heading">
-                    <div class="release-step-copy"><h3>Item Preparation</h3><p>{{ $preparationComplete ? 'Prepared quantities match the approved quantities.' : ($hasPickupSchedule ? 'Confirm the quantities prepared for release.' : 'Save a pickup schedule before confirming preparation.') }}</p></div>
-                    <span class="release-step-badge {{ $preparationComplete ? 'is-complete' : 'is-pending' }}">{{ $preparationComplete ? 'Confirmed' : 'Pending' }}</span>
+                    <div class="release-step-copy">
+                        <h3>Item Preparation</h3>
+                        <p>
+                            @if($preparationComplete)
+                                Physical readiness confirmed for every approved item.
+                            @elseif($hasOpenPreparationIssue)
+                                Inventory review required. Recheck the affected item after Head/Admin completes the review.
+                            @elseif($hasPickupSchedule)
+                                Physically check each approved item before release. Report a discrepancy only when the physical stock does not match Inventory.
+                            @else
+                                A pickup schedule must be available before item preparation can be confirmed.
+                            @endif
+                        </p>
+                    </div>
+                    <span class="release-step-badge {{ $preparationComplete ? 'is-complete' : ($hasOpenPreparationIssue ? 'is-warning' : 'is-pending') }}">
+                        {{ $preparationComplete ? 'Prepared' : ($hasOpenPreparationIssue ? 'Inventory Review Required' : 'Pending') }}
+                    </span>
                     <div class="release-step-actions">
                         @if($hasPickupSchedule)
                             <button class="icon-button release-step-toggle" type="button" data-release-panel-toggle aria-controls="release-preparation-panel" aria-expanded="{{ $preparationComplete ? 'false' : 'true' }}" aria-label="Toggle item preparation details" title="Show or hide item preparation"><x-icon name="chevron-down" size="18" /></button>
@@ -145,9 +181,9 @@
                     <div class="release-step-panel release-documents-panel" id="release-documents-panel">
                         @include('custody.partials.release-documents')
                         @if($hasOffCampusItem)
-                            <p class="release-step-note">For an off-campus barricade, validate the Borrower Slip and approved Gate Pass. The Guard on Duty completes the <strong>Released by</strong>, Date, and Time fields at the campus exit.</p>
+                            <p class="release-step-note">For an off-campus barricade, validate the Borrower Slip and approved Gate Pass. The Guard on Duty completes <strong>Released by</strong>, Date, and Time at the campus exit; the borrower keeps the accomplished Gate Pass for return.</p>
                         @elseif($hasLaundryItem)
-                            <p class="release-step-note">For linen, the borrower proceeds to the Laundry Area with the approved Borrower Slip and Laundry Form. Laundry Personnel issue the linen and wet-sign <strong>Issued by</strong>. Record Physical Release only after the linen has actually been issued.</p>
+                            <p class="release-step-note">For linen, Laundry Personnel completes the <strong>ISSUED BY</strong> section before Physical Release is recorded.</p>
                         @else
                             <p class="release-step-note">Validate the Borrower Slip and approved item before recording the physical handover.</p>
                         @endif
@@ -166,7 +202,7 @@
                     @if($pickupWindowUpcoming)
                         <div class="callout info release-window-notice" id="physical-release-availability">
                             <strong>Physical release is not available yet.</strong>
-                            <p>Physical release can be confirmed from <strong>{{ optional($pickupWindowStartsAt)->format('d F Y, g:i A') }}</strong> until <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>. Come back at the scheduled pickup time.</p>
+                            <p>Available from <strong>{{ optional($pickupWindowStartsAt)->format('d F Y, g:i A') }}</strong> to <strong>{{ optional($pickupWindowEndsAt)->format('d F Y, g:i A') }}</strong>.</p>
                         </div>
                     @elseif($pickupWindowPassed)
                         <div class="callout warning release-window-notice" id="physical-release-availability">
@@ -175,23 +211,17 @@
                         </div>
                     @endif
                 @else
-                    <p class="release-step-note" id="physical-release-availability">{{ $pickupMissed ? 'Waiting for a new pickup schedule before physical release.' : 'Complete pickup scheduling and item preparation before recording physical handover.' }}</p>
+                    <p class="release-step-note" id="physical-release-availability">
+                        {{ $hasOpenPreparationIssue
+                            ? 'Physical Release is unavailable while the reported inventory discrepancy is under review. After review, the Action Officer must check the affected item again.'
+                            : ($pickupMissed
+                                ? 'Waiting for a new pickup schedule before physical release.'
+                                : 'Complete pickup scheduling and item preparation before recording physical handover.') }}
+                    </p>
                 @endif
                 @include('custody.partials.physical-release-form')
             </li>
         </ol>
-        <div class="release-process-note">
-            <x-icon name="information" size="19" />
-            <span>
-                @if($hasOffCampusItem)
-                    After Physical Release, the borrower presents the printed Gate Pass to the Guard on Duty. The guard completes <strong>Released by</strong>, Date, and Time. The borrower keeps the accomplished Gate Pass and submits it to SPMU when returning the barricade.
-                @elseif($hasLaundryItem)
-                    Laundry Personnel are the physical issuer for linen. After <strong>Issued by</strong> is signed, SPMU records the completed release. On return, the borrower goes to the Laundry Area first for checking and the <strong>Received by</strong> signature. The Laundry Worker keeps the accomplished form and later delivers it directly to SPMU; the borrower is not responsible for that document handoff.
-                @else
-                    After Physical Release, the item is under the borrower's custody. On return, the Action Officer inspects the item and records the returned quantity and condition.
-                @endif
-            </span>
-        </div>
     </article>
 </section>
 

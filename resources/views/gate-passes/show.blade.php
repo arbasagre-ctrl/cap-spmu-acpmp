@@ -94,8 +94,7 @@
                         <strong>Ready for printing.</strong>
                         <p>The Guard on Duty completes the printed Gate Pass at campus exit.</p>
                         <div class="inline-actions top-gap">
-                            <a class="button secondary ui-pressable" href="{{ route('documents.view', $gatePass->passDocument) }}" target="_blank" rel="noopener">Open Gate Pass</a>
-                            <a class="button primary ui-pressable" href="{{ route('documents.download', $gatePass->passDocument) }}">Download / Print</a>
+                            <a class="button secondary ui-pressable" href="{{ route('documents.preview', $gatePass->passDocument) }}">Preview</a>
                         </div>
                     </div>
                 @endif
@@ -143,7 +142,7 @@
                     <p>The accomplished Gate Pass has been received and recorded by SPMU.</p>
                     @if($gatePass->accomplishedFile)
                         <div class="inline-actions top-gap">
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $gatePass->accomplishedFile, false) }}" target="_blank" rel="noopener">Open Accomplished Gate Pass</a>
+                            <a class="button secondary small ui-pressable" href="{{ route('files.preview', $gatePass->accomplishedFile) }}">Preview</a>
                         </div>
                     @endif
                 </div>
@@ -174,7 +173,7 @@
             </dl>
 
             @if(! $gatePassFinalized && ! $gatePassVoided)
-                <span class="status-badge status-danger">Missing approved document</span>
+                <span class="status-badge status-danger">Not available</span>
             @endif
 
             <div class="table-wrap top-gap">

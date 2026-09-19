@@ -12,7 +12,9 @@
     $issued = (float) ($balance['borrowed'] ?? 0);
     $laundry = (float) ($balance['laundry'] ?? 0);
     $incident = (float) ($balance['incident'] ?? 0);
+    $conditionHold = (float) ($balance['condition_hold'] ?? 0);
     $unavailable = max(0, $total - $available - $reserved - $issued);
+    $masterUnavailable = max(0, $unavailable - $laundry - $incident - $conditionHold);
 
     $damagedMaintenance = min($total, (float) ($balance['damaged_maintenance'] ?? 0));
     $lost = min($total, (float) ($balance['lost'] ?? 0));
@@ -40,6 +42,13 @@
     $isActionOfficer = auth()->user()?->access_classification?->value === 'SPMU_OFFICER';
     $canEditInventory = $isInventoryAdmin;
 
+    $adjustmentCapabilities = (array) ($inventoryAdjustmentCapabilities ?? []);
+    $canPlaceUnderMaintenance = (bool) ($adjustmentCapabilities['can_place_under_maintenance'] ?? false);
+    $canReturnMaintenanceToService = (bool) ($adjustmentCapabilities['can_return_maintenance_to_service'] ?? false);
+    $canRetireMaintenanceStock = (bool) ($adjustmentCapabilities['can_retire_maintenance_stock'] ?? false);
+    $canWriteOffRetired = (bool) ($adjustmentCapabilities['can_write_off_retired'] ?? false);
+    $writeOffSources = collect($eligibleWriteOffSources ?? []);
+
     $requestedInventoryTab = (string) request('tab', 'overview');
     $activeInventoryTab = in_array($requestedInventoryTab, [
         'overview',
@@ -58,10 +67,12 @@
     $currentSources = collect($currentInventorySources ?? []);
     $currentSourceGroups = $currentSources->groupBy('group');
     $currentSourceOrder = [
+        'DISCREPANCY' => 'Preparation discrepancies',
         'RESERVED' => 'Reserved',
         'CUSTODY' => 'On custody',
         'LAUNDRY' => 'Laundry',
         'ISSUE' => 'Inventory exceptions',
+        'CONDITION_HOLD' => 'Maintenance holds',
         'CONDITION' => 'Item condition',
     ];
 @endphp
@@ -78,7 +89,10 @@
             @endif
         </p>
         <h1>{{ $item->unique_description }}</h1>
-        <p>{{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }} &middot; {{ $item->category->category_name }} &middot; {{ $item->unit->unit_name }}</p>
+        <p>
+            {{ 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT) }} &middot; {{ $item->category->category_name }} &middot; {{ $item->unit->unit_name }}
+            @unless($item->active) &middot; Inactive / archived record @endunless
+        </p>
     </div>
 
     <a class="button secondary ui-pressable" href="{{ route('inventory.index') }}">
@@ -234,6 +248,116 @@
         </nav>
 
         <section class="inventory-tab-panel inventory-tab-overview" data-inventory-panel="overview" role="tabpanel" @if($activeInventoryTab !== 'overview') hidden @endif>
+            @if($isInventoryAdmin)
+                <article class="card inventory-adjustment-card" id="inventory-adjustment">
+                    <div class="inventory-adjustment-header">
+                        <div>
+                            <p class="eyebrow">Inventory reconciliation</p>
+                            <h2>Physical stock adjustment</h2>
+                        </div>
+                        <button
+                            type="button"
+                            class="button secondary ui-pressable inventory-adjustment-toggle"
+                            data-inventory-adjustment-toggle
+                            aria-expanded="{{ $errors->hasAny(['action', 'incident_source', 'quantity', 'new_total_quantity', 'reason']) ? 'true' : 'false' }}"
+                            aria-controls="inventory-adjustment-panel"
+                        >
+                            <span>Record Inventory Adjustment</span>
+                            <x-icon name="chevron-down" size="15" />
+                        </button>
+                    </div>
+
+                    <div
+                        class="inventory-adjustment-panel"
+                        id="inventory-adjustment-panel"
+                        data-inventory-adjustment-panel
+                        @unless($errors->hasAny(['action', 'incident_source', 'quantity', 'new_total_quantity', 'reason'])) hidden @endunless
+                    >
+                        <form method="post" action="{{ route('inventory.adjust', $item) }}" class="inventory-adjustment-form" data-inventory-adjustment-form>
+                            @csrf
+
+                            <label>
+                                Adjustment action
+                                <select name="action" data-inventory-adjustment-action required>
+                                    <option value="">Select action</option>
+                                    <optgroup label="Stock Adjustment">
+                                        <option value="STOCK_ADDITION" @selected(old('action') === 'STOCK_ADDITION')>Additional Stock Received</option>
+                                        <option value="PHYSICAL_COUNT_CORRECTION" @selected(old('action') === 'PHYSICAL_COUNT_CORRECTION')>Physical Count Correction</option>
+                                    </optgroup>
+                                    @if($canPlaceUnderMaintenance || $canReturnMaintenanceToService || $canRetireMaintenanceStock)
+                                        <optgroup label="Physical Condition">
+                                            @if($canPlaceUnderMaintenance)
+                                                <option value="PLACE_UNDER_MAINTENANCE" @selected(old('action') === 'PLACE_UNDER_MAINTENANCE')>Place Stock Under Maintenance</option>
+                                            @endif
+                                            @if($canReturnMaintenanceToService)
+                                                <option value="RETURN_MAINTENANCE_TO_SERVICE" @selected(old('action') === 'RETURN_MAINTENANCE_TO_SERVICE')>Return Maintenance Stock to Service</option>
+                                            @endif
+                                            @if($canRetireMaintenanceStock)
+                                                <option value="RETIRE_MAINTENANCE_STOCK" @selected(old('action') === 'RETIRE_MAINTENANCE_STOCK')>Retire / Condemn Maintenance Stock</option>
+                                            @endif
+                                        </optgroup>
+                                    @endif
+                                    @if($canWriteOffRetired)
+                                        <optgroup label="Accountability Disposition">
+                                            <option value="WRITE_OFF_RETIRED" @selected(old('action') === 'WRITE_OFF_RETIRED')>Stock Retired / Written Off</option>
+                                        </optgroup>
+                                    @endif
+                                </select>
+                                @error('action')<small class="field-error">{{ $message }}</small>@enderror
+                            </label>
+
+                            <label data-inventory-incident-source-field hidden>
+                                Related accountability incident
+                                <select name="incident_source" data-inventory-incident-source>
+                                    <option value="">Select accountability incident</option>
+                                    @foreach($writeOffSources as $source)
+                                        <option
+                                            value="{{ $source['incident_id'] }}|{{ $source['incident_state'] }}"
+                                            data-incident-state="{{ $source['incident_state'] }}"
+                                            @selected(old('incident_source') === $source['incident_id'].'|'.$source['incident_state'])
+                                        >
+                                            {{ $source['reference'] }} — {{ $source['condition'] }} — {{ (float) $source['quantity'] + 0 }} remaining
+                                        </option>
+                                    @endforeach
+                                </select>
+                                @if($writeOffSources->isEmpty())
+                                    <small>No eligible accountability incident is available.</small>
+                                @endif
+                                @error('incident_source')<small class="field-error">{{ $message }}</small>@enderror
+                            </label>
+
+                            <label data-inventory-quantity-field hidden>
+                                <span data-inventory-quantity-label>Quantity</span>
+                                <input type="number" name="quantity" min="1" step="1" inputmode="numeric" value="{{ old('quantity') }}">
+                                @error('quantity')<small class="field-error">{{ $message }}</small>@enderror
+                            </label>
+
+                            <label data-inventory-new-total-field hidden>
+                                Verified physical stock total
+                                <input type="number" name="new_total_quantity" min="0" step="1" inputmode="numeric" value="{{ old('new_total_quantity') }}">
+                                @error('new_total_quantity')<small class="field-error">{{ $message }}</small>@enderror
+                            </label>
+
+                            <label class="inventory-adjustment-reason" data-inventory-reason-field hidden>
+                                <span data-inventory-reason-label>Reason / reference</span>
+                                <textarea
+                                    name="reason"
+                                    rows="3"
+                                    data-inventory-reason-input
+                                    placeholder="State the verified physical change and supporting reference, if applicable."
+                                >{{ old('reason') }}</textarea>
+                                @error('reason')<small class="field-error">{{ $message }}</small>@enderror
+                            </label>
+
+                            <div class="inventory-adjustment-actions">
+                                <button type="button" class="button secondary ui-pressable" data-inventory-adjustment-cancel>Cancel</button>
+                                <button type="submit" class="button primary ui-pressable">Record Inventory Adjustment</button>
+                            </div>
+                        </form>
+                    </div>
+                </article>
+            @endif
+
             <div class="inventory-detail-grid inventory-overview-grid">
                 <article class="card inventory-overview-card">
                     <div class="card-header">
@@ -250,9 +374,19 @@
                             <strong>{{ $laundry + 0 }}</strong>
                         </div>
                         <div class="inventory-ops-row" role="listitem">
-                            <span>Incident / condition hold</span>
+                            <span>Accountability / incident hold</span>
                             <strong>{{ $incident + 0 }}</strong>
                         </div>
+                        <div class="inventory-ops-row" role="listitem">
+                            <span>Maintenance / physical condition hold</span>
+                            <strong>{{ $conditionHold + 0 }}</strong>
+                        </div>
+                        @if($masterUnavailable > 0)
+                            <div class="inventory-ops-row" role="listitem">
+                                <span>{{ ! $item->active ? 'Inactive / archived stock' : 'Master condition hold' }}</span>
+                                <strong>{{ $masterUnavailable + 0 }}</strong>
+                            </div>
+                        @endif
                     </div>
 
                     @if($unavailable <= 0)
@@ -302,7 +436,7 @@
                     <div>
                         <p class="eyebrow">Current stock source records</p>
                         <h2>Records behind the current counts</h2>
-                        <p class="meta">Active reservations, custody, laundry, and inventory exceptions that explain the summary above.</p>
+                        <p class="meta">Preparation discrepancies, reservations, custody, laundry, maintenance holds, and inventory exceptions that explain the summary above.</p>
                     </div>
                     <div class="inventory-source-header-actions">
                         <span class="inventory-source-live">Current</span>
@@ -1417,8 +1551,14 @@
     }
 
     .inventory-history-filter,
-    .inventory-history-summary {
+    .inventory-history-summary,
+    .inventory-adjustment-form {
         grid-template-columns: 1fr;
+    }
+
+    .inventory-adjustment-reason,
+    .inventory-adjustment-actions {
+        grid-column: auto;
     }
 
     .inventory-history-metric {
@@ -1444,6 +1584,34 @@
         width: 100%;
     }
 }
+
+
+.inventory-adjustment-card { margin-bottom: 18px; }
+.inventory-adjustment-header { display: flex; align-items: center; justify-content: space-between; gap: 16px 22px; flex-wrap: wrap; }
+.inventory-adjustment-header h2 { margin: 0; }
+.inventory-adjustment-header .meta { margin: 5px 0 0; }
+.inventory-adjustment-toggle { flex-shrink: 0; }
+.inventory-adjustment-toggle .ui-icon { transition: transform .18s ease; }
+.inventory-adjustment-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
+.inventory-adjustment-panel { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.inventory-adjustment-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; }
+.inventory-adjustment-form > label {
+    display: grid;
+    align-self: start;
+    align-content: start;
+    gap: 7px;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+.inventory-adjustment-form > label[hidden] { display: none !important; }
+.inventory-adjustment-form select, .inventory-adjustment-form input, .inventory-adjustment-form textarea { width: 100%; }
+.inventory-adjustment-form select, .inventory-adjustment-form input { min-height: 48px; }
+.inventory-adjustment-form textarea { min-height: 82px; resize: vertical; }
+.inventory-adjustment-reason, .inventory-adjustment-actions { grid-column: 1 / -1; }
+.inventory-adjustment-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.inventory-adjustment-form small:not(.field-error) { color: var(--text-muted); font-weight: 500; line-height: 1.45; }
 
 @media print {
     .sidebar,
@@ -1508,6 +1676,141 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const initialTab = tabButtons.find((button) => button.classList.contains('is-active'))?.dataset.inventoryTab || 'overview';
     activateTab(initialTab, false);
+});
+</script>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const toggle = document.querySelector('[data-inventory-adjustment-toggle]');
+    const panel = document.querySelector('[data-inventory-adjustment-panel]');
+    const form = document.querySelector('[data-inventory-adjustment-form]');
+
+    if (!toggle || !panel || !form) {
+        return;
+    }
+
+    const action = form.querySelector('[data-inventory-adjustment-action]');
+    const incidentField = form.querySelector('[data-inventory-incident-source-field]');
+    const incidentSelect = form.querySelector('[data-inventory-incident-source]');
+    const quantityField = form.querySelector('[data-inventory-quantity-field]');
+    const quantityLabel = form.querySelector('[data-inventory-quantity-label]');
+    const quantityInput = quantityField?.querySelector('input');
+    const newTotalField = form.querySelector('[data-inventory-new-total-field]');
+    const newTotalInput = newTotalField?.querySelector('input');
+    const reasonField = form.querySelector('[data-inventory-reason-field]');
+    const reasonLabel = form.querySelector('[data-inventory-reason-label]');
+    const reasonInput = form.querySelector('[data-inventory-reason-input]');
+    const cancel = form.querySelector('[data-inventory-adjustment-cancel]');
+
+    const incidentActions = new Set([
+        'WRITE_OFF_RETIRED',
+    ]);
+
+    const quantityOnlyActions = new Set([
+        'STOCK_ADDITION',
+        'PLACE_UNDER_MAINTENANCE',
+        'RETURN_MAINTENANCE_TO_SERVICE',
+        'RETIRE_MAINTENANCE_STOCK',
+    ]);
+
+    const allowedStates = {
+        WRITE_OFF_RETIRED: new Set(['DAMAGED_MAINTENANCE', 'LOST', 'STOLEN', 'DESTROYED']),
+    };
+
+    const quantityLabels = {
+        STOCK_ADDITION: 'Quantity received',
+        PLACE_UNDER_MAINTENANCE: 'Quantity to place under maintenance',
+        RETURN_MAINTENANCE_TO_SERVICE: 'Quantity returned to service',
+        RETIRE_MAINTENANCE_STOCK: 'Quantity to retire / condemn',
+        WRITE_OFF_RETIRED: 'Quantity to retire / write off',
+    };
+
+    const reasonConfig = {
+        STOCK_ADDITION: {
+            label: 'Source / Reference',
+            placeholder: 'Example: Delivery Receipt, Purchase Order, property transfer, or other receiving reference.',
+            required: true,
+        },
+        PHYSICAL_COUNT_CORRECTION: {
+            label: 'Reason for Correction',
+            placeholder: 'State why the recorded Total Stock differs from the verified physical count.',
+            required: true,
+        },
+        PLACE_UNDER_MAINTENANCE: {
+            label: 'Condition / Reason',
+            placeholder: 'Describe the verified condition that requires the stock to be placed under maintenance.',
+            required: true,
+        },
+        RETIRE_MAINTENANCE_STOCK: {
+            label: 'Retirement / Condemnation Basis',
+            placeholder: 'State the verified basis for permanently retiring or condemning the unit(s).',
+            required: true,
+        },
+        WRITE_OFF_RETIRED: {
+            label: 'Write-off Basis',
+            placeholder: 'State the approved basis for permanently writing off or retiring the affected unit(s).',
+            required: true,
+        },
+    };
+
+    const setExpanded = (expanded) => {
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        panel.hidden = !expanded;
+    };
+
+    const syncFields = () => {
+        const selected = action?.value || '';
+        const needsIncident = incidentActions.has(selected);
+        const needsQuantity = quantityOnlyActions.has(selected) || needsIncident;
+        const needsNewTotal = selected === 'PHYSICAL_COUNT_CORRECTION';
+        const reason = reasonConfig[selected] || null;
+
+        if (quantityLabel) {
+            quantityLabel.textContent = quantityLabels[selected] || 'Quantity';
+        }
+
+        if (incidentField) incidentField.hidden = !needsIncident;
+        if (quantityField) quantityField.hidden = !needsQuantity;
+        if (newTotalField) newTotalField.hidden = !needsNewTotal;
+        if (reasonField) reasonField.hidden = !reason;
+        if (incidentSelect) incidentSelect.required = needsIncident;
+        if (quantityInput) quantityInput.required = needsQuantity;
+        if (newTotalInput) newTotalInput.required = needsNewTotal;
+
+        if (reasonLabel) reasonLabel.textContent = reason?.label || 'Reason / reference';
+        if (reasonInput) {
+            reasonInput.required = Boolean(reason?.required);
+            reasonInput.placeholder = reason?.placeholder || '';
+        }
+
+        if (incidentSelect && needsIncident) {
+            const allowed = allowedStates[selected] || new Set();
+            Array.from(incidentSelect.options).forEach((option, index) => {
+                if (index === 0) return;
+                const visible = allowed.has(option.dataset.incidentState || '');
+                option.hidden = !visible;
+                option.disabled = !visible;
+            });
+
+            if (incidentSelect.selectedOptions[0]?.disabled) {
+                incidentSelect.value = '';
+            }
+        }
+    };
+
+    toggle.addEventListener('click', () => {
+        setExpanded(toggle.getAttribute('aria-expanded') !== 'true');
+    });
+
+    cancel?.addEventListener('click', () => {
+        form.reset();
+        syncFields();
+        setExpanded(false);
+    });
+
+    action?.addEventListener('change', syncFields);
+    syncFields();
 });
 </script>
 

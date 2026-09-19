@@ -128,7 +128,8 @@ class TransactionAccountabilityHistoryService
                 ->get();
 
             foreach ($incidentAuditEvents as $audit) {
-                $outcome = $this->outcomeLabel($audit->after_json['resolution_outcome'] ?? null);
+                $complianceAction = $audit->after_json['compliance_action'] ?? null;
+                $outcome = $this->outcomeLabel($audit->after_json['resolution_outcome'] ?? null, $complianceAction);
                 $complianceVerified = $audit->action_code === 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED';
                 $resolved = $complianceVerified || $audit->action_code === 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED';
                 $reference = $incidents->firstWhere('id', $audit->record_id)?->incident_no ?: 'property case';
@@ -137,8 +138,9 @@ class TransactionAccountabilityHistoryService
                 if ($complianceVerified) {
                     $borrowerEvent = 'Property compliance verified';
                     $spmuEvent = 'Action Officer verified property compliance';
-                    $borrowerDetails = "The SPMU Action Officer verified the required repair/replacement or compliance for {$reference}; the property case was resolved.";
-                    $spmuDetails = "Action Officer physical compliance verification completed for {$reference}. Outcome: {$outcome}.";
+                    $actionLabel = $this->complianceActionLabel($complianceAction);
+                    $borrowerDetails = "The SPMU Action Officer verified {$actionLabel} for {$reference}; the property case was resolved.";
+                    $spmuDetails = "Action Officer verification completed for {$reference}. Outcome: {$outcome}.";
                     $fallbackActor = 'SPMU Action Officer';
                     $priority = 170;
                 } elseif ($resolved) {
@@ -473,17 +475,27 @@ class TransactionAccountabilityHistoryService
             ->get();
     }
 
-    private function outcomeLabel(?string $outcome): string
+    private function outcomeLabel(?string $outcome, ?string $complianceAction = null): string
     {
         return match ((string) $outcome) {
             'NO_BORROWER_CHARGE' => 'No borrower liability / no charge',
-            'COMPLIANCE_REQUIRED' => 'Repair / replacement / compliance required',
+            'COMPLIANCE_REQUIRED' => ucfirst($this->complianceActionLabel($complianceAction)).' required',
             'BILLING_REQUIRED' => 'Billing / payment required',
-            'COMPLIANCE_COMPLETED' => 'Required compliance completed',
+            'COMPLIANCE_COMPLETED' => ucfirst($this->complianceActionLabel($complianceAction)).' verified',
             'BILLING_SETTLED' => 'Billing settled',
             'BILLING_WAIVED' => 'Billing waived',
             'ADMINISTRATIVELY_CLEARED' => 'Administratively cleared',
             default => 'Decision recorded',
+        };
+    }
+
+    private function complianceActionLabel(?string $action): string
+    {
+        return match (strtoupper((string) $action)) {
+            'REPAIR' => 'repair and return to service',
+            'REPLACEMENT' => 'one-for-one replacement',
+            'RECOVERY' => 'item recovery / return',
+            default => 'property compliance',
         };
     }
 }

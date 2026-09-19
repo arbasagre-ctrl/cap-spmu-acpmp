@@ -13,10 +13,8 @@
 
 /* 1. Summary cards -------------------------------------------------------- */
 
-/*
- * Compact and equal height. The count leads, the label follows, and the
- * chevron only hints that the card opens somewhere.
- */
+/* Compact and equal height. The count leads, the label follows; these are
+   summary reading, not primary navigation, so no arrow affordance. */
 .is-borrower-dashboard .dashboard-stat-grid .dashboard-kpi-card {
     min-height: 0;
     padding: 16px 18px;
@@ -97,21 +95,9 @@
     flex: 0 0 auto;
 }
 
-/* Persistent accountability summary ------------------------------------- */
-.borrower-obligation-card { border-color: var(--warning-border); }
-.borrower-obligation-summary { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px 20px; }
-.borrower-obligation-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--warning-bg); color: var(--warning); }
-.borrower-obligation-copy .eyebrow { margin: 0 0 3px; color: var(--warning); }
-.borrower-obligation-copy h2 { margin: 0; color: var(--heading); font-size: 16px; }
-.borrower-obligation-copy p { margin: 3px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+/* Inline accountability flag shown inside the Current Borrowing Requests
+   table's Status cell - not a standalone summary card. */
 .borrower-active-obligation { display: block; margin-top: 4px; color: var(--warning); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
-@media (max-width: 680px) { .borrower-obligation-summary { grid-template-columns: 40px minmax(0, 1fr); } .borrower-obligation-summary .button { grid-column: 1 / -1; width: 100%; } }
-
-/* Under-processing tone: an obligation exists, but nothing is asked of the
-   borrower right now, so the alert reads as informational, not urgent. */
-.borrower-obligation-card.is-info { border-color: var(--info-border); }
-.borrower-obligation-card.is-info .borrower-obligation-icon { background: var(--info-bg); color: var(--info); }
-.borrower-obligation-card.is-info .borrower-obligation-copy .eyebrow { color: var(--info); }
 
 /* 3. Active requests table ------------------------------------------------ */
 
@@ -234,7 +220,14 @@
  */
 .is-borrower-dashboard .queue-list .borrower-next-row {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 220px 88px;
+    /*
+     * The action column fits whichever control this row renders - the
+     * bespoke-width borrower-active-action pill or a plain universal
+     * button sized to its own label (View Obligations is longer than
+     * Continue/View) - so a longer label never overflows past a fixed
+     * track and strands its icon outside the visible control.
+     */
+    grid-template-columns: 44px minmax(0, 1fr) 220px minmax(88px, max-content);
     align-items: center;
     gap: 16px;
     padding: 14px 20px;
@@ -312,7 +305,10 @@
     text-align: left;
 }
 
-.is-borrower-dashboard .queue-list .borrower-next-row > .borrower-active-action {
+/* Targets the action control by structure, not by skin class, so this
+   positioning applies the same way whether the row renders the bespoke
+   borrower-active-action pill or a plain universal button. */
+.is-borrower-dashboard .queue-list .borrower-next-row > a.button {
     justify-self: center;
 }
 
@@ -357,7 +353,7 @@ html[data-theme="dark"] .is-borrower-dashboard .borrower-active-action:focus-vis
     }
 
     .is-borrower-dashboard .queue-list .borrower-next-row > .borrower-next-when,
-    .is-borrower-dashboard .queue-list .borrower-next-row > .borrower-active-action {
+    .is-borrower-dashboard .queue-list .borrower-next-row > a.button {
         grid-column: 2;
         justify-self: start;
         text-align: left;

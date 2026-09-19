@@ -134,26 +134,91 @@
                         <strong>{{ $row['next_action'] }}</strong>
                     </div>
 
-                    <div class="ob-case-actions">
-                        @foreach($row['actions'] as [$label, $url, $newTab, $buttonTone])
-                            <a
-                                class="button {{ $buttonTone === 'primary' ? 'primary' : 'secondary' }} small ui-pressable"
-                                href="{{ $url }}"
-                                @if($newTab) target="_blank" rel="noopener" @endif
-                            >
-                                {{ $label }}
-                            </a>
-                        @endforeach
+                    @php
+                        /*
+                         * One obligation = one obvious primary action: View
+                         * Obligation. Every document/reference action this row
+                         * carries only appears after it is opened, grouped by
+                         * what it actually is, instead of a row of buttons
+                         * competing with each other on the collapsed card.
+                         */
+                        $documentActions = collect($row['actions'])->filter(fn ($action) => ($action[4] ?? 'document') === 'document');
+                        $referenceActions = collect($row['actions'])->filter(fn ($action) => ($action[4] ?? 'document') === 'reference');
+                        $obligationRestriction = $row['restricted'] ? ($row['restriction'] ?? null) : null;
+                        $hasHistoryFacts = ! empty($row['facts']);
+                    @endphp
 
+                    <div class="ob-case-actions">
                         <details class="ob-details">
-                            <summary><span>View Details</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
-                            <div class="ob-detail-grid">
-                                @foreach($row['facts'] as [$factLabel, $factValue])
-                                    <div>
-                                        <small>{{ $factLabel }}</small>
-                                        <strong>{{ $factValue }}</strong>
+                            <summary><span>View Obligation</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
+                            <div class="ob-detail-body">
+                                @if($documentActions->isNotEmpty())
+                                    <div class="ob-detail-section">
+                                        <p class="ob-detail-section-heading">Documents</p>
+                                        <div class="ob-detail-actions">
+                                            @foreach($documentActions as [$label, $url, $newTab, $buttonTone])
+                                                <a
+                                                    class="button {{ $buttonTone === 'primary' ? 'primary' : 'secondary' }} small ui-pressable"
+                                                    href="{{ $url }}"
+                                                    @if($newTab) target="_blank" rel="noopener" @endif
+                                                >
+                                                    {{ $label }}
+                                                </a>
+                                            @endforeach
+                                        </div>
                                     </div>
-                                @endforeach
+                                @endif
+
+                                @if($referenceActions->isNotEmpty())
+                                    <div class="ob-detail-section">
+                                        <p class="ob-detail-section-heading">Borrowing Reference</p>
+                                        <div class="ob-detail-actions">
+                                            @foreach($referenceActions as [$label, $url, $newTab, $buttonTone])
+                                                <a
+                                                    class="button {{ $buttonTone === 'primary' ? 'primary' : 'secondary' }} small ui-pressable"
+                                                    href="{{ $url }}"
+                                                    @if($newTab) target="_blank" rel="noopener" @endif
+                                                >
+                                                    {{ $label }}
+                                                </a>
+                                            @endforeach
+                                        </div>
+                                    </div>
+                                @endif
+
+                                @if($obligationRestriction)
+                                    <div class="ob-detail-section">
+                                        <p class="ob-detail-section-heading">Restriction</p>
+                                        <div class="ob-detail-grid">
+                                            <div>
+                                                <small>Reason</small>
+                                                <strong>{{ $obligationRestriction->reason ?: str($obligationRestriction->restriction_type)->replace('_', ' ')->title() }}</strong>
+                                            </div>
+                                            <div>
+                                                <small>Effective From</small>
+                                                <strong>{{ optional($obligationRestriction->effective_from)->format('d M Y') ?: '—' }}</strong>
+                                            </div>
+                                            <div>
+                                                <small>Status</small>
+                                                <strong>{{ $obligationRestriction->effective_to ? 'In effect until '.$obligationRestriction->effective_to->format('d M Y') : 'Active until resolved' }}</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+                                @endif
+
+                                @if($hasHistoryFacts)
+                                    <div class="ob-detail-section">
+                                        <p class="ob-detail-section-heading">History / Details</p>
+                                        <div class="ob-detail-grid">
+                                            @foreach($row['facts'] as [$factLabel, $factValue])
+                                                <div>
+                                                    <small>{{ $factLabel }}</small>
+                                                    <strong>{{ $factValue }}</strong>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    </div>
+                                @endif
                             </div>
                         </details>
                     </div>

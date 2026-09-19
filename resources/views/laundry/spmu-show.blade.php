@@ -50,16 +50,18 @@
 
             @if($job->latestEvidence?->file)
                 <div class="top-gap">
-                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">Open Uploaded Final Form</a>
+                    <a class="button secondary small ui-pressable" href="{{ route('files.preview', $job->latestEvidence->file) }}">Preview</a>
                 </div>
             @endif
 
-            @if($job->document)
-                <div class="top-gap">
-                    <p class="meta">Generated borrower-printable Laundry Form</p>
-                    <a class="button secondary small ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">Open Generated Form</a>
-                </div>
-            @endif
+            <div class="top-gap">
+                <p class="meta">Generated borrower-printable Laundry Form</p>
+                @if($job->document)
+                    <a class="button secondary small ui-pressable" href="{{ route('documents.preview', $job->document) }}">Preview</a>
+                @else
+                    <span class="status-badge status-neutral">Not available</span>
+                @endif
+            </div>
         </article>
 
         <article class="card">

@@ -96,7 +96,7 @@ class SpmuRoleSeparationTest extends TestCase
             ->assertSeeText(
                 'Scheduled automatically from the SPMU Operational Calendar.'
             )
-            ->assertSeeText('Confirm Preparation')
+            ->assertSeeText('Confirm Items Prepared')
             ->assertDontSee(
                 'Release & Return Oversight'
             )

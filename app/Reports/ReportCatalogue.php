@@ -258,16 +258,26 @@ final class ReportCatalogue
                 'type' => 'select',
                 'placeholder' => 'All statuses',
                 'options' => fn (): array => [
+                    // Current - property accountability (Incident)
                     'OPEN' => 'Open',
                     'COMPLIANCE_REQUIRED' => 'Compliance Required',
-                    'BILLING_PENDING' => 'Billing Pending',
-                    'RESOLVED' => 'Resolved',
+                    'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
+                    'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
+                    'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
+                    'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
+                    'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
                     'CLOSED' => 'Closed',
                     'VOID_CORRECTION' => 'Void Correction',
+                    // Current - late return (OverdueCase)
                     'OVERDUE' => 'Overdue',
-                    'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction',
                     'FOR_HEAD_APPROVAL' => 'For Head/Admin Decision',
                     'BILLED' => 'Awaiting Payment',
+                    'RESOLVED' => 'Resolved',
+                    // Legacy / historical only - not reachable by any new case,
+                    // kept so older records remain searchable.
+                    'FOR_BILLING' => 'Billing Statement Pending (Legacy)',
+                    'BILLING_PENDING' => 'Billing Pending (Legacy)',
+                    'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction (Legacy)',
                 ],
             ],
 

@@ -15,6 +15,7 @@ use App\Models\NotificationDelivery;
 use App\Models\OverdueCase;
 use App\Models\TemporaryDelegation;
 use App\Models\User;
+use App\Services\AccountabilityCaseTally;
 use App\Services\BorrowerObligationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -41,7 +42,7 @@ class DashboardController extends Controller
         $activeRequestBars = collect();
         $activeRequestTotal = 0;
         $dashboardMode = $workspace;
-        $borrowerObligationOverview = null;
+        $borrowerRestrictionActions = collect();
 
         if ($workspace === 'BORROWER') {
             $dashboardMode = 'BORROWER';
@@ -81,8 +82,52 @@ class DashboardController extends Controller
             // active CustodyTransaction. This is the same grouping
             // My Obligations uses, from the one shared implementation, so
             // the two screens never disagree.
-            $borrowerObligationOverview = app(BorrowerObligationService::class)->overview($user->id);
+            $obligationService = app(BorrowerObligationService::class);
+            $borrowerObligationOverview = $obligationService->overview($user->id);
             $activeObligations = $borrowerObligationOverview['count'];
+            $borrowerObligationRows = collect($obligationService->obligationRows($user->id));
+
+            // A standalone administrative restriction (a sanction with no
+            // linked incident, billing, or custody) is the one obligation
+            // type that can exist without a BorrowingRequest behind it, so it
+            // can never appear in the $queue below. It is surfaced here as an
+            // extra "Actions Requiring Your Attention" row instead of a
+            // separate obligation banner, so it is never silently invisible.
+            $borrowerRestrictionActions = $borrowerObligationRows
+                ->where('category', 'restriction')
+                ->where('action_state', BorrowerObligationService::ACTION_BORROWER)
+                ->values();
+
+            // A custody sitting at the coarse OBLIGATION_OPEN/INCIDENT_OPEN
+            // status is not, by itself, evidence the borrower has anything to
+            // do - an RSLDDP awaiting SPMU upload, Accounting processing, or
+            // Head/Admin resolution all use that same coarse status while the
+            // borrower waits. Reuse My Obligations' own per-case action_state
+            // (the same rule that already tells RSLDDP_PAYMENT_REQUIRED apart
+            // from the other RSLDDP stages) instead of re-deriving it here.
+            $borrowerActionableCustodyIds = $borrowerObligationRows
+                ->whereIn('category', ['property', 'overdue'])
+                ->where('action_state', BorrowerObligationService::ACTION_BORROWER)
+                ->pluck('custody_transaction_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+
+            // OVERDUE means the item is still physically outstanding past its
+            // due date - that always needs the borrower to return it,
+            // independent of whatever accountability stage a linked incident
+            // may separately be in, so it stays unconditional here.
+            $custodyNeedsBorrowerAction = static function ($custody) use ($borrowerActionableCustodyIds): bool {
+                $status = (string) ($custody?->status ?? '');
+
+                return $status === 'OVERDUE'
+                    || (
+                        in_array($status, ['INCIDENT_OPEN', 'OBLIGATION_OPEN'], true)
+                        && in_array((int) $custody->id, $borrowerActionableCustodyIds, true)
+                    );
+            };
 
             $statistics = [
                 'Active Borrowings' => $activeBorrowings,
@@ -111,26 +156,26 @@ class DashboardController extends Controller
                 ->where('borrower_user_id', $user->id)
                 ->where($liveBorrowerRequest)
                 ->get()
-                ->filter(function (BorrowingRequest $record): bool {
+                ->filter(function (BorrowingRequest $record) use ($custodyNeedsBorrowerAction): bool {
                     $custody = $record->custody;
                     $laundry = $custody?->laundryJob;
 
                     return in_array($record->status, [RequestStatus::Draft, RequestStatus::ReturnedForRevision], true)
-                        || in_array((string) $custody?->status, ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'], true)
+                        || $custodyNeedsBorrowerAction($custody)
                         || ($laundry?->status === 'FOR_LAUNDRY' && ! $laundry->hasVerifiedAccomplishedForm())
                         || (
                             $custody?->scheduled_release_at !== null
                             && $custody?->released_at === null
                         );
                 })
-                ->sort(function (BorrowingRequest $left, BorrowingRequest $right): int {
-                    $priority = static function (BorrowingRequest $record): int {
+                ->sort(function (BorrowingRequest $left, BorrowingRequest $right) use ($custodyNeedsBorrowerAction): int {
+                    $priority = static function (BorrowingRequest $record) use ($custodyNeedsBorrowerAction): int {
                         $custody = $record->custody;
                         $laundry = $custody?->laundryJob;
 
                         return match (true) {
                             $record->status === RequestStatus::ReturnedForRevision => 1,
-                            in_array((string) $custody?->status, ['OVERDUE', 'INCIDENT_OPEN', 'OBLIGATION_OPEN'], true) => 2,
+                            $custodyNeedsBorrowerAction($custody) => 2,
                             $custody?->released_at === null && (
                                 $custody?->pickup_expired_at !== null
                                 || ($custody?->pickup_expires_at !== null && now()->gt($custody->pickup_expires_at))
@@ -283,12 +328,14 @@ class DashboardController extends Controller
 
             $openAccountabilityCases = $this->openAccountabilityCaseCount();
 
+            // Matches the exact "currently in effect" test the Accountability
+            // workspace's own $activeRestrictions filter uses, including
+            // treating a null effective_from as already active, so this card
+            // and its destination never disagree on which restrictions count.
             $activeRestrictions = BorrowerRestriction::query()
                 ->where('status', 'ACTIVE')
-                ->where('effective_from', '<=', now())
-                ->where(function ($query): void {
-                    $query->whereNull('effective_to')->orWhere('effective_to', '>', now());
-                })
+                ->where(fn ($query) => $query->whereNull('effective_from')->orWhere('effective_from', '<=', now()))
+                ->where(fn ($query) => $query->whereNull('effective_to')->orWhere('effective_to', '>', now()))
                 ->count();
 
             $statistics = [
@@ -346,55 +393,39 @@ class DashboardController extends Controller
             'nextCustodies',
             'activeRequestBars',
             'activeRequestTotal',
-            'borrowerObligationOverview'
+            'borrowerRestrictionActions'
         ));
     }
 
     /**
      * Count open accountability matters exactly the way the Accountability
-     * workspace presents them: one property incident/late-return matter per
-     * underlying custody, plus genuinely standalone open billings.
+     * workspace's own "Active Accountability Cases" chip does - via the same
+     * canonical AccountabilityCaseTally, never a second, slightly different
+     * formula. An Incident and an OverdueCase on the same custody are two
+     * cases; a linked billing/restriction is only counted when it has no
+     * linked open case of its own (a standalone legacy record).
      */
     private function openAccountabilityCaseCount(): int
     {
         $openIncidents = Incident::query()
             ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->get(['id', 'custody_transaction_id']);
+            ->get(['id']);
 
         $openOverdues = OverdueCase::query()
             ->where('status', '!=', 'RESOLVED')
             ->get(['id', 'custody_transaction_id']);
 
-        $incidentCustodyIds = $openIncidents
-            ->pluck('custody_transaction_id')
-            ->filter()
-            ->map(fn ($id): int => (int) $id)
-            ->unique();
-
-        $openCaseCount = $openIncidents->count()
-            + $openOverdues->reject(
-                fn (OverdueCase $case): bool => $case->custody_transaction_id !== null
-                    && $incidentCustodyIds->contains((int) $case->custody_transaction_id)
-            )->count();
-
-        $openIncidentIds = $openIncidents->pluck('id')->map(fn ($id): int => (int) $id);
-        $openOverdueIds = $openOverdues->pluck('id')->map(fn ($id): int => (int) $id);
-
-        $standaloneBillingCount = BillingStatement::query()
+        $openBillings = BillingStatement::query()
             ->with(['lines.penalty:id,overdue_case_id'])
             ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
-            ->get()
-            ->reject(function (BillingStatement $billing) use ($openIncidentIds, $openOverdueIds): bool {
-                return $billing->lines->contains(function ($line) use ($openIncidentIds, $openOverdueIds): bool {
-                    $incidentId = (int) ($line->incident_id ?? 0);
-                    $overdueId = (int) ($line->penalty?->overdue_case_id ?? 0);
+            ->get();
 
-                    return ($incidentId > 0 && $openIncidentIds->contains($incidentId))
-                        || ($overdueId > 0 && $openOverdueIds->contains($overdueId));
-                });
-            })
-            ->count();
+        $activeRestrictions = BorrowerRestriction::query()
+            ->where('status', 'ACTIVE')
+            ->where(fn ($query) => $query->whereNull('effective_from')->orWhere('effective_from', '<=', now()))
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhere('effective_to', '>', now()))
+            ->get(['id', 'incident_id', 'custody_transaction_id']);
 
-        return $openCaseCount + $standaloneBillingCount;
+        return AccountabilityCaseTally::forOpenRecords($openIncidents, $openOverdues, $openBillings, $activeRestrictions)->count();
     }
 }

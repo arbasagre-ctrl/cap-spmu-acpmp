@@ -214,10 +214,10 @@
     $statMeta = match($dashboardMode) {
         'BORROWER' => [
             'Open Requests' => ['requests', 'info', route('requests.index'), 'Requests still in progress'],
-            'Active Borrowings' => ['custody', 'info', route('custody.index'), 'Released property currently on custody'],
-            'Upcoming Pickup' => ['calendar', 'warning', route('custody.index'), 'Approved transactions scheduled for pickup'],
-            'Due for Return' => ['calendar', 'danger', route('custody.index'), 'Borrowings due for return'],
-            'Returns Due' => ['calendar', 'danger', route('custody.index'), 'Borrowings due for return'],
+            'Active Borrowings' => ['custody', 'info', route('custody.index', ['kpi' => 'active_borrowings']), 'Released property currently on custody'],
+            'Upcoming Pickup' => ['calendar', 'warning', route('custody.index', ['kpi' => 'upcoming_pickup']), 'Approved transactions scheduled for pickup'],
+            'Due for Return' => ['calendar', 'danger', route('custody.index', ['kpi' => 'returns_due']), 'Borrowings due for return'],
+            'Returns Due' => ['calendar', 'danger', route('custody.index', ['kpi' => 'returns_due']), 'Borrowings due for return'],
             'Needs My Action' => ['warning', 'warning', route('dashboard').'#borrower-actions', 'Transactions requiring your response'],
             'Active Obligations' => ['warning', 'warning', route('accountability.index'), 'Outstanding accountability obligations'],
         ],
@@ -238,7 +238,7 @@
             'Active Borrowings' => ['custody', 'info', route('custody.index'), 'Released property currently on custody'],
             'Active Custodies' => ['custody', 'info', route('custody.index'), 'Ongoing custody transactions'],
             'Open Accountability Cases' => ['accountability', 'danger', route('accountability.index'), 'Unresolved accountability matters'],
-            'Active Restrictions' => ['warning', 'warning', route('accountability.index', ['view' => 'restrictions']), 'Borrowing restrictions currently in effect'],
+            'Active Restrictions' => ['warning', 'warning', route('accountability.index', ['view' => 'restrictions']).'#accountability-cases-section', 'Borrowing restrictions currently in effect'],
             'Overdue / Issues' => ['accountability', 'danger', route('accountability.index'), 'Transactions requiring accountability oversight'],
         ],
         'ICTU' => [
@@ -294,47 +294,12 @@
             <span class="kpi-label">{{ $label }}</span>
             <strong class="kpi-value">{{ number_format($value) }}</strong>
             <span class="kpi-note">{{ $note }}</span>
-            <span class="stat-card-arrow" aria-hidden="true"><x-icon name="arrow-right" /></span>
+            @unless($dashboardMode === 'BORROWER')
+                <span class="stat-card-arrow" aria-hidden="true"><x-icon name="arrow-right" /></span>
+            @endunless
         </a>
     @endforeach
 </section>
-
-@if($dashboardMode === 'BORROWER' && ! empty($borrowerObligationOverview) && (int) ($borrowerObligationOverview['count'] ?? 0) > 0)
-    @php
-        $dashboardObligationCount = (int) ($borrowerObligationOverview['count'] ?? 0);
-        $dashboardNeedsAction = (int) ($borrowerObligationOverview['needs_action'] ?? 0);
-        $dashboardRestrictionCount = (int) ($borrowerObligationOverview['restrictions'] ?? 0);
-
-        /*
-         * The eyebrow and message must never make a borrower feel they owe an
-         * action when every current obligation is merely under SPMU
-         * processing - only needs_action drives "Action required".
-         */
-        $dashboardAlertNeedsAction = $dashboardNeedsAction > 0;
-
-        $dashboardObligationCopy = $dashboardAlertNeedsAction
-            ? ($dashboardNeedsAction === 1
-                ? '1 obligation needs your attention.'
-                : $dashboardNeedsAction.' obligations need your attention.')
-            : 'Your accountability matter is currently being processed. No action is required from you at this time.';
-
-        if ($dashboardRestrictionCount > 0) {
-            $dashboardObligationCopy .= ' Borrowing access is currently restricted.';
-        }
-    @endphp
-
-    <article class="borrower-dash-card borrower-obligation-card {{ $dashboardAlertNeedsAction ? '' : 'is-info' }}" aria-labelledby="borrower-obligation-title">
-        <div class="borrower-obligation-summary">
-            <span class="borrower-obligation-icon" aria-hidden="true"><x-icon name="{{ $dashboardAlertNeedsAction ? 'warning' : 'information' }}" size="22" /></span>
-            <div class="borrower-obligation-copy">
-                <p class="eyebrow">{{ $dashboardAlertNeedsAction ? 'Action required' : 'Under SPMU processing' }}</p>
-                <h2 id="borrower-obligation-title">{{ $dashboardObligationCount }} outstanding {{ $dashboardObligationCount === 1 ? 'obligation' : 'obligations' }}</h2>
-                <p>{{ $dashboardObligationCopy }}</p>
-            </div>
-            <a class="button primary small ui-pressable" href="{{ route('accountability.index') }}"><span>View My Obligations</span><x-icon name="arrow-right" size="14" /></a>
-        </div>
-    </article>
-@endif
 
 <section id="{{ $dashboardMode === 'BORROWER' ? 'borrower-actions' : 'dashboard-actions' }}" class="dashboard-grid dashboard-balanced-grid dashboard-single-panel {{ $dashboardMode === 'BORROWER' ? 'borrower-actions-only' : '' }}">
     <article class="card queue-card dashboard-panel-equal {{ $dashboardMode === 'BORROWER' ? 'borrower-dash-card' : '' }}">
@@ -453,14 +418,23 @@
                             <span></span>
                         @endif
 
-                        <a class="button secondary small ui-pressable borrower-active-action" href="{{ $actionHref }}"><span>{{ $actionLabel }}</span><x-icon name="arrow-right" size="14" /></a>
+                        {{--
+                            View Obligations must reuse the exact same
+                            action pattern as View Request/View Record
+                            elsewhere - the bespoke borrower-active-action
+                            skin is skipped for it so nothing here can
+                            diverge from that universal look, and the
+                            button sizes to its own label instead of a
+                            fixed width that a longer label can overflow.
+                        --}}
+                        <a class="button secondary small ui-pressable {{ $hasAccountabilityMatter ? '' : 'borrower-active-action' }}" href="{{ $actionHref }}"><span>{{ $actionLabel }}</span><x-icon name="arrow-right" size="14" /></a>
                     </article>
                 @elseif($dashboardMode === 'SPMU_OFFICER')
                     <article>
                         <div>
                             <strong>{{ $record->request_no }}</strong>
                             <span>{{ $record->borrower?->full_name }}</span>
-                            <small>Verify the request and required supporting documents, or return it for correction.</small>
+                            <small>Verify the request and required supporting documents, or return it for revision.</small>
                         </div>
                         <a class="button primary small ui-pressable" href="{{ route('requests.show', $record) }}"><span>Verify</span><x-icon name="arrow-right" size="14" /></a>
                     </article>
@@ -485,11 +459,13 @@
                 @endif
             @empty
                 @if($dashboardMode === 'BORROWER')
-                    <div class="borrower-dash-empty">
-                        <x-icon name="check-circle" size="26" />
-                        <strong>No current action is required.</strong>
-                        <span>No borrowing transaction currently requires your response.</span>
-                    </div>
+                    @if($borrowerRestrictionActions->isEmpty())
+                        <div class="borrower-dash-empty">
+                            <x-icon name="check-circle" size="26" />
+                            <strong>No current action is required.</strong>
+                            <span>No borrowing transaction currently requires your response.</span>
+                        </div>
+                    @endif
                 @else
                     <div class="empty-state">
                         <strong>No records currently require action.</strong>
@@ -497,6 +473,26 @@
                     </div>
                 @endif
             @endforelse
+
+            @if($dashboardMode === 'BORROWER')
+                @foreach($borrowerRestrictionActions as $obligationRow)
+                    <article class="borrower-next-row">
+                        <span class="borrower-next-icon tone-warning" aria-hidden="true">
+                            <x-icon name="lock" size="17" />
+                        </span>
+
+                        <div class="borrower-next-copy">
+                            <strong>{{ $obligationRow['type'] }}</strong>
+                            <span>{{ $obligationRow['summary'] }}</span>
+                            <small>{{ $obligationRow['next_action'] }}</small>
+                        </div>
+
+                        <span class="borrower-next-when">{{ $obligationRow['badge'] }}</span>
+
+                        <a class="button secondary small ui-pressable" href="{{ route('accountability.index') }}"><span>View Obligation</span><x-icon name="arrow-right" size="14" /></a>
+                    </article>
+                @endforeach
+            @endif
         </div>
     </article>
 

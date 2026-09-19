@@ -29,12 +29,13 @@ class SecurityHeaders
             'camera=(), microphone=(), geolocation=()'
         );
 
-        if ($request->routeIs('files.show', 'administration.document-templates.sample')) {
+        if ($request->routeIs('files.show', 'documents.view')) {
             /*
              * A protected PDF/image may be displayed only inside the same
-             * SPMU-ACPMP application. The generated template sample remains
-             * protected by its route authorization; this exception exists
-             * solely for the authenticated, same-origin preview iframe.
+             * SPMU-ACPMP application. The generated document remains
+             * protected by its own route authorization; this exception
+             * exists solely for the authenticated, same-origin preview
+             * iframe (see documents.preview / document-review-viewer).
              */
             $response->headers->set(
                 'X-Frame-Options',

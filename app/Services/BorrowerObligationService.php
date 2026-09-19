@@ -42,7 +42,7 @@ class BorrowerObligationService
             ->get();
 
         $restrictions = BorrowerRestriction::query()
-            ->with('custody')
+            ->with(['custody', 'sanction.documents'])
             ->where('borrower_user_id', $borrowerUserId)
             ->latest('effective_from')
             ->get();
@@ -79,15 +79,9 @@ class BorrowerObligationService
     public function overview(int $borrowerUserId): array
     {
         $records = $this->recordsForBorrower($borrowerUserId);
+        $filtered = $this->filterOpenRecords($records);
 
-        $openIncidents = $records['incidents']->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
-        $openBillings = $records['billings']->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
-        $activeRestrictions = $records['restrictions']->filter(
-            fn ($restriction) => $restriction->status === 'ACTIVE'
-                && ($restriction->effective_from === null || $restriction->effective_from->lte(now()))
-                && ($restriction->effective_to === null || $restriction->effective_to->gt(now()))
-        );
-        $openOverdueCases = $records['overdueCases']->whereNotIn('status', [LateReturnService::STATUS_RESOLVED]);
+        [$openIncidents, $openOverdueCases, $openBillings, $activeRestrictions] = $filtered;
 
         $rows = $this->buildRows($openIncidents, $openOverdueCases, $openBillings, $activeRestrictions);
         $resolvedHistory = $this->resolvedHistory($records['billings'], $records['overdueCases'], $records['incidents']);
@@ -105,6 +99,63 @@ class BorrowerObligationService
             'property_cases' => $openIncidents->count(),
             'late_returns' => $openOverdueCases->count(),
         ];
+    }
+
+    /**
+     * The same grouped obligation rows overview() summarizes into counts,
+     * exposed directly so a caller (the borrower dashboard's action list) can
+     * render the individual rows instead of only their totals.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function obligationRows(int $borrowerUserId): array
+    {
+        [$openIncidents, $openOverdueCases, $openBillings, $activeRestrictions] = $this->filterOpenRecords(
+            $this->recordsForBorrower($borrowerUserId)
+        );
+
+        return $this->buildRows($openIncidents, $openOverdueCases, $openBillings, $activeRestrictions);
+    }
+
+    /**
+     * Custody transaction IDs whose open property/late-return obligation
+     * genuinely needs the borrower to act right now - not merely "processing"
+     * while SPMU, the Accounting Office, or the Head/Admin handles the next
+     * step. Reused by the dashboard's action queue so a custody is never
+     * flagged purely from a coarse OBLIGATION_OPEN/INCIDENT_OPEN status; the
+     * same per-record action_state used by My Obligations decides it.
+     *
+     * @return array<int, int>
+     */
+    public function borrowerActionableCustodyIds(int $borrowerUserId): array
+    {
+        return collect($this->obligationRows($borrowerUserId))
+            ->whereIn('category', ['property', 'overdue'])
+            ->where('action_state', self::ACTION_BORROWER)
+            ->pluck('custody_transaction_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array{incidents: Collection, billings: Collection, restrictions: Collection, overdueCases: Collection}  $records
+     * @return array{0: Collection, 1: Collection, 2: Collection, 3: Collection}
+     */
+    private function filterOpenRecords(array $records): array
+    {
+        $openIncidents = $records['incidents']->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION']);
+        $openBillings = $records['billings']->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID']);
+        $activeRestrictions = $records['restrictions']->filter(
+            fn ($restriction) => $restriction->status === 'ACTIVE'
+                && ($restriction->effective_from === null || $restriction->effective_from->lte(now()))
+                && ($restriction->effective_to === null || $restriction->effective_to->gt(now()))
+        );
+        $openOverdueCases = $records['overdueCases']->whereNotIn('status', [LateReturnService::STATUS_RESOLVED]);
+
+        return [$openIncidents, $openOverdueCases, $openBillings, $activeRestrictions];
     }
 
     /**
@@ -184,7 +235,15 @@ class BorrowerObligationService
             }
 
             $document = $billingDocument($linkedBilling);
+            $billingLabel = 'Preview';
             $complianceDocument = $activeDocument($incident->documents, 'ACCOUNTABILITY_COMPLIANCE_NOTICE');
+            $rslddpDocument = $activeDocument($incident->documents, 'RSLDDP');
+            $complianceActionLabel = match (strtoupper((string) $incident->compliance_action)) {
+                'REPAIR' => 'repair and return-to-service requirement',
+                'REPLACEMENT' => 'one-for-one replacement',
+                'RECOVERY' => 'item recovery / return',
+                default => 'property compliance',
+            };
 
             $statusLabel = 'Under Review';
             $statusTone = 'neutral';
@@ -193,12 +252,25 @@ class BorrowerObligationService
             $nextTone = 'info';
             $actionState = self::ACTION_PROCESSING;
 
-            if ($incident->status === 'COMPLIANCE_REQUIRED') {
+            if (in_array($incident->status, ['COMPLIANCE_REQUIRED', 'COMPLIANCE_RSLDDP_PENDING'], true)) {
+                /* RSLDDP paperwork tracked in parallel here is Admin-internal
+                   only - the borrower's compliance experience is unchanged
+                   whether or not this case requires one. */
                 $statusLabel = 'Compliance Required';
                 $statusTone = 'warning';
-                $nextAction = 'Complete the required repair, replacement, or compliance, then present it to the SPMU Action Officer for physical verification.';
+                $nextAction = 'Complete the required '.$complianceActionLabel.', then present the property to the SPMU Action Officer for physical verification.';
                 $nextTone = 'warning';
                 $actionState = self::ACTION_BORROWER;
+            } elseif ($incident->status === 'RSLDDP_AWAITING_UPLOAD') {
+                $statusLabel = 'RSLDDP Processing';
+                $statusTone = 'info';
+                $nextAction = 'No borrower action is required while the SPMU Head/Admin prepares the RSLDDP for external signing.';
+                $actionState = self::ACTION_PROCESSING;
+            } elseif ($incident->status === 'RSLDDP_FOR_ACCOUNTING_PROCESSING') {
+                $statusLabel = 'For Accounting Processing';
+                $statusTone = 'info';
+                $nextAction = 'No borrower action is required while the accomplished RSLDDP is processed by the Accounting Office.';
+                $actionState = self::ACTION_PROCESSING;
             } elseif ($linkedBilling) {
                 if ($linkedBilling->status === 'RECEIPT_SUBMITTED') {
                     $statusLabel = 'Payment Verification';
@@ -214,6 +286,11 @@ class BorrowerObligationService
                     $nextTone = 'warning';
                     $actionState = self::ACTION_BORROWER;
                 }
+            } elseif ($incident->status === 'RSLDDP_FOR_RESOLUTION') {
+                $statusLabel = 'For Resolution';
+                $statusTone = 'info';
+                $nextAction = 'No borrower action is required while the SPMU Head/Admin verifies and resolves this case.';
+                $actionState = self::ACTION_PROCESSING;
             } elseif (in_array($incident->status, ['FOR_BILLING', 'BILLING_PENDING'], true)) {
                 $statusLabel = 'Billing Statement Pending';
                 $statusTone = 'warning';
@@ -224,17 +301,36 @@ class BorrowerObligationService
 
             $actions = [];
 
+            /*
+             * Every document link uses "Preview" and every record link uses
+             * "View" - the same convention as the rest of the system - and
+             * carries a $kind tag ('document' or 'reference') so the view
+             * can group these into the Documents / Borrowing Reference
+             * sections of one expanded obligation instead of a wall of
+             * buttons on the collapsed card. A document never also needs a
+             * separate Download action here: opening it already lets the
+             * borrower view or save it. Every document opens through the
+             * in-system preview page, in the same tab, never a raw stream
+             * in a new one.
+             */
             if ($document) {
-                $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
-                $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+                $actions[] = [$billingLabel, route('documents.preview', $document), false, 'primary', 'document'];
+            }
+
+            if ($rslddpDocument) {
+                $actions[] = ['Preview', route('documents.preview', $rslddpDocument), false, 'secondary', 'document'];
             }
 
             if ($complianceDocument) {
-                $actions[] = ['View Compliance Notice', route('documents.view', $complianceDocument), true, 'primary'];
+                $actions[] = ['Preview', route('documents.preview', $complianceDocument), false, 'primary', 'document'];
+            }
+
+            if ($linkedRestriction && $linkedRestriction->incident_id) {
+                $actions[] = ['Preview', route('restrictions.notice', $linkedRestriction), false, 'secondary', 'document'];
             }
 
             if ($custody) {
-                $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary'];
+                $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary', 'reference'];
             }
 
             $facts = [
@@ -254,12 +350,13 @@ class BorrowerObligationService
                 $facts[] = ['Receipt recording', 'SPMU Action Officer'];
             }
 
-            if ($linkedRestriction) {
-                $facts[] = ['Borrowing status', 'Restricted until this obligation is resolved'];
-            }
+            /* The restriction's own reason/dates/status now have a dedicated
+               panel in the expanded obligation - see 'restriction' below -
+               so this fact line no longer repeats the same thing more vaguely. */
 
             $obligationRows[] = [
                 'category' => 'property',
+                'custody_transaction_id' => $custody?->id,
                 'action_state' => $actionState,
                 'status' => $linkedBilling?->status ?: $incident->status,
                 'date' => $linkedBilling?->issued_at ?: $recordDate,
@@ -277,6 +374,7 @@ class BorrowerObligationService
                 'badge_tone' => $statusTone,
                 'status_meta' => $statusMeta,
                 'restricted' => (bool) $linkedRestriction,
+                'restriction' => $linkedRestriction,
                 'next_action' => $nextAction,
                 'next_tone' => $nextTone,
                 'facts' => $facts,
@@ -352,7 +450,7 @@ class BorrowerObligationService
                 ->values();
             $itemName = $itemNames->count() === 1
                 ? (string) $itemNames->first()
-                : 'Borrowed items';
+                : ($itemNames->isEmpty() ? 'Borrowed item' : $itemNames->implode(', '));
 
             $actualReturnAt = $custody?->returns
                 ?->pluck('received_at')
@@ -399,7 +497,7 @@ class BorrowerObligationService
                 } else {
                     $statusLabel = 'Payment Required';
                     $statusTone = 'warning';
-                    $nextAction = 'Settle the issued late-return Billing Statement through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.';
+                    $nextAction = 'Settle the issued Late Return Billing Statement through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.';
                     $nextTone = 'warning';
                     $actionState = self::ACTION_BORROWER;
                 }
@@ -407,23 +505,31 @@ class BorrowerObligationService
                 $statusMeta = '₱'.number_format((float) $linkedBilling->total_amount, 2);
             }
 
+            /*
+             * "Preview" for documents, "View" for records - the same
+             * convention every other action in the system uses - and each
+             * carries a $kind tag so the view groups them under Documents /
+             * Borrowing Reference in the expanded obligation instead of
+             * listing every document action on the collapsed card. A
+             * document that can be opened does not also need a separate
+             * Download action.
+             */
             $actions = [];
 
             if ($lateReturnNotice) {
-                $actions[] = ['View Late Return Notice', route('documents.view', $lateReturnNotice), true, $linkedBilling ? 'secondary' : 'primary'];
-                $actions[] = ['Download Notice', route('documents.download', $lateReturnNotice), false, 'secondary'];
+                $actions[] = ['Preview', route('documents.preview', $lateReturnNotice), false, $linkedBilling ? 'secondary' : 'primary', 'document'];
             }
 
             if ($document) {
-                $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
-                $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+                $actions[] = ['Preview', route('documents.preview', $document), false, 'primary', 'document'];
             }
 
             if ($custody) {
-                $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary'];
+                $actions[] = ['View Borrowing', route('custody.show', $custody), false, 'secondary', 'reference'];
             }
 
             $facts = [
+                ['Item(s)', $itemName],
                 ['Expected return', optional($dueAt)->format('d M Y') ?: '—'],
                 ['Actual return', $actualReturnAt?->format('d M Y') ?: 'Not yet returned'],
                 ['Late days', (string) $daysLate],
@@ -431,26 +537,29 @@ class BorrowerObligationService
             ];
 
             if ($linkedBilling) {
-                $facts[] = ['Billing Statement', $linkedBilling->billing_no];
+                $facts[] = ['Late Return Billing Statement', $linkedBilling->billing_no];
                 $facts[] = ['Amount', '₱'.number_format((float) $linkedBilling->total_amount, 2)];
             }
 
-            if ($linkedRestriction) {
-                $facts[] = ['Borrowing status', 'Restricted until this obligation is resolved'];
-            }
+            /* The restriction's own reason/dates/status now have a dedicated
+               panel in the expanded obligation - see 'restriction' below. */
 
             $obligationRows[] = [
                 'category' => 'overdue',
+                'custody_transaction_id' => $custody?->id,
                 'action_state' => $actionState,
                 'status' => $linkedBilling?->status ?: $overdue->status,
                 'date' => $linkedBilling?->issued_at ?: $recordDate,
                 'tone' => $isPhysicallyOutstanding ? 'danger' : 'warning',
                 'icon' => 'calendar',
                 'type' => $isPhysicallyOutstanding ? 'Overdue Return' : 'Late Return',
-                'title' => $itemName,
+                /* One stable obligation title, not the physical item name -
+                   the item(s) are still shown, as a fact, once the
+                   obligation is opened. */
+                'title' => 'Late Return Obligation',
                 'reference' => $custody?->custody_no ?: ($custody?->request?->request_no ?: 'Late return record'),
                 'summary' => $linkedBilling
-                    ? 'The late-return case and its Billing Statement are shown together here.'
+                    ? 'The late-return case and its Late Return Billing Statement are shown together here.'
                     : ($isPhysicallyOutstanding
                         ? 'The item is still physically outstanding.'
                         : 'The physical return is complete and the late-return assessment is being processed.'),
@@ -458,6 +567,7 @@ class BorrowerObligationService
                 'badge_tone' => $statusTone,
                 'status_meta' => $statusMeta,
                 'restricted' => (bool) $linkedRestriction,
+                'restriction' => $linkedRestriction,
                 'next_action' => $nextAction,
                 'next_tone' => $nextTone,
                 'facts' => $facts,
@@ -505,9 +615,11 @@ class BorrowerObligationService
                 ? 'Payment Verification'
                 : 'Payment Required';
 
+            $billingLabel = $billing->displayLabel();
+
             $nextAction = $billing->status === 'RECEIPT_SUBMITTED'
                 ? 'No borrower action is required while the SPMU Action Officer verifies the official CSPC Cashier receipt.'
-                : 'Settle the issued Billing Statement through the CSPC Cashier and present the official receipt to the SPMU Action Officer for recording and confirmation.';
+                : "Settle the issued {$billingLabel} through the CSPC Cashier and present the official receipt to the SPMU Action Officer for recording and confirmation.";
 
             $actionState = $billing->status === 'RECEIPT_SUBMITTED'
                 ? self::ACTION_PROCESSING
@@ -521,8 +633,7 @@ class BorrowerObligationService
 
             $actions = [];
             if ($document) {
-                $actions[] = ['View Billing Statement', route('documents.view', $document), true, 'primary'];
-                $actions[] = ['Download', route('documents.download', $document), false, 'secondary'];
+                $actions[] = ["Open {$billingLabel}", route('documents.preview', $document), false, 'primary', 'document'];
             }
 
             $obligationRows[] = [
@@ -533,20 +644,20 @@ class BorrowerObligationService
                 'tone' => 'info',
                 'icon' => 'requests',
                 'type' => 'Financial Obligation',
-                'title' => $billing->lines->first()?->description ?: 'Billing Statement',
+                'title' => $billing->lines->first()?->description ?: $billingLabel,
                 'reference' => $billing->billing_no,
-                'summary' => 'An open SPMU Billing Statement requires settlement or verification.',
+                'summary' => "An open SPMU {$billingLabel} requires settlement or verification.",
                 'badge' => $statusLabel,
                 'badge_tone' => $latestPayment?->status === 'REJECTED' ? 'danger' : 'info',
                 'status_meta' => '₱'.number_format((float) $billing->total_amount, 2),
                 'restricted' => (bool) $linkedRestriction,
+                'restriction' => $linkedRestriction,
                 'next_action' => $nextAction,
                 'next_tone' => $latestPayment?->status === 'REJECTED' ? 'danger' : 'warning',
                 'facts' => [
-                    ['Billing Statement', $billing->billing_no],
+                    [$billingLabel, $billing->billing_no],
                     ['Amount', '₱'.number_format((float) $billing->total_amount, 2)],
                     ['Payment due', optional($billing->due_at)->format('d M Y') ?: 'Not specified'],
-                    ['Borrowing status', $linkedRestriction ? 'Restricted until resolved' : 'No linked restriction'],
                 ],
                 'actions' => $actions,
                 'search' => strtolower(implode(' ', [
@@ -582,6 +693,35 @@ class BorrowerObligationService
                with SPMU before it can be lifted. */
             $actionState = $restriction->effective_to ? self::ACTION_PROCESSING : self::ACTION_BORROWER;
 
+            /*
+             * A sanction-caused restriction gets the Suspension Notice (or,
+             * for a historical non-suspension sanction, its original
+             * Administrative Sanction Notice label - accurate to what it
+             * actually is, never relabelled). A property-caused restriction
+             * with no sanction gets the Restriction Notice. A late-return-
+             * caused restriction gets neither - it already has its own Late
+             * Return Notice on that obligation's row.
+             */
+            $sanctionForRestriction = $restriction->sanction_id ? $restriction->sanction : null;
+            $isSuspension = $sanctionForRestriction
+                && strtoupper((string) $sanctionForRestriction->sanction_code) === 'BORROWING_SUSPENSION';
+
+            $actions = [];
+            if ($sanctionForRestriction) {
+                $sanctionDocument = $activeDocument($sanctionForRestriction->documents, 'ADMINISTRATIVE_SANCTION_NOTICE');
+                if ($sanctionDocument) {
+                    $actions[] = [
+                        $isSuspension ? 'Preview' : 'Preview',
+                        route('documents.preview', $sanctionDocument),
+                        false,
+                        'secondary',
+                        'document',
+                    ];
+                }
+            } elseif ($restriction->incident_id) {
+                $actions[] = ['Preview', route('restrictions.notice', $restriction), false, 'secondary', 'document'];
+            }
+
             $obligationRows[] = [
                 'category' => 'restriction',
                 'action_state' => $actionState,
@@ -590,12 +730,16 @@ class BorrowerObligationService
                 'tone' => 'orange',
                 'icon' => 'lock',
                 'type' => 'Borrowing Restriction',
-                'title' => $restriction->sanction_id
-                    ? 'Administrative borrowing restriction'
-                    : 'Borrowing temporarily restricted',
-                'reference' => $restriction->sanction_id
-                    ? 'Administrative sanction'
-                    : 'Restriction record',
+                'title' => match (true) {
+                    $isSuspension => 'Borrowing suspension',
+                    (bool) $sanctionForRestriction => 'Administrative borrowing restriction',
+                    default => 'Borrowing temporarily restricted',
+                },
+                'reference' => match (true) {
+                    $isSuspension => 'Suspension',
+                    (bool) $sanctionForRestriction => 'Administrative sanction',
+                    default => 'Restriction record',
+                },
                 'summary' => $restriction->reason ?: $restrictionType,
                 'badge' => $restriction->effective_to ? 'In Effect' : 'Restricted',
                 'badge_tone' => 'warning',
@@ -603,16 +747,16 @@ class BorrowerObligationService
                     ? 'Until '.$restriction->effective_to->format('d M Y')
                     : 'Until resolved',
                 'restricted' => true,
+                'restriction' => $restriction,
                 'next_action' => $restriction->effective_to
                     ? 'Wait until the configured restriction period ends.'
                     : 'Resolve the linked requirement with SPMU.',
                 'next_tone' => 'warning',
-                'facts' => [
-                    ['Restriction type', $restrictionType],
-                    ['Effective from', optional($restriction->effective_from)->format('d M Y') ?: '—'],
-                    ['Effective until', optional($restriction->effective_to)->format('d M Y') ?: 'Until resolved'],
-                ],
-                'actions' => [],
+                /* The row's whole subject is this restriction, so its
+                   reason/dates/status are shown once, by the dedicated
+                   Restriction panel every row gets - not duplicated here too. */
+                'facts' => [],
+                'actions' => $actions,
                 'search' => strtolower(implode(' ', [
                     'borrowing restriction',
                     $restrictionType,

@@ -11,104 +11,6 @@
 .accountability-page-heading h1 { margin: 2px 0 4px; font-size: clamp(20px, 1.6vw, 24px); }
 .accountability-page-heading p:not(.eyebrow) { max-width: 680px; font-size: 12.5px; line-height: 1.5; }
 
-/* Summary KPI row -------------------------------------------------------- */
-.accountability-kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
-
-.accountability-kpi-grid .accountability-kpi-card {
-    display: grid;
-    grid-template-columns: 32px minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
-    align-content: center;
-    column-gap: 11px;
-    row-gap: 2px;
-    min-height: 120px;
-    height: 100%;
-    padding: 14px 16px;
-    color: inherit;
-    text-decoration: none;
-    transition: border-color var(--motion) ease, background-color var(--motion) ease, box-shadow var(--motion) ease;
-}
-
-.accountability-kpi-card .kpi-icon {
-    grid-column: 1;
-    grid-row: 1 / span 3;
-    align-self: center;
-    margin: 0;
-}
-
-.accountability-kpi-card .kpi-value { grid-column: 2; grid-row: 1; margin: 0; font-size: 25px; }
-.accountability-kpi-card .kpi-label { grid-column: 2; grid-row: 2; font-size: 11.5px; line-height: 1.3; }
-
-/* One line of context per card: longer strings ellipsise rather than
-   pushing every card in the row taller. */
-.accountability-kpi-card small {
-    display: block;
-    grid-column: 2;
-    grid-row: 3;
-    margin: 2px 0 0;
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: 10.5px;
-    line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.accountability-kpi-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
-.accountability-kpi-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-
-/* Selected card reads as selected through its border, not a filled panel.
-   Head/AO select a view server-side (.is-active); the borrower's cards
-   filter the table already on the page client-side (.is-selected) — same
-   look, different mechanism. */
-.accountability-kpi-card.is-active,
-.accountability-kpi-card.is-selected {
-    border-color: var(--interactive);
-    background: var(--info-bg);
-    box-shadow: none;
-}
-
-/* Sub-navigation --------------------------------------------------------- */
-.accountability-tabs {
-    display: flex;
-    gap: 5px;
-    margin-bottom: 18px;
-    padding: 4px;
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface-subtle);
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
-}
-
-.accountability-tab {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 7px;
-    min-height: 34px;
-    padding: 0 12px;
-    border: 1px solid transparent;
-    border-radius: 7px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 700;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: border-color var(--motion) ease, background-color var(--motion) ease, color var(--motion) ease;
-}
-
-.accountability-tab:hover { color: var(--heading); background: var(--surface-hover); }
-.accountability-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-
-.accountability-tab.is-active {
-    color: var(--heading);
-    background: var(--surface-elevated);
-    border-color: var(--border);
-    box-shadow: var(--shadow-sm);
-}
-
 /* Section headings ------------------------------------------------------- */
 .accountability-section-heading { align-items: flex-start; margin-bottom: 12px; }
 .accountability-section-heading > div { min-width: 0; }
@@ -203,23 +105,13 @@
 .accountability-table-card td { padding: 8px 13px; font-size: 12px; }
 
 /* Responsive ------------------------------------------------------------- */
-@media (max-width: 1180px) {
-    .accountability-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
 @media (max-width: 900px) {
     .accountability-case-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 620px) {
-    .accountability-kpi-grid { grid-template-columns: minmax(0, 1fr); }
-    .accountability-kpi-grid .accountability-kpi-card { min-height: 92px; }
     .accountability-case-facts { grid-template-columns: minmax(0, 1fr); }
     .accountability-section-heading { flex-direction: column; gap: 8px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .accountability-kpi-card, .accountability-tab { transition: none; }
 }
 
 /* ========================================================================
@@ -258,14 +150,6 @@ html[data-theme="dark"] .kpi-accent-restriction {
     --kpi-icon-bg: #211a33;
     --kpi-icon-border: #3b2f57;
 }
-
-/* Sub-navigation --------------------------------------------------------- */
-/* The selected view reads as selected on its own, without a count chip.
-   The active/inactive/hover colors themselves live in the single
-   .accountability-tab.is-active rule above — this block only adds icon color. */
-.accountability-tab .ui-icon { flex: 0 0 auto; color: var(--text-soft); }
-.accountability-tab.is-active .ui-icon,
-.accountability-tab:hover:not(.is-active) .ui-icon { color: var(--interactive); }
 
 /* Active caseload -------------------------------------------------------- */
 .accountability-cases-card { padding: 0; overflow: hidden; }
@@ -398,7 +282,8 @@ html[data-theme="dark"] .kpi-accent-restriction {
 .accountability-cases-table th { white-space: nowrap; }
 .accountability-cases-table .is-numeric { text-align: right; font-variant-numeric: tabular-nums; }
 
-.accountability-case-row > td { padding: 11px 14px; font-size: 12px; vertical-align: middle; }
+/* Inherits the universal .table-wrap th/td padding and font-size instead of a page-specific shrink. */
+.accountability-case-row > td { vertical-align: middle; }
 .accountability-case-row > td:first-child { min-width: 210px; }
 
 /* Reference above the person it belongs to, as one identity block. */
@@ -688,64 +573,9 @@ html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5
 /* A peso amount is a longer string than a case count, so it takes less size. */
 .accountability-overview-card.tone-balance .accountability-overview-value { font-size: 27px; }
 
-/* ========================================================================
-   Workflow tabs.
-
-   One white strip holding five evenly-spread destinations. The selected one
-   is a filled blue pill with a deeper bar along its foot, so the choice is
-   readable at a glance without any tab shouting a number.
-   ======================================================================== */
-
-.accountability-tabs {
-    gap: 4px;
-    padding: 6px;
-    border-color: var(--border);
-    border-radius: 14px;
-    background: var(--surface-elevated);
-}
-
-.accountability-tab {
-    position: relative;
-    flex: 1 1 0;
-    justify-content: center;
-    min-height: 42px;
-    padding: 0 10px;
-    border-radius: 10px;
-    color: var(--heading);
-    font-size: 13px;
-    font-weight: 650;
-}
-
-.accountability-tab .ui-icon { color: var(--text-soft); }
-
-.accountability-tab:hover:not(.is-active) { background: var(--surface-hover); }
-
-.accountability-tab.is-active {
-    color: #fff;
-    background: #1d6ff2;
-    border-color: transparent;
-    box-shadow: none;
-}
-
-.accountability-tab.is-active .ui-icon { color: #fff; }
-
-/* The bar sits along the foot of the pill, not under the whole strip. */
-.accountability-tab.is-active::after {
-    content: '';
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 3px;
-    border-radius: 0 0 10px 10px;
-    background: #1550c4;
-}
-
 /* Responsive ------------------------------------------------------------- */
 @media (max-width: 1180px) {
     .accountability-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 900px) {
-    .accountability-tab { flex: 0 0 auto; justify-content: flex-start; }
 }
 
 @media (max-width: 620px) {

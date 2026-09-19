@@ -3,10 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
-use App\Models\DocumentTemplate;
 use App\Models\SystemSetting;
 use App\Services\AuditService;
-use App\Services\DocumentTemplateLayoutService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +26,7 @@ class SettingController extends Controller
         'gate_pass_template_version',
     ];
 
-    public function index(Request $request, DocumentTemplateLayoutService $layouts): View
+    public function index(Request $request): View
     {
         $this->authorizeConfiguration($request);
 
@@ -38,19 +36,14 @@ class SettingController extends Controller
         if ($isIctu) {
             /*
              * ICTU owns only technical configuration. Operational policy,
-             * fees, workflow deadlines, and controlled SPMU documents are
-             * intentionally excluded from this workspace.
+             * fees, and workflow deadlines are intentionally excluded from
+             * this workspace.
              */
             $settings = SystemSetting::query()
                 ->whereIn('setting_key', self::ICTU_SETTING_KEYS)
                 ->orderBy('group_code')
                 ->orderBy('setting_key')
                 ->get();
-
-            $templateTypes = [];
-            $documentTemplates = collect();
-            $templateFields = [];
-            $templateRequiredFields = [];
         } else {
             /*
              * SPMU Admin/Head owns business/operational configuration.
@@ -67,41 +60,9 @@ class SettingController extends Controller
                 ->orderBy('group_code')
                 ->orderBy('setting_key')
                 ->get();
-
-            $templateTypes = [
-                'BORROWER_SLIP' => "Borrower's Slip Template",
-                'LAUNDRY_FORM' => 'Laundry Form Template',
-                'GATE_PASS' => 'Gate Pass Template',
-                'BILLING_STATEMENT' => 'Billing Statement Template',
-                'ACCOUNTABILITY_COMPLIANCE_NOTICE' => 'Accountability / Compliance Notice Template',
-                'ADMINISTRATIVE_SANCTION_NOTICE' => 'Administrative Sanction Notice Template',
-                'RSLDDP' => 'RSLDDP Template',
-            ];
-
-            $documentTemplates = DocumentTemplate::query()
-                ->with('file')
-                ->whereIn('document_type', array_keys($templateTypes))
-                ->orderByDesc('template_version')
-                ->get()
-                ->groupBy('document_type');
-
-
-            $templateFields = collect($templateTypes)
-                ->mapWithKeys(fn (string $label, string $type): array => [$type => $layouts->fields($type)])
-                ->all();
-            $templateRequiredFields = collect($templateTypes)
-                ->mapWithKeys(fn (string $label, string $type): array => [$type => $layouts->requiredFields($type)])
-                ->all();
         }
 
-        return view('administration.settings', compact(
-            'settings',
-            'templateTypes',
-            'documentTemplates',
-            'templateFields',
-            'templateRequiredFields',
-            'isIctu'
-        ));
+        return view('administration.settings', compact('settings', 'isIctu'));
     }
 
     public function update(

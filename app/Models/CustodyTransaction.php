@@ -206,6 +206,11 @@ class CustodyTransaction extends Model
                 'FOR_BILLING' => ['key' => 'FOR_BILLING', 'label' => 'Billing Required'],
                 'BILLING_PENDING' => ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending'],
                 'COMPLIANCE_REQUIRED' => ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
+                'COMPLIANCE_RSLDDP_PENDING' => ['key' => 'COMPLIANCE_RSLDDP_PENDING', 'label' => 'Compliance - RSLDDP Pending'],
+                'RSLDDP_AWAITING_UPLOAD' => ['key' => 'RSLDDP_AWAITING_UPLOAD', 'label' => 'RSLDDP Processing'],
+                'RSLDDP_FOR_ACCOUNTING_PROCESSING' => ['key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'label' => 'For Accounting Processing'],
+                'RSLDDP_PAYMENT_REQUIRED' => ['key' => 'RSLDDP_PAYMENT_REQUIRED', 'label' => 'Payment Required'],
+                'RSLDDP_FOR_RESOLUTION' => ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Resolution'],
                 default => ['key' => 'INCIDENT_OPEN', 'label' => 'Accountability Pending'],
             };
         }
@@ -373,6 +378,36 @@ class CustodyTransaction extends Model
                     'label' => 'Compliance Required',
                     'title' => 'Property compliance required',
                     'copy' => 'SPMU still needs to verify the required repair, replacement, or other compliance.',
+                ],
+                'COMPLIANCE_RSLDDP_PENDING' => [
+                    'key' => 'COMPLIANCE_RSLDDP_PENDING',
+                    'label' => 'Compliance - RSLDDP Pending',
+                    'title' => 'RSLDDP required for compliance case',
+                    'copy' => 'The SPMU Head/Admin has determined this compliance case also requires an accomplished RSLDDP before it can be resolved.',
+                ],
+                'RSLDDP_AWAITING_UPLOAD' => [
+                    'key' => 'RSLDDP_AWAITING_UPLOAD',
+                    'label' => 'RSLDDP Processing',
+                    'title' => 'RSLDDP in progress',
+                    'copy' => 'The RSLDDP has been generated and is awaiting the accomplished, notarized copy to be uploaded.',
+                ],
+                'RSLDDP_FOR_ACCOUNTING_PROCESSING' => [
+                    'key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING',
+                    'label' => 'For Accounting Processing',
+                    'title' => 'Forwarded for Accounting processing',
+                    'copy' => 'The accomplished RSLDDP is being processed by the Accounting Office toward an Official Billing Statement.',
+                ],
+                'RSLDDP_PAYMENT_REQUIRED' => [
+                    'key' => 'RSLDDP_PAYMENT_REQUIRED',
+                    'label' => 'Payment Required',
+                    'title' => 'Payment required',
+                    'copy' => 'The Official Billing Statement has been recorded. Payment through the CSPC Cashier is required.',
+                ],
+                'RSLDDP_FOR_RESOLUTION' => [
+                    'key' => 'RSLDDP_FOR_RESOLUTION',
+                    'label' => 'For Resolution',
+                    'title' => 'Awaiting final verification',
+                    'copy' => 'Payment has been recorded. The SPMU Head/Admin still needs to verify and resolve the case.',
                 ],
                 default => [
                     'key' => 'ACCOUNTABILITY_REVIEW',

@@ -1,4 +1,4 @@
-@extends('layouts.app', ['title' => $item->exists ? 'Edit Inventory Item' : 'Add Inventory Item'])
+@extends('layouts.app', ['title' => $item->exists ? 'Edit Inventory Details' : 'Add Inventory Item'])
 
 @section('content')
 @include('inventory.partials.form-styles')
@@ -7,10 +7,10 @@
     <section class="page-heading inventory-form-heading">
         <div>
             <p class="eyebrow">SPMU inventory administration</p>
-            <h1>{{ $item->exists ? 'Edit inventory item' : 'Add inventory item' }}</h1>
+            <h1>{{ $item->exists ? 'Edit inventory details' : 'Add inventory item' }}</h1>
         </div>
 
-        <a class="inventory-form-back" href="{{ route('inventory.index') }}">
+        <a class="inventory-form-back" href="{{ $item->exists ? route('inventory.show', $item) : route('inventory.index') }}">
             <x-icon name="arrow-left" size="16" />
             Back
         </a>
@@ -61,29 +61,61 @@
                 <textarea name="specification">{{ old('specification', $item->specification) }}</textarea>
             </label>
 
-            <div class="inventory-form-columns">
-                <label>
-                    Total quantity
-                    <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        inputmode="numeric"
-                        name="total_quantity"
-                        value="{{ old('total_quantity', $item->total_quantity ?? 0) }}"
-                        required
-                    >
-                </label>
+            @if($item->exists)
+                <section class="inventory-form-stock-control" aria-label="Physical stock control">
+                    <div class="inventory-form-stock-control-head">
+                        <div>
+                            <span>Physical stock control</span>
+                            <strong>Managed from Inventory Overview</strong>
+                        </div>
+                        <a class="button secondary small ui-pressable" href="{{ route('inventory.show', ['inventory' => $item->id, 'tab' => 'overview']) }}">
+                            View Inventory Overview
+                            <x-icon name="arrow-right" size="14" />
+                        </a>
+                    </div>
 
-                <label>
-                    Condition
-                    <select name="condition_code">
-                        <option value="SERVICEABLE" @selected(old('condition_code', $item->condition_code) === 'SERVICEABLE')>Serviceable</option>
-                        <option value="DAMAGED_MAINTENANCE" @selected(old('condition_code', $item->condition_code) === 'DAMAGED_MAINTENANCE')>Damaged / Maintenance</option>
-                        <option value="CONDEMNED" @selected(old('condition_code', $item->condition_code) === 'CONDEMNED')>Condemned</option>
-                    </select>
-                </label>
-            </div>
+                    <div class="inventory-form-stock-values">
+                        <div>
+                            <span>Total Stock</span>
+                            <strong>{{ (float) $item->total_quantity + 0 }}</strong>
+                        </div>
+                        <div>
+                            <span>Master Condition</span>
+                            <strong>{{ match($item->condition_code) {
+                                'SERVICEABLE' => 'Good / Serviceable',
+                                'DAMAGED_MAINTENANCE' => 'Damaged / Under Repair',
+                                'CONDEMNED' => 'Condemned',
+                                default => str($item->condition_code)->replace('_', ' ')->title(),
+                            } }}</strong>
+                        </div>
+                    </div>
+
+                </section>
+            @else
+                <div class="inventory-form-columns">
+                    <label>
+                        Total quantity
+                        <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            inputmode="numeric"
+                            name="total_quantity"
+                            value="{{ old('total_quantity', $item->total_quantity ?? 0) }}"
+                            required
+                        >
+                    </label>
+
+                    <label>
+                        Initial condition
+                        <select name="condition_code">
+                            <option value="SERVICEABLE" @selected(old('condition_code', $item->condition_code) === 'SERVICEABLE')>Good / Serviceable</option>
+                            <option value="DAMAGED_MAINTENANCE" @selected(old('condition_code', $item->condition_code) === 'DAMAGED_MAINTENANCE')>Damaged / Under Repair</option>
+                            <option value="CONDEMNED" @selected(old('condition_code', $item->condition_code) === 'CONDEMNED')>Condemned</option>
+                        </select>
+                    </label>
+                </div>
+            @endif
 
             <fieldset>
                 <legend>Operational flags</legend>
@@ -113,16 +145,33 @@
                         <input type="checkbox" name="active" value="1" @checked(old('active', $item->exists ? $item->active : true))>
                         Active
                     </label>
+                    @error('active')<small class="field-error inventory-form-flag-error">{{ $message }}</small>@enderror
                 </div>
             </fieldset>
 
-            <label>
-                Mandatory change reason
-                <textarea name="change_reason" required>{{ old('change_reason') }}</textarea>
-            </label>
+            @if($item->exists)
+                <label>
+                    Reason for Change
+                    <textarea
+                        name="change_reason"
+                        required
+                        placeholder="Briefly state why the inventory details are being updated."
+                    >{{ old('change_reason') }}</textarea>
+                    @error('change_reason')<small class="field-error">{{ $message }}</small>@enderror
+                </label>
+            @else
+                <label>
+                    Initial Stock Source / Reference <small>(Optional)</small>
+                    <textarea
+                        name="initial_stock_source"
+                        placeholder="Example: Delivery Receipt, Purchase Order, property transfer, or opening inventory reference."
+                    >{{ old('initial_stock_source') }}</textarea>
+                    @error('initial_stock_source')<small class="field-error">{{ $message }}</small>@enderror
+                </label>
+            @endif
 
             <div class="inventory-form-actions">
-                <a class="button secondary ui-pressable inventory-form-cancel" href="{{ route('inventory.index') }}">
+                <a class="button secondary ui-pressable inventory-form-cancel" href="{{ $item->exists ? route('inventory.show', $item) : route('inventory.index') }}">
                     Cancel
                 </a>
 

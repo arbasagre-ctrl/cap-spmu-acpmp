@@ -1,6 +1,11 @@
 @props([
     'file' => null,
     'title' => 'Scanned Borrowing Request Letter',
+    'eyebrow' => 'Signed request letter',
+    'emptyText' => 'No scanned request letter is available.',
+    'previewUrl' => null,
+    'expanded' => false,
+    'compactHeader' => false,
 ])
 
 @php
@@ -8,10 +13,17 @@
      * Relative URL is intentional.
      * It keeps the iframe on the same host/port/session
      * currently used by the authenticated SPMU user.
+     *
+     * previewUrl lets a caller point the embedded viewer at a route with its
+     * own authorization (for example documents.view for a GeneratedDocument)
+     * instead of the default files.show lookup. The embedded PDF viewer keeps
+     * its native Print/Download controls, so no duplicate outer action is
+     * rendered here.
      */
-    $previewUrl = $file
+    $previewUrl ??= $file
         ? route('files.show', $file, false)
         : null;
+
 
     $mimeType =
         strtolower((string) ($file?->mime_type ?? ''));
@@ -29,37 +41,50 @@
             '/\.(png|jpe?g|webp)$/i',
             $originalName
         );
+
+    /*
+     * Standalone preview geometry is derived from the physical file itself,
+     * never from a document type/name. This keeps current and future forms
+     * dynamic: portrait stays portrait, landscape stays landscape, while an
+     * unreadable/unsupported page dictionary simply falls back to neutral.
+     */
+    $previewGeometry = $isPdf
+        ? app(\App\Services\DocumentPreviewGeometryService::class)->inspect($file)
+        : ['orientation' => 'unknown', 'ratio' => null];
+    $previewOrientation = $previewGeometry['orientation'] ?? 'unknown';
+    $previewRatio = $previewGeometry['ratio'] ?? null;
 @endphp
 
-<article class="card scanned-document-card">
-    <div class="scanned-document-header">
-        <div>
-            <p class="eyebrow">
-                Signed request letter
-            </p>
-
-            <h2>
-                {{ $title }}
-            </h2>
-        </div>
-
-        @if($previewUrl)
-            <a
-                class="button secondary small ui-pressable scanned-document-open"
-                href="{{ $previewUrl }}"
-                target="_blank"
-                rel="noopener"
-            >
-                Open original
-
-                <x-icon name="external-link" size="15" />
-            </a>
+<article
+    class="card scanned-document-card{{ $expanded ? ' scanned-document-card--expanded' : '' }}{{ $compactHeader ? ' scanned-document-card--compact-header' : '' }}"
+    data-document-preview-card
+    data-preview-orientation="{{ $previewOrientation }}"
+    @if($previewRatio) style="--document-page-ratio: {{ $previewRatio }}" @endif
+>
+    @if($compactHeader)
+        @if(filled($eyebrow))
+            <div class="scanned-document-reference">
+                <span>Document no.</span>
+                <strong>{{ $eyebrow }}</strong>
+            </div>
         @endif
-    </div>
+    @else
+        <div class="scanned-document-header">
+            <div>
+                <p class="eyebrow">
+                    {{ $eyebrow }}
+                </p>
+
+                <h2>
+                    {{ $title }}
+                </h2>
+            </div>
+        </div>
+    @endif
 
     @if(!$file)
         <div class="scanned-document-empty">
-            No scanned request letter is available.
+            {{ $emptyText }}
         </div>
     @elseif($isPdf)
         <div class="scanned-pdf-stage">
@@ -118,7 +143,6 @@
     @else
         <div class="scanned-document-empty">
             Preview is unavailable for this file type.
-            Use Open original.
         </div>
     @endif
 </article>
@@ -139,15 +163,23 @@
         border-bottom: 1px solid var(--border, #d7dee8);
     }
 
-    .scanned-document-open {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        white-space: nowrap;
+
+
+
+    .scanned-document-reference {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 12px 20px;
+        border-bottom: 1px solid var(--border, #d7dee8);
+        color: #64748b;
+        font-size: .82rem;
     }
 
-    .scanned-document-open .ui-icon {
-        flex-shrink: 0;
+    .scanned-document-reference strong {
+        color: var(--text, #0f2744);
+        font-size: .86rem;
+        overflow-wrap: anywhere;
     }
 
     .scanned-document-header h2 {
@@ -261,6 +293,25 @@
         let zoom = 100;
         let fit = true;
 
+        const card = viewer.closest('[data-document-preview-card]');
+        const syncImageOrientation = () => {
+            if (!card || !image.naturalWidth || !image.naturalHeight) {
+                return;
+            }
+
+            const ratio = image.naturalWidth / image.naturalHeight;
+            card.dataset.previewOrientation =
+                ratio > 1.08 ? 'landscape' :
+                ratio < 0.92 ? 'portrait' :
+                'square';
+            card.style.setProperty('--document-page-ratio', ratio.toFixed(4));
+        };
+
+        image.addEventListener('load', syncImageOrientation);
+        if (image.complete) {
+            syncImageOrientation();
+        }
+
         const render = () => {
             if (fit) {
                 image.style.width = 'auto';
@@ -357,6 +408,88 @@
         height: 50vh !important;
         min-height: 340px !important;
         max-height: 460px !important;
+    }
+}
+</style>
+
+<style>
+/*
+ * Dynamic standalone preview geometry.
+ *
+ * The wrapper reacts to the physical first-page aspect ratio detected from
+ * the PDF itself. No form names or document types are hard-coded here, so a
+ * newly uploaded/generated portrait or landscape document automatically gets
+ * the same treatment. Unknown/mixed geometry keeps a safe neutral layout.
+ */
+.scanned-document-card--expanded {
+    width: 100%;
+    margin-inline: auto;
+    transition: max-width .15s ease;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="portrait"] {
+    max-width: 1040px;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="square"] {
+    max-width: 1220px;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="landscape"],
+.scanned-document-card--expanded[data-preview-orientation="unknown"] {
+    max-width: 100%;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="portrait"] .scanned-pdf-stage,
+.scanned-document-card--expanded[data-preview-orientation="portrait"] .scanned-image-stage {
+    height: clamp(660px, 76vh, 900px) !important;
+    min-height: 660px !important;
+    max-height: 900px !important;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="landscape"] .scanned-pdf-stage,
+.scanned-document-card--expanded[data-preview-orientation="landscape"] .scanned-image-stage {
+    height: clamp(540px, 64vh, 760px) !important;
+    min-height: 540px !important;
+    max-height: 760px !important;
+}
+
+.scanned-document-card--expanded[data-preview-orientation="square"] .scanned-pdf-stage,
+.scanned-document-card--expanded[data-preview-orientation="square"] .scanned-image-stage,
+.scanned-document-card--expanded[data-preview-orientation="unknown"] .scanned-pdf-stage,
+.scanned-document-card--expanded[data-preview-orientation="unknown"] .scanned-image-stage {
+    height: clamp(580px, 70vh, 820px) !important;
+    min-height: 580px !important;
+    max-height: 820px !important;
+}
+
+@media (max-width: 900px) {
+    .scanned-document-card--expanded,
+    .scanned-document-card--expanded[data-preview-orientation] {
+        max-width: 100%;
+    }
+
+    .scanned-document-card--expanded[data-preview-orientation] .scanned-pdf-stage,
+    .scanned-document-card--expanded[data-preview-orientation] .scanned-image-stage {
+        height: 64vh !important;
+        min-height: 500px !important;
+        max-height: 700px !important;
+    }
+}
+
+@media (max-width: 620px) {
+    .scanned-document-reference {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        padding: 10px 14px;
+    }
+
+    .scanned-document-card--expanded[data-preview-orientation] .scanned-pdf-stage,
+    .scanned-document-card--expanded[data-preview-orientation] .scanned-image-stage {
+        height: 58vh !important;
+        min-height: 380px !important;
+        max-height: 560px !important;
     }
 }
 </style>

@@ -200,7 +200,8 @@ test('physical release shows timing notices and disables handover inputs until e
 
 test('document links preserve current-document filtering and Gate Pass preview/final distinction', () => {
     assert.match(documents, /whereNotIn\('status', \['SUPERSEDED', 'INVALIDATED', 'EXPIRED'\]\)/);
-    assert.match(documents, /route\('documents\.download', \$document\)/);
+    assert.match(documents, /route\('documents\.preview', \$document\)/);
+    assert.doesNotMatch(documents, /route\('documents\.download', \$document\)/);
     assert.match(documents, /\['READY_FOR_PRINTING', 'VERIFIED'\]/);
     assert.match(documents, /FINAL SPMU GATE PASS/);
     assert.match(documents, /SPMU PREVIEW — NOT FOR BORROWER PRINTING/);

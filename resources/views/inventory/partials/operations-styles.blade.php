@@ -8,7 +8,7 @@
 /* Availability window */
 
 /* Search and category */
-.spmu-inventory-filters { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(200px, 1fr); align-items: end; gap: 14px 18px; margin-bottom: 16px; }
+.spmu-inventory-filters { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(190px, 1fr) minmax(190px, .9fr); align-items: end; gap: 14px 18px; margin-bottom: 16px; }
 .spmu-inventory-filters .search-input-shell input { padding-left: 36px; }
 
 /* Result summary above the table */

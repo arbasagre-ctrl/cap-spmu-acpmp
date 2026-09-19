@@ -30,8 +30,8 @@
                             <strong>{{ str($document->document_type)->replace('_', ' ')->title() }}</strong>
                             <small>{{ $documentDisplayStatus }}</small>
                         </div>
-                        <a class="button secondary small ui-pressable release-outline" href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
-                            Open Document
+                        <a class="button secondary small ui-pressable release-outline" href="{{ route('documents.preview', $document) }}">
+                            Preview
                         </a>
                     </div>
                 @empty

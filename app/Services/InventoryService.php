@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\Allocation;
 use App\Models\BorrowingRequest;
+use App\Models\Incident;
 use App\Models\InventoryItem;
 use App\Models\RequestVersion;
+use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -463,38 +465,18 @@ class InventoryService
         |
         */
 
-        $incident = (float) DB::table('incident_lines')
-            ->join(
-                'incidents',
-                'incidents.id',
-                '=',
-                'incident_lines.incident_id'
-            )
-            ->join(
-                'custody_lines',
-                'custody_lines.id',
-                '=',
-                'incident_lines.custody_line_id'
-            )
-            ->join(
-                'request_items',
-                'request_items.id',
-                '=',
-                'custody_lines.request_item_id'
-            )
-            ->where(
-                'request_items.inventory_item_id',
-                $item->id
-            )
-            ->sum(
-                'incident_lines.quantity'
-            );
-
-
         /*
         |--------------------------------------------------------------------------
         | INCIDENT STATE BREAKDOWN
         |--------------------------------------------------------------------------
+        |
+        | Incident lines remain part of the historical accountability record even
+        | after the borrower has settled an obligation. Physical inventory is restored only by a recorded physical disposition.
+        | Repair, replacement, and recovery are posted automatically when the
+        | Action Officer verifies the Head-required compliance; write-off remains
+        | a formal Admin inventory disposition. The original incident record stays
+        | unchanged as the accountability history.
+        |
         */
 
         $incidentStates = DB::table('incident_lines')
@@ -530,6 +512,33 @@ class InventoryService
                 'quantity',
                 'disposition_state'
             );
+
+        $incidentClosures = $this->incidentClosureStateTotals([$item->id])[$item->id] ?? [];
+
+        $incidentStates = $incidentStates->mapWithKeys(
+            fn ($quantity, $state): array => [
+                $state => max(
+                    0,
+                    (float) $quantity - (float) ($incidentClosures[$state] ?? 0)
+                ),
+            ]
+        );
+
+        $incident = (float) $incidentStates->sum();
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADMIN-RECORDED CONDITION HOLD
+        |--------------------------------------------------------------------------
+        |
+        | A physical issue discovered outside a borrower accountability case (for
+        | example during AO item preparation) can place otherwise free stock under
+        | maintenance. These formal Stock Card movements are separate from incident
+        | lines and remain unavailable until returned to service or retired.
+        |
+        */
+
+        $conditionHold = $this->conditionHoldTotals([$item->id])[$item->id] ?? 0.0;
 
 
         /*
@@ -576,6 +585,7 @@ class InventoryService
             - $borrowed
             - $laundry
             - $incident
+            - $conditionHold
         );
 
         $borrowerAvailable = max(
@@ -585,6 +595,7 @@ class InventoryService
             - $borrowed
             - $laundry
             - $incident
+            - $conditionHold
         );
 
         $available = max(
@@ -594,6 +605,7 @@ class InventoryService
             - $borrowedForPeriod
             - $laundry
             - $incident
+            - $conditionHold
         );
 
 
@@ -638,13 +650,19 @@ class InventoryService
             'incident' => $incident,
 
             /*
-             * Incident state breakdown.
+             * Formal Head/Admin condition holds that are not borrower incidents.
+             */
+            'condition_hold' => (float) $conditionHold,
+
+            /*
+             * Incident state breakdown plus formal maintenance holds.
              */
             'damaged_maintenance' =>
                 (float) (
                     $incidentStates['DAMAGED_MAINTENANCE']
                     ?? 0
                 )
+                + (float) $conditionHold
                 + (
                     $item->condition_code === 'DAMAGED_MAINTENANCE'
                         ? $total
@@ -722,6 +740,7 @@ class InventoryService
         $borrowedForPeriod = $this->custodyTotals($ids, $from, $to);
         $laundry = $this->laundryTotals($ids);
         [$incident, $incidentStates] = $this->incidentTotals($ids);
+        $conditionHolds = $this->conditionHoldTotals($ids);
 
         $balances = [];
 
@@ -735,6 +754,7 @@ class InventoryService
 
             $itemLaundry = (float) ($laundry[$id] ?? 0);
             $itemIncident = (float) ($incident[$id] ?? 0);
+            $itemConditionHold = (float) ($conditionHolds[$id] ?? 0);
             $itemBorrowed = (float) ($borrowed[$id] ?? 0);
             $itemStates = $incidentStates[$id] ?? [];
 
@@ -747,7 +767,9 @@ class InventoryService
                 'borrowed_for_period' => (float) ($borrowedForPeriod[$id] ?? 0),
                 'laundry' => $itemLaundry,
                 'incident' => $itemIncident,
+                'condition_hold' => $itemConditionHold,
                 'damaged_maintenance' => (float) ($itemStates['DAMAGED_MAINTENANCE'] ?? 0)
+                    + $itemConditionHold
                     + ($item->condition_code === 'DAMAGED_MAINTENANCE' ? $total : 0.0),
                 'lost' => (float) ($itemStates['LOST'] ?? 0),
                 'stolen' => (float) ($itemStates['STOLEN'] ?? 0),
@@ -755,7 +777,7 @@ class InventoryService
                 'condemned' => $item->condition_code === 'CONDEMNED' ? $total : 0.0,
                 'current_available' => max(
                     0,
-                    $serviceableTotal - $itemBorrowed - $itemLaundry - $itemIncident
+                    $serviceableTotal - $itemBorrowed - $itemLaundry - $itemIncident - $itemConditionHold
                 ),
                 'borrower_available' => max(
                     0,
@@ -764,6 +786,7 @@ class InventoryService
                     - $itemBorrowed
                     - $itemLaundry
                     - $itemIncident
+                    - $itemConditionHold
                 ),
                 'available' => max(
                     0,
@@ -772,6 +795,7 @@ class InventoryService
                     - (float) ($borrowedForPeriod[$id] ?? 0)
                     - $itemLaundry
                     - $itemIncident
+                    - $itemConditionHold
                 ),
             ];
         }
@@ -948,15 +972,633 @@ class InventoryService
             ->selectRaw('COALESCE(SUM(incident_lines.quantity), 0) AS quantity')
             ->get();
 
+        $closures = $this->incidentClosureStateTotals($ids);
         $totals = [];
         $states = [];
 
         foreach ($rows as $row) {
-            $totals[$row->item_id] = ($totals[$row->item_id] ?? 0) + (float) $row->quantity;
-            $states[$row->item_id][$row->state] = (float) $row->quantity;
+            $remaining = max(
+                0,
+                (float) $row->quantity
+                - (float) ($closures[$row->item_id][$row->state] ?? 0)
+            );
+
+            if ($remaining <= 0) {
+                continue;
+            }
+
+            $totals[$row->item_id] = ($totals[$row->item_id] ?? 0) + $remaining;
+            $states[$row->item_id][$row->state] = $remaining;
         }
 
         return [$totals, $states];
+    }
+
+    /**
+     * Inventory movements that physically close an incident-held quantity.
+     * A Head decision alone never restores inventory; repair/replacement/recovery
+     * close only after Action Officer verification, while write-off is recorded by Admin.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, array<string, float>>
+     */
+    private function incidentClosureStateTotals(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $rows = DB::table('inventory_transaction_lines as line')
+            ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+            ->whereIn('line.inventory_item_id', $ids)
+            ->where('tx.source_type', Incident::class)
+            ->whereIn('tx.transaction_type', [
+                'INVENTORY_INCIDENT_RESTORATION',
+                'INVENTORY_INCIDENT_WRITE_OFF',
+            ])
+            ->whereIn('line.to_state', ['AVAILABLE', 'RETIRED'])
+            ->groupBy('line.inventory_item_id', 'line.from_state')
+            ->select(
+                'line.inventory_item_id AS item_id',
+                'line.from_state AS state'
+            )
+            ->selectRaw('COALESCE(SUM(line.quantity), 0) AS quantity')
+            ->get();
+
+        $states = [];
+
+        foreach ($rows as $row) {
+            $states[(int) $row->item_id][(string) $row->state] = (float) $row->quantity;
+        }
+
+        return $states;
+    }
+
+    /**
+     * Outstanding quantity placed under maintenance directly by the SPMU Head.
+     * These movements are used for verified physical discrepancies that are not
+     * tied to a borrower Incident (for example, a condition issue found during
+     * pre-release preparation).
+     *
+     * @param  list<int>  $ids
+     * @return array<int, float>
+     */
+    private function conditionHoldTotals(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $placed = DB::table('inventory_transaction_lines as line')
+            ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+            ->whereIn('line.inventory_item_id', $ids)
+            ->where('tx.transaction_type', 'INVENTORY_CONDITION_HOLD')
+            ->where('line.to_state', 'DAMAGED_MAINTENANCE')
+            ->groupBy('line.inventory_item_id')
+            ->select('line.inventory_item_id AS item_id')
+            ->selectRaw('COALESCE(SUM(line.quantity), 0) AS quantity')
+            ->pluck('quantity', 'item_id');
+
+        $closed = DB::table('inventory_transaction_lines as line')
+            ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+            ->whereIn('line.inventory_item_id', $ids)
+            ->whereIn('tx.transaction_type', [
+                'INVENTORY_CONDITION_RESTORATION',
+                'INVENTORY_CONDITION_RETIREMENT',
+            ])
+            ->where('line.from_state', 'DAMAGED_MAINTENANCE')
+            ->groupBy('line.inventory_item_id')
+            ->select('line.inventory_item_id AS item_id')
+            ->selectRaw('COALESCE(SUM(line.quantity), 0) AS quantity')
+            ->pluck('quantity', 'item_id');
+
+        $totals = [];
+
+        foreach ($ids as $id) {
+            $totals[(int) $id] = max(
+                0,
+                (float) ($placed[$id] ?? 0) - (float) ($closed[$id] ?? 0)
+            );
+        }
+
+        return $totals;
+    }
+
+    /**
+     * Current manual maintenance hold for a single inventory item.
+     */
+    public function conditionHoldQuantity(InventoryItem $item): float
+    {
+        return (float) ($this->conditionHoldTotals([$item->id])[$item->id] ?? 0);
+    }
+
+    /**
+     * Manual Inventory Overview actions are intentionally narrower than the
+     * automatic transactional movements posted by borrowing, Laundry, and
+     * Accountability workflows. Laundry remains the routine cleaning path for
+     * linen, but a laundry-managed item may still need a physical maintenance
+     * hold when it is actually damaged (for example, torn and awaiting repair).
+     *
+     * @param  array<string, mixed>|null  $balance
+     * @return array<string, bool|float>
+     */
+    public function manualAdjustmentCapabilities(
+        InventoryItem $item,
+        ?array $balance = null
+    ): array {
+        $balance ??= $this->availability($item, now(), now()->addSecond());
+
+        $conditionHold = (float) ($balance['condition_hold'] ?? $this->conditionHoldQuantity($item));
+        $freeServiceable = (float) ($balance['borrower_available'] ?? $balance['available'] ?? 0);
+        $usesLaundryWorkflow = (bool) $item->laundry_required;
+
+        return [
+            'uses_laundry_workflow' => $usesLaundryWorkflow,
+            'free_serviceable' => $freeServiceable,
+            'condition_hold' => $conditionHold,
+            'can_place_under_maintenance' => $item->active
+                && $item->condition_code === 'SERVICEABLE'
+                && $freeServiceable > 0,
+            'can_return_maintenance_to_service' => $conditionHold > 0,
+            'can_retire_maintenance_stock' => $conditionHold > 0,
+        ];
+    }
+
+    /**
+     * Remaining physical incident quantity for one item/incident/state after
+     * prior repair, replacement, recovery, or write-off transactions.
+     */
+    public function remainingIncidentQuantity(
+        InventoryItem $item,
+        Incident $incident,
+        string $state
+    ): float {
+        $state = strtoupper($state);
+
+        $recorded = (float) DB::table('incident_lines')
+            ->join('custody_lines', 'custody_lines.id', '=', 'incident_lines.custody_line_id')
+            ->join('request_items', 'request_items.id', '=', 'custody_lines.request_item_id')
+            ->where('incident_lines.incident_id', $incident->id)
+            ->where('request_items.inventory_item_id', $item->id)
+            ->where('incident_lines.disposition_state', $state)
+            ->sum('incident_lines.quantity');
+
+        if ($recorded <= 0) {
+            return 0.0;
+        }
+
+        $closed = (float) DB::table('inventory_transaction_lines as line')
+            ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+            ->where('line.inventory_item_id', $item->id)
+            ->where('tx.source_type', Incident::class)
+            ->where('tx.source_id', $incident->id)
+            ->where('line.from_state', $state)
+            ->whereIn('tx.transaction_type', [
+                'INVENTORY_INCIDENT_RESTORATION',
+                'INVENTORY_INCIDENT_WRITE_OFF',
+            ])
+            ->sum('line.quantity');
+
+        return max(0, $recorded - $closed);
+    }
+
+    /**
+     * Apply the physical inventory effect of a verified accountability
+     * compliance action. The Head/Admin chooses the required action; the AO
+     * verifies the physical completion. Inventory changes happen only here,
+     * at verification time, never when the Head decision is first recorded.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function recordIncidentCompliance(
+        Incident $incident,
+        User $actor,
+        string $complianceAction
+    ): array {
+        $complianceAction = strtoupper(trim($complianceAction));
+
+        $inventoryAction = match ($complianceAction) {
+            'REPAIR' => 'RETURN_TO_SERVICE',
+            'REPLACEMENT' => 'REPLACEMENT_RECEIVED',
+            'RECOVERY' => 'ITEM_RECOVERED',
+            default => throw ValidationException::withMessages([
+                'compliance_action' => 'The recorded compliance action cannot update Inventory automatically.',
+            ]),
+        };
+
+        $allowedStates = match ($complianceAction) {
+            'REPAIR' => ['DAMAGED_MAINTENANCE'],
+            'REPLACEMENT' => ['DAMAGED_MAINTENANCE', 'LOST', 'STOLEN', 'DESTROYED', 'REPLACEMENT_REQUIRED'],
+            'RECOVERY' => ['LOST', 'STOLEN'],
+            default => [],
+        };
+
+        $rows = DB::table('incident_lines as incident_line')
+            ->join('custody_lines as custody_line', 'custody_line.id', '=', 'incident_line.custody_line_id')
+            ->join('request_items as request_item', 'request_item.id', '=', 'custody_line.request_item_id')
+            ->where('incident_line.incident_id', $incident->id)
+            ->groupBy('request_item.inventory_item_id', 'incident_line.disposition_state')
+            ->get([
+                'request_item.inventory_item_id',
+                'incident_line.disposition_state',
+                DB::raw('COALESCE(SUM(incident_line.quantity), 0) as recorded_quantity'),
+            ]);
+
+        if ($rows->isEmpty()) {
+            throw ValidationException::withMessages([
+                'incident' => 'No inventory quantity is linked to this property accountability case.',
+            ]);
+        }
+
+        $results = [];
+
+        foreach ($rows as $row) {
+            $state = strtoupper((string) $row->disposition_state);
+
+            if (! in_array($state, $allowedStates, true)) {
+                throw ValidationException::withMessages([
+                    'compliance_action' => 'The recorded compliance action does not match the affected property condition.',
+                ]);
+            }
+
+            $item = InventoryItem::query()->findOrFail((int) $row->inventory_item_id);
+            $remaining = $this->remainingIncidentQuantity($item, $incident, $state);
+
+            // A pre-existing manual reconciliation may already have closed the
+            // physical quantity. Do not create a duplicate Stock Card movement.
+            if ($remaining <= 0) {
+                continue;
+            }
+
+            $results[] = $this->recordAdjustment($item, $actor, [
+                'action' => $inventoryAction,
+                'incident_id' => $incident->id,
+                'incident_state' => $state,
+                'quantity' => $remaining,
+            ]);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Record the opening stock of a newly created inventory item in the same
+     * read-only Stock Card used by operational movements.
+     */
+    public function recordInitialStock(
+        InventoryItem $item,
+        ?User $actor = null,
+        ?string $sourceReference = null
+    ): void
+    {
+        $quantity = (float) $item->total_quantity;
+
+        if ($quantity <= 0) {
+            return;
+        }
+
+        $transactionId = DB::table('inventory_transactions')->insertGetId([
+            'actor_user_id' => $actor?->id,
+            'transaction_type' => 'INVENTORY_INITIAL_STOCK',
+            'source_type' => InventoryItem::class,
+            'source_id' => $item->id,
+            'reason' => filled($sourceReference)
+                ? 'Opening stock recorded when the inventory item was created. Source / Reference: '.trim($sourceReference)
+                : 'Opening stock recorded when the inventory item was created.',
+            'correlation_id' => (string) Str::uuid(),
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('inventory_transaction_lines')->insert([
+            'inventory_transaction_id' => $transactionId,
+            'inventory_item_id' => $item->id,
+            'from_state' => 'OPENING_BALANCE',
+            'to_state' => $item->condition_code === 'SERVICEABLE'
+                ? 'AVAILABLE'
+                : $item->condition_code,
+            'quantity' => $quantity,
+            'before_quantity' => 0,
+            'after_quantity' => $quantity,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * Formal SPMU Head inventory reconciliation. This is intentionally separate
+     * from the metadata Edit screen so stock/condition changes always leave a
+     * Stock Card movement and cannot silently change an approved commitment.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    public function recordAdjustment(
+        InventoryItem $item,
+        User $actor,
+        array $data
+    ): array {
+        return DB::transaction(function () use ($item, $actor, $data): array {
+            $locked = InventoryItem::query()->lockForUpdate()->findOrFail($item->id);
+            $action = strtoupper((string) ($data['action'] ?? ''));
+            $reason = trim((string) ($data['reason'] ?? ''));
+
+            if ($action === 'RETURN_MAINTENANCE_TO_SERVICE' && $reason === '') {
+                $reason = 'Physically verified serviceable and returned to service.';
+            }
+
+            if (in_array($action, [
+                'STOCK_ADDITION',
+                'PHYSICAL_COUNT_CORRECTION',
+                'PLACE_UNDER_MAINTENANCE',
+                'RETIRE_MAINTENANCE_STOCK',
+                'WRITE_OFF_RETIRED',
+            ], true) && $reason === '') {
+                throw ValidationException::withMessages([
+                    'reason' => 'This inventory adjustment requires a documented source, reason, or formal basis.',
+                ]);
+            }
+
+            $beforeTotal = (float) $locked->total_quantity;
+            $beforeBalance = $this->availability($locked, now(), now()->addSecond());
+
+            $transactionType = null;
+            $sourceType = InventoryItem::class;
+            $sourceId = $locked->id;
+            $fromState = 'AVAILABLE';
+            $toState = 'AVAILABLE';
+            $quantity = 0.0;
+            $afterTotal = $beforeTotal;
+            $actionLabel = '';
+
+            if ($action === 'STOCK_ADDITION') {
+                $quantity = (float) ($data['quantity'] ?? 0);
+                if ($quantity <= 0) {
+                    throw ValidationException::withMessages([
+                        'quantity' => 'Enter the quantity of newly received stock.',
+                    ]);
+                }
+
+                $transactionType = 'INVENTORY_STOCK_ADDITION';
+                $fromState = 'OUTSIDE_STOCK';
+                $toState = 'AVAILABLE';
+                $afterTotal = $beforeTotal + $quantity;
+                $actionLabel = 'Additional Stock Received';
+            } elseif ($action === 'PHYSICAL_COUNT_CORRECTION') {
+                $target = (float) ($data['new_total_quantity'] ?? -1);
+                if ($target < 0) {
+                    throw ValidationException::withMessages([
+                        'new_total_quantity' => 'Enter the verified physical stock total.',
+                    ]);
+                }
+
+                $committed = (float) $beforeBalance['reserved']
+                    + (float) $beforeBalance['borrowed']
+                    + (float) $beforeBalance['laundry']
+                    + (float) $beforeBalance['incident']
+                    + (float) ($beforeBalance['condition_hold'] ?? 0);
+
+                if ($target < $committed) {
+                    throw ValidationException::withMessages([
+                        'new_total_quantity' => "Physical stock total cannot be lower than the active committed/unavailable quantity of {$committed}.",
+                    ]);
+                }
+
+                if (abs($target - $beforeTotal) < 0.0001) {
+                    throw ValidationException::withMessages([
+                        'new_total_quantity' => 'The verified physical stock total is unchanged.',
+                    ]);
+                }
+
+                $quantity = abs($target - $beforeTotal);
+                $transactionType = 'INVENTORY_PHYSICAL_COUNT_CORRECTION';
+                $fromState = $target > $beforeTotal ? 'COUNT_CORRECTION' : 'AVAILABLE';
+                $toState = $target > $beforeTotal ? 'AVAILABLE' : 'COUNT_CORRECTION';
+                $afterTotal = $target;
+                $actionLabel = 'Physical Count Correction';
+            } elseif (in_array($action, [
+                'PLACE_UNDER_MAINTENANCE',
+                'RETURN_MAINTENANCE_TO_SERVICE',
+                'RETIRE_MAINTENANCE_STOCK',
+            ], true)) {
+                $quantity = (float) ($data['quantity'] ?? 0);
+                if ($quantity <= 0) {
+                    throw ValidationException::withMessages([
+                        'quantity' => 'Enter the quantity covered by this physical stock adjustment.',
+                    ]);
+                }
+
+                $conditionHold = $this->conditionHoldQuantity($locked);
+
+                if (in_array($action, ['RETURN_MAINTENANCE_TO_SERVICE', 'RETIRE_MAINTENANCE_STOCK'], true)
+                    && $conditionHold <= 0) {
+                    throw ValidationException::withMessages([
+                        'action' => 'No units are currently under the manual maintenance hold.',
+                    ]);
+                }
+
+                if ($action === 'PLACE_UNDER_MAINTENANCE') {
+                    if (! $locked->active || $locked->condition_code !== 'SERVICEABLE') {
+                        throw ValidationException::withMessages([
+                            'action' => 'Maintenance hold can only be recorded for an active serviceable inventory record.',
+                        ]);
+                    }
+
+                    $freeQuantity = (float) ($beforeBalance['borrower_available'] ?? 0);
+                    if ($quantity > $freeQuantity) {
+                        throw ValidationException::withMessages([
+                            'quantity' => "Only {$freeQuantity} uncommitted serviceable unit(s) can be placed under maintenance.",
+                        ]);
+                    }
+
+                    $transactionType = 'INVENTORY_CONDITION_HOLD';
+                    $fromState = 'AVAILABLE';
+                    $toState = 'DAMAGED_MAINTENANCE';
+                    $actionLabel = 'Placed Under Maintenance';
+                } elseif ($action === 'RETURN_MAINTENANCE_TO_SERVICE') {
+                    if ($quantity > $conditionHold) {
+                        throw ValidationException::withMessages([
+                            'quantity' => "Only {$conditionHold} unit(s) are currently under the manual maintenance hold.",
+                        ]);
+                    }
+
+                    $transactionType = 'INVENTORY_CONDITION_RESTORATION';
+                    $fromState = 'DAMAGED_MAINTENANCE';
+                    $toState = 'AVAILABLE';
+                    $actionLabel = 'Maintenance Stock Returned to Service';
+                } else {
+                    if ($quantity > $conditionHold) {
+                        throw ValidationException::withMessages([
+                            'quantity' => "Only {$conditionHold} unit(s) are currently under the manual maintenance hold.",
+                        ]);
+                    }
+
+                    $transactionType = 'INVENTORY_CONDITION_RETIREMENT';
+                    $fromState = 'DAMAGED_MAINTENANCE';
+                    $toState = 'RETIRED';
+                    $afterTotal = $beforeTotal - $quantity;
+
+                    $remainingHold = max(0, $conditionHold - $quantity);
+                    $committedAfter = (float) $beforeBalance['reserved']
+                        + (float) $beforeBalance['borrowed']
+                        + (float) $beforeBalance['laundry']
+                        + (float) $beforeBalance['incident']
+                        + $remainingHold;
+
+                    if ($afterTotal < $committedAfter) {
+                        throw ValidationException::withMessages([
+                            'quantity' => 'The retirement would reduce Total Stock below active inventory commitments.',
+                        ]);
+                    }
+
+                    $actionLabel = 'Maintenance Stock Retired / Condemned';
+                }
+            } elseif (in_array($action, [
+                'RETURN_TO_SERVICE',
+                'REPLACEMENT_RECEIVED',
+                'ITEM_RECOVERED',
+                'WRITE_OFF_RETIRED',
+            ], true)) {
+                $incidentId = (int) ($data['incident_id'] ?? 0);
+                $state = strtoupper((string) ($data['incident_state'] ?? ''));
+                $quantity = (float) ($data['quantity'] ?? 0);
+                $incident = Incident::query()->find($incidentId);
+
+                if (! $incident || $state === '') {
+                    throw ValidationException::withMessages([
+                        'incident_source' => 'Select the related accountability incident.',
+                    ]);
+                }
+
+                if ($action === 'WRITE_OFF_RETIRED'
+                    && ! in_array(strtoupper((string) $incident->status), ['RESOLVED', 'CLOSED'], true)) {
+                    throw ValidationException::withMessages([
+                        'incident_source' => 'Stock write-off is available only after the related accountability case has a final resolution.',
+                    ]);
+                }
+
+                if ($quantity <= 0) {
+                    throw ValidationException::withMessages([
+                        'quantity' => 'Enter the quantity covered by this reconciliation.',
+                    ]);
+                }
+
+                $allowedStates = match ($action) {
+                    'RETURN_TO_SERVICE' => ['DAMAGED_MAINTENANCE'],
+                    'ITEM_RECOVERED' => ['LOST', 'STOLEN'],
+                    'REPLACEMENT_RECEIVED' => ['DAMAGED_MAINTENANCE', 'LOST', 'STOLEN', 'DESTROYED', 'REPLACEMENT_REQUIRED'],
+                    'WRITE_OFF_RETIRED' => ['DAMAGED_MAINTENANCE', 'LOST', 'STOLEN', 'DESTROYED'],
+                    default => [],
+                };
+
+                if (! in_array($state, $allowedStates, true)) {
+                    throw ValidationException::withMessages([
+                        'incident_source' => 'The selected accountability incident is not valid for this action.',
+                    ]);
+                }
+
+                $remaining = $this->remainingIncidentQuantity($locked, $incident, $state);
+                if ($quantity > $remaining) {
+                    throw ValidationException::withMessages([
+                        'quantity' => "Only {$remaining} unit(s) remain under this inventory exception.",
+                    ]);
+                }
+
+                $sourceType = Incident::class;
+                $sourceId = $incident->id;
+                $fromState = $state;
+
+                if ($action === 'WRITE_OFF_RETIRED') {
+                    $transactionType = 'INVENTORY_INCIDENT_WRITE_OFF';
+                    $toState = 'RETIRED';
+                    $afterTotal = $beforeTotal - $quantity;
+                    $remainingIncident = max(0, (float) $beforeBalance['incident'] - $quantity);
+                    $committedAfter = (float) $beforeBalance['reserved']
+                        + (float) $beforeBalance['borrowed']
+                        + (float) $beforeBalance['laundry']
+                        + $remainingIncident;
+
+                    if ($afterTotal < $committedAfter) {
+                        throw ValidationException::withMessages([
+                            'quantity' => 'The write-off would reduce Total Stock below active inventory commitments.',
+                        ]);
+                    }
+
+                    $actionLabel = 'Stock Retired / Written Off';
+                } else {
+                    $transactionType = 'INVENTORY_INCIDENT_RESTORATION';
+                    $toState = 'AVAILABLE';
+                    $actionLabel = match ($action) {
+                        'RETURN_TO_SERVICE' => 'Returned to Service / Repaired',
+                        'REPLACEMENT_RECEIVED' => 'Replacement Received',
+                        'ITEM_RECOVERED' => 'Item Recovered',
+                    };
+                }
+            } else {
+                throw ValidationException::withMessages([
+                    'action' => 'Select a valid inventory adjustment action.',
+                ]);
+            }
+
+            if ($afterTotal < 0) {
+                throw ValidationException::withMessages([
+                    'quantity' => 'Inventory quantity cannot be negative.',
+                ]);
+            }
+
+            if (abs($afterTotal - $beforeTotal) >= 0.0001) {
+                $locked->update(['total_quantity' => $afterTotal]);
+            }
+
+            $transactionId = DB::table('inventory_transactions')->insertGetId([
+                'actor_user_id' => $actor->id,
+                'transaction_type' => $transactionType,
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'reason' => $reason !== ''
+                    ? $actionLabel.' — '.$reason
+                    : $actionLabel,
+                'correlation_id' => (string) Str::uuid(),
+                'occurred_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $lineId = DB::table('inventory_transaction_lines')->insertGetId([
+                'inventory_transaction_id' => $transactionId,
+                'inventory_item_id' => $locked->id,
+                'from_state' => $fromState,
+                'to_state' => $toState,
+                'quantity' => $quantity,
+                'before_quantity' => (float) ($beforeBalance['borrower_available'] ?? 0),
+                'after_quantity' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $fresh = $locked->fresh();
+            $afterBalance = $this->availability($fresh, now(), now()->addSecond());
+
+            DB::table('inventory_transaction_lines')
+                ->where('id', $lineId)
+                ->update([
+                    'after_quantity' => (float) ($afterBalance['borrower_available'] ?? 0),
+                    'updated_at' => now(),
+                ]);
+
+            return [
+                'action' => $action,
+                'action_label' => $actionLabel,
+                'quantity' => $quantity,
+                'before_total' => $beforeTotal,
+                'after_total' => (float) $fresh->total_quantity,
+                'before_available' => (float) ($beforeBalance['borrower_available'] ?? 0),
+                'after_available' => (float) ($afterBalance['borrower_available'] ?? 0),
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+            ];
+        }, 3);
     }
 
     /**

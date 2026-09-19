@@ -747,7 +747,7 @@ td.empty-state { height: 110px; }
 .table-wrap { width: 100%; overflow-x: auto; }
 .table-wrap table { width: 100%; min-width: 680px; margin: 0; border-collapse: collapse; }
 .table-wrap th {
-    padding: 10px 13px;
+    padding: 14px 16px;
     color: var(--text-secondary);
     background: var(--table-heading-bg);
     border-bottom: 1px solid var(--border-strong);
@@ -758,12 +758,12 @@ td.empty-state { height: 110px; }
     text-transform: uppercase;
     white-space: nowrap;
 }
-.table-wrap td { padding: 11px 13px; border-bottom: 1px solid var(--row-border); vertical-align: middle; }
+.table-wrap td { padding: 16px; border-bottom: 1px solid var(--row-border); vertical-align: middle; line-height: 1.45; }
 .table-wrap tbody tr:last-child td { border-bottom: 0; }
 .table-wrap tbody tr:hover:not(:has(.empty-state)) { background: var(--row-hover); }
 .table-wrap td strong, .table-wrap td small { display: block; }
 .table-wrap td small { margin-top: 2px; font-size: 11px; }
-.table-action { display: inline-flex; min-height: 34px; align-items: center; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 750; white-space: nowrap; }
+.table-action { display: inline-flex; align-items: center; gap: 4px; min-height: 34px; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--interactive); font-size: 11px; font-weight: 750; white-space: nowrap; cursor: pointer; }
 .table-action:hover { background: var(--surface-hover); }
 
 .admin-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1472,57 +1472,6 @@ body.calendar-drawer-open { overflow: hidden; }
 .accountability-summary span:last-child { border-right: 0; }
 .accountability-summary strong { color: var(--heading); font-size: 21px; line-height: 1; }
 .dashboard-stat-grid.accountability-filter-grid .dashboard-kpi-card { height: 100px; min-height: 100px; padding: 10px 12px; }
-.accountability-filter-card {
-    width: 100%;
-    appearance: none;
-    grid-template-columns: 30px minmax(0, 1fr);
-    grid-template-rows: 25px 14px 12px;
-    align-content: center;
-    column-gap: 10px;
-    row-gap: 2px;
-    color: inherit;
-    cursor: pointer;
-    font: inherit;
-    text-align: left;
-    transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
-}
-.accountability-filter-card[data-accountability-card-filter="overdue"] { --kpi-accent: #b42318; --accountability-card-color: #b42318; }
-.accountability-filter-card[data-accountability-card-filter="property"] { --kpi-accent: #a16207; --accountability-card-color: #a16207; }
-.accountability-filter-card[data-accountability-card-filter="billing"] { --kpi-accent: #1769aa; --accountability-card-color: #1769aa; }
-.accountability-filter-card[data-accountability-card-filter="restriction"] { --kpi-accent: #c05621; --accountability-card-color: #c05621; }
-.accountability-filter-card .kpi-icon {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-    width: 30px;
-    height: 30px;
-    align-self: center;
-    color: #fff;
-    background: var(--accountability-card-color);
-    border-color: var(--accountability-card-color);
-}
-.accountability-filter-card .kpi-value {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: end;
-    margin: 0;
-    font-size: 25px;
-    line-height: 1;
-}
-.accountability-filter-card .kpi-label { grid-column: 2; grid-row: 2; align-self: start; font-size: 11px; line-height: 1.2; }
-.accountability-filter-card > small {
-    grid-column: 2;
-    grid-row: 3;
-    align-self: start;
-    overflow: hidden;
-    margin-top: 0;
-    font-size: 9px;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.accountability-filter-card:hover { border-color: var(--kpi-accent); box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.accountability-filter-card:focus-visible { outline: 0; border-color: var(--interactive); box-shadow: var(--focus-ring); }
-.accountability-filter-card { position: relative; }
 .borrower-accountability-browser { display: grid; gap: 11px; }
 .borrower-accountability-toolbar {
     display: grid;
@@ -1560,7 +1509,6 @@ body.calendar-drawer-open { overflow: hidden; }
 @media (max-width: 620px) {
     .stat-grid.accountability-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dashboard-stat-grid.accountability-filter-grid .dashboard-kpi-card { height: 100px; min-height: 100px; padding: 9px 10px; }
-    .accountability-filter-card small { display: none; }
     .borrower-accountability-toolbar { grid-template-columns: 1fr; }
     .borrower-accountability-search { grid-column: auto; }
     .borrower-accountability-clear { width: 100%; }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
+use App\Models\AuditEvent;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
@@ -67,10 +68,10 @@ class InventoryController extends Controller
 
         $itemsQuery = InventoryItem::query()
             ->with(['category', 'unit'])
-            ->where('active', true)
             ->when(
                 $isBorrower,
                 fn (Builder $query) => $query
+                    ->where('active', true)
                     ->where('borrowable', true)
                     ->where('condition_code', 'SERVICEABLE')
             )
@@ -189,7 +190,7 @@ class InventoryController extends Controller
             abort(403);
         }
 
-        if (! $inventory->active) {
+        if (! $inventory->active && $workspace === 'BORROWER') {
             abort(404);
         }
 
@@ -239,6 +240,9 @@ class InventoryController extends Controller
         $stockCardReferences = [];
         $lastInventoryActivityAt = null;
         $currentInventorySources = collect();
+        $inventoryIssueSources = collect();
+        $eligibleWriteOffSources = collect();
+        $inventoryAdjustmentCapabilities = [];
 
         $historySummary = [
             'borrowers' => 0,
@@ -419,6 +423,26 @@ class InventoryController extends Controller
                     ];
                 });
 
+            $incidentClosures = DB::table('inventory_transaction_lines as line')
+                ->join('inventory_transactions as tx', 'tx.id', '=', 'line.inventory_transaction_id')
+                ->where('line.inventory_item_id', $inventory->id)
+                ->where('tx.source_type', Incident::class)
+                ->whereIn('tx.transaction_type', [
+                    'INVENTORY_INCIDENT_RESTORATION',
+                    'INVENTORY_INCIDENT_WRITE_OFF',
+                ])
+                ->groupBy('tx.source_id', 'line.from_state')
+                ->select(
+                    'tx.source_id as incident_id',
+                    'line.from_state as disposition_state'
+                )
+                ->selectRaw('COALESCE(SUM(line.quantity), 0) as closed_quantity')
+                ->get()
+                ->mapWithKeys(fn ($row) => [
+                    ((int) $row->incident_id).'|'.strtoupper((string) $row->disposition_state)
+                        => (float) $row->closed_quantity,
+                ]);
+
             $incidentSources = DB::table('incident_lines as incident_line')
                 ->join('incidents as incident', 'incident.id', '=', 'incident_line.incident_id')
                 ->join('custody_lines as custody_line', 'custody_line.id', '=', 'incident_line.custody_line_id')
@@ -448,8 +472,19 @@ class InventoryController extends Controller
                     'borrower.full_name as borrower_name',
                     DB::raw('COALESCE(SUM(incident_line.quantity), 0) as source_quantity'),
                 ])
-                ->map(function ($row): array {
-                    $condition = match ((string) $row->disposition_state) {
+                ->map(function ($row) use ($incidentClosures): ?array {
+                    $state = strtoupper((string) $row->disposition_state);
+                    $remaining = max(
+                        0,
+                        (float) $row->source_quantity
+                        - (float) ($incidentClosures[((int) $row->incident_id).'|'.$state] ?? 0)
+                    );
+
+                    if ($remaining <= 0) {
+                        return null;
+                    }
+
+                    $condition = match ($state) {
                         'DAMAGED_MAINTENANCE' => 'Damaged / under repair',
                         'LOST' => 'Lost',
                         'STOLEN' => 'Stolen',
@@ -467,7 +502,10 @@ class InventoryController extends Controller
                         'group' => 'ISSUE',
                         'group_label' => 'Inventory exception',
                         'reference' => $row->incident_no ?: 'Incident #'.$row->incident_id,
-                        'quantity' => (float) $row->source_quantity,
+                        'quantity' => $remaining,
+                        'incident_id' => (int) $row->incident_id,
+                        'incident_state' => $state,
+                        'incident_status' => strtoupper((string) $row->incident_status),
                         'status' => $accountabilityResolved
                             ? 'Accountability resolved · Still unavailable'
                             : 'Accountability pending · Still unavailable',
@@ -479,7 +517,9 @@ class InventoryController extends Controller
                         'url' => route('accountability.index'),
                         'action_label' => 'View Accountability',
                     ];
-                });
+                })
+                ->filter()
+                ->values();
 
             $masterConditionSources = collect();
             if ($inventory->condition_code !== 'SERVICEABLE') {
@@ -498,11 +538,56 @@ class InventoryController extends Controller
                 ]);
             }
 
+            $conditionHoldSources = collect();
+            $conditionHoldQuantity = (float) ($balance['condition_hold'] ?? 0);
+            if ($conditionHoldQuantity > 0) {
+                $conditionHoldSources->push([
+                    'group' => 'CONDITION_HOLD',
+                    'group_label' => 'Maintenance hold',
+                    'reference' => 'INV-'.str_pad((string) $inventory->id, 4, '0', STR_PAD_LEFT),
+                    'quantity' => $conditionHoldQuantity,
+                    'status' => 'Unavailable pending physical disposition',
+                    'primary' => 'Admin-recorded maintenance hold',
+                    'secondary' => 'Review the Stock Card for the adjustment history.',
+                    'url' => route('inventory.show', [
+                        'inventory' => $inventory->id,
+                        'tab' => 'stock-card',
+                    ]),
+                    'action_label' => 'View Stock Card',
+                ]);
+            }
+
+            $inventoryIssueSources = $incidentSources
+                ->map(fn (array $source): array => [
+                    'incident_id' => $source['incident_id'],
+                    'incident_state' => $source['incident_state'],
+                    'incident_status' => $source['incident_status'],
+                    'reference' => $source['reference'],
+                    'condition' => $source['primary'],
+                    'quantity' => $source['quantity'],
+                    'status' => $source['status'],
+                ])
+                ->values();
+
+            $eligibleWriteOffSources = $inventoryIssueSources
+                ->filter(fn (array $source): bool =>
+                    in_array($source['incident_state'], ['DAMAGED_MAINTENANCE', 'LOST', 'STOLEN', 'DESTROYED'], true)
+                    && in_array($source['incident_status'], ['RESOLVED', 'CLOSED'], true)
+                )
+                ->values();
+
+            $inventoryAdjustmentCapabilities = $service->manualAdjustmentCapabilities($inventory, $balance);
+            $inventoryAdjustmentCapabilities['can_write_off_retired'] = $eligibleWriteOffSources->isNotEmpty();
+
+            $preparationDiscrepancySources = $this->currentPreparationDiscrepancySources($inventory);
+
             $currentInventorySources = collect()
+                ->concat($preparationDiscrepancySources)
                 ->concat($reservationSources)
                 ->concat($custodySources)
                 ->concat($laundrySources)
                 ->concat($incidentSources)
+                ->concat($conditionHoldSources)
                 ->concat($masterConditionSources)
                 ->values();
 
@@ -547,6 +632,10 @@ class InventoryController extends Controller
             $historyStatus = strtoupper(
                 (string) ($filters['history_status'] ?? 'ALL')
             );
+
+            if (! $inventory->laundry_required && $historyStatus === 'IN_LAUNDRY') {
+                $historyStatus = 'ALL';
+            }
 
             $historyQuery = CustodyTransaction::query()
                 ->with([
@@ -836,7 +925,91 @@ class InventoryController extends Controller
             'stockCardReferences' => $stockCardReferences,
             'lastInventoryActivityAt' => $lastInventoryActivityAt,
             'currentInventorySources' => $currentInventorySources,
+            'inventoryIssueSources' => $inventoryIssueSources,
+            'eligibleWriteOffSources' => $eligibleWriteOffSources,
+            'inventoryAdjustmentCapabilities' => $inventoryAdjustmentCapabilities,
         ]);
+    }
+
+    /**
+     * Open AO-reported preparation discrepancies for this inventory item.
+     * This is visibility only: the Inventory record changes only through a
+     * formal SPMU Head reconciliation action.
+     */
+    private function currentPreparationDiscrepancySources(InventoryItem $inventory)
+    {
+        $lineIds = DB::table('custody_lines as custody_line')
+            ->join('request_items as request_item', 'request_item.id', '=', 'custody_line.request_item_id')
+            ->where('request_item.inventory_item_id', $inventory->id)
+            ->pluck('custody_line.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($lineIds === []) {
+            return collect();
+        }
+
+        $reports = AuditEvent::query()
+            ->where('record_type', CustodyTransaction::class)
+            ->where('action_code', 'PREPARATION_ISSUE_REPORTED')
+            ->orderByDesc('occurred_at')
+            ->get()
+            ->filter(fn (AuditEvent $event): bool => in_array(
+                (int) data_get($event->after_json, 'custody_line_id'),
+                $lineIds,
+                true
+            ));
+
+        if ($reports->isEmpty()) {
+            return collect();
+        }
+
+        $closedIds = AuditEvent::query()
+            ->where('record_type', CustodyTransaction::class)
+            ->whereIn('action_code', [
+                'PREPARATION_ISSUE_RESOLVED',
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+            ])
+            ->get()
+            ->map(fn (AuditEvent $event): int => (int) data_get(
+                $event->after_json,
+                'preparation_issue_event_id'
+            ))
+            ->filter()
+            ->unique();
+
+        $custodies = CustodyTransaction::query()
+            ->whereIn('id', $reports->pluck('record_id')->filter()->unique())
+            ->get(['id', 'custody_no'])
+            ->keyBy('id');
+
+        return $reports
+            ->reject(fn (AuditEvent $event): bool => $closedIds->contains($event->id))
+            ->map(function (AuditEvent $event) use ($custodies): array {
+                $custody = $custodies->get((int) $event->record_id);
+                $approved = (float) data_get($event->after_json, 'approved_quantity', 0);
+                $ready = data_get($event->after_json, 'observed_usable_quantity');
+                $secondary = collect([
+                    data_get($event->after_json, 'issue_label'),
+                    $approved > 0 ? 'Approved quantity '.($approved + 0) : null,
+                    $ready !== null ? 'Physically ready '.((float) $ready + 0) : null,
+                ])->filter()->join(' · ');
+
+                return [
+                    'group' => 'DISCREPANCY',
+                    'group_label' => 'Preparation discrepancy',
+                    'reference' => $custody?->custody_no ?: 'Release record #'.$event->record_id,
+                    'quantity' => max(0, $approved),
+                    'status' => 'Admin review required',
+                    'primary' => (string) data_get($event->after_json, 'item_name', 'Inventory discrepancy'),
+                    'secondary' => $secondary ?: null,
+                    'url' => $custody
+                        ? route('custody.show', ['custody' => $custody->id])
+                        : null,
+                    'action_label' => $custody ? 'View Release Record' : null,
+                ];
+            })
+            ->values();
     }
 
     /**
@@ -949,6 +1122,18 @@ class InventoryController extends Controller
                         ],
                     ]);
                 $kind = 'Laundry';
+            } elseif ($sourceType === InventoryItem::class) {
+                $records = InventoryItem::query()
+                    ->whereIn('id', $ids)
+                    ->get(['id', 'unique_description'])
+                    ->mapWithKeys(fn (InventoryItem $item) => [
+                        $item->id => [
+                            'label' => 'INV-'.str_pad((string) $item->id, 4, '0', STR_PAD_LEFT),
+                            'url' => route('inventory.show', ['inventory' => $item->id]),
+                            'action_label' => 'View Item',
+                        ],
+                    ]);
+                $kind = 'Inventory adjustment';
             } elseif ($sourceType === LaundryRecord::class) {
                 $records = $ids->mapWithKeys(fn ($id) => [
                     $id => [
@@ -1037,18 +1222,26 @@ class InventoryController extends Controller
 
     public function store(
         Request $request,
-        AuditService $audit
+        AuditService $audit,
+        InventoryService $inventoryService
     ): RedirectResponse {
         $this->authorizeInventoryAdministrator($request);
 
         $data = $this->validated($request);
 
         $item = InventoryItem::query()->create($data);
+        $inventoryService->recordInitialStock(
+            $item,
+            $request->user(),
+            $request->input('initial_stock_source')
+        );
 
         $audit->record(
             'INVENTORY_ITEM_CREATED',
             $item,
-            reason: $request->input('change_reason'),
+            reason: filled($request->input('initial_stock_source'))
+                ? 'Initial inventory item created. Source / Reference: '.trim((string) $request->input('initial_stock_source'))
+                : 'Initial inventory item created.',
             after: $item->toArray()
         );
 
@@ -1099,15 +1292,16 @@ class InventoryController extends Controller
         );
 
         $committed =
-            $balance['allocated']
+            $balance['reserved']
             + $balance['borrowed']
             + $balance['laundry']
-            + $balance['incident'];
+            + $balance['incident']
+            + ($balance['condition_hold'] ?? 0);
 
-        if ((float) $data['total_quantity'] < $committed) {
+        if (! $data['active'] && $inventory->active && $committed > 0) {
             throw ValidationException::withMessages([
-                'total_quantity' =>
-                    "Total quantity cannot be reduced below the active commitment of {$committed}.",
+                'active' =>
+                    "This item cannot be archived while {$committed} unit(s) are reserved, on custody, in laundry, or under an inventory exception.",
             ]);
         }
 
@@ -1129,6 +1323,87 @@ class InventoryController extends Controller
                 'status',
                 'Inventory item updated with an audit record.'
             );
+    }
+
+    public function adjust(
+        Request $request,
+        InventoryItem $inventory,
+        InventoryService $service,
+        AuditService $audit
+    ): RedirectResponse {
+        $this->authorizeInventoryAdministrator($request);
+
+        $data = $request->validate([
+            'action' => [
+                'required',
+                Rule::in([
+                    'STOCK_ADDITION',
+                    'PHYSICAL_COUNT_CORRECTION',
+                    'PLACE_UNDER_MAINTENANCE',
+                    'RETURN_MAINTENANCE_TO_SERVICE',
+                    'RETIRE_MAINTENANCE_STOCK',
+                    'WRITE_OFF_RETIRED',
+                ]),
+            ],
+            'incident_source' => ['nullable', 'string', 'max:120'],
+            'quantity' => ['nullable', 'numeric', 'min:0.001'],
+            'new_total_quantity' => ['nullable', 'numeric', 'min:0'],
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $requiredReasonActions = [
+            'STOCK_ADDITION',
+            'PHYSICAL_COUNT_CORRECTION',
+            'PLACE_UNDER_MAINTENANCE',
+            'RETIRE_MAINTENANCE_STOCK',
+            'WRITE_OFF_RETIRED',
+        ];
+
+        if (in_array($data['action'], $requiredReasonActions, true) && blank($data['reason'] ?? null)) {
+            throw ValidationException::withMessages([
+                'reason' => match ($data['action']) {
+                    'STOCK_ADDITION' => 'Enter the source or reference for the newly received stock.',
+                    'PHYSICAL_COUNT_CORRECTION' => 'Enter the reason for the physical count correction.',
+                    'PLACE_UNDER_MAINTENANCE' => 'Enter the verified condition or reason for the maintenance hold.',
+                    'RETIRE_MAINTENANCE_STOCK' => 'Enter the retirement or condemnation basis.',
+                    'WRITE_OFF_RETIRED' => 'Enter the approved write-off basis.',
+                    default => 'Enter the required inventory adjustment basis.',
+                },
+            ]);
+        }
+
+        if (filled($data['incident_source'] ?? null)) {
+            if (! preg_match('/^(\d+)\|([A-Z_]+)$/', (string) $data['incident_source'], $match)) {
+                throw ValidationException::withMessages([
+                    'incident_source' => 'Select a valid accountability incident.',
+                ]);
+            }
+
+            $data['incident_id'] = (int) $match[1];
+            $data['incident_state'] = (string) $match[2];
+        }
+
+        $before = $inventory->fresh()->toArray();
+        $result = $service->recordAdjustment($inventory, $request->user(), $data);
+        $fresh = $inventory->fresh();
+
+        $auditReason = filled($data['reason'] ?? null)
+            ? trim((string) $data['reason'])
+            : ($data['action'] === 'RETURN_MAINTENANCE_TO_SERVICE'
+                ? 'Maintenance stock returned to service after physical verification.'
+                : $result['action_label'].' recorded.');
+
+        $audit->record(
+            'INVENTORY_ADJUSTMENT_RECORDED',
+            $fresh,
+            reason: $auditReason,
+            before: $before,
+            after: array_merge($fresh->toArray(), ['adjustment' => $result])
+        );
+
+        return redirect()
+            ->route('inventory.show', ['inventory' => $fresh->id, 'tab' => 'overview'])
+            ->with('status', $result['action_label'].' recorded in the Stock Card.');
     }
 
     private function authorizeInventoryAdministrator(Request $request): void
@@ -1170,25 +1445,34 @@ class InventoryController extends Controller
                 'nullable',
                 'string',
             ],
-            'total_quantity' => [
-                'required',
-                'integer',
-                'min:0',
-            ],
-            'condition_code' => [
-                'required',
-                Rule::in([
-                    'SERVICEABLE',
-                    'DAMAGED_MAINTENANCE',
-                    'CONDEMNED',
-                ]),
-            ],
-            'change_reason' => [
-                'required',
-                'string',
-                'max:1000',
-            ],
+            'change_reason' => $item
+                ? ['required', 'string', 'max:1000']
+                : ['nullable', 'string', 'max:1000'],
+            'initial_stock_source' => $item
+                ? ['nullable']
+                : ['nullable', 'string', 'max:1000'],
         ]);
+
+        if ($item) {
+            // Physical stock and condition are reconciled from Inventory Overview
+            // so every change produces a formal Stock Card movement.
+            $data['total_quantity'] = $item->total_quantity;
+            $data['condition_code'] = $item->condition_code;
+        } else {
+            $stockData = $request->validate([
+                'total_quantity' => ['required', 'integer', 'min:0'],
+                'condition_code' => [
+                    'required',
+                    Rule::in([
+                        'SERVICEABLE',
+                        'DAMAGED_MAINTENANCE',
+                        'CONDEMNED',
+                    ]),
+                ],
+            ]);
+
+            $data = array_merge($data, $stockData);
+        }
 
         $data['borrowable'] = $request->boolean(
             'borrowable'
@@ -1206,12 +1490,9 @@ class InventoryController extends Controller
             'provisional'
         );
 
-        $data['active'] = $request->boolean(
-            'active',
-            true
-        );
+        $data['active'] = $request->boolean('active');
 
-        unset($data['change_reason']);
+        unset($data['change_reason'], $data['initial_stock_source']);
 
         if (
             $data['off_campus_allowed']

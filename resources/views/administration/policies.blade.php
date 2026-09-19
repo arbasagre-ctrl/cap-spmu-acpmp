@@ -170,7 +170,7 @@
     <div>
         <p class="eyebrow">{{ $activeSectionHeading[0] ?? 'SPMU Head configuration' }}</p>
         <h1>{{ $activeSectionHeading[1] ?? 'Operational Configuration' }}</h1>
-        <p>{{ $activeSectionHeading[2] ?? 'Manage schedules, policies, and official templates.' }}</p>
+        <p>{{ $activeSectionHeading[2] ?? 'Manage schedules and operational policies.' }}</p>
     </div>
 
     @if($configurationSection)
@@ -234,75 +234,6 @@
                 <span class="operational-config-card-text">
                     <strong>Sanction Rules</strong>
                     <span>Confirmed offense rules</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-        </div>
-    </div>
-
-    <div class="operational-config-group">
-        <h2 class="operational-config-group-title">Document templates</h2>
-
-        <div class="operational-config-grid operational-config-grid-3">
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-borrower-slip']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="requests" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Borrower's Slip Template</strong>
-                    <span>Approved Borrower's Slip</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-laundry-form']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="custody" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Laundry Form Template</strong>
-                    <span>Approved Laundry Form</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-gate-pass']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="id-badge" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Gate Pass Template</strong>
-                    <span>Approved Gate Pass</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-billing-statement']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="reports" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Billing Statement Template</strong>
-                    <span>Approved Billing Statement</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-accountability-compliance-notice']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Compliance Notice Template</strong>
-                    <span>Approved compliance notice</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-administrative-sanction-notice']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>Sanction Notice Template</strong>
-                    <span>Approved administrative sanction notice</span>
-                </span>
-                <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
-            </a>
-
-            <a class="operational-config-card ui-pressable" href="{{ route('administration.settings.index', ['section' => 'template-rslddp']) }}">
-                <span class="operational-config-card-icon" aria-hidden="true"><x-icon name="accountability" size="24" /></span>
-                <span class="operational-config-card-text">
-                    <strong>RSLDDP Template</strong>
-                    <span>Approved accountability report</span>
                 </span>
                 <x-icon name="arrow-right" size="20" class="operational-config-card-chevron" />
             </a>

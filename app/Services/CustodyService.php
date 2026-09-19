@@ -21,7 +21,6 @@ use App\Models\OverdueCase;
 use App\Models\Penalty;
 use App\Models\ReturnLine;
 use App\Models\ReturnTransaction;
-use App\Models\SystemSetting;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -47,9 +46,10 @@ class CustodyService
      *
      * When the Operational Calendar provides a valid Pickup / Issuance
      * window, the schedule becomes active automatically. No Action Officer
-     * confirmation is required. The borrower is notified once when the
-     * automatic schedule is activated. If no valid window can be generated,
-     * the record remains for SPMU exception handling.
+     * confirmation is required. The initial borrower-facing schedule is sent
+     * by the REQUEST_APPROVED notification so this method records activation
+     * only and must not emit a second PICKUP_SCHEDULED notification. If no
+     * valid window can be generated, the record remains for SPMU exception handling.
      */
     public function ensurePickupRecord(
         BorrowingRequest $request,
@@ -129,8 +129,8 @@ class CustodyService
             );
 
             // firstOrCreate may already persist pickup_scheduled_at on a brand-new
-            // automatically scheduled custody record. Treat that first creation as an
-            // activation so the borrower notification is still generated exactly once.
+            // automatically scheduled custody record. Track first activation for audit only;
+            // The REQUEST_APPROVED notification already contains the initial pickup schedule.
             $automaticScheduleActivated = (bool) (
                 $custody->wasRecentlyCreated
                 && $pickupStart
@@ -208,18 +208,9 @@ class CustodyService
                     ]
                 );
 
-                $requiredDocuments = $custody->lines->contains(
-                    fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
-                )
-                    ? 'the generated Borrower Slip and Gate Pass'
-                    : 'the generated Borrower Slip';
-
-                $this->notifications->send(
-                    'PICKUP_SCHEDULED',
-                    collect([$custody->borrower]),
-                    "Your approved pickup and issuance schedule for {$custody->custody_no} is {$pickupStart->format('F j, Y g:i A')} to {$pickupEnd->format('g:i A')}. This schedule was assigned automatically from the SPMU Operational Calendar. Please proceed to SPMU within the pickup window and bring {$requiredDocuments}. Items are considered issued only after physical handover is recorded.",
-                    $custody
-                );
+                // Do not notify here. REQUEST_APPROVED is the single initial
+                // borrower notification and already includes this pickup schedule.
+                // PICKUP_SCHEDULED is reserved for a later schedule update/reschedule.
             }
 
             return $custody;
@@ -270,6 +261,50 @@ class CustodyService
                         || $locked->pickup_expired_at
                         || $locked->pickup_expires_at->gte(now())
                     ) {
+                        return;
+                    }
+
+                    /*
+                     * A pickup window that passes while SPMU is resolving a
+                     * preparation/inventory discrepancy is NOT a borrower
+                     * missed pickup. Keep the approved request and reservation
+                     * on hold and let the Head/Admin finish the inventory
+                     * review. No automatic reschedule is created because the
+                     * pickup schedule is already part of the approved packet.
+                     */
+                    if ($this->hasPreparationExceptionPendingRelease($locked)) {
+                        $alreadyRecorded = AuditEvent::query()
+                            ->where('record_type', CustodyTransaction::class)
+                            ->where('record_id', $locked->id)
+                            ->where('action_code', 'PICKUP_HELD_FOR_PREPARATION_ISSUE')
+                            ->exists();
+
+                        if (! $alreadyRecorded) {
+                            $this->audit->record(
+                                'PICKUP_HELD_FOR_PREPARATION_ISSUE',
+                                $locked,
+                                after: [
+                                    'pickup_expires_at' => $locked->pickup_expires_at->toIso8601String(),
+                                    'borrower_missed_pickup' => false,
+                                    'reservation_released' => false,
+                                    'reason' => 'Open inventory discrepancy during item preparation',
+                                ]
+                            );
+
+                            $locked->loadMissing('borrower');
+
+                            if ($locked->borrower) {
+                                $this->notifications->send(
+                                    'PICKUP_HELD_PREPARATION_ISSUE',
+                                    collect([$locked->borrower]),
+                                    "Your scheduled pickup for {$locked->custody_no} could not proceed because SPMU is resolving an inventory discrepancy found during item preparation. This is not recorded as a missed pickup. Your approved request remains on hold while SPMU completes the review.",
+                                    $locked,
+                                    ['SYSTEM', 'EMAIL'],
+                                    ['SYSTEM', 'EMAIL']
+                                );
+                            }
+                        }
+
                         return;
                     }
 
@@ -436,6 +471,12 @@ class CustodyService
             ->orderBy('id')
             ->each(function (CustodyTransaction $custody): void {
                 if (! $custody->borrower) {
+                    return;
+                }
+
+                // Do not create/retry a borrower missed-pickup notice while
+                // an SPMU-side preparation discrepancy is still unresolved.
+                if ($this->hasPreparationExceptionPendingRelease($custody)) {
                     return;
                 }
 
@@ -877,8 +918,15 @@ class CustodyService
         }, 3);
     }
 
-    public function updateReceiptQuantities(CustodyTransaction $custody, User $spmu, array $quantities, array $reasons): void
-    {
+    public function reportPreparationIssue(
+        CustodyTransaction $custody,
+        User $spmu,
+        int $custodyLineId,
+        string $issueType,
+        ?string $details = null,
+        ?float $observedUsableQuantity = null,
+        ?string $conditionObserved = null
+    ): AuditEvent {
         abort_unless(
             $spmu->access_classification === AccessClassification::SpmuOfficer
                 && $custody->borrower_user_id !== $spmu->id
@@ -887,37 +935,300 @@ class CustodyService
             403
         );
 
-        DB::transaction(function () use ($custody, $quantities): void {
-            foreach ($custody->lines()->get() as $line) {
-                $approved = (float) $line->approved_quantity;
-                $quantity = (float) ($quantities[$line->id] ?? $approved);
+        $issueLabels = [
+            'ITEM_NOT_READY' => 'Item not found / not ready',
+            'PHYSICAL_CONDITION' => 'Physical condition issue',
+            'QUANTITY_AVAILABILITY' => 'Physical quantity is short',
+            'OTHER' => 'Other inventory discrepancy',
+        ];
 
-                if (abs($quantity - $approved) > 0.000001) {
-                    throw ValidationException::withMessages([
-                        'quantities' => 'Prepared quantity must exactly match the verified approved quantity. Revise the request if the quantity must change.',
-                    ]);
-                }
+        if (! array_key_exists($issueType, $issueLabels)) {
+            throw ValidationException::withMessages([
+                'issue_type' => 'Select a valid inventory discrepancy.',
+            ]);
+        }
 
-                $line->update([
-                    'quantity_to_receive' => $approved,
-                    'adjustment_reason' => null,
+        [$issueEvent, $itemName, $approvedQuantity] = DB::transaction(function () use (
+            $custody,
+            $custodyLineId,
+            $issueType,
+            $details,
+            $observedUsableQuantity,
+            $conditionObserved,
+            $issueLabels
+        ): array {
+            $locked = CustodyTransaction::query()
+                ->with('lines.requestItem.inventoryItem')
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
+
+            if ($locked->status !== 'PREPARING_RELEASE' || $locked->released_at) {
+                throw ValidationException::withMessages([
+                    'preparation_issue' => 'This transaction is no longer awaiting item preparation.',
                 ]);
             }
 
-            $custody->update([
+            $line = $locked->lines->firstWhere('id', $custodyLineId);
+
+            if (! $line) {
+                throw ValidationException::withMessages([
+                    'custody_line_id' => 'Select an item from this borrowing transaction.',
+                ]);
+            }
+
+            $approved = (float) $line->approved_quantity;
+
+            if ($observedUsableQuantity !== null && $observedUsableQuantity > $approved) {
+                throw ValidationException::withMessages([
+                    'observed_usable_quantity' => 'Physically ready quantity cannot be greater than the approved quantity.',
+                ]);
+            }
+
+            if ($issueType === 'QUANTITY_AVAILABILITY' && $observedUsableQuantity === null) {
+                throw ValidationException::withMessages([
+                    'observed_usable_quantity' => 'Enter the physically ready quantity for a quantity shortage.',
+                ]);
+            }
+
+            $details = trim((string) $details);
+            $conditionObserved = trim((string) $conditionObserved);
+
+            if ($issueType === 'PHYSICAL_CONDITION' && $conditionObserved === '') {
+                throw ValidationException::withMessages([
+                    'condition_observed' => 'Describe the physical condition observed.',
+                ]);
+            }
+
+            if ($issueType === 'OTHER' && $details === '') {
+                throw ValidationException::withMessages([
+                    'details' => 'Describe the inventory discrepancy.',
+                ]);
+            }
+
+            $issueReason = match ($issueType) {
+                'QUANTITY_AVAILABILITY' => $details !== ''
+                    ? $details
+                    : 'Physical quantity shortage observed during item preparation.',
+                'PHYSICAL_CONDITION' => $conditionObserved,
+                'ITEM_NOT_READY' => $details !== ''
+                    ? $details
+                    : 'Item not found or not ready during physical preparation.',
+                default => $details,
+            };
+
+            $openForLine = $this->unresolvedPreparationIssueEvents($locked)
+                ->contains(fn (AuditEvent $event) => (int) data_get($event->after_json, 'custody_line_id') === $line->id);
+
+            if ($openForLine) {
+                throw ValidationException::withMessages([
+                    'preparation_issue' => 'This item already has an inventory discrepancy under review.',
+                ]);
+            }
+
+            // A newly observed problem invalidates any earlier preparation
+            // confirmation. No inventory or approved quantity is changed here.
+            $locked->update([
                 'prepared_at' => null,
                 'prepared_by_user_id' => null,
             ]);
 
-            $this->audit->record(
-                'FINAL_ISSUED_QUANTITY_RECORDED',
-                $custody,
-                after: ['quantities' => $quantities]
+            $itemName = (string) ($line->requestItem?->description_snapshot ?: 'Item');
+            $unit = (string) ($line->requestItem?->unit_snapshot ?: '');
+
+            $event = $this->audit->record(
+                'PREPARATION_ISSUE_REPORTED',
+                $locked,
+                reason: $issueReason,
+                after: [
+                    'custody_line_id' => $line->id,
+                    'request_item_id' => $line->request_item_id,
+                    'item_name' => $itemName,
+                    'unit' => $unit,
+                    'approved_quantity' => $approved,
+                    'observed_usable_quantity' => $observedUsableQuantity,
+                    'condition_observed' => $conditionObserved !== '' ? $conditionObserved : null,
+                    'issue_type' => $issueType,
+                    'issue_label' => $issueLabels[$issueType],
+                    'details' => $details !== '' ? $details : null,
+                ]
             );
-        });
+
+            return [$event, $itemName, $approved];
+        }, 3);
+
+        $heads = User::query()
+            ->where('account_status', 'ACTIVE')
+            ->where('access_classification', AccessClassification::SpmuHead->value)
+            ->get();
+
+        if ($heads->isNotEmpty()) {
+            $observed = $observedUsableQuantity === null
+                ? ''
+                : ' Physically ready/usable: '.($observedUsableQuantity + 0).'.';
+
+            $this->notifications->send(
+                'PREPARATION_ISSUE_REPORTED',
+                $heads,
+                "Inventory discrepancy reported for {$custody->custody_no}: {$itemName}. Approved quantity: ".($approvedQuantity + 0).".{$observed} Review the affected item and Inventory before release.",
+                $custody
+            );
+        }
+
+        return $issueEvent;
     }
 
-    public function prepare(CustodyTransaction $custody, User $spmu, array $quantities): void
+    /**
+     * Complete a reported inventory-discrepancy review after the Head/Admin has
+     * reviewed the physical discrepancy and any necessary inventory
+     * correction. This action does not edit inventory by itself.
+     */
+    public function resolvePreparationIssue(
+        CustodyTransaction $custody,
+        User $spmuHead,
+        AuditEvent $issueEvent,
+        ?string $resolutionNotes = null
+    ): void {
+        abort_unless(
+            $spmuHead->access_classification === AccessClassification::SpmuHead
+                && $custody->status === 'PREPARING_RELEASE'
+                && ! $custody->released_at,
+            403
+        );
+
+        $reporter = null;
+        $itemName = 'item';
+
+        DB::transaction(function () use (
+            $custody,
+            $issueEvent,
+            $resolutionNotes,
+            &$reporter,
+            &$itemName
+        ): void {
+            $locked = CustodyTransaction::query()
+                ->lockForUpdate()
+                ->findOrFail($custody->id);
+
+            $issue = AuditEvent::query()
+                ->with('actor')
+                ->lockForUpdate()
+                ->findOrFail($issueEvent->id);
+
+            abort_unless(
+                $issue->action_code === 'PREPARATION_ISSUE_REPORTED'
+                    && $issue->record_type === CustodyTransaction::class
+                    && (int) $issue->record_id === (int) $locked->id,
+                404
+            );
+
+            if (! $this->unresolvedPreparationIssueEvents($locked)->contains('id', $issue->id)) {
+                throw ValidationException::withMessages([
+                    'preparation_issue' => 'This inventory discrepancy has already been reviewed.',
+                ]);
+            }
+
+            if ($locked->pickup_expires_at && now()->gt($locked->pickup_expires_at)) {
+                throw ValidationException::withMessages([
+                    'resolution_type' => 'The approved pickup schedule has already passed while this discrepancy was unresolved. Do not create a new schedule for the same approved Borrower Slip. Use Unable to Fulfill Approved Request instead.',
+                ]);
+            }
+
+            $itemName = (string) data_get($issue->after_json, 'item_name', 'item');
+            $reporter = $issue->actor;
+            $notes = trim((string) $resolutionNotes);
+            $auditReason = $notes !== ''
+                ? $notes
+                : 'Inventory review completed; Action Officer recheck required.';
+
+            $this->audit->record(
+                'PREPARATION_ISSUE_RESOLVED',
+                $locked,
+                reason: $auditReason,
+                after: [
+                    'preparation_issue_event_id' => $issue->id,
+                    'custody_line_id' => (int) data_get($issue->after_json, 'custody_line_id'),
+                    'item_name' => $itemName,
+                    'resolution_notes' => $notes !== '' ? $notes : null,
+                ]
+            );
+        }, 3);
+
+        if ($reporter && $reporter->account_status?->value === 'ACTIVE') {
+            $this->notifications->send(
+                'PREPARATION_ISSUE_RESOLVED',
+                collect([$reporter]),
+                "The inventory review for {$itemName} under {$custody->custody_no} has been completed. Physically check the item again, then confirm Items Prepared only when every approved item is ready for release.",
+                $custody
+            );
+        }
+    }
+
+    /**
+     * Whether an AO-reported preparation exception is still preventing a
+     * completed physical preparation. This remains true not only while Head/
+     * Admin is reviewing the discrepancy, but also after Inventory Review is
+     * completed and the Action Officer still needs to physically recheck the
+     * item. Until Items Prepared is confirmed, a passed pickup window is an
+     * SPMU-side fulfillment problem rather than a borrower no-show.
+     */
+    public function hasPreparationExceptionPendingRelease(CustodyTransaction $custody): bool
+    {
+        if (
+            $custody->status !== 'PREPARING_RELEASE'
+            || $custody->released_at
+            || $custody->prepared_at
+        ) {
+            return false;
+        }
+
+        return AuditEvent::query()
+            ->where('record_type', CustodyTransaction::class)
+            ->where('record_id', $custody->id)
+            ->where('action_code', 'PREPARATION_ISSUE_REPORTED')
+            ->exists();
+    }
+
+    /**
+     * Whether Step 2 currently has an AO-reported physical discrepancy that
+     * still requires Head/Admin action. Other services use this to ensure an
+     * SPMU-side preparation problem is never treated as a borrower no-show.
+     */
+    public function hasOpenPreparationIssue(CustodyTransaction $custody): bool
+    {
+        return $this->unresolvedPreparationIssueEvents($custody)->isNotEmpty();
+    }
+
+    /** @return Collection<int, AuditEvent> */
+    private function unresolvedPreparationIssueEvents(CustodyTransaction $custody): Collection
+    {
+        $events = AuditEvent::query()
+            ->where('record_type', CustodyTransaction::class)
+            ->where('record_id', $custody->id)
+            ->whereIn('action_code', [
+                'PREPARATION_ISSUE_REPORTED',
+                'PREPARATION_ISSUE_RESOLVED',
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+            ])
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get();
+
+        $closedIds = $events
+            ->whereIn('action_code', [
+                'PREPARATION_ISSUE_RESOLVED',
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+            ])
+            ->map(fn (AuditEvent $event) => (int) data_get($event->after_json, 'preparation_issue_event_id'))
+            ->filter()
+            ->unique();
+
+        return $events
+            ->where('action_code', 'PREPARATION_ISSUE_REPORTED')
+            ->reject(fn (AuditEvent $event) => $closedIds->contains((int) $event->id))
+            ->values();
+    }
+
+    public function prepare(CustodyTransaction $custody, User $spmu): void
     {
         abort_unless(
             $spmu->access_classification === AccessClassification::SpmuOfficer
@@ -927,9 +1238,7 @@ class CustodyService
             403
         );
 
-        $documentIds = [];
-
-        DB::transaction(function () use ($custody, $spmu, $quantities, &$documentIds): void {
+        DB::transaction(function () use ($custody, $spmu): void {
             $custody = CustodyTransaction::query()
                 ->with([
                     'borrower',
@@ -952,110 +1261,69 @@ class CustodyService
                 ]);
             }
 
+            if ($this->unresolvedPreparationIssueEvents($custody)->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'preparation' => 'Wait for the reported inventory discrepancy to be reviewed before confirming Items Prepared.',
+                ]);
+            }
+
             /*
              * The approved packet must already exist before preparation is
              * persisted. This validates Head-generated documents and never
              * creates a substitute Gate Pass or Borrower Slip at this stage.
              */
             $documentIds = $this->validateApprovedReleaseDocuments($custody);
+            $preparedQuantities = [];
 
             foreach ($custody->lines as $line) {
-                if (! array_key_exists($line->id, $quantities)) {
-                    throw ValidationException::withMessages([
-                        'quantities' => 'Enter the actual prepared quantity for every approved item.',
-                    ]);
-                }
-
                 $approved = (float) $line->approved_quantity;
-                $prepared = (float) $quantities[$line->id];
 
-                if (abs($prepared - $approved) > 0.000001) {
-                    throw ValidationException::withMessages([
-                        'quantities' => "Prepared quantity does not match the approved request for {$line->requestItem->description_snapshot}. Approved: {$approved}; prepared: {$prepared}. Recheck the count. Release processing remains blocked until the actual prepared quantity matches the approved quantity.",
-                    ]);
-                }
-
+                /*
+                 * Item Preparation confirms physical readiness only. The
+                 * approved quantity was already validated and reserved during
+                 * approval, so the Action Officer does not re-enter or edit it
+                 * here. Any physical discrepancy must be resolved through the
+                 * appropriate inventory/administrative process before the AO
+                 * confirms preparation.
+                 */
                 $line->update([
                     'quantity_to_receive' => $approved,
                     'item_status' => 'PREPARED',
                     'adjustment_reason' => null,
                 ]);
+
+                $preparedQuantities[$line->id] = $approved;
             }
 
             $custody->update([
                 'prepared_by_user_id' => $spmu->id,
                 'prepared_at' => now(),
             ]);
-        }, 3);
-
-        $fresh = $custody->fresh([
-            'borrower',
-            'request.currentVersion',
-            'lines.requestItem.inventoryItem',
-            'gatePass',
-        ]);
-
-        $this->audit->record(
-            'RELEASE_PREPARED',
-            $fresh,
-            reason: 'SPMU Action Officer confirmed every Actual Prepared quantity and validated the approved/generated release documents against the allocation.',
-            after: [
-                'prepared_quantities' => $quantities,
-                'borrower_slip_document_id' => $documentIds['borrower_slip'],
-                'gate_pass_document_id' => $documentIds['gate_pass'],
-                'laundry_form_document_id' => $documentIds['laundry_form'],
-            ]
-        );
-    }
-
-    public function acknowledge(CustodyTransaction $custody, User $borrower): void
-    {
-        abort_unless($custody->borrower_user_id === $borrower->id && $custody->status === 'PREPARING_RELEASE', 403);
-        if (! $custody->prepared_at) {
-            throw ValidationException::withMessages(['acknowledge' => 'SPMU must verify the prepared quantities before borrower acknowledgement.']);
-        }
-        DB::transaction(function () use ($custody): void {
-            $hasLinen = $custody->lines()
-                ->whereHas('requestItem.inventoryItem', fn ($query) => $query->where('laundry_required', true))
-                ->exists();
 
             /*
-             * This is a system acknowledgement only. It is NOT an electronic
-             * signature. All documents that require signatures are printed,
-             * signed by hand, scanned, and uploaded/verified as evidence.
-             * Legacy signature columns are explicitly cleared and are not used
-             * by the active workflow.
+             * Keep the preparation state change and its audit entry atomic.
+             * If audit persistence fails, the preparation updates roll back as
+             * well instead of leaving a prepared transaction with no audit.
              */
-            $custody->update([
-                'borrower_ack_signature_snapshot_id' => null,
-                'laundry_borrower_signature_snapshot_id' => null,
-                'laundry_approver_signature_snapshot_id' => null,
-                'acknowledged_at' => now(),
+            $fresh = $custody->fresh([
+                'borrower',
+                'request.currentVersion',
+                'lines.requestItem.inventoryItem',
+                'gatePass',
             ]);
 
-            $custody->lines()->update(['item_status' => 'PREPARED']);
-
-            /*
-             * Compatibility acknowledgement must never replace the Borrower
-             * Slip generated from the Action Officer's confirmed preparation.
-             * The physical Borrower Slip is printed and wet-signed during
-             * handover; there is no borrower-generated/e-signed slip version.
-             */
-            if ($hasLinen) {
-                $this->documents->replaceConditionalForm($custody->fresh(), 'LAUNDRY_FORM');
-            } else {
-                $this->documents->refreshPacketIfReady($custody->fresh());
-            }
-
             $this->audit->record(
-                'BORROWER_RECEIPT_ACKNOWLEDGED',
-                $custody,
+                'RELEASE_PREPARED',
+                $fresh,
+                reason: 'SPMU Action Officer confirmed the approved items were physically checked and ready for release, and validated the approved/generated release documents.',
                 after: [
-                    'acknowledged_at' => $custody->fresh()->acknowledged_at?->toIso8601String(),
-                    'signature_method' => 'NONE_SYSTEM_ACKNOWLEDGEMENT_ONLY',
+                    'prepared_quantities' => $preparedQuantities,
+                    'borrower_slip_document_id' => $documentIds['borrower_slip'],
+                    'gate_pass_document_id' => $documentIds['gate_pass'],
+                    'laundry_form_document_id' => $documentIds['laundry_form'],
                 ]
             );
-        });
+        }, 3);
     }
 
     public function release(
@@ -1075,6 +1343,12 @@ class CustodyService
             now(),
             'release'
         );
+
+        if ($this->unresolvedPreparationIssueEvents($custody)->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'release' => 'Physical Release is unavailable while an inventory discrepancy is under review.',
+            ]);
+        }
 
         if (! $custody->prepared_at) {
             throw ValidationException::withMessages([
@@ -1304,25 +1578,10 @@ class CustodyService
             ]);
 
             /*
-             * Regenerate the Borrower Slip after physical release so the
-             * controlled digital copy reflects the issued transaction state.
-             * The Action Officer's operational identity and timestamp remain
-             * in the custody/audit records; no release E-signature is rendered.
+             * Keep the Borrower Slip generated at final Head approval as the
+             * single official travelling copy. Physical release is recorded in
+             * custody/audit data only; it must not invalidate or regenerate the PDF.
              */
-            $this->documents->borrowerSlip(
-                $custody->fresh([
-                    'borrower',
-                    'releasedBy',
-                    'releaseSignature.file',
-                    'request.borrower',
-                    'request.currentVersion.borrowerSignature.file',
-                    'request.currentVersion.approvalSteps.approver',
-                    'request.currentVersion.approvalSteps.signatureSnapshot.file',
-                    'lines.requestItem.inventoryItem',
-                    'returns.receivedBy',
-                    'returns.inspectionSignature.file',
-                ])
-            );
 
             /*
              * The Laundry Form is intentionally NOT regenerated at release.
@@ -1339,7 +1598,7 @@ class CustodyService
                 'approved_gate_pass_document_id' => $approvedDocumentIds['gate_pass'],
                 'laundry_form_document_id' => $approvedDocumentIds['laundry_form'],
             ]);
-            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Effective Return Date: {$custody->due_at->format('F j, Y')}.", $custody);
+            $this->notifications->send('ITEMS_RELEASED', collect([$custody->borrower]), "Items under {$custody->custody_no} were physically released. Please return them on or before {$custody->due_at->format('F j, Y')}.", $custody, ['SYSTEM']);
 
             if ($hasLinen) {
                 $spmuActionOfficers = User::query()
@@ -1839,10 +2098,13 @@ class CustodyService
                             'imposed_by_user_id' => $spmu->id,
                         ]);
 
-                        if (SystemSetting::value('rslddp_template_status') === 'APPROVED') {
-                            $this->documents->rslddp($incident->fresh());
-                        }
-
+                        /*
+                         * RSLDDP is intentionally NOT generated here. It
+                         * starts only after SPMU Admin/Head confirms actual
+                         * accountability exists (AccountabilityController::
+                         * resolveIncident()), not merely because an adverse
+                         * inspection finding was reported.
+                         */
                         $openedIncidents->push($incident);
                     }
                 }
@@ -2118,25 +2380,10 @@ class CustodyService
             ]);
 
             /*
-             * The Borrower Slip was originally generated before the return.
-             * Replace it now with the controlled post-inspection copy so its
-             * return section reflects adverse findings (if any) and the
-             * persisted Date Returned, without an Action Officer E-signature.
+             * Return findings and the physical return timestamp stay in the
+             * return/custody/audit records. The approval-time Borrower Slip is
+             * intentionally preserved and is not regenerated after inspection.
              */
-            $this->documents->borrowerSlip(
-                $custody->fresh([
-                    'borrower',
-                    'releasedBy',
-                    'releaseSignature.file',
-                    'request.borrower',
-                    'request.currentVersion.borrowerSignature.file',
-                    'request.currentVersion.approvalSteps.approver',
-                    'request.currentVersion.approvalSteps.signatureSnapshot.file',
-                    'lines.requestItem.inventoryItem',
-                    'returns.receivedBy',
-                    'returns.inspectionSignature.file',
-                ])
-            );
 
             $borrowerReturnMessage = $linenLines->isNotEmpty()
                 ? "Linen return {$return->return_no} was recorded by SPMU from the accomplished Laundry Form. Status: {$status}."

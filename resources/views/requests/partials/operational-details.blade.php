@@ -60,10 +60,9 @@
                         <small>Version {{ $doc->version_no }} · {{ str($doc->verification_status)->replace('_', ' ')->title() }}</small>
                     </div>
                     <a class="button secondary small ui-pressable request-document-link"
-                        href="{{ route('files.show', $doc->file, false) }}"
-                        target="_blank" rel="noopener"
-                        aria-label="Open {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER ? 'Approved Borrowing Request Letter' : 'Permission to Conduct Letter' }}">
-                        Open Document
+                        href="{{ route('files.preview', $doc->file, false) }}"
+                        aria-label="Preview {{ $doc->document_type === App\Models\RequestSupportingDocument::TYPE_REQUEST_LETTER ? 'Approved Borrowing Request Letter' : 'Permission to Conduct Letter' }}">
+                        Preview
                     </a>
                 </div>
             @empty
@@ -79,13 +78,8 @@
                         <small>{{ $borrowerSlipDocument ? 'Generated · Retained with transaction' : 'Not generated' }}</small>
                     </div>
                     @if($borrowerSlipDocument)
-                        <div class="request-document-actions">
-                            <a class="button secondary small ui-pressable request-document-link"
-                                href="{{ route('documents.view', $borrowerSlipDocument) }}"
-                                target="_blank" rel="noopener">Open Borrower Slip</a>
-                            <a class="button secondary small ui-pressable request-document-link"
-                                href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
-                        </div>
+                        <a class="button secondary small ui-pressable request-document-link"
+                            href="{{ route('documents.preview', $borrowerSlipDocument) }}">Preview</a>
                     @else
                         <span class="status-badge status-neutral">Not available</span>
                     @endif
@@ -98,13 +92,8 @@
                             <small>{{ $laundryFormDocument ? 'Generated · Original operational form' : 'Not generated' }}</small>
                         </div>
                         @if($laundryFormDocument)
-                            <div class="request-document-actions">
-                                <a class="button secondary small ui-pressable request-document-link"
-                                    href="{{ route('documents.view', $laundryFormDocument) }}"
-                                    target="_blank" rel="noopener">Open Laundry Form</a>
-                                <a class="button secondary small ui-pressable request-document-link"
-                                    href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
-                            </div>
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('documents.preview', $laundryFormDocument) }}">Preview</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif
@@ -123,8 +112,7 @@
                         </div>
                         @if($laundryAccomplishedFile)
                             <a class="button secondary small ui-pressable request-document-link"
-                                href="{{ route('files.show', $laundryAccomplishedFile, false) }}"
-                                target="_blank" rel="noopener">Open Accomplished Laundry Form</a>
+                                href="{{ route('files.preview', $laundryAccomplishedFile, false) }}">Preview</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif
@@ -138,13 +126,8 @@
                             <small>{{ $gatePassDocument ? 'Generated · Original operational form' : 'Not generated' }}</small>
                         </div>
                         @if($gatePassDocument)
-                            <div class="request-document-actions">
-                                <a class="button secondary small ui-pressable request-document-link"
-                                    href="{{ route('documents.view', $gatePassDocument) }}"
-                                    target="_blank" rel="noopener">Open Gate Pass</a>
-                                <a class="button secondary small ui-pressable request-document-link"
-                                    href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
-                            </div>
+                            <a class="button secondary small ui-pressable request-document-link"
+                                href="{{ route('documents.preview', $gatePassDocument) }}">Preview</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif
@@ -163,8 +146,7 @@
                         </div>
                         @if($gatePassAccomplishedFile)
                             <a class="button secondary small ui-pressable request-document-link"
-                                href="{{ route('files.show', $gatePassAccomplishedFile, false) }}"
-                                target="_blank" rel="noopener">Open Accomplished Gate Pass</a>
+                                href="{{ route('files.preview', $gatePassAccomplishedFile, false) }}">Preview</a>
                         @else
                             <span class="status-badge status-neutral">Not available</span>
                         @endif

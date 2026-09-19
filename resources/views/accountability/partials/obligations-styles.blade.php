@@ -345,21 +345,33 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
     position: relative;
 }
 
+/*
+ * One obligation = one obvious primary action. This is the sole visible
+ * control on the collapsed card, so it carries the exact same look as the
+ * universal primary button used everywhere else in the system (View
+ * Request, View Record, and so on) - not a secondary/outline treatment.
+ */
 .ob-details > summary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 7px;
     min-height: 34px;
-    padding: 0 14px;
-    color: var(--interactive);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 7px;
+    padding: 6px 14px;
+    color: #fff;
+    background: var(--primary-action);
+    border: 1px solid var(--primary-action);
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 750;
     list-style: none;
+}
+
+.ob-details > summary:hover,
+.ob-details > summary:focus-visible {
+    background: var(--primary-action-hover);
+    border-color: var(--primary-action-hover);
 }
 
 .ob-details > summary::-webkit-details-marker { display: none; }
@@ -369,8 +381,7 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
 }
 
 .ob-details[open] > summary {
-    margin-bottom: 10px;
-    background: var(--surface-subtle);
+    margin-bottom: 12px;
 }
 
 .ob-disclosure-chevron {
@@ -381,6 +392,35 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
 .ob-details[open] > summary .ob-disclosure-chevron,
 .ob-resolved-history-disclosure[open] > summary .ob-disclosure-chevron {
     transform: rotate(180deg);
+}
+
+/* Expanded obligation: Documents / Borrowing Reference / Restriction /
+   History, each its own labeled group instead of one undifferentiated
+   button row - and never repeating what the collapsed card already shows. */
+.ob-detail-body {
+    display: grid;
+    gap: 14px;
+    width: 100%;
+}
+
+.ob-detail-section {
+    display: grid;
+    gap: 8px;
+}
+
+.ob-detail-section-heading {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.ob-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .ob-detail-grid {

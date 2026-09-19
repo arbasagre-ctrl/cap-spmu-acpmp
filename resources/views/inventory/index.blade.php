@@ -236,6 +236,16 @@
                     @endforeach
                 </select>
             </label>
+
+
+            <label>
+                Record status
+                <select id="spmu-inventory-status">
+                    <option value="active">Active records</option>
+                    <option value="inactive">Inactive / archived records</option>
+                    <option value="all">All records</option>
+                </select>
+            </label>
         </div>
 
         <div class="spmu-inventory-summary">

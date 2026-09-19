@@ -13,11 +13,11 @@
         >
         <span>
             @if($hasOffCampusItem)
-                I confirm that the Borrower Slip and approved Gate Pass were validated and the barricade was handed to the borrower.
+                I confirm the barricade was handed to the borrower and the Borrower Slip and Gate Pass were validated.
             @elseif($hasLaundryItem)
-                I confirm that the linen was physically issued by Laundry Personnel and the printed Laundry Form was completed with the required <strong>ISSUED BY</strong> signature.
+                I confirm the linen items were issued and the Laundry Form was signed under <strong>ISSUED BY</strong>.
             @else
-                I confirm that the Borrower Slip and approved item were validated and the item was physically handed to the borrower.
+                I confirm the item was handed to the borrower and the Borrower Slip was validated.
             @endif
         </span>
     </label>

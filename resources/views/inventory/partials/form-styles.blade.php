@@ -23,6 +23,18 @@
 .inventory-form-page .inventory-form-flags label:hover { border-color: var(--border-strong); }
 .inventory-form-page .inventory-form-flags label:focus-within { border-color: var(--inventory-blue); box-shadow: var(--focus-ring); }
 
+.inventory-form-stock-control { display: grid; gap: 14px; padding: 17px 18px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); }
+.inventory-form-stock-control-head { display: flex; align-items: center; justify-content: space-between; gap: 14px 18px; flex-wrap: wrap; }
+.inventory-form-stock-control-head > div { display: grid; gap: 3px; }
+.inventory-form-stock-control-head span, .inventory-form-stock-values span { color: var(--text-muted); font-size: 11px; font-weight: 750; letter-spacing: .035em; text-transform: uppercase; }
+.inventory-form-stock-control-head strong, .inventory-form-stock-values strong { color: var(--heading); font-size: 13px; }
+.inventory-form-stock-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-elevated); }
+.inventory-form-stock-values > div { display: grid; gap: 5px; padding: 13px 15px; }
+.inventory-form-stock-values > div + div { border-left: 1px solid var(--border); }
+.inventory-form-stock-control p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.inventory-form-stock-control p strong { color: var(--heading); }
+.inventory-form-flag-error { grid-column: 1 / -1; color: var(--danger); }
+
 .inventory-form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .inventory-form-page .button.inventory-form-cancel { min-height: 42px; padding: 11px 24px; border-color: var(--inventory-blue); border-radius: 7px; background: var(--surface-elevated); color: var(--inventory-blue); font-size: 13px; }
 .inventory-form-page .button.inventory-form-cancel:hover, .inventory-form-page .button.inventory-form-cancel:focus-visible { background: var(--info-bg); }
@@ -37,6 +49,8 @@ html[data-theme="dark"] .inventory-form-page .button.inventory-form-save:hover {
     .inventory-form-page .inventory-form-heading { align-items: stretch; }
     .inventory-form-columns { grid-template-columns: minmax(0, 1fr); }
     .inventory-form-page .inventory-form-card { padding: 18px 16px; }
+    .inventory-form-stock-values { grid-template-columns: 1fr; }
+    .inventory-form-stock-values > div + div { border-left: 0; border-top: 1px solid var(--border); }
     .inventory-form-actions { justify-content: stretch; }
     .inventory-form-page .button.inventory-form-cancel, .inventory-form-page .button.inventory-form-save { flex: 1 1 auto; justify-content: center; }
 }

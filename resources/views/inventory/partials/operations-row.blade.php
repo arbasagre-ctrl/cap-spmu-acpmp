@@ -2,13 +2,13 @@
     $balance = $balances[$item->id] ?? [];
 
     /*
-     * The operational list shows PHYSICAL availability, matching the
-     * Inventory Status Report. Reserved stock is still physically in SPMU and is shown separately
-     * from currently available units.
+     * Available means free for a new approved allocation right now.
+     * Approved reservations are excluded from Available and shown separately
+     * in the Reserved column.
      */
     $available = (float) (
-        $balance['current_available']
-        ?? $balance['borrower_available']
+        $balance['borrower_available']
+        ?? $balance['current_available']
         ?? $balance['available']
         ?? 0
     );
@@ -45,6 +45,7 @@
     data-spmu-inventory-row
     data-search="{{ $searchText }}"
     data-category="{{ strtolower($categoryName) }}"
+    data-status="{{ $item->active ? 'active' : 'inactive' }}"
 >
     <td>
         <span class="spmu-inventory-id">{{ $itemCode }}</span>
@@ -52,7 +53,10 @@
 
     <td class="spmu-inventory-item">
         <strong>{{ $item->unique_description }}</strong>
-        <small>{{ $categoryName }}{{ $unitName ? ' · '.$unitName : '' }}</small>
+        <small>
+            {{ $categoryName }}{{ $unitName ? ' · '.$unitName : '' }}
+            @unless($item->active) · Inactive / archived record @endunless
+        </small>
     </td>
 
     <td class="is-numeric"><span class="spmu-inventory-count">{{ $totalStock + 0 }}</span></td>
@@ -72,6 +76,9 @@
             @if($incident > 0)
                 <span class="has-open">{{ $incident + 0 }} condition / incident hold</span>
             @endif
+            @unless($item->active)
+                <span class="has-open">Record is inactive / archived</span>
+            @endunless
         </span>
     </td>
 
@@ -109,10 +116,10 @@
                 <a
                     class="table-action ui-pressable"
                     href="{{ route('inventory.edit', $item) }}"
-                    aria-label="Edit {{ $item->unique_description }}"
+                    aria-label="Edit details for {{ $item->unique_description }}"
                 >
                     <x-icon name="edit" size="16" />
-                    Edit
+                    Edit Details
                 </a>
             @endif
         </span>

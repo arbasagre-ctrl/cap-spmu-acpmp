@@ -6,8 +6,35 @@
     <div class="notification-list borrower-notifications">
     @forelse($notifications as $notification)
         @php
-            $eventLabel = str($notification->event->event_code)->replace('_',' ')->lower()->title();
-            $message = $notification->event->payload_snapshot_json['message'] ?? $notification->provider_response ?? 'A system update was recorded.';
+            $eventCode = strtoupper((string) $notification->event->event_code);
+            $eventLabel = [
+                'REQUEST_APPROVED' => 'Borrowing Request Approved',
+                'REQUEST_RETURNED_FOR_REVISION' => 'Request Revision Required',
+                'REQUEST_REJECTED' => 'Borrowing Request Not Approved',
+                'REQUEST_CANCELLED' => 'Borrowing Request Cancelled',
+                'CANCELLATION_REJECTED' => 'Cancellation Request Not Approved',
+                'PICKUP_SCHEDULED' => 'Pickup Schedule Updated',
+                'PICKUP_EXPIRED' => 'Pickup Schedule Missed',
+                'PICKUP_RESCHEDULE_REQUESTED' => 'Pickup Reschedule Requested',
+                'ITEMS_RELEASED' => 'Borrowed Items Released',
+                'RETURN_DUE_TOMORROW' => 'Return Due Tomorrow',
+                'RETURN_DUE_TODAY' => 'Return Due Today',
+                'RETURN_INSPECTED' => 'Return Inspected',
+                'TRANSACTION_CLOSED' => 'Borrowing Transaction Completed',
+                'BORROWING_OVERDUE' => 'Return Overdue',
+                'LATE_RETURN_NOTICE_ISSUED' => 'Late Return Notice',
+                'LATE_RETURN_BILLING_STATEMENT_ISSUED' => 'Late Return Billing Statement',
+                'ACCOUNTABILITY_OPENED' => 'Property Accountability Case Opened',
+                'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' => 'Property Accountability Decision',
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' => 'Property Accountability Resolved',
+                'PAYMENT_VERIFIED' => 'Payment Confirmed',
+                'RECEIPT_VERIFIED' => 'Payment Confirmed',
+                'EVIDENCE_VERIFIED' => 'Supporting Document Verified',
+                'EVIDENCE_REJECTED' => 'Supporting Document Needs Replacement',
+                'ADMINISTRATIVE_SANCTION_RECORDED' => 'Administrative Sanction Notice',
+                'EARLY_RETURN_REQUESTED' => 'Early Return Request',
+            ][$eventCode] ?? str($eventCode)->replace('_',' ')->lower()->title();
+            $message = $notification->event->payload_snapshot_json['message'] ?? $notification->provider_response ?? 'An update was recorded.';
             $target = $targets[$notification->id] ?? null;
         @endphp
         <article class="notification-item {{ $notification->read_at ? '' : 'unread' }} {{ $target ? 'is-linked' : '' }}">

@@ -211,7 +211,7 @@ class CompleteWorkflowTest extends TestCase
             ->count());
     }
 
-    public function test_spmu_cannot_reduce_pickup_quantity_below_verified_approved_quantity(): void
+    public function test_spmu_preparation_uses_the_verified_approved_quantity_without_a_manual_quantity_edit_route(): void
     {
         [$borrower, $spmu, $spmuOfficer, $request, $version] =
             $this->approvedRequest(12);
@@ -224,25 +224,13 @@ class CompleteWorkflowTest extends TestCase
         $line = $custody->lines->firstOrFail();
 
         /*
-         * Finalized workflow: SPMU may not silently reduce an approved
-         * quantity at pickup. If stock/requirements changed, the request
-         * must go through revision/correction instead.
+         * Finalized Step 2 workflow: the Action Officer no longer types an
+         * "Actual Prepared" quantity. Preparation carries the verified Head-
+         * approved quantity forward; a mismatch is reported through the
+         * inventory-discrepancy workflow instead of silently reducing release.
          */
-        $this->withSession(['active_workspace' => 'SPMU'])
-            ->actingAs($spmuOfficer)
-            ->post(
-                route('custody.quantities', $custody),
-                [
-                    'quantities' => [$line->id => 8],
-                    'reasons' => [$line->id => 'Attempted reduced pickup.'],
-                ]
-            )
-            ->assertSessionHasErrors('quantities');
-
-        $this->assertSame(
-            12.0,
-            (float) $line->fresh()->quantity_to_receive
-        );
+        $this->assertNull(\Illuminate\Support\Facades\Route::getRoutes()->getByName('custody.quantities'));
+        $this->assertSame(12.0, (float) $line->fresh()->quantity_to_receive);
 
         $this->assertDatabaseHas('allocations', [
             'request_item_id' => $line->request_item_id,
@@ -257,6 +245,8 @@ class CompleteWorkflowTest extends TestCase
             $spmuOfficer,
             $version
         );
+
+        $this->assertSame(12.0, (float) $line->fresh()->quantity_to_receive);
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($spmuOfficer)
@@ -1010,15 +1000,6 @@ class CompleteWorkflowTest extends TestCase
 
     public function test_stolen_property_requires_blotter_and_evidence_and_can_generate_approved_rslddp(): void
     {
-        SystemSetting::where(
-            'setting_key',
-            'rslddp_template_status'
-        )
-            ->firstOrFail()
-            ->update([
-                'value_json' => 'APPROVED',
-            ]);
-
         [$borrower, $spmu, $spmuOfficer, $request, $version] =
             $this->approvedRequest(2);
 
@@ -1119,7 +1100,12 @@ class CompleteWorkflowTest extends TestCase
             $incident->police_blotter_reference
         );
 
-        $this->assertDatabaseHas('generated_documents', [
+        /*
+         * RSLDDP starts only after SPMU Admin/Head confirms actual
+         * accountability exists - never merely because an adverse
+         * inspection finding was reported.
+         */
+        $this->assertDatabaseMissing('generated_documents', [
             'subject_type' => Incident::class,
             'subject_id' => $incident->id,
             'document_type' => 'RSLDDP',
@@ -1131,9 +1117,8 @@ class CompleteWorkflowTest extends TestCase
         );
 
         /*
-         * The SPMU Head must first record the formal accountability
-         * decision (Billing / Payment Required) before a Billing Statement
-         * can be generated for this incident.
+         * Billing / Payment Required always requires RSLDDP - it is now the
+         * only path to a monetary property settlement.
          */
         $this->actingAs($spmu)
             ->post(
@@ -1153,42 +1138,86 @@ class CompleteWorkflowTest extends TestCase
             )
             ->assertSessionHasNoErrors();
 
+        $incident->refresh();
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status);
+        $this->assertTrue((bool) $incident->requires_rslddp);
+        $this->assertDatabaseHas('generated_documents', [
+            'subject_type' => Incident::class,
+            'subject_id' => $incident->id,
+            'document_type' => 'RSLDDP',
+            'status' => 'FINAL',
+        ]);
+
+        /*
+         * The old generic property-billing action is retired for new
+         * cases - its own status guard makes it unreachable here.
+         */
         $this->actingAs($spmu)
             ->post(
-                route(
-                    'incidents.bill',
-                    $incident
-                ),
+                route('incidents.bill', $incident),
+                ['amount' => 500, 'basis' => 'Authorized appraisal.']
+            )
+            ->assertSessionHasErrors('incident');
+
+        $this->actingAs($spmu)
+            ->post(
+                route('incidents.rslddp.upload', $incident),
+                ['evidence' => UploadedFile::fake()->create('accomplished-rslddp.pdf', 10, 'application/pdf')]
+            )
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_FOR_ACCOUNTING_PROCESSING', $incident->status);
+        $this->assertNotNull($incident->rslddp_evidence_submission_id);
+
+        $this->actingAs($spmu)
+            ->post(
+                route('incidents.rslddp.billing', $incident),
                 [
+                    'evidence' => UploadedFile::fake()->create('official-billing.pdf', 10, 'application/pdf'),
                     'amount' => 500,
-                    'basis' => 'Authorized appraisal.',
+                    'billing_reference' => 'ACCTG-SOA-2026-001',
                 ]
             )
             ->assertSessionHasNoErrors();
 
-        $billing = BillingStatement::where(
-            'borrower_user_id',
-            $borrower->id
-        )
+        $incident->refresh();
+        $this->assertSame('RSLDDP_PAYMENT_REQUIRED', $incident->status);
+
+        $billing = BillingStatement::where('borrower_user_id', $borrower->id)
+            ->where('source', 'ACCOUNTING_OFFICE')
             ->firstOrFail();
+        $this->assertSame(500.0, (float) $billing->total_amount);
+
+        $this->actingAs($spmuOfficer)
+            ->post(
+                route('payments.store', $billing),
+                [
+                    'evidence' => UploadedFile::fake()->create('receipt.pdf', 10, 'application/pdf'),
+                    'official_receipt_no' => 'OR-2026-001',
+                    'receipt_date' => now()->format('Y-m-d'),
+                    'amount' => 500,
+                ]
+            )
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('SETTLED', $billing->fresh()->status);
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_FOR_RESOLUTION', $incident->status);
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'incident_id' => $incident->id,
+            'status' => 'ACTIVE',
+        ]);
 
         $this->actingAs($spmu)
             ->post(
-                route(
-                    'billings.waive',
-                    $billing
-                ),
-                [
-                    'reason' =>
-                        'Authorized institutional waiver for test closeout.',
-                ]
+                route('incidents.rslddp.resolve', $incident),
+                ['resolution_remarks' => 'RSLDDP and settlement verified.']
             )
             ->assertSessionHasNoErrors();
 
-        $this->assertSame(
-            'WAIVED',
-            $billing->fresh()->status
-        );
+        $this->assertSame('RESOLVED', $incident->fresh()->status);
 
         $this->assertSame(
             'CLOSED',

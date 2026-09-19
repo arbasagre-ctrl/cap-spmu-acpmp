@@ -80,9 +80,11 @@
 
             <div class="inline-actions laundry-form-actions">
                 @if($job->latestEvidence?->file)
-                    <a class="button secondary small ui-pressable" href="{{ route('files.show', $job->latestEvidence->file, false) }}" target="_blank" rel="noopener">Open Accomplished Form</a>
+                    <a class="button secondary small ui-pressable" href="{{ route('files.preview', $job->latestEvidence->file) }}">Preview</a>
                 @elseif($job->document)
-                    <a class="button secondary ui-pressable" href="{{ route('documents.download', $job->document) }}" target="_blank" rel="noopener">Open Laundry Form</a>
+                    <a class="button secondary ui-pressable" href="{{ route('documents.preview', $job->document) }}">Preview</a>
+                @else
+                    <span class="status-badge status-neutral">Not available</span>
                 @endif
             </div>
 

@@ -408,7 +408,7 @@ class RequestWorkflowService
                     'REQUEST_SUBMITTED',
                     $submissionRecipients,
                     $entrySequenceNo === 1
-                        ? "Request {$request->request_no} is ready for Action Officer document and request verification. Verification is not approval."
+                        ? "Request {$request->request_no} is ready for Action Officer review."
                         : "On-campus request {$request->request_no} is ready for SPMU Head review and decision.",
                     $request,
                     ['SYSTEM', 'EMAIL'],
@@ -588,7 +588,7 @@ class RequestWorkflowService
             $this->notifications->send(
                 'REQUEST_VERIFIED',
                 $heads,
-                "Request {$request->request_no} was VERIFIED by the SPMU Action Officer and is ready for Head review and decision. No approval or reservation has occurred yet.",
+                "Request {$request->request_no} was verified by the SPMU Action Officer and is ready for the SPMU Head's decision.",
                 $request,
                 ['SYSTEM', 'EMAIL']
             );
@@ -1158,9 +1158,10 @@ class RequestWorkflowService
                  * Create the pickup/custody record immediately
                  * after SPMU approval and reservation.
                  *
-                 * The system assigns the automatic Pickup / Issuance
-                 * operating window here. The Action Officer only confirms
-                 * that generated schedule before the borrower is notified.
+                 * The system assigns and activates the automatic Pickup /
+                 * Issuance operating window here. The initial pickup window
+                 * is included in the borrower's approval notification; the
+                 * Action Officer does not perform a duplicate confirmation.
                  */
                 $custody = $this->custody->ensurePickupRecord(
                     $request->fresh(),
@@ -1272,7 +1273,7 @@ class RequestWorkflowService
                             true,
 
                         'pickup_schedule_confirmed' =>
-                            false,
+                            true,
 
                         'automatic_pickup_at' =>
                             $automaticPickupWindow['start']->toIso8601String(),
@@ -1293,7 +1294,7 @@ class RequestWorkflowService
                     collect([
                         $request->borrower,
                     ]),
-                    "Request {$request->request_no} was approved by the SPMU Head. Your Borrower Slip and any applicable Gate Pass or Laundry Form are now available to view and download. SPMU will notify you after the Action Officer confirms the system-generated Pickup / Issuance schedule.",
+                    "Your borrowing request {$request->request_no} has been approved. Pickup is scheduled for {$automaticPickupWindow['start']->format('F j, Y g:i A')} to {$automaticPickupWindow['end']->format('g:i A')}. Please preview and print your Borrower Slip before pickup, together with any other required form shown in your request.",
                     $request
                 );
 
@@ -1305,7 +1306,7 @@ class RequestWorkflowService
                 $this->notifications->send(
                     'REQUEST_APPROVED',
                     $actionOfficers,
-                    "Request {$request->request_no} was approved. The system generated the Pickup / Issuance window for {$automaticPickupWindow['start']->format('F j, Y g:i A')} to {$automaticPickupWindow['end']->format('g:i A')}. Review and confirm the schedule before borrower notification and item preparation.",
+                    "Request {$request->request_no} was approved. Pickup is scheduled for {$automaticPickupWindow['start']->format('F j, Y g:i A')} to {$automaticPickupWindow['end']->format('g:i A')}. Prepare the approved items for release.",
                     $request,
                     ['SYSTEM', 'EMAIL']
                 );
@@ -1400,6 +1401,17 @@ class RequestWorkflowService
                         RequestStatus::Expired,
                         RequestStatus::Rejected,
                     ], true)) {
+                        return;
+                    }
+
+                    /*
+                     * An AO-reported inventory discrepancy is an SPMU-side
+                     * fulfillment problem, not a borrower missed pickup. While
+                     * Step 2 is still under inventory review, preserve the
+                     * approved reservation and never auto-cancel the request as
+                     * unclaimed.
+                     */
+                    if ($this->custody->hasPreparationExceptionPendingRelease($locked)) {
                         return;
                     }
 
@@ -1568,7 +1580,7 @@ class RequestWorkflowService
             $this->notifications->send(
                 'REQUEST_CANCELLED',
                 collect([$request->borrower]),
-                "Request {$request->request_no} was automatically cancelled because the approved items were not claimed within the allowed pickup period. The reserved quantity has been returned to available SPMU inventory.",
+                "Request {$request->request_no} was cancelled because the items were not picked up within the allowed period.",
                 $request,
                 ['SYSTEM', 'EMAIL'],
                 ['SYSTEM', 'EMAIL']
@@ -1628,6 +1640,114 @@ class RequestWorkflowService
         // No second SPMU confirmation is required while nothing has been
         // physically released. Cancellation is effective immediately.
         $this->finalizeCancellation($request, $actor, $reason, $afterReservation);
+    }
+
+    /**
+     * Head/Admin terminal resolution for an AO-reported preparation
+     * discrepancy when SPMU can no longer provide the complete approved
+     * quantity. This is an SPMU-side administrative cancellation: nothing was
+     * physically released, the borrower is not treated as a missed pickup,
+     * the reservation is restored, and all generated pickup documents for the
+     * approved version are invalidated.
+     */
+    public function cancelApprovedForPreparationDiscrepancy(
+        CustodyTransaction $custody,
+        User $spmuHead,
+        AuditEvent $issueEvent,
+        string $resolutionNotes
+    ): void {
+        abort_unless(
+            $spmuHead->access_classification === AccessClassification::SpmuHead,
+            403
+        );
+
+        $custody->loadMissing([
+            'request.borrower',
+            'request.currentVersion',
+            'request.custody.gatePass',
+        ]);
+
+        if ($custody->released_at || $custody->status !== 'PREPARING_RELEASE') {
+            throw ValidationException::withMessages([
+                'preparation_issue' => 'This transaction is no longer eligible for preparation-issue cancellation.',
+            ]);
+        }
+
+        $request = $custody->request;
+
+        if (! $request || $request->status !== RequestStatus::ApprovedReadyForRelease) {
+            throw ValidationException::withMessages([
+                'preparation_issue' => 'Only an approved, unreleased request can be cancelled from Step 2.',
+            ]);
+        }
+
+        $notes = trim($resolutionNotes);
+
+        if ($notes === '') {
+            throw ValidationException::withMessages([
+                'resolution_notes' => 'Explain why SPMU cannot fulfill the complete approved quantity.',
+            ]);
+        }
+
+        DB::transaction(function () use ($custody, $request, $spmuHead, $issueEvent, $notes): void {
+            $issue = AuditEvent::query()
+                ->lockForUpdate()
+                ->findOrFail($issueEvent->id);
+
+            abort_unless(
+                $issue->action_code === 'PREPARATION_ISSUE_REPORTED'
+                    && $issue->record_type === CustodyTransaction::class
+                    && (int) $issue->record_id === (int) $custody->id,
+                404
+            );
+
+            $alreadyClosedUnfulfilled = AuditEvent::query()
+                ->where('record_type', CustodyTransaction::class)
+                ->where('record_id', $custody->id)
+                ->where('action_code', 'PREPARATION_ISSUE_CLOSED_UNFULFILLED')
+                ->where('after_json->preparation_issue_event_id', $issue->id)
+                ->exists();
+
+            if ($alreadyClosedUnfulfilled) {
+                throw ValidationException::withMessages([
+                    'preparation_issue' => 'This inventory discrepancy has already been closed as unable to fulfill.',
+                ]);
+            }
+
+            if ($custody->prepared_at) {
+                throw ValidationException::withMessages([
+                    'preparation_issue' => 'Items Prepared has already been confirmed. This preparation discrepancy can no longer be used to cancel the approved request.',
+                ]);
+            }
+
+            $this->audit->record(
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+                $custody,
+                reason: $notes,
+                after: [
+                    'preparation_issue_event_id' => $issue->id,
+                    'custody_line_id' => (int) data_get($issue->after_json, 'custody_line_id'),
+                    'item_name' => (string) data_get($issue->after_json, 'item_name', 'Item'),
+                    'resolution_outcome' => 'UNABLE_TO_FULFILL_APPROVED_REQUEST',
+                    'resolution_notes' => $notes,
+                    'borrower_missed_pickup' => false,
+                    'partial_release_allowed' => false,
+                ]
+            );
+
+            $reason = 'SPMU could not fulfill the complete approved quantity because of an inventory discrepancy found during physical preparation. '.$notes;
+
+            $this->finalizeCancellation(
+                $request,
+                $spmuHead,
+                $reason,
+                true,
+                true,
+                'PREPARATION_UNABLE_TO_FULFILL',
+                "SPMU could not complete preparation for request {$request->request_no} because the full approved quantity was not physically available. The approved request was cancelled before release. No items were released, this is not recorded as a missed pickup, and the reserved quantity has been returned to inventory. If you still need the items, submit a new borrowing request.",
+                'PREPARATION_UNABLE_TO_FULFILL'
+            );
+        }, 3);
     }
 
     public function reviewCancellation(
@@ -1705,14 +1825,20 @@ class RequestWorkflowService
         User $actor,
         string $reason,
         bool $afterReservation,
-        bool $createCancellationRecord = true
+        bool $createCancellationRecord = true,
+        string $notificationEventCode = 'REQUEST_CANCELLED',
+        ?string $notificationMessage = null,
+        string $auditActionCode = 'REQUEST_CANCELLED'
     ): void {
         DB::transaction(function () use (
             $request,
             $actor,
             $reason,
             $afterReservation,
-            $createCancellationRecord
+            $createCancellationRecord,
+            $notificationEventCode,
+            $notificationMessage,
+            $auditActionCode
         ): void {
             if ($afterReservation) {
                 $this->inventory->restore(
@@ -1794,16 +1920,16 @@ class RequestWorkflowService
             );
 
             $this->audit->record(
-                'REQUEST_CANCELLED',
+                $auditActionCode,
                 $request,
                 reason: $reason,
                 after: ['reservation_released' => $afterReservation]
             );
 
             $this->notifications->send(
-                'REQUEST_CANCELLED',
+                $notificationEventCode,
                 collect([$request->borrower]),
-                "Request {$request->request_no} was cancelled. {$reason}",
+                $notificationMessage ?: "Request {$request->request_no} was cancelled. {$reason}",
                 $request
             );
 
@@ -1820,7 +1946,7 @@ class RequestWorkflowService
                     $this->notifications->send(
                         'REQUEST_CANCELLED',
                         $actionOfficers,
-                        "Borrower cancelled {$request->request_no} before physical release. Any unreleased allocation, pickup window, and prepared pickup documents are no longer active.",
+                        "The borrower cancelled request {$request->request_no} before pickup. No further release action is required.",
                         $request
                     );
                 }

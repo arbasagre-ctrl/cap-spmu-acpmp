@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class GeneratedDocument extends Model
 {
@@ -18,6 +19,11 @@ class GeneratedDocument extends Model
     public function file(): BelongsTo
     {
         return $this->belongsTo(StoredFile::class, 'stored_file_id');
+    }
+
+    public function subject(): MorphTo
+    {
+        return $this->morphTo();
     }
 
     public function template(): BelongsTo

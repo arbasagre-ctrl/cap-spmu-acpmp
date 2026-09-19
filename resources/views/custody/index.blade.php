@@ -7,6 +7,13 @@
     $isHead = auth()->user()?->access_classification?->value === 'SPMU_HEAD';
     $mode = $spmuMode ?? null;
 
+    $borrowerKpiFilterLabels = [
+        'active_borrowings' => 'Active Borrowings',
+        'upcoming_pickup' => 'Upcoming Pickup',
+        'returns_due' => 'Returns Due',
+    ];
+    $borrowerKpiFilterLabel = $borrowerKpiFilterLabels[$borrowerKpiFilter ?? ''] ?? null;
+
     $pageTitle = $isBorrower
         ? 'My Borrowings'
         : ($isHead
@@ -123,13 +130,20 @@
         ['key' => 'OVERDUE', 'label' => 'Overdue'],
         ['key' => 'ACCOUNTABILITY_REVIEW', 'label' => 'Accountability Review'],
         ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
-        ['key' => 'FOR_BILLING', 'label' => 'Billing Statement Pending'],
-        ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending'],
+        ['key' => 'COMPLIANCE_RSLDDP_PENDING', 'label' => 'Compliance - RSLDDP Pending'],
+        ['key' => 'RSLDDP_AWAITING_UPLOAD', 'label' => 'RSLDDP Processing'],
+        ['key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'label' => 'For Accounting Processing'],
+        ['key' => 'RSLDDP_PAYMENT_REQUIRED', 'label' => 'Payment Required'],
+        ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Resolution'],
         ['key' => 'BILLING_ISSUED', 'label' => 'Billing Unpaid'],
         ['key' => 'PAYMENT_VERIFICATION', 'label' => 'Payment Verification'],
         ['key' => 'LATE_RETURN', 'label' => 'Late Return Processing'],
         ['key' => 'BORROWING_RESTRICTED', 'label' => 'Borrowing Restricted'],
         ['key' => 'OBLIGATION_OPEN', 'label' => 'Accountability Pending'],
+        // Legacy / historical only - not reachable by any new case, kept so
+        // in-flight legacy custodies remain filterable.
+        ['key' => 'FOR_BILLING', 'label' => 'Billing Statement Pending (Legacy)'],
+        ['key' => 'BILLING_PENDING', 'label' => 'Billing Pending (Legacy)'],
     ]);
 
     $operationalFilterStatuses = match ($mode) {
@@ -226,6 +240,13 @@
     @include('custody.partials.oversight-interactions')
 @elseif($isBorrower)
     <div class="content-area my-borrowings" data-my-borrowings>
+        @if($borrowerKpiFilterLabel)
+            <div class="callout compact">
+                <span>Showing <strong>{{ $borrowerKpiFilterLabel }}</strong> ({{ $custodies->count() }}) from your dashboard.</span>
+                <a class="table-action" href="{{ route('custody.index') }}">Clear filter — show all</a>
+            </div>
+        @endif
+
         <div class="borrowings-toolbar">
             <label>
                 Search

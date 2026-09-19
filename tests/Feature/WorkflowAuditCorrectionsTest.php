@@ -530,10 +530,10 @@ class WorkflowAuditCorrectionsTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 9. Borrower Slip aggregates findings across all returns
+    // 9. Borrower Slip stays a single approval-time physical copy
     // ------------------------------------------------------------------
 
-    public function test_regenerated_borrower_slip_preserves_earlier_adverse_finding_after_later_clean_return(): void
+    public function test_borrower_slip_does_not_regenerate_return_findings_into_the_approval_time_pdf(): void
     {
         [, , , , , $custody] = $this->releasedCustody('Monoblock Chairs', 4);
         $line = $custody->lines->first();
@@ -597,7 +597,13 @@ class WorkflowAuditCorrectionsTest extends TestCase
         $method->setAccessible(true);
         $html = $method->invoke(app(DocumentService::class), $freshCustody);
 
-        $this->assertStringContainsString('damaged', $html);
+        $this->assertStringNotContainsString('1 damaged', $html);
+        $this->assertDatabaseHas('return_lines', [
+            'return_transaction_id' => $firstReturn->id,
+            'custody_line_id' => $line->id,
+            'condition_code' => 'DAMAGED',
+            'quantity_received' => 1,
+        ]);
     }
 
     // ------------------------------------------------------------------

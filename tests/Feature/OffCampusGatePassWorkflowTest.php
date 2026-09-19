@@ -286,10 +286,10 @@ class OffCampusGatePassWorkflowTest extends TestCase
             ->get(route('requests.show', $request))
             ->assertOk()
             ->assertSeeText('Bring the generated documents to SPMU')
-            ->assertSee(route('documents.view', $borrowerSlip), false)
-            ->assertSee(route('documents.download', $borrowerSlip), false)
-            ->assertSee(route('documents.view', $gatePassDocument), false)
-            ->assertSee(route('documents.download', $gatePassDocument), false);
+            ->assertSee(route('documents.preview', $borrowerSlip), false)
+            ->assertSee(route('documents.preview', $gatePassDocument), false)
+            ->assertDontSee(route('documents.download', $borrowerSlip), false)
+            ->assertDontSee(route('documents.download', $gatePassDocument), false);
 
         $this->withSession(['active_workspace' => 'BORROWER'])
             ->actingAs($this->borrower)

@@ -455,9 +455,9 @@
                             <small>Required for this student activity.</small>
                         </div>
                         @if($permissionToConductDoc)
-                            <a class="button secondary small ui-pressable" href="{{ route('files.show', $permissionToConductDoc->file, false) }}" target="_blank" rel="noopener">View Attachment</a>
+                            <a class="button secondary small ui-pressable" href="{{ route('files.preview', $permissionToConductDoc->file) }}">Preview</a>
                         @else
-                            <span class="status-badge status-danger">Missing</span>
+                            <span class="status-badge status-danger">Not available</span>
                         @endif
                     </div>
                 @endif
@@ -839,11 +839,9 @@
                                 <td>
                                     <a
                                         class="borrower-document-view"
-                                        href="{{ route('files.show', $doc->file, false) }}"
-                                        target="_blank"
-                                        rel="noopener"
+                                        href="{{ route('files.preview', $doc->file) }}"
                                     >
-                                        Open Document
+                                        Preview
                                     </a>
                                 </td>
                             </tr>
@@ -859,7 +857,7 @@
             <h2 class="borrower-card-title">
                 <span class="borrower-card-icon" aria-hidden="true"><x-icon name="printer" size="20" /></span>
                 Forms for Physical Processing
-                <span class="borrower-card-note">View and download the approved forms before pickup.</span>
+                <span class="borrower-card-note">Preview and print the approved forms before pickup.</span>
             </h2>
 
             <div class="callout info">
@@ -875,61 +873,50 @@
                     </div>
                     <div class="borrower-item-quantity">
                         @if($borrowerSlipDocument)
-                            <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $borrowerSlipDocument) }}" target="_blank" rel="noopener">Open Borrower Slip</a>
-                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $borrowerSlipDocument) }}">Download</a>
-                            </span>
+                            <a class="button secondary small ui-pressable" href="{{ route('documents.preview', $borrowerSlipDocument) }}">Preview</a>
                         @else
-                            <span class="status-badge status-neutral">Preparing</span>
+                            <span class="status-badge status-neutral">Not available</span>
                         @endif
                     </div>
                 </div>
 
-                <div class="borrower-item-row">
-                    <div>
-                        <strong>Laundry Form</strong>
-                        <small>{{ $requestHasLaundry ? 'Applicable to this borrowing.' : 'Not applicable.' }}</small>
-                    </div>
-                    <div class="borrower-item-quantity">
-                        @if(!$requestHasLaundry)
-                            <span class="status-badge status-neutral">Not applicable</span>
-                        @elseif($laundryFormDocument)
-                            <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $laundryFormDocument) }}" target="_blank" rel="noopener">Open Laundry Form</a>
-                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $laundryFormDocument) }}">Download</a>
-                            </span>
-                        @else
-                            <span class="status-badge status-neutral">Preparing</span>
-                        @endif
-                    </div>
-                </div>
-
-                <div class="borrower-item-row">
-                    <div>
-                        <strong>Gate Pass</strong>
-                        <small>
-                            @if(!$requestHasOffCampus)
-                                Not applicable.
-                            @elseif($gatePassFinalized)
-                                Generated automatically after SPMU Head approval.
+                @if($requestHasLaundry)
+                    <div class="borrower-item-row">
+                        <div>
+                            <strong>Laundry Form</strong>
+                            <small>Required for the laundry-handled items in this borrowing.</small>
+                        </div>
+                        <div class="borrower-item-quantity">
+                            @if($laundryFormDocument)
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.preview', $laundryFormDocument) }}">Preview</a>
                             @else
-                                Required, but the approved Gate Pass is not available. Contact SPMU; do not proceed with release.
+                                <span class="status-badge status-neutral">Not available</span>
                             @endif
-                        </small>
+                        </div>
                     </div>
-                    <div class="borrower-item-quantity">
-                        @if(!$requestHasOffCampus)
-                            <span class="status-badge status-neutral">Not applicable</span>
-                        @elseif($gatePassFinalized)
-                            <span class="inline-actions">
-                                <a class="button secondary small ui-pressable" href="{{ route('documents.view', $gatePassDocument) }}" target="_blank" rel="noopener">Open Gate Pass</a>
-                                <a class="button primary small ui-pressable" href="{{ route('documents.download', $gatePassDocument) }}">Download</a>
-                            </span>
-                        @else
-                            <span class="status-badge status-danger">Missing approved document</span>
-                        @endif
+                @endif
+
+                @if($requestHasOffCampus)
+                    <div class="borrower-item-row">
+                        <div>
+                            <strong>Gate Pass</strong>
+                            <small>
+                                @if($gatePassFinalized)
+                                    Generated automatically after SPMU Head approval.
+                                @else
+                                    Required, but the approved Gate Pass is not available. Contact SPMU; do not proceed with release.
+                                @endif
+                            </small>
+                        </div>
+                        <div class="borrower-item-quantity">
+                            @if($gatePassFinalized)
+                                <a class="button secondary small ui-pressable" href="{{ route('documents.preview', $gatePassDocument) }}">Preview</a>
+                            @else
+                                <span class="status-badge status-danger">Not available</span>
+                            @endif
+                        </div>
                     </div>
-                </div>
+                @endif
             </div>
         </article>
     @endif
@@ -995,11 +982,9 @@
 
                 <a
                     class="button secondary small ui-pressable"
-                    href="{{ route('files.show', $doc->file, false) }}"
-                    target="_blank"
-                    rel="noopener"
+                    href="{{ route('files.preview', $doc->file) }}"
                 >
-                    View Scan
+                    Preview
                 </a>
             </div>
         @empty

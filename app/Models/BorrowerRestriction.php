@@ -31,6 +31,21 @@ class BorrowerRestriction extends Model
         return $this->belongsTo(CustodyTransaction::class, 'custody_transaction_id');
     }
 
+    public function borrower(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'borrower_user_id');
+    }
+
+    public function sanction(): BelongsTo
+    {
+        return $this->belongsTo(Sanction::class, 'sanction_id');
+    }
+
+    public function imposedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'imposed_by_user_id');
+    }
+
     /**
      * Restrict a query to the borrowing transaction that created the control.
      * The reason fallback keeps pre-migration rows safe without letting one

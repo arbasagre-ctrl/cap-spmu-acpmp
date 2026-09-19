@@ -181,6 +181,7 @@
                 </dl>
             </article>
 
+            @if($hasOperationalReturnDocuments)
             <article class="card return-context-card return-documents-card">
                 <div class="card-header">
                     <div>
@@ -209,10 +210,8 @@
                             @if($laundryJob?->latestEvidence?->file)
                                 <a
                                     class="button secondary small ui-pressable"
-                                    href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
-                                    target="_blank"
-                                    rel="noopener"
-                                >Open Form</a>
+                                    href="{{ route('files.preview', $laundryJob->latestEvidence->file) }}"
+                                    >Preview</a>
                             @elseif($laundryJob)
                                 <details
                                     class="return-laundry-disclosure"
@@ -293,7 +292,7 @@
 
                             @if($custody->gatePass?->accomplishedFile)
                                 <a class="button secondary small ui-pressable return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
-                                    <span>Open Gate Pass</span>
+                                    <span>View Gate Pass Record</span>
                                     <span aria-hidden="true">→</span>
                                 </a>
                             @elseif($custody->gatePass)
@@ -307,14 +306,9 @@
                         </div>
                     @endif
 
-                    @unless($hasOperationalReturnDocuments)
-                        <div class="empty-state">
-                            <strong>No additional operational documents required.</strong>
-                            <span>This return can proceed without a Laundry Form or Gate Pass.</span>
-                        </div>
-                    @endunless
                 </div>
             </article>
+            @endif
         </section>
 
         <section class="content-area return-primary-section" id="return-primary">
@@ -360,7 +354,7 @@
                         <p>All items are already returned. Record the accomplished Gate Pass to complete the remaining documentation.</p>
                         @if($custody->gatePass)
                             <a class="button primary small ui-pressable top-gap return-navigation-action" href="{{ route('gate-passes.show', $custody->gatePass) }}">
-                                <span>Open Gate Pass</span>
+                                <span>View Gate Pass Record</span>
                                 <span aria-hidden="true">→</span>
                             </a>
                         @endif
@@ -409,11 +403,9 @@
                 @if($laundryJob?->latestEvidence?->file)
                     <a
                         class="button secondary small ui-pressable"
-                        href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
-                        target="_blank"
-                        rel="noopener"
-                    >
-                        Open Laundry Form
+                        href="{{ route('files.preview', $laundryJob->latestEvidence->file) }}"
+                        >
+                        Preview
                     </a>
                 @endif
             @endif

@@ -1306,8 +1306,8 @@
                         @if($requestLetter)
                             <p class="document-current">
                                 Current file:
-                                <a href="{{ route('files.show', $requestLetter->file, false) }}" target="_blank" rel="noopener">
-                                    View uploaded file
+                                <a href="{{ route('files.preview', $requestLetter->file) }}">
+                                    Preview
                                 </a>
                             </p>
                         @endif
@@ -1346,8 +1346,8 @@
                         @if($ptc)
                             <p class="document-current">
                                 Current file:
-                                <a href="{{ route('files.show', $ptc->file, false) }}" target="_blank" rel="noopener">
-                                    View uploaded file
+                                <a href="{{ route('files.preview', $ptc->file) }}">
+                                    Preview
                                 </a>
                             </p>
                         @endif
@@ -2731,8 +2731,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (submitButton) {
+            // Keep the original borrower-facing action label visible.
+            // Disabling the button is enough to prevent a second confirmation
+            // while the request is being submitted.
             submitButton.disabled = true;
-            submitButton.textContent = 'Processing...';
         }
     });
     submitDialog?.addEventListener('click', (event) => {

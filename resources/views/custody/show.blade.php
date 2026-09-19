@@ -15,6 +15,7 @@
     $isBorrower = $workspace === 'BORROWER' && auth()->id() === $custody->borrower_user_id;
     $isSpmu = $workspace === 'SPMU';
     $isSpmuOfficer = $isSpmu && $user?->access_classification === \App\Enums\AccessClassification::SpmuOfficer;
+    $isSpmuHead = $isSpmu && $user?->access_classification === \App\Enums\AccessClassification::SpmuHead;
     $spmuMode = $spmuMode ?? null;
     $showReleaseWorkflow = ! ($isSpmuOfficer && $spmuMode === 'return');
     $showReturnWorkflow = ! ($isSpmuOfficer && $spmuMode === 'release');
@@ -79,11 +80,21 @@
         && (bool) $custody->due_at
         && now()->lt($custody->due_at);
     $preparationComplete = (bool) $custody->prepared_at;
+    $preparationIssueRecords = collect($preparationIssues ?? []);
+    $hasOpenPreparationIssue = $preparationIssueRecords->where('is_resolved', false)->isNotEmpty();
+    $hasPreparationExceptionPendingRelease = $custody->status === 'PREPARING_RELEASE'
+        && ! $custody->released_at
+        && ! $preparationComplete
+        && $preparationIssueRecords->isNotEmpty();
     $pickupWindowStartsAt = $custody->scheduled_release_at;
     $pickupWindowEndsAt = $custody->pickup_expires_at;
     $pickupWindowPassed = (bool) $pickupWindowEndsAt
         && now()->gt($pickupWindowEndsAt);
-    $pickupMissed = ! $custody->released_at
+    $pickupHeldForPreparationIssue = ! $custody->released_at
+        && $hasPreparationExceptionPendingRelease
+        && $pickupWindowPassed;
+    $pickupMissed = ! $pickupHeldForPreparationIssue
+        && ! $custody->released_at
         && (bool) $custody->pickup_scheduled_at
         && ((bool) $custody->pickup_expired_at || $pickupWindowPassed);
     $hasPickupSchedule = (bool) $pickupWindowStartsAt
@@ -604,11 +615,9 @@
                             @if($laundryJob?->latestEvidence?->file)
                                 <a
                                     class="button secondary small ui-pressable"
-                                    href="{{ route('files.show', $laundryJob->latestEvidence->file, false) }}"
-                                    target="_blank"
-                                    rel="noopener"
+                                    href="{{ route('files.preview', $laundryJob->latestEvidence->file, false) }}"
                                 >
-                                    View Form
+                                    Preview
                                 </a>
                             @endif
                         </div>
@@ -637,11 +646,9 @@
                             @if($custody->gatePass?->accomplished_file_id)
                                 <a
                                     class="button secondary small ui-pressable"
-                                    href="{{ route('files.show', $custody->gatePass->accomplished_file_id, false) }}"
-                                    target="_blank"
-                                    rel="noopener"
+                                    href="{{ route('files.preview', $custody->gatePass->accomplished_file_id, false) }}"
                                 >
-                                    View Gate Pass
+                                    Preview
                                 </a>
                             @endif
                         </div>
@@ -867,6 +874,217 @@
         </div>
     </article>
 </section>
+
+@if($isSpmuHead && collect($preparationIssues ?? [])->isNotEmpty() && ! $custody->released_at)
+<section class="content-area" id="preparation-issues">
+    <article class="card">
+        <div class="card-header">
+            <div>
+                <p class="eyebrow">Item preparation</p>
+                <h2>Inventory Discrepancy Review</h2>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Reported Discrepancy</th>
+                        <th>Physical Observation</th>
+                        <th>Reported By</th>
+                        <th>Status / Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($preparationIssues as $issue)
+                        <tr>
+                            <td>
+                                <strong>{{ $issue['item_name'] }}</strong>
+                                <small>{{ $issue['approved_quantity'] + 0 }} {{ $issue['unit'] }} approved</small>
+                            </td>
+                            <td>
+                                <strong>{{ $issue['issue_label'] }}</strong>
+                                @if(!empty($issue['condition_observed']))
+                                    <small>{{ $issue['condition_observed'] }}</small>
+                                @endif
+                                @if(!empty($issue['details']))
+                                    <small>{{ $issue['details'] }}</small>
+                                @endif
+                            </td>
+                            <td>
+                                @if($issue['observed_usable_quantity'] !== null)
+                                    {{ $issue['observed_usable_quantity'] + 0 }} of {{ $issue['approved_quantity'] + 0 }} {{ $issue['unit'] }} physically ready
+                                @else
+                                    —
+                                @endif
+                            </td>
+                            <td>
+                                {{ $issue['reported_by'] }}
+                                <small>{{ $issue['reported_at']?->format('d M Y, g:i A') }}</small>
+                            </td>
+                            <td>
+                                @if($issue['is_resolved'])
+                                    @if($issue['resolution_outcome'] === 'UNABLE_TO_FULFILL_APPROVED_REQUEST')
+                                        <strong>Unable to Fulfill — Request Cancelled</strong>
+                                        @if(!empty($issue['resolution_notes']))
+                                            <small>{{ $issue['resolution_notes'] }}</small>
+                                        @endif
+                                        <small>No borrower missed-pickup record was created.</small>
+                                    @else
+                                        <strong>Inventory Reviewed — AO Recheck Required</strong>
+                                        @if(!empty($issue['resolution_notes']))
+                                            <small>{{ $issue['resolution_notes'] }}</small>
+                                        @endif
+
+                                        @if($pickupWindowPassed && ! $preparationComplete && $custody->status === 'PREPARING_RELEASE')
+                                            <form
+                                                method="post"
+                                                action="{{ route('custody.resolve-preparation-issue', [$custody, $issue['event']]) }}"
+                                                class="form-grid"
+                                            >
+                                                @csrf
+                                                <input type="hidden" name="resolution_type" value="UNABLE_TO_FULFILL_APPROVED_REQUEST">
+                                                <label>
+                                                    Reason
+                                                    <textarea
+                                                        name="resolution_notes"
+                                                        maxlength="1000"
+                                                        required
+                                                        placeholder="State why the complete approved quantity can no longer be released under the approved pickup schedule."
+                                                    ></textarea>
+                                                </label>
+                                                <label class="checkbox-line">
+                                                    <input type="checkbox" name="confirm_unable_to_fulfill" value="1" required>
+                                                    <span>I confirm that the approved release can no longer proceed and partial release is not allowed.</span>
+                                                </label>
+                                                <button class="button danger ui-pressable" type="submit">
+                                                    Unable to Fulfill Approved Request
+                                                </button>
+                                            </form>
+                                        @endif
+                                    @endif
+                                    @if($issue['resolved_at'])
+                                        <small>{{ $issue['resolved_at']->format('d M Y, g:i A') }}</small>
+                                    @endif
+                                @else
+                                    @if($issue['inventory_item_id'])
+                                        <a
+                                            class="button secondary small ui-pressable"
+                                            href="{{ route('inventory.show', $issue['inventory_item_id']) }}"
+                                        >
+                                            Review Inventory
+                                        </a>
+                                    @endif
+
+                                    @if($pickupWindowPassed)
+                                        <form
+                                            method="post"
+                                            action="{{ route('custody.resolve-preparation-issue', [$custody, $issue['event']]) }}"
+                                            class="form-grid"
+                                        >
+                                            @csrf
+                                            <input type="hidden" name="resolution_type" value="UNABLE_TO_FULFILL_APPROVED_REQUEST">
+                                            <label>
+                                                Reason
+                                                <textarea
+                                                    name="resolution_notes"
+                                                    maxlength="1000"
+                                                    required
+                                                    placeholder="State why SPMU cannot provide the complete approved quantity."
+                                                ></textarea>
+                                            </label>
+                                            <label class="checkbox-line">
+                                                <input type="checkbox" name="confirm_unable_to_fulfill" value="1" required>
+                                                <span>I confirm that the complete approved quantity cannot be provided and partial release is not allowed.</span>
+                                            </label>
+                                            <button class="button danger ui-pressable" type="submit">
+                                                Unable to Fulfill Approved Request
+                                            </button>
+                                        </form>
+                                    @else
+                                        <form
+                                            method="post"
+                                            action="{{ route('custody.resolve-preparation-issue', [$custody, $issue['event']]) }}"
+                                            class="form-grid"
+                                            data-preparation-resolution-form
+                                        >
+                                            @csrf
+                                            <label>
+                                                Resolution
+                                                <select name="resolution_type" required data-preparation-resolution-type>
+                                                    <option value="INVENTORY_REVIEW_COMPLETE">Resolved — AO Recheck Required</option>
+                                                    <option value="UNABLE_TO_FULFILL_APPROVED_REQUEST">Unable to Fulfill Approved Request</option>
+                                                </select>
+                                            </label>
+
+                                            <label data-preparation-resolution-notes>
+                                                <span data-preparation-resolution-notes-label>Remarks (Optional)</span>
+                                                <textarea
+                                                    name="resolution_notes"
+                                                    maxlength="1000"
+                                                    placeholder="Add a short note only if needed."
+                                                    data-preparation-resolution-notes-input
+                                                ></textarea>
+                                            </label>
+
+                                            <label class="checkbox-line" data-preparation-unfulfillable-confirmation hidden>
+                                                <input type="checkbox" name="confirm_unable_to_fulfill" value="1" disabled>
+                                                <span>I confirm that the complete approved quantity cannot be provided and partial release is not allowed.</span>
+                                            </label>
+
+                                            <button class="button primary ui-pressable" type="submit" data-preparation-resolution-submit>
+                                                Confirm Inventory Reviewed
+                                            </button>
+                                        </form>
+                                    @endif
+                                @endif
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </article>
+</section>
+<script>
+(() => {
+    document.querySelectorAll('[data-preparation-resolution-form]').forEach((form) => {
+        const type = form.querySelector('[data-preparation-resolution-type]');
+        const notes = form.querySelector('[data-preparation-resolution-notes]');
+        const notesLabel = form.querySelector('[data-preparation-resolution-notes-label]');
+        const notesInput = form.querySelector('[data-preparation-resolution-notes-input]');
+        const confirmation = form.querySelector('[data-preparation-unfulfillable-confirmation]');
+        const confirmationInput = confirmation?.querySelector('input');
+        const submit = form.querySelector('[data-preparation-resolution-submit]');
+
+        const sync = () => {
+            const unable = type?.value === 'UNABLE_TO_FULFILL_APPROVED_REQUEST';
+            if (notesLabel) notesLabel.textContent = unable ? 'Reason' : 'Remarks (Optional)';
+            if (notesInput) {
+                notesInput.required = unable;
+                notesInput.placeholder = unable
+                    ? 'State why SPMU cannot provide the complete approved quantity.'
+                    : 'Add a short note only if needed.';
+            }
+            if (confirmation) confirmation.hidden = !unable;
+            if (confirmationInput) {
+                confirmationInput.disabled = !unable;
+                confirmationInput.required = unable;
+            }
+            if (submit) {
+                submit.textContent = unable ? 'Unable to Fulfill Approved Request' : 'Confirm Inventory Reviewed';
+                submit.classList.toggle('danger', unable);
+                submit.classList.toggle('primary', !unable);
+            }
+        };
+
+        type?.addEventListener('change', sync);
+        sync();
+    });
+})();
+</script>
+@endif
 
 @endif {{-- useReleaseProcessLayout --}}
 @endif {{-- showReleaseWorkflow --}}

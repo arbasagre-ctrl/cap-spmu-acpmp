@@ -13,7 +13,6 @@ use App\Http\Controllers\CustodyController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DelegationController;
 use App\Http\Controllers\DocumentController;
-use App\Http\Controllers\DocumentTemplateController;
 use App\Http\Controllers\EvidenceController;
 use App\Http\Controllers\GatePassController;
 use App\Http\Controllers\InventoryController;
@@ -122,6 +121,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::delete('/profile/picture', [ProfilePictureController::class, 'destroy'])
         ->name('profile.picture.destroy');
 
+    Route::get('/protected-files/{file}/preview', [DocumentController::class, 'protectedFilePreview'])
+        ->name('files.preview');
+
     Route::get('/protected-files/{file}', [DocumentController::class, 'protectedFile'])
         ->name('files.show');
 
@@ -173,6 +175,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
         Route::put('/inventory/{inventory}', [InventoryController::class, 'update'])
             ->name('inventory.update');
+
+        Route::post('/inventory/{inventory}/adjustments', [InventoryController::class, 'adjust'])
+            ->whereNumber('inventory')
+            ->name('inventory.adjust');
     });
 
 
@@ -307,6 +313,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/documents/{document}/view', [DocumentController::class, 'view'])
         ->name('documents.view');
 
+    Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])
+        ->name('documents.preview');
+
 
     /*
     |--------------------------------------------------------------------------
@@ -350,17 +359,17 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:BORROWER')
         ->name('custody.request-pickup-reschedule');
 
-    Route::post('/custody/{custody}/quantities', [CustodyController::class, 'quantities'])
+    Route::post('/custody/{custody}/report-preparation-issue', [CustodyController::class, 'reportPreparationIssue'])
         ->middleware('workspace:SPMU')
-        ->name('custody.quantities');
+        ->name('custody.report-preparation-issue');
+
+    Route::post('/custody/{custody}/preparation-issues/{preparationIssue}/resolve', [CustodyController::class, 'resolvePreparationIssue'])
+        ->middleware('workspace:SPMU')
+        ->name('custody.resolve-preparation-issue');
 
     Route::post('/custody/{custody}/prepare', [CustodyController::class, 'prepare'])
         ->middleware('workspace:SPMU')
         ->name('custody.prepare');
-
-    Route::post('/custody/{custody}/acknowledge', [CustodyController::class, 'acknowledge'])
-        ->middleware('workspace:BORROWER')
-        ->name('custody.acknowledge');
 
     Route::post('/custody/{custody}/release', [CustodyController::class, 'release'])
         ->middleware('workspace:SPMU')
@@ -480,6 +489,22 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::post('/incidents/{incident}/resolve', [AccountabilityController::class, 'resolveIncident'])
         ->middleware('workspace:SPMU')
         ->name('incidents.resolve');
+
+    Route::post('/incidents/{incident}/rslddp/upload', [AccountabilityController::class, 'uploadAccomplishedRslddp'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.rslddp.upload');
+
+    Route::post('/incidents/{incident}/rslddp/billing', [AccountabilityController::class, 'recordOfficialBillingStatement'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.rslddp.billing');
+
+    Route::post('/incidents/{incident}/rslddp/resolve', [AccountabilityController::class, 'resolveRslddpSettlement'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.rslddp.resolve');
+
+    Route::get('/restrictions/{restriction}/notice', [AccountabilityController::class, 'restrictionNotice'])
+        ->middleware('workspace:BORROWER,SPMU')
+        ->name('restrictions.notice');
 
     Route::post('/overdue/{overdue}/bill', [AccountabilityController::class, 'billOverdue'])
         ->middleware('workspace:SPMU')
@@ -612,61 +637,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
             Route::put('/settings/{setting}', [SettingController::class, 'update'])
                 ->name('settings.update');
-
-
-            Route::post('/document-templates/{type}/draft', [DocumentTemplateController::class, 'storeDraft'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->name('document-templates.draft.store');
-
-            Route::post('/document-templates/{type}/{template}/prepare', [DocumentTemplateController::class, 'prepare'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.prepare');
-
-            Route::get('/document-templates/{type}/{template}/minor-edit', [DocumentTemplateController::class, 'editMinorPresentation'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.minor-edit');
-
-            Route::post('/document-templates/{type}/{template}/minor-edit', [DocumentTemplateController::class, 'updateMinorPresentation'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.minor-edit.update');
-
-            Route::get('/document-templates/{type}/{template}/preview', [DocumentTemplateController::class, 'preview'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.preview');
-
-            Route::get('/document-templates/{type}/{template}/sample', [DocumentTemplateController::class, 'sample'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.sample');
-
-            Route::get('/document-templates/{type}/{template}/download', [DocumentTemplateController::class, 'download'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.download');
-
-            Route::get('/document-templates/{type}/{template}/review', [DocumentTemplateController::class, 'review'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.review');
-
-            Route::get('/document-templates/{type}/{template}/render', [DocumentTemplateController::class, 'render'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.render');
-
-            Route::post('/document-templates/{type}/{template}/activate', [DocumentTemplateController::class, 'activate'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.activate');
-
-            Route::delete('/document-templates/{type}/{template}', [DocumentTemplateController::class, 'destroyDraft'])
-                ->where('type', 'borrower-slip|laundry-form|gate-pass|billing-statement|rslddp')
-                ->whereNumber('template')
-                ->name('document-templates.draft.destroy');
         });
 
 

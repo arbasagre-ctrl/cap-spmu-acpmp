@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
+use App\Models\AuditEvent;
 use App\Models\BillingStatement;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
@@ -11,6 +12,7 @@ use App\Models\Penalty;
 use App\Services\CustodyService;
 use App\Services\OperationalCalendarService;
 use App\Services\ProtectedFileService;
+use App\Services\RequestWorkflowService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,14 +23,59 @@ use Illuminate\View\View;
 
 class CustodyController extends Controller
 {
+    /**
+     * The KPI values a borrower dashboard card can pre-filter My Borrowings
+     * to. Each query mirrors the exact count query DashboardController runs
+     * for that card, so the destination list is always exactly the record
+     * set the card counted - not merely records that happen to share a
+     * status. Opening the page with no ?kpi= keeps the normal, unfiltered
+     * All view.
+     */
+    private const BORROWER_KPI_FILTERS = ['active_borrowings', 'upcoming_pickup', 'returns_due'];
+
     public function index(Request $request): View
     {
         $query = CustodyTransaction::with(['borrower.organizationalUnit', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'])->latest();
-        if (strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER') {
+        $isBorrower = strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER';
+        $borrowerKpiFilter = null;
+
+        if ($isBorrower) {
             $query->where('borrower_user_id', $request->user()->id);
+
+            $requestedKpi = (string) $request->query('kpi', '');
+
+            if (in_array($requestedKpi, self::BORROWER_KPI_FILTERS, true)) {
+                $borrowerKpiFilter = $requestedKpi;
+
+                match ($borrowerKpiFilter) {
+                    'active_borrowings' => $query
+                        ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+                        ->whereNotNull('released_at')
+                        ->whereHas('lines', fn ($line) => $line
+                            ->whereColumn('returned_quantity', '<', 'actual_released_quantity')),
+                    'upcoming_pickup' => $query
+                        ->whereNull('released_at')
+                        ->whereNotNull('scheduled_release_at')
+                        ->whereNull('pickup_expired_at')
+                        ->where(function ($q) {
+                            $q->whereNull('pickup_expires_at')
+                                ->orWhere('pickup_expires_at', '>=', now());
+                        }),
+                    'returns_due' => $query
+                        ->whereNotIn('status', ['CLOSED', 'CANCELLED', 'OVERDUE'])
+                        ->whereNotNull('released_at')
+                        ->whereNotNull('due_at')
+                        ->whereHas('lines', fn ($line) => $line
+                            ->whereColumn('returned_quantity', '<', 'actual_released_quantity'))
+                        ->whereBetween('due_at', [now()->startOfDay(), now()->addDay()->endOfDay()]),
+                };
+            }
         }
 
-        return view('custody.index', ['custodies' => $query->get()]);
+        return view('custody.index', [
+            'custodies' => $query->get(),
+            'borrowerKpiFilter' => $borrowerKpiFilter,
+        ]);
     }
 
     public function releaseIndex(Request $request): View
@@ -252,6 +299,65 @@ class CustodyController extends Controller
                 || $pickupRescheduleRequestEvent->occurred_at?->gt($custody->pickup_scheduled_at)
             );
 
+        $preparationIssueEvents = AuditEvent::query()
+            ->with('actor')
+            ->where('record_type', CustodyTransaction::class)
+            ->where('record_id', $custody->id)
+            ->whereIn('action_code', [
+                'PREPARATION_ISSUE_REPORTED',
+                'PREPARATION_ISSUE_RESOLVED',
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+            ])
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get();
+
+        $preparationIssueResolutions = $preparationIssueEvents
+            ->whereIn('action_code', [
+                'PREPARATION_ISSUE_RESOLVED',
+                'PREPARATION_ISSUE_CLOSED_UNFULFILLED',
+            ])
+            ->keyBy(fn (AuditEvent $event) => (int) data_get(
+                $event->after_json,
+                'preparation_issue_event_id'
+            ));
+
+        $preparationIssues = $preparationIssueEvents
+            ->where('action_code', 'PREPARATION_ISSUE_REPORTED')
+            ->sortByDesc(fn (AuditEvent $event) => $event->occurred_at?->timestamp ?? 0)
+            ->map(function (AuditEvent $event) use ($preparationIssueResolutions, $custody): array {
+                $resolution = $preparationIssueResolutions->get((int) $event->id);
+
+                $custodyLineId = (int) data_get($event->after_json, 'custody_line_id');
+                $inventoryItemId = $custody->lines
+                    ->firstWhere('id', $custodyLineId)?->requestItem?->inventoryItem?->id;
+
+                return [
+                    'event' => $event,
+                    'id' => $event->id,
+                    'custody_line_id' => $custodyLineId,
+                    'inventory_item_id' => $inventoryItemId,
+                    'item_name' => (string) data_get($event->after_json, 'item_name', 'Item'),
+                    'unit' => (string) data_get($event->after_json, 'unit', ''),
+                    'approved_quantity' => data_get($event->after_json, 'approved_quantity'),
+                    'observed_usable_quantity' => data_get($event->after_json, 'observed_usable_quantity'),
+                    'condition_observed' => data_get($event->after_json, 'condition_observed'),
+                    'issue_type' => (string) data_get($event->after_json, 'issue_type', 'OTHER'),
+                    'issue_label' => (string) data_get($event->after_json, 'issue_label', 'Inventory discrepancy'),
+                    'details' => data_get($event->after_json, 'details'),
+                    'reported_by' => $event->actor?->full_name ?: 'SPMU Action Officer',
+                    'reported_at' => $event->occurred_at,
+                    'is_resolved' => (bool) $resolution,
+                    'resolution_outcome' => $resolution?->action_code === 'PREPARATION_ISSUE_CLOSED_UNFULFILLED'
+                        ? 'UNABLE_TO_FULFILL_APPROVED_REQUEST'
+                        : ($resolution ? 'INVENTORY_REVIEW_COMPLETE' : null),
+                    'resolution_notes' => (string) data_get($resolution?->after_json, 'resolution_notes', ''),
+                    'resolved_by' => $resolution?->actor?->full_name,
+                    'resolved_at' => $resolution?->occurred_at,
+                ];
+            })
+            ->values();
+
         return view('custody.show', [
             'custody' => $custody,
             'spmuMode' => $spmuMode,
@@ -264,6 +370,7 @@ class CustodyController extends Controller
             'pickupRescheduleRequested' => $pickupRescheduleRequested,
             'pickupRescheduleAvailable' => $pickupRescheduleAvailable,
             'nextPickupRescheduleAt' => $nextPickupRescheduleAt,
+            'preparationIssues' => $preparationIssues,
             'documents' => $custody->request->currentVersion
                 ->documents()
                 ->where(function ($query) use ($custody) {
@@ -364,40 +471,140 @@ class CustodyController extends Controller
             );
     }
 
-    public function quantities(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
+    public function reportPreparationIssue(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
     {
-        $data = $request->validate([
-            'quantities' => ['required', 'array'],
-            'quantities.*' => ['required', 'integer', 'min:0'],
-            'reasons' => ['nullable', 'array'],
-        ]);
-        $service->updateReceiptQuantities($custody, $request->user(), $data['quantities'], $data['reasons'] ?? []);
+        $this->authorizeCustody($request, $custody);
 
-        return back()->with('status', 'Quantity to receive saved. SPMU must verify any reduction before acknowledgement.');
+        abort_unless(
+            strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU'
+                && $request->user()?->access_classification === AccessClassification::SpmuOfficer
+                && $custody->borrower_user_id !== $request->user()?->id,
+            403
+        );
+
+        $data = $request->validate([
+            'custody_line_id' => ['required', 'integer'],
+            'issue_type' => ['required', Rule::in([
+                'ITEM_NOT_READY',
+                'PHYSICAL_CONDITION',
+                'QUANTITY_AVAILABILITY',
+                'OTHER',
+            ])],
+            'observed_usable_quantity' => [
+                Rule::requiredIf(fn () => $request->input('issue_type') === 'QUANTITY_AVAILABILITY'),
+                'nullable',
+                'numeric',
+                'min:0',
+            ],
+            'condition_observed' => [
+                Rule::requiredIf(fn () => $request->input('issue_type') === 'PHYSICAL_CONDITION'),
+                'nullable',
+                'string',
+                'max:500',
+            ],
+            'details' => [
+                Rule::requiredIf(fn () => $request->input('issue_type') === 'OTHER'),
+                'nullable',
+                'string',
+                'max:1000',
+            ],
+        ]);
+
+        $service->reportPreparationIssue(
+            $custody,
+            $request->user(),
+            (int) $data['custody_line_id'],
+            (string) $data['issue_type'],
+            isset($data['details']) ? (string) $data['details'] : null,
+            array_key_exists('observed_usable_quantity', $data)
+                && $data['observed_usable_quantity'] !== null
+                    ? (float) $data['observed_usable_quantity']
+                    : null,
+            isset($data['condition_observed']) ? (string) $data['condition_observed'] : null,
+        );
+
+        return redirect()
+            ->to(route('custody.release.show', $custody).'#item-preparation')
+            ->with(
+                'status',
+                'Preparation issue reported. SPMU Head/Admin has been notified. Physical Release stays unavailable until the issue is resolved and the item is checked again.'
+            );
+    }
+
+    public function resolvePreparationIssue(
+        Request $request,
+        CustodyTransaction $custody,
+        AuditEvent $preparationIssue,
+        CustodyService $service,
+        RequestWorkflowService $workflow
+    ): RedirectResponse {
+        $this->authorizeCustody($request, $custody);
+
+        abort_unless(
+            strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU'
+                && $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403
+        );
+
+        $data = $request->validate([
+            'resolution_type' => ['required', Rule::in([
+                'INVENTORY_REVIEW_COMPLETE',
+                'UNABLE_TO_FULFILL_APPROVED_REQUEST',
+            ])],
+            'resolution_notes' => [
+                Rule::requiredIf(fn () => $request->input('resolution_type') === 'UNABLE_TO_FULFILL_APPROVED_REQUEST'),
+                'nullable',
+                'string',
+                'max:1000',
+            ],
+            'confirm_unable_to_fulfill' => [
+                Rule::requiredIf(fn () => $request->input('resolution_type') === 'UNABLE_TO_FULFILL_APPROVED_REQUEST'),
+                'nullable',
+                'accepted',
+            ],
+        ]);
+
+        if ($data['resolution_type'] === 'UNABLE_TO_FULFILL_APPROVED_REQUEST') {
+            $workflow->cancelApprovedForPreparationDiscrepancy(
+                $custody,
+                $request->user(),
+                $preparationIssue,
+                (string) ($data['resolution_notes'] ?? ''),
+            );
+
+            return redirect()
+                ->route('custody.show', $custody)
+                ->with(
+                    'status',
+                    'The approved request was cancelled because SPMU could not provide the complete approved quantity. No items were released, the borrower was not marked as a missed pickup, the reservation was restored, and the generated pickup documents are no longer valid.'
+                );
+        }
+
+        $service->resolvePreparationIssue(
+            $custody,
+            $request->user(),
+            $preparationIssue,
+            isset($data['resolution_notes']) ? (string) $data['resolution_notes'] : null,
+        );
+
+        return redirect()
+            ->to(route('custody.show', $custody).'#preparation-issues')
+            ->with(
+                'status',
+                'Inventory review completed. The Action Officer must physically check the affected item again before confirming Items Prepared.'
+            );
     }
 
     public function prepare(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
     {
-        $data = $request->validate([
-            'quantities' => ['required', 'array'],
-            'quantities.*' => ['required', 'integer', 'min:0'],
-        ]);
-
-        $service->prepare($custody, $request->user(), $data['quantities']);
+        $service->prepare($custody, $request->user());
 
         return redirect()
             ->to(route('custody.release.show', $custody).'#release-actions')
             ->with(
                 'status',
-                'Item preparation confirmed. Continue with the physical documents and release steps below.'
+                'Items prepared. Continue with the release documents and physical handover steps below.'
             );
-    }
-
-    public function acknowledge(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
-    {
-        $service->acknowledge($custody, $request->user());
-
-        return back()->with('status', 'Borrower acknowledgement recorded. This is a system confirmation only; no electronic signature was created.');
     }
 
     public function release(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse

@@ -17,7 +17,7 @@
     </table>
 
     <div class="document-title">
-        <h1>Administrative Sanction Notice</h1>
+        <h1>{{ $hasBorrowingSuspension ? 'Suspension Notice' : 'Administrative Sanction Notice' }}</h1>
         <div class="document-meta">
             <strong>Offense Level</strong> {{ $offenseLabel }}
             <span class="meta-separator">•</span>

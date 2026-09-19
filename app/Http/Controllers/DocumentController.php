@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\UserRole;
 use App\Models\BillingStatement;
+use App\Models\BorrowerRestriction;
 use App\Models\EvidenceSubmission;
 use App\Models\GeneratedDocument;
 use App\Models\GatePass;
@@ -11,12 +12,14 @@ use App\Models\Incident;
 use App\Models\OverdueCase;
 use App\Models\Payment;
 use App\Models\RequestSupportingDocument;
+use App\Models\Sanction;
 use App\Models\SignatureSnapshot;
 use App\Models\StoredFile;
 use App\Models\UserSignature;
 use App\Services\ProtectedFileService;
 use App\Services\RequestWorkflowService;
 use Illuminate\Http\Request;
+use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -86,6 +89,23 @@ class DocumentController extends Controller
         );
     }
 
+    /**
+     * In-system preview page for a generated/uploaded accountability
+     * document. Embeds the same authorized documents.view stream in a
+     * page-level iframe (see components.document-review-viewer) instead of
+     * opening documents.view directly in a new tab, so document actions use
+     * the in-system Preview page with the PDF viewer's native Print/Download
+     * controls.
+     */
+    public function preview(Request $request, GeneratedDocument $document): View
+    {
+        $this->authorizeGeneratedDocument($request, $document);
+
+        $document->loadMissing(['file', 'subject']);
+
+        return view('documents.preview', ['document' => $document]);
+    }
+
     private function authorizeGeneratedDocument(
         Request $request,
         GeneratedDocument $document
@@ -107,11 +127,25 @@ class DocumentController extends Controller
                 ->value('borrower_user_id')
             : null;
 
+        $restrictionBorrowerId = $document->subject_type === BorrowerRestriction::class
+            ? BorrowerRestriction::query()
+                ->whereKey($document->subject_id)
+                ->value('borrower_user_id')
+            : null;
+
+        $sanctionBorrowerId = $document->subject_type === Sanction::class
+            ? Sanction::query()
+                ->whereKey($document->subject_id)
+                ->value('borrower_user_id')
+            : null;
+
         abort_unless(
             ($borrowingRequest
                 && (int) $borrowingRequest->borrower_user_id === (int) $user->id)
             || (int) $billingBorrowerId === (int) $user->id
             || (int) $overdueBorrowerId === (int) $user->id
+            || (int) $restrictionBorrowerId === (int) $user->id
+            || (int) $sanctionBorrowerId === (int) $user->id
             || $user->hasRole(UserRole::Spmu)
             || $user->hasRole(UserRole::Ictu),
             403
@@ -133,6 +167,23 @@ class DocumentController extends Controller
      * RequestSupportingDocument uses `is_current`.
      * It does NOT use GeneratedDocument's `status` field.
      */
+    /**
+     * Render an authorized protected upload inside the application preview
+     * page. The raw bytes are still served only by files.show, so this
+     * wrapper does not weaken or duplicate the existing file authorization.
+     */
+    public function protectedFilePreview(
+        Request $request,
+        StoredFile $file,
+        ProtectedFileService $files
+    ): View {
+        // Build the existing protected response first to run the exact same
+        // authorization checks. Streamed bytes are not executed here.
+        $this->protectedFile($request, $file, $files);
+
+        return view('documents.file-preview', ['file' => $file]);
+    }
+
     public function protectedFile(
         Request $request,
         StoredFile $file,

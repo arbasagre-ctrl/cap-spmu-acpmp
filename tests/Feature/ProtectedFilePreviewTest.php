@@ -73,6 +73,44 @@ class ProtectedFilePreviewTest extends TestCase
         );
     }
 
+    public function test_protected_file_preview_wrapper_is_available_and_embeds_the_authorized_stream(): void
+    {
+        $spmu = User::query()
+            ->where(
+                'access_classification',
+                AccessClassification::SpmuHead->value
+            )
+            ->firstOrFail();
+
+        $bytes = '%PDF-1.4 preview-wrapper-test';
+        $path = 'tests/preview/wrapper-test.pdf';
+
+        Storage::disk('local')->put($path, $bytes);
+
+        $file = StoredFile::query()->create([
+            'uploaded_by_user_id' => $spmu->id,
+            'disk' => 'local',
+            'storage_path' => $path,
+            'original_name' => 'wrapper-test.pdf',
+            'mime_type' => 'application/pdf',
+            'byte_size' => strlen($bytes),
+            'sha256' => hash('sha256', $bytes),
+            'classification' => 'REQUEST_SUPPORTING_DOCUMENT',
+        ]);
+
+        $response = $this
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmu)
+            ->get(route('files.preview', $file));
+
+        $response
+            ->assertOk()
+            ->assertViewIs('documents.file-preview')
+            ->assertViewHas('file', fn (StoredFile $viewFile) => $viewFile->is($file));
+
+        $response->assertSee(route('files.show', $file, false), false);
+    }
+
     public function test_spmu_can_preview_current_borrower_uploaded_request_supporting_document(): void
     {
         $borrower = User::query()

@@ -17,7 +17,7 @@
     </table>
 
     <div class="document-title">
-        <h1>Billing Statement / Assessment Notice</h1>
+        <h1>{{ $documentTitle ?? 'Billing Statement / Assessment Notice' }}</h1>
         <div class="document-meta">
             <strong>Billing No.</strong> {{ $billing->billing_no }}
             <span class="meta-separator">•</span>

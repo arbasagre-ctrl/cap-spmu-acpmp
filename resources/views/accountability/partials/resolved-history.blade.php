@@ -5,8 +5,24 @@
     late-return assessment on the overdue case, the billing, and its verified
     payment. Nothing here can reopen or change a case, and no outcome is
     relabelled: only a settled billing with a verified payment reads as Paid.
+
+    Shared by the staff Accountability page and the borrower's My Obligations
+    page. Staff (AO/Head) see a compact table, one row per case, matching the
+    same universal table used by Current Accountability - this partial is
+    the only thing that differs between them. The borrower's own view keeps
+    its existing card layout unchanged; that page was not part of this
+    redesign.
 --}}
+@php
+    /*
+     * Historical records stay secondary to current work: only the most
+     * recent rows render open by default, and the rest reveal on request
+     * instead of loading a long table/list into view.
+     */
+    $resolvedHistoryInitialLimit = 10;
+@endphp
 <section class="content-area" id="resolved-history">
+@if($isBorrower ?? false)
     <div class="section-heading accountability-section-heading">
         <div>
             <p class="eyebrow">Closed records</p>
@@ -28,16 +44,14 @@
             <span>Cases appear here after payment verification or another final resolution.</span>
         </article>
     @else
-        @foreach($resolvedHistory as $row)
+        @foreach($resolvedHistory as $resolvedHistoryIndex => $row)
             @php
                 $case = $row['case'];
                 $incident = $row['incident'] ?? null;
                 $billing = $row['billing'];
                 $payment = $row['payment'];
                 $fromLaundry = $case?->return_date_source === 'LAUNDRY_RECEIPT';
-            @endphp
 
-            @php
                 /*
                  * resolvedHistory() only ever builds a row from one of two
                  * sources: a billing tied back to a late-return overdue case
@@ -60,18 +74,18 @@
                     ->first();
 
                 /*
-                 * This partial is shared by the AO/Head Accountability
-                 * Oversight page and Borrower My Obligations. Which staff
-                 * member handled a step is an internal operational detail,
-                 * not a fact about the borrower's own case, so it is shown
-                 * only to SPMU staff. The borrower still sees that each step
-                 * happened, when, and its outcome - only the named individual
-                 * is generalized to their role. This mirrors My Obligations'
-                 * own active-obligations view, which never names SPMU staff.
+                 * This partial is shared by the AO/Head Accountability page
+                 * and Borrower My Obligations. Which staff member handled a
+                 * step is an internal operational detail, not a fact about
+                 * the borrower's own case, so it is shown only to SPMU staff.
                  */
                 $showsStaffIdentity = ! ($isBorrower ?? false);
             @endphp
-            <article class="card top-gap accountability-case-card resolved-history-card">
+
+            <article
+                class="card top-gap accountability-case-card resolved-history-card"
+                @if($resolvedHistoryIndex >= $resolvedHistoryInitialLimit) hidden data-resolved-history-extra @endif
+            >
                 <div class="card-header">
                     <div>
                         <strong>{{ $row['reference'] }}</strong>
@@ -91,140 +105,128 @@
 
                 <details class="accountability-case-details">
                     <summary class="resolved-history-detail-toggle"><span>View Details</span><x-icon name="chevron-down" size="14" class="resolved-history-chevron" /></summary>
-
-                    @if($incident)
-                        <dl class="accountability-case-facts top-gap">
-                            <div>
-                                <dt>Incident</dt>
-                                <dd>{{ $incident->incident_no ?: '—' }}</dd>
-                            </div>
-                            <div>
-                                <dt>Finding</dt>
-                                <dd>{{ str($incident->incident_type)->replace('_', ' ')->title() }}</dd>
-                            </div>
-                            <div>
-                                <dt>Custody</dt>
-                                <dd>{{ $incident->custody?->custody_no ?: '—' }}</dd>
-                            </div>
-                            <div>
-                                <dt>Final Status</dt>
-                                <dd><x-status-badge :status="$incident->status" /></dd>
-                            </div>
-                        </dl>
-                    @endif
-
-                    @if($case)
-                        <dl class="accountability-case-facts top-gap">
-                            <div>
-                                <dt>Expected Return</dt>
-                                <dd>{{ optional($case->grace_expires_at)->format('d M Y') ?: '—' }}</dd>
-                            </div>
-                            <div>
-                                <dt>{{ $fromLaundry ? 'Laundry Received' : 'Actual Return' }}</dt>
-                                <dd>{{ optional($case->actual_return_date)->format('d M Y') ?: '—' }}</dd>
-                            </div>
-                            <div>
-                                <dt>Late Days</dt>
-                                <dd>{{ $case->late_days === null ? '—' : $case->late_days }}</dd>
-                            </div>
-                            <div>
-                                <dt>Final Late Return Fee</dt>
-                                <dd>{{ $amountLabel }}</dd>
-                            </div>
-                        </dl>
-                    @endif
-
-                    <div class="resolved-history-detail">
-                        @if($case?->ao_confirmed_at)
-                            <section>
-                                <h4>AO Confirmation</h4>
-                                <p>
-                                    {{ $showsStaffIdentity ? ($case->confirmedBy?->full_name ?? 'Action Officer') : 'SPMU Action Officer' }}
-                                    &middot; {{ $case->ao_confirmed_at->format('d M Y, h:i A') }}
-                                </p>
-                            </section>
-                        @endif
-
-                        @if($billing)
-                            <section>
-                                <h4>Head Approval</h4>
-                                <p>
-                                    {{ $showsStaffIdentity ? ($billing->responsibleSpmuUser?->full_name ?? 'SPMU Head') : 'SPMU Head/Admin' }}
-                                    &middot; {{ optional($billing->issued_at)->format('d M Y, h:i A') }}
-                                </p>
-                                <p class="resolved-history-note">
-                                    Billing {{ $billing->billing_no }} &middot; <x-status-badge :status="$billing->status" />
-                                </p>
-                            </section>
-                        @endif
-
-                        @if($payment)
-                            <section>
-                                <h4>Payment</h4>
-                                <dl class="resolved-history-payment">
-                                    <div>
-                                        <dt>Official Receipt No.</dt>
-                                        <dd>{{ $payment->official_receipt_no }}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Receipt Date</dt>
-                                        <dd>{{ optional($payment->receipt_date)->format('d M Y') ?: '—' }}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Amount Paid</dt>
-                                        <dd>PHP {{ number_format((float) $payment->amount, 2) }}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Verified By</dt>
-                                        <dd>{{ $showsStaffIdentity ? ($payment->verifiedBy?->full_name ?? '—') : 'SPMU Action Officer' }}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Verified At</dt>
-                                        <dd>{{ optional($payment->verified_at)->format('d M Y, h:i A') ?: '—' }}</dd>
-                                    </div>
-                                </dl>
-                            </section>
-                        @endif
-
-                        <section>
-                            <h4>Resolution</h4>
-                            <p>
-                                {{ $row['outcome'] }}
-                                @if($row['resolved_at'])
-                                    &middot; {{ \Carbon\Carbon::parse($row['resolved_at'])->format('d M Y, h:i A') }}
-                                @endif
-                            </p>
-                        </section>
-                    </div>
-
-                    @if($lateReturnNotice || $billing || $payment?->evidence_file_id)
-                        <div class="resolved-history-links">
-                            @if($lateReturnNotice)
-                                <a href="{{ route('documents.view', $lateReturnNotice) }}" target="_blank" rel="noopener">
-                                    <x-icon name="external-link" size="15" />
-                                    Open Late Return Notice
-                                </a>
-                            @endif
-
-                            @foreach(($billing?->documents ?? collect())->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED']) as $document)
-                                <a href="{{ route('documents.view', $document) }}" target="_blank" rel="noopener">
-                                    <x-icon name="external-link" size="15" />
-                                    Open Billing Statement
-                                </a>
-                            @endforeach
-
-                            @if($payment?->evidence_file_id)
-                                <a href="{{ route('files.show', $payment->evidence_file_id, false) }}" target="_blank" rel="noopener">
-                                    <x-icon name="external-link" size="15" />
-                                    Open Receipt
-                                </a>
-                            @endif
-                        </div>
-                    @endif
+                    @include('accountability.partials.resolved-history-detail')
                 </details>
             </article>
         @endforeach
+
+        @if($resolvedHistory->count() > $resolvedHistoryInitialLimit)
+            <button type="button" class="button secondary top-gap" id="resolved-history-show-more">
+                Show {{ $resolvedHistory->count() - $resolvedHistoryInitialLimit }} More
+            </button>
+            <script>
+            (() => {
+                const button = document.getElementById('resolved-history-show-more');
+                if (!button) return;
+                button.addEventListener('click', () => {
+                    document.querySelectorAll('[data-resolved-history-extra]').forEach(row => { row.hidden = false; });
+                    button.remove();
+                }, { once: true });
+            })();
+            </script>
+        @endif
     @endif
+@else
+    <article class="card accountability-cases-card">
+        <div class="accountability-cases-head">
+            <h2>
+                Resolved Accountability
+                @if($resolvedHistory->isNotEmpty())
+                    <span class="accountability-count-chip">{{ $resolvedHistory->count() }}</span>
+                @endif
+            </h2>
+        </div>
+
+        @if($resolvedHistory->isEmpty())
+            <div class="empty-state">
+                <div>
+                    <strong>No resolved accountability cases yet.</strong>
+                    <p>Cases appear here after payment verification or another final resolution.</p>
+                </div>
+            </div>
+        @else
+            <div class="table-wrap accountability-cases-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Reference / Borrower</th>
+                            <th scope="col">Case Type</th>
+                            <th scope="col">Outcome</th>
+                            <th scope="col" class="is-numeric">Amount</th>
+                            <th scope="col">Resolved Date</th>
+                            <th scope="col">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($resolvedHistory as $resolvedHistoryIndex => $row)
+                            @php
+                                $case = $row['case'];
+                                $incident = $row['incident'] ?? null;
+                                $billing = $row['billing'];
+                                $payment = $row['payment'];
+                                $fromLaundry = $case?->return_date_source === 'LAUNDRY_RECEIPT';
+                                $typeLabel = $case
+                                    ? (((int) ($case->late_days ?? 0)) > 0
+                                        ? ($fromLaundry ? 'Laundry-Reported Late Return' : 'Late Return')
+                                        : 'Overdue Record Cleared')
+                                    : 'Property Accountability';
+                                $amountLabel = $billing ? 'PHP '.number_format((float) $billing->total_amount, 2) : 'No charge';
+                                $lateReturnNotice = $case?->documents
+                                    ?->where('document_type', 'LATE_RETURN_NOTICE')
+                                    ->whereNotIn('status', ['SUPERSEDED', 'INVALIDATED', 'EXPIRED'])
+                                    ->sortByDesc('generated_at')
+                                    ->first();
+                                $showsStaffIdentity = ! ($isBorrower ?? false);
+                            @endphp
+                            <tr
+                                class="accountability-case-row"
+                                @if($resolvedHistoryIndex >= $resolvedHistoryInitialLimit) hidden data-resolved-history-extra @endif
+                            >
+                                <td>
+                                    <span class="accountability-case-ref">{{ $row['reference'] }}</span>
+                                    <span class="accountability-case-borrower">{{ $row['borrower']?->full_name ?? 'Unknown borrower' }}</span>
+                                </td>
+                                <td><span class="accountability-case-type-label">{{ $typeLabel }}</span></td>
+                                <td><x-status-badge :status="$row['tone'] === 'success' ? 'COMPLETED' : 'CANCELLED'" :label="$row['outcome']" /></td>
+                                <td class="is-numeric">{{ $amountLabel }}</td>
+                                <td>{{ $row['resolved_at'] ? \Carbon\Carbon::parse($row['resolved_at'])->format('d M Y') : '—' }}</td>
+                                <td>
+                                    <button type="button" class="table-action" data-case-toggle aria-expanded="false">
+                                        <span>View Details</span>
+                                        <x-icon name="chevron-down" size="13" class="accountability-toggle-chevron" />
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr class="accountability-case-detail-row" hidden>
+                                <td colspan="6">
+                                    @include('accountability.partials.resolved-history-detail')
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+            @if($resolvedHistory->count() > $resolvedHistoryInitialLimit)
+                <div class="actions" style="padding:14px 17px;">
+                    <button type="button" class="button secondary" id="resolved-history-show-more">
+                        Show {{ $resolvedHistory->count() - $resolvedHistoryInitialLimit }} More
+                    </button>
+                </div>
+                <script>
+                (() => {
+                    const button = document.getElementById('resolved-history-show-more');
+                    if (!button) return;
+                    button.addEventListener('click', () => {
+                        document.querySelectorAll('[data-resolved-history-extra]').forEach(row => { row.hidden = false; });
+                        button.remove();
+                    }, { once: true });
+                })();
+                </script>
+            @endif
+        @endif
+    </article>
+@endif
 </section>
 
 <style>

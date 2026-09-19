@@ -403,10 +403,22 @@ class BorrowerObligationGroupingTest extends TestCase
     /* Dashboard wiring                                                    */
     /* ================================================================== */
 
-    public function test_dashboard_shows_the_grouped_count_not_the_raw_technical_record_total(): void
+    public function test_dashboard_surfaces_the_grouped_obligation_once_in_actions_requiring_attention(): void
     {
         $borrower = $this->borrower();
         $custody = $this->custody($borrower, now()->addDays(3));
+
+        /*
+         * Real Incident creation (CustodyService) also transitions the
+         * custody's own status - reproduced directly here since this fixture
+         * inserts the Incident row without going through that service. The
+         * dashboard's single action list reads the custody status, not the
+         * obligation overview, so this is required for the row to appear.
+         */
+        $custody->update(['status' => 'INCIDENT_OPEN']);
+        foreach ($custody->lines as $line) {
+            $line->update(['returned_quantity' => $line->actual_released_quantity]);
+        }
 
         $incident = $this->incident($borrower, $custody, 'BILLING_PENDING');
         $billing = $this->billing($borrower, 'ISSUED');
@@ -431,14 +443,21 @@ class BorrowerObligationGroupingTest extends TestCase
             ->actingAs($borrower)
             ->get(route('dashboard'));
 
+        /* One grouped obligation, shown once under the single action list -
+           not three separate rows for the incident, billing, and restriction,
+           and not duplicated by a second banner. */
         $response->assertOk()
-            /* One grouped obligation, not the three underlying records. */
-            ->assertSee('1 outstanding obligation')
-            ->assertSee('Action required')
-            ->assertSee('1 obligation needs your attention.');
+            ->assertSee('Actions Requiring Your Attention')
+            ->assertSee($custody->request->request_no);
+
+        $this->assertSame(
+            1,
+            substr_count($response->getContent(), $custody->request->request_no),
+            'The obligation must appear exactly once in the action list, not duplicated by a banner.'
+        );
     }
 
-    public function test_dashboard_alert_reads_as_processing_when_nothing_needs_the_borrower(): void
+    public function test_dashboard_shows_no_action_item_when_nothing_needs_the_borrower(): void
     {
         $borrower = $this->borrower();
         $custody = $this->custody($borrower, now()->addDays(3));
@@ -449,10 +468,10 @@ class BorrowerObligationGroupingTest extends TestCase
             ->actingAs($borrower)
             ->get(route('dashboard'));
 
+        /* Custody status stays ACTIVE (no real Incident-open transition was
+           applied by this fixture), so the record correctly needs no action. */
         $response->assertOk()
-            ->assertSee('Under SPMU processing')
-            ->assertSee('No action is required from you at this time.')
-            ->assertDontSee('Action required');
+            ->assertSee('No current action is required.');
     }
 
     public function test_dashboard_shows_no_obligation_alert_when_there_are_none(): void
@@ -463,12 +482,8 @@ class BorrowerObligationGroupingTest extends TestCase
             ->actingAs($borrower)
             ->get(route('dashboard'));
 
-        /*
-         * The dashboard subtitle always says "...and outstanding
-         * obligations", and the borrower stylesheet always defines the
-         * .borrower-obligation-card rule, so neither text is a safe probe.
-         * The rendered alert element's id is unique to the actual markup.
-         */
+        /* The standalone "Action Required" obligation banner was removed
+           entirely - it never renders for any borrower any more. */
         $response->assertOk()->assertDontSee('id="borrower-obligation-title"', false);
     }
 

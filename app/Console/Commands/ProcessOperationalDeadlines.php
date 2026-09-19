@@ -110,7 +110,7 @@ class ProcessOperationalDeadlines extends Command
                     $notifications->send(
                         $eventCode,
                         collect([$custody->borrower]),
-                        "Custody {$custody->custody_no} is due {$label}, {$custody->due_at->format('F j, Y')}. This is the effective SPMU operational return date; approved closures automatically move the deadline to the next open return day.",
+                        "Reminder: the borrowed items under {$custody->custody_no} are due {$label}, {$custody->due_at->format('F j, Y')}. Please return them to SPMU within the allowed return hours.",
                         $custody
                     );
                     $dueSoon++;
@@ -255,7 +255,7 @@ class ProcessOperationalDeadlines extends Command
                 $notifications->send(
                     'BORROWING_OVERDUE',
                     collect([$custody->borrower]),
-                    "Custody {$custody->custody_no} is late by {$daysLate} calendar day(s). Please return the outstanding property to SPMU.",
+                    "The borrowed items under {$custody->custody_no} are overdue by {$daysLate} day(s). Please return the outstanding items to SPMU as soon as possible.",
                     $custody,
                     ['SYSTEM', 'EMAIL', 'SMS'],
                     ['SYSTEM', 'EMAIL']

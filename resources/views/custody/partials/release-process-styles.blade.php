@@ -125,6 +125,7 @@
 .release-step-badge { justify-self: center; margin-top: 1px; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 750; line-height: 1.4; text-align: center; }
 .release-step-badge.is-complete { color: var(--success); background: var(--success-bg); }
 .release-step-badge.is-pending { color: var(--text-muted); background: var(--surface-muted); }
+.release-step-badge.is-warning { color: var(--warning, #a35b00); background: var(--warning-bg, #fff4df); }
 .release-schedule-status { display: flex; flex-direction: column; align-items: center; justify-content: space-between; align-self: stretch; gap: 8px; }
 .release-flow-page .release-schedule-edit { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--release-blue); font-size: 11.5px; font-weight: 700; line-height: 1.2; white-space: nowrap; cursor: pointer; }
 .release-flow-page .release-schedule-edit > .ui-icon { flex-shrink: 0; }
@@ -143,33 +144,42 @@
 .release-flow-page .release-schedule-fields { margin-top: 0; gap: 16px; }
 .release-flow-page .release-schedule-form, .release-flow-page .release-preparation-form { margin: 0; }
 .release-flow-page .release-schedule-form > .meta { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
-.release-flow-page .release-schedule-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--info-border); border-radius: 7px; background: var(--info-bg); }
-.release-flow-page .release-schedule-suggestion > div { display: grid; gap: 3px; min-width: 0; }
-.release-flow-page .release-schedule-suggestion strong { color: var(--heading); font-size: 12px; font-weight: 750; }
-.release-flow-page .release-schedule-suggestion span { color: var(--info); font-size: 12px; font-weight: 700; }
-.release-flow-page .release-schedule-suggestion small { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
-.release-flow-page .release-schedule-suggestion .button { flex-shrink: 0; }
+.release-flow-page .release-schedule-details { display: grid; gap: 8px; margin: 0; padding: 0; }
+.release-flow-page .release-schedule-detail-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); align-items: baseline; gap: 14px; padding: 10px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.release-flow-page .release-schedule-detail-label { color: var(--text-muted); font-size: 11.5px; font-weight: 700; }
+.release-flow-page .release-schedule-detail-value { color: var(--heading); font-size: 12px; font-weight: 700; }
+.release-flow-page .release-schedule-detail-help { margin: 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.55; }
+.release-flow-page .release-schedule-exception { margin: 12px 0 0; padding: 12px 0 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); }
+.release-flow-page .release-schedule-exception strong { color: var(--heading); }
+.release-flow-page .release-schedule-exception p { margin: 5px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.55; }
+.release-flow-page .release-schedule-exception .meta { color: var(--text-muted); }
+.release-flow-page .release-schedule-exception-note { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .release-flow-page .release-preparation-form > p { margin: 0; color: var(--text-muted); font-size: 12px; }
-.release-flow-page .release-preparation-form .table-wrap table { min-width: 580px; }
-.release-preparation-form .actual-prepared-quantity {
-    width: 100%;
-    max-width: 190px;
-    min-height: 40px;
-    margin: 0;
-    padding: 9px 11px;
-    color: var(--heading);
-    background: var(--input-bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 7px;
-    text-align: left;
-    box-shadow: none;
-}
-.release-preparation-form .actual-prepared-quantity:focus {
-    outline: 0;
-    border-color: var(--interactive);
-    box-shadow: var(--focus-ring);
-}
+.release-flow-page .release-preparation-form .table-wrap table { min-width: 560px; }
 .release-flow-page .release-preparation-form .empty-state { min-height: 0; padding: 12px; align-items: flex-start; text-align: left; }
+.release-preparation-status { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; padding: 3px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 750; line-height: 1.3; white-space: nowrap; }
+.release-preparation-status.is-pending { color: var(--text-muted); background: var(--surface-muted); }
+.release-preparation-status.is-issue { color: var(--danger, #b42318); background: var(--danger-bg, #fff1f0); }
+.release-preparation-status.is-recheck { color: var(--warning, #a35b00); background: var(--warning-bg, #fff4df); }
+.release-preparation-status.is-resolved { color: var(--success); background: var(--success-bg); }
+.release-preparation-warning { display: grid; gap: 4px; }
+.release-preparation-issue-list { display: grid; gap: 8px; margin-top: 10px; }
+.release-preparation-issue-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 10px 12px; border: 1px solid var(--row-border); border-radius: 7px; background: var(--surface-elevated); }
+.release-preparation-issue-row > div { display: grid; gap: 3px; min-width: 0; }
+.release-preparation-issue-row strong { color: var(--heading); font-size: 12px; }
+.release-preparation-issue-row span:not(.release-preparation-status),
+.release-preparation-issue-row small { color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.release-preparation-actions { display: grid; gap: 12px; margin-top: 12px; }
+.release-preparation-action-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.release-preparation-action-row > form { margin: 0; }
+.release-preparation-report-toggle { gap: 8px; }
+.release-preparation-report-toggle .ui-icon,
+.release-step-toggle .ui-icon { transition: transform 160ms ease; }
+.release-preparation-report-toggle[aria-expanded="true"] .ui-icon,
+.release-step-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
+.release-preparation-report-panel { width: 100%; }
+.release-preparation-report-form { margin-top: 0; padding: 14px; border: 1px solid var(--row-border); border-radius: 8px; background: var(--surface-muted); }
+.release-preparation-report-form textarea { min-height: 90px; resize: vertical; }
 .release-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding-right: 40px; }
 .release-documents-panel { margin-top: 4px; }
 .release-document-row { display: grid; grid-template-columns: minmax(0, 1fr) var(--release-actions-width); align-items: center; gap: 12px; padding: 4px 0; }
@@ -229,10 +239,13 @@ html[data-theme="dark"] .release-process-step.is-current > .release-step-number 
     .release-document-row { grid-template-columns: minmax(0, 1fr) auto; }
     .release-document-row > .button { margin-right: 0; }
     .release-flow-page .release-schedule-fields { grid-template-columns: minmax(0, 1fr); }
-    .release-flow-page .release-schedule-suggestion { align-items: flex-start; flex-direction: column; }
-    .release-flow-page .release-schedule-suggestion .button { width: 100%; }
+    .release-flow-page .release-schedule-detail-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
     .release-flow-page .release-handover-form .checkbox { gap: 12px; }
     .release-form-actions { padding-right: 0; flex-wrap: wrap; }
+    .release-preparation-action-row { align-items: stretch; justify-content: stretch; }
+    .release-preparation-action-row > form, .release-preparation-action-row > .button { width: 100%; }
+    .release-preparation-action-row .button { width: 100%; }
+    .release-preparation-issue-row { grid-template-columns: minmax(0, 1fr); }
     .release-flow-page .release-context-list { grid-template-columns: minmax(120px, .95fr) minmax(0, 1fr); margin: 0; }
     .release-status-dates { grid-template-columns: minmax(0, 1.5fr) minmax(90px, 1fr); padding: 12px; }
 }

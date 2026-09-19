@@ -48,8 +48,8 @@
             <td><span class="field-label">Final Disposition</span><span class="field-value emphasis">{{ $disposition }}</span></td>
         </tr>
         <tr>
-            <td><span class="field-label">Approved Daily Rate</span><span class="field-value">{{ $rate !== null ? 'PHP '.number_format($rate, 2) : 'Not applicable' }}</span></td>
-            <td><span class="field-label">Assessed Amount</span><span class="field-value">PHP {{ number_format($amount, 2) }}</span></td>
+            <td><span class="field-label">Official Late-Return Fee Rate</span><span class="field-value">{{ $rate !== null ? 'PHP '.number_format($rate, 2).' per day' : 'Not applicable' }}</span></td>
+            <td><span class="field-label">Billing Information</span><span class="field-value">{{ $amount > 0 ? 'See the separate Late Return Billing Statement for the total amount due.' : 'No separate billing required.' }}</span></td>
         </tr>
     </table>
 
@@ -82,9 +82,9 @@
 
     <div class="notice-box {{ $amount > 0 ? 'warning-box' : '' }}">
         <strong>Document Purpose</strong>
-        <p>This Late Return Notice is the formal record of the finalized late-return assessment.</p>
+        <p>This Late Return Notice formally informs the borrower of the confirmed late return, the final number of late days, and the official late-return fee rate per day.</p>
         @if($amount > 0)
-            <p>A separate Billing Statement is the financial document used for CSPC Cashier settlement. This Late Return Notice is not an Official Receipt.</p>
+            <p>The total amount due is intentionally not stated in this notice. A separate Late Return Billing Statement is the financial document used for CSPC Cashier settlement. This Late Return Notice is not an Official Receipt.</p>
         @else
             <p>No amount is payable under the recorded disposition unless a separate authorized accountability action is issued.</p>
         @endif
