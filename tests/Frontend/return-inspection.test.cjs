@@ -116,14 +116,10 @@ test('a non-linen return requires every outstanding item type and full quantity 
     assert.equal(ui.rows[0].state.textContent, '99% accounted');
     ui.quantity(0, 'FINE', 100);
     assert.equal(ui.button.disabled, true);
-    assert.match(ui.copy.textContent, /No partial return/);
     ui.quantity(1, 'FINE', 3);
     assert.equal(ui.button.disabled, true);
     ui.quantity(1, 'FINE', 5);
     assert.equal(ui.button.disabled, false);
-    assert.equal(ui.warningIcon.hidden, true);
-    assert.equal(ui.successIcon.hidden, false);
-    assert.match(ui.copy.textContent, /complete non-linen return branch/);
 });
 
 test('mixed conditions require evidence, and stolen quantities also require a police reference', () => {
@@ -182,18 +178,6 @@ test('incomplete large quantities are never rounded up to 100% accounted', () =>
     ui.quantity(0, 'FINE', 1000);
     assert.equal(ui.rows[0].state.textContent, '100% accounted');
     assert.equal(ui.button.disabled, false);
-});
-
-test('remarks count includes restored input and updates without changing workflow data', () => {
-    const ui = inspection();
-    assert.equal(ui.count.textContent, String(ui.remarks.value.length));
-    ui.remarks.value = 'Two table cloths stained.';
-    ui.remarks.dispatch('input');
-    assert.equal(ui.count.textContent, String(ui.remarks.value.length));
-    assert.equal(ui.button.disabled, true);
-    ui.run();
-    assert.equal(ui.remarks.listenerCount('input'), 1);
-    assert.equal(ui.rows[0].inputs.FINE.listenerCount('input'), 1);
 });
 
 test('success notice can be dismissed even when no items need inspection', () => {

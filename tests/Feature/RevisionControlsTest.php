@@ -181,9 +181,14 @@ class RevisionControlsTest extends TestCase
         $this->assertDatabaseMissing('generated_documents', ['subject_id' => $ordinaryCustody->id, 'document_type' => 'LAUNDRY_FORM']);
     }
 
-    public function test_early_return_route_is_available_under_the_current_policy(): void
+    /**
+     * Early return uses the normal Return Inspection endpoint (custody.return),
+     * classified automatically by calendar date - the legacy custody.early-
+     * return route is intentionally retired and must not be recreated.
+     */
+    public function test_early_return_route_is_retired_under_the_current_policy(): void
     {
-        $this->assertTrue(app('router')->has('custody.early-return'));
+        $this->assertFalse(app('router')->has('custody.early-return'));
     }
 
     private function assertClassification(AccessClassification $classification, bool $mayBorrow, array $workspaces): void

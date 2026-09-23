@@ -38,6 +38,7 @@ class CustodyService
         private NotificationService $notifications,
         private OperationalCalendarService $operationalCalendar,
         private LateReturnService $lateReturns,
+        private PolicyService $policy,
     ) {}
 
     /**
@@ -2431,6 +2432,23 @@ class CustodyService
                     ]),
                     ['SYSTEM', 'EMAIL']
                 );
+            }
+
+            /*
+             * Late Return and Property Accountability offense detection.
+             * Recorded as two independent BorrowerViolation rows (never
+             * merged) so a Head later clearing a property finding can never
+             * erase a confirmed Late Return. The Late Return half is
+             * confirmed automatically from due-date/actual-return
+             * timestamps - it is never gated behind a Head Yes/No decision.
+             * The Property Accountability half, if any, is left
+             * PENDING_REVIEW for the Head's own Confirm/Clear decision on the
+             * linked Incident, unchanged from before.
+             */
+            $detectedViolations = $this->policy->detectFromConfirmedReturn($custody, $return, $spmu);
+
+            if ($detectedViolations['late_return']) {
+                $this->policy->autoConfirmLateReturnViolation($detectedViolations['late_return'], $spmu);
             }
 
             return $return->fresh(['receivedBy', 'inspectionSignature.file']);

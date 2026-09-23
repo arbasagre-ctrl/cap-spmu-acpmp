@@ -41,6 +41,19 @@ services:
     volumes:
       - application_storage:/var/www/html/storage
 
+  queue:
+    build: .
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "database", "--tries=1", "--sleep=3", "--timeout=30"]
+    env_file: .env.docker
+    environment:
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - application_storage:/var/www/html/storage
+
 volumes:
   database_data:
   application_storage:

@@ -204,9 +204,9 @@ class SimpleLaundryWorkflowTest extends TestCase
             ->actingAs($officer)
             ->get(route('custody.return.show', $custody))
             ->assertOk()
-            ->assertSeeText('Record Accomplished Form')
+            ->assertSeeText('Record Form')
             ->assertDontSeeText('I confirm the signed form is complete.')
-            ->assertSeeText('Use the RECEIVED BY date on the form.');
+            ->assertSeeText('Use the RECEIVED BY date written on the accomplished form.');
     }
 
     private function recordReturn(

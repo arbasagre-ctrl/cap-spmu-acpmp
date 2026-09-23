@@ -82,26 +82,29 @@ class PolicyService
     }
 
     /**
-     * Create one reviewable violation record per borrowing transaction.
-     * A transaction may contain several findings, but it does not silently
-     * increment the offense count more than once.
+     * Detect and record violation reasons from a confirmed physical return.
+     * Late Return and Property Accountability are recorded as two
+     * independent BorrowerViolation rows (violation_source), never merged
+     * into one - a Late Return is an objective timestamp fact that must
+     * remain confirmed regardless of what later happens to a separate
+     * property finding on the same transaction, and a property finding
+     * always still requires its own Head Confirm/Clear review.
+     *
+     * @return array{late_return: ?BorrowerViolation, property: ?BorrowerViolation}
      */
     public function detectFromConfirmedReturn(
         CustodyTransaction $custody,
         ReturnTransaction $return,
         User $spmu
-    ): ?BorrowerViolation {
+    ): array {
         $return->loadMissing('lines');
 
-        $reasons = [];
         $dueDate = $custody->due_at?->toDateString();
         $originalDueDate = $custody->original_due_at?->toDateString();
         $actualDate = $return->received_at?->toDateString();
+        $isLate = $dueDate && $actualDate && $actualDate > $dueDate;
 
-        if ($dueDate && $actualDate && $actualDate > $dueDate) {
-            $reasons[] = 'LATE_RETURN';
-        }
-
+        $propertyReasons = [];
         foreach ($return->lines as $line) {
             $condition = strtoupper((string) $line->condition_code);
             if ($condition === 'FINE') {
@@ -109,32 +112,52 @@ class PolicyService
             }
 
             $normalized = $this->normalizeOffenseApplicationType($condition);
-            if ($normalized) {
-                $reasons[] = $normalized;
+            if ($normalized && in_array($normalized, self::PROPERTY_OFFENSE_TYPES, true)) {
+                $propertyReasons[] = $normalized;
             }
         }
 
-        if ($reasons === []) {
-            return null;
-        }
-
         $period = $this->activePeriodFor($return->received_at);
+        $dateDetails = [
+            'original_expected_return_date' => $originalDueDate ?: $dueDate,
+            'effective_return_date' => $dueDate,
+            'actual_return_date' => $actualDate,
+            'return_date_adjusted' => $originalDueDate && $originalDueDate !== $dueDate,
+        ];
 
+        $lateReturnViolation = $isLate
+            ? $this->recordDetectedViolation($custody, $spmu, $period, 'LATE_RETURN', ['LATE_RETURN'], $dateDetails)
+            : null;
+
+        $propertyViolation = $propertyReasons !== []
+            ? $this->recordDetectedViolation($custody, $spmu, $period, 'PROPERTY_ACCOUNTABILITY', array_values(array_unique($propertyReasons)), $dateDetails)
+            : null;
+
+        return ['late_return' => $lateReturnViolation, 'property' => $propertyViolation];
+    }
+
+    /**
+     * @param  list<string>  $reasons
+     * @param  array<string, mixed>  $dateDetails
+     */
+    private function recordDetectedViolation(
+        CustodyTransaction $custody,
+        User $spmu,
+        ?AcademicPeriod $period,
+        string $violationSource,
+        array $reasons,
+        array $dateDetails
+    ): BorrowerViolation {
         $violation = BorrowerViolation::query()->updateOrCreate(
             [
                 'custody_transaction_id' => $custody->id,
                 'violation_code' => 'BORROWING_VIOLATION',
+                'violation_source' => $violationSource,
             ],
             [
                 'borrower_user_id' => $custody->borrower_user_id,
                 'academic_period_id' => $period?->id,
-                'details_json' => [
-                    'reasons' => array_values(array_unique($reasons)),
-                    'original_expected_return_date' => $originalDueDate ?: $dueDate,
-                    'effective_return_date' => $dueDate,
-                    'actual_return_date' => $actualDate,
-                    'return_date_adjusted' => $originalDueDate && $originalDueDate !== $dueDate,
-                ],
+                'details_json' => array_merge($dateDetails, ['reasons' => $reasons]),
                 'status' => 'PENDING_REVIEW',
                 'detected_at' => now(),
                 'detected_by_user_id' => $spmu->id,
@@ -151,6 +174,89 @@ class PolicyService
         );
 
         return $violation;
+    }
+
+    /**
+     * The Late Return case-level fact (the borrower returned late) is
+     * confirmed unconditionally and automatically the moment due date and
+     * actual return timestamps establish it - it is never gated behind a
+     * Head Yes/No decision, and it is structurally impossible for it to
+     * carry a property-condition reason, since detectFromConfirmedReturn()
+     * always records Late Return and Property Accountability as separate
+     * rows. Attributed to the acting SPMU user who recorded the return.
+     */
+    public function autoConfirmLateReturnViolation(BorrowerViolation $violation, User $actor): ?Sanction
+    {
+        if ($violation->violation_source !== 'LATE_RETURN' || $violation->status !== 'PENDING_REVIEW') {
+            return null;
+        }
+
+        return DB::transaction(function () use ($violation, $actor): ?Sanction {
+            $locked = BorrowerViolation::query()->lockForUpdate()->findOrFail($violation->id);
+
+            if ($locked->status !== 'PENDING_REVIEW') {
+                return $locked->sanction()->first();
+            }
+
+            if (! $this->violationIsEnabledForOffense($locked)) {
+                // The underlying lateness fact is still confirmed
+                // automatically; Late Return offense-counting itself is
+                // simply not enabled under current Offense Application
+                // configuration, so no offense-number/Sanction is created.
+                $locked->update([
+                    'status' => 'CONFIRMED',
+                    'reviewed_by_user_id' => $actor->id,
+                    'reviewed_at' => now(),
+                    'review_remarks' => 'Automatically confirmed: due date and recorded actual return date establish the late return. Late Return is not currently enabled as an offense type under Operational Configuration → Sanction Rules → Offense Application.',
+                ]);
+
+                $this->audit->record('BORROWING_VIOLATION_AUTO_CONFIRMED', $locked, reason: 'Late return established by timestamps.');
+
+                return null;
+            }
+
+            $period = $locked->academicPeriod ?: $this->activePeriodFor($locked->detected_at);
+            if (! $period) {
+                // No active academic period to count the offense under - the
+                // case-level fact is still confirmed below; the sanction step
+                // simply cannot run yet.
+                $locked->update([
+                    'status' => 'CONFIRMED',
+                    'reviewed_by_user_id' => $actor->id,
+                    'reviewed_at' => now(),
+                    'review_remarks' => 'Automatically confirmed: due date and recorded actual return date establish the late return. No active academic period is configured, so the offense/sanction step cannot run yet.',
+                ]);
+
+                $this->audit->record('BORROWING_VIOLATION_AUTO_CONFIRMED', $locked, reason: 'Late return established by timestamps.');
+
+                return null;
+            }
+
+            $locked->update([
+                'academic_period_id' => $period->id,
+                'status' => 'CONFIRMED',
+                'reviewed_by_user_id' => $actor->id,
+                'reviewed_at' => now(),
+                'review_remarks' => 'Automatically confirmed: due date and recorded actual return date establish the late return.',
+            ]);
+
+            $this->audit->record('BORROWING_VIOLATION_AUTO_CONFIRMED', $locked, reason: 'Late return established by timestamps.');
+
+            return $this->applyConfirmedDecision(
+                locked: $locked,
+                actor: $actor,
+                remarks: null,
+                sanctionCode: null,
+                customSanctionLabel: null,
+                effectiveTo: null,
+                allowedSanctions: [
+                    'NOTICE' => 'Notice',
+                    'WRITTEN_REPRIMAND' => 'Written Reprimand',
+                    'BORROWING_SUSPENSION' => 'Borrowing Suspension',
+                    'OTHER' => null,
+                ],
+            );
+        }, 3);
     }
 
     /**
@@ -281,6 +387,50 @@ class PolicyService
     }
 
     /**
+     * The read-only preview shown beside a PENDING_REVIEW BorrowerViolation
+     * in the Administrative Review queue (the return-time-detected-violation
+     * path, distinct from incidentOffensePreview()'s incident-driven path).
+     * Under the current automatic Late Return confirmation and
+     * Incident-linked Property Accountability review, a violation normally
+     * never sits here long enough to need this - it exists for legacy rows
+     * and any other edge case that leaves one PENDING_REVIEW.
+     *
+     * @return array<string, mixed>
+     */
+    public function violationOffensePreview(BorrowerViolation $violation): array
+    {
+        $period = $violation->academicPeriod ?: $this->activePeriodFor($violation->detected_at);
+
+        $confirmedBefore = $period
+            ? BorrowerViolation::query()
+                ->where('borrower_user_id', $violation->borrower_user_id)
+                ->where('academic_period_id', $period->id)
+                ->where('status', 'CONFIRMED')
+                ->whereKeyNot($violation->id)
+                ->count()
+            : 0;
+
+        $offenseNo = $confirmedBefore + 1;
+        $rule = SanctionRule::query()
+            ->where('offense_no', min(max(1, $offenseNo), 3))
+            ->where('status', 'ACTIVE')
+            ->latest('effective_from')
+            ->first();
+
+        return [
+            'is_enabled' => $this->violationIsEnabledForOffense($violation),
+            'academic_period' => $period,
+            'academic_period_label' => $period
+                ? $period->academic_year.' · '.$period->term_name
+                : 'No active academic period',
+            'next_offense_no' => $offenseNo,
+            'next_offense_label' => $this->ordinalOffense($offenseNo),
+            'configured_rule' => $rule,
+            'configured_sanction_label' => $rule?->sanction_label ?: 'No active sanction rule configured',
+        ];
+    }
+
+    /**
      * Confirm the property case as the one administrative offense for the
      * borrowing transaction. If a pending late/property violation already
      * exists for the same custody record, it is reused so one borrowing does
@@ -314,6 +464,7 @@ class PolicyService
         $violation = BorrowerViolation::query()
             ->where('custody_transaction_id', $incident->custody_transaction_id)
             ->where('violation_code', 'BORROWING_VIOLATION')
+            ->where('violation_source', 'PROPERTY_ACCOUNTABILITY')
             ->first();
 
         if ($violation?->status === 'CONFIRMED') {
@@ -350,6 +501,7 @@ class PolicyService
                 'custody_transaction_id' => $incident->custody_transaction_id,
                 'academic_period_id' => $preview['academic_period']->id,
                 'violation_code' => 'BORROWING_VIOLATION',
+                'violation_source' => 'PROPERTY_ACCOUNTABILITY',
                 'details_json' => $details,
                 'status' => 'PENDING_REVIEW',
                 'detected_at' => $incident->reported_at ?: now(),
@@ -479,128 +631,201 @@ class PolicyService
                 return null;
             }
 
-            $period = $locked->academicPeriod ?: $this->activePeriodFor($locked->detected_at);
-            if (! $period) {
-                throw ValidationException::withMessages([
-                    'academic_period' => 'Configure and activate the applicable academic period before confirming this violation.',
-                ]);
-            }
+            return $this->applyConfirmedDecision($locked, $spmuHead, $remarks, $sanctionCode, $customSanctionLabel, $effectiveTo, $allowedSanctions);
+        }, 3);
+    }
 
-            $offenseNo = BorrowerViolation::query()
-                ->where('borrower_user_id', $locked->borrower_user_id)
-                ->where('academic_period_id', $period->id)
-                ->where('status', 'CONFIRMED')
-                ->whereKeyNot($locked->id)
-                ->count() + 1;
+    /**
+     * Shared by the Head-facing reviewViolation() and the automatic
+     * autoConfirmLateReturnViolation() path. Assumes $locked is already
+     * row-locked inside an active transaction. Always marks the violation
+     * CONFIRMED (the case-level fact) before deciding whether an
+     * offense-number/Sanction is actually created for it - if another
+     * violation on the SAME custody transaction (any violation_source) is
+     * already CONFIRMED, whether this one also consumes its own
+     * offense-number slot is institutional policy
+     * (same_custody_multiple_violations_rule), never a per-case choice: an
+     * unset rule leaves this row plainly "Policy Pending" (CONFIRMED with no
+     * Sanction) instead of silently escalating the sanction level.
+     *
+     * @param  array<string, ?string>  $allowedSanctions
+     */
+    private function applyConfirmedDecision(
+        BorrowerViolation $locked,
+        User $actor,
+        ?string $remarks,
+        ?string $sanctionCode,
+        ?string $customSanctionLabel,
+        ?string $effectiveTo,
+        array $allowedSanctions
+    ): ?Sanction {
+        $period = $locked->academicPeriod ?: $this->activePeriodFor($locked->detected_at);
+        if (! $period) {
+            throw ValidationException::withMessages([
+                'academic_period' => 'Configure and activate the applicable academic period before confirming this violation.',
+            ]);
+        }
 
-            $configuredRule = SanctionRule::query()
-                ->where('offense_no', min($offenseNo, 3))
-                ->where('status', 'ACTIVE')
-                ->latest('effective_from')
-                ->first();
-
-            if ($sanctionCode === null) {
-                $sanctionCode = $configuredRule?->sanction_code;
-            }
-
-            if (! $sanctionCode || ! array_key_exists($sanctionCode, $allowedSanctions)) {
-                throw ValidationException::withMessages([
-                    'sanction_code' => 'Configure the applicable offense sanction rule or choose an override for this case.',
-                ]);
-            }
-
-            $usesConfiguredRule = $configuredRule && $configuredRule->sanction_code === $sanctionCode;
-
-            $sanctionLabel = $sanctionCode === 'OTHER'
-                ? trim((string) $customSanctionLabel)
-                : ($configuredRule && $configuredRule->sanction_code === $sanctionCode
-                    ? $configuredRule->sanction_label
-                    : $allowedSanctions[$sanctionCode]);
-
-            if ($sanctionCode === 'OTHER' && $sanctionLabel === '') {
-                throw ValidationException::withMessages([
-                    'custom_sanction_label' => 'Enter the administrative action when Other is selected.',
-                ]);
-            }
-
-            $effectiveFrom = CarbonImmutable::instance(now());
-            $sanctionEffectiveTo = $effectiveTo
-                ? CarbonImmutable::parse($effectiveTo)->endOfDay()
-                : null;
-
-            if ($sanctionCode === 'BORROWING_SUSPENSION' && ! $sanctionEffectiveTo && $usesConfiguredRule) {
-                $sanctionEffectiveTo = match ($configuredRule->duration_mode) {
-                    'MONTHS' => $effectiveFrom
-                        ->addMonthsNoOverflow(max(1, (int) ($configuredRule->duration_value ?: 1)))
-                        ->endOfDay(),
-                    'UNTIL_ACADEMIC_PERIOD_END' => $period->end_date
-                        ? CarbonImmutable::instance($period->end_date)->endOfDay()
-                        : null,
-                    default => null,
-                };
-            }
-
-            if ($sanctionCode === 'BORROWING_SUSPENSION' && ! $sanctionEffectiveTo) {
-                throw ValidationException::withMessages([
-                    'effective_to' => 'The configured suspension rule has no usable duration. Configure a duration or enter a manual suspension end date.',
-                ]);
-            }
-
+        if ($locked->status !== 'CONFIRMED') {
             $locked->update([
                 'academic_period_id' => $period->id,
                 'status' => 'CONFIRMED',
-                'reviewed_by_user_id' => $spmuHead->id,
+                'reviewed_by_user_id' => $actor->id,
                 'reviewed_at' => now(),
                 'review_remarks' => $remarks,
             ]);
+        }
 
-            $sanction = Sanction::query()->create([
-                'borrower_violation_id' => $locked->id,
+        if ($locked->custody_transaction_id !== null) {
+            $siblingConfirmed = BorrowerViolation::query()
+                ->where('custody_transaction_id', $locked->custody_transaction_id)
+                ->where('status', 'CONFIRMED')
+                ->whereKeyNot($locked->id)
+                ->exists();
+
+            if ($siblingConfirmed) {
+                $rule = SystemSetting::value('same_custody_multiple_violations_rule');
+
+                if ($rule === 'SAME_OCCURRENCE') {
+                    $this->audit->record(
+                        'BORROWING_VIOLATION_OFFENSE_COUNT_SAME_OCCURRENCE',
+                        $locked,
+                        reason: $remarks,
+                        after: ['policy' => 'SAME_OCCURRENCE', 'custody_transaction_id' => $locked->custody_transaction_id]
+                    );
+
+                    return null;
+                }
+
+                if ($rule !== 'SEPARATE_OCCURRENCES') {
+                    // Not yet confirmed by the institution. The case-level
+                    // CONFIRMED fact already stands above; the
+                    // offense-number/Sanction step is left Policy Pending
+                    // (queryable as status===CONFIRMED && sanction===null)
+                    // rather than guessed. No per-case route or UI resolves
+                    // this - only the system-wide setting does, once set.
+                    $this->audit->record(
+                        'BORROWING_VIOLATION_OFFENSE_COUNT_POLICY_PENDING',
+                        $locked,
+                        reason: $remarks,
+                        after: ['custody_transaction_id' => $locked->custody_transaction_id]
+                    );
+
+                    return null;
+                }
+
+                // SEPARATE_OCCURRENCES: institution has confirmed each
+                // matter counts on its own - fall through to the normal,
+                // unmodified automatic offense-counting path below.
+            }
+        }
+
+        $offenseNo = BorrowerViolation::query()
+            ->where('borrower_user_id', $locked->borrower_user_id)
+            ->where('academic_period_id', $period->id)
+            ->where('status', 'CONFIRMED')
+            ->whereKeyNot($locked->id)
+            ->count() + 1;
+
+        $configuredRule = SanctionRule::query()
+            ->where('offense_no', min($offenseNo, 3))
+            ->where('status', 'ACTIVE')
+            ->latest('effective_from')
+            ->first();
+
+        if ($sanctionCode === null) {
+            $sanctionCode = $configuredRule?->sanction_code;
+        }
+
+        if (! $sanctionCode || ! array_key_exists($sanctionCode, $allowedSanctions)) {
+            throw ValidationException::withMessages([
+                'sanction_code' => 'Configure the applicable offense sanction rule or choose an override for this case.',
+            ]);
+        }
+
+        $usesConfiguredRule = $configuredRule && $configuredRule->sanction_code === $sanctionCode;
+
+        $sanctionLabel = $sanctionCode === 'OTHER'
+            ? trim((string) $customSanctionLabel)
+            : ($configuredRule && $configuredRule->sanction_code === $sanctionCode
+                ? $configuredRule->sanction_label
+                : $allowedSanctions[$sanctionCode]);
+
+        if ($sanctionCode === 'OTHER' && $sanctionLabel === '') {
+            throw ValidationException::withMessages([
+                'custom_sanction_label' => 'Enter the administrative action when Other is selected.',
+            ]);
+        }
+
+        $effectiveFrom = CarbonImmutable::instance(now());
+        $sanctionEffectiveTo = $effectiveTo
+            ? CarbonImmutable::parse($effectiveTo)->endOfDay()
+            : null;
+
+        if ($sanctionCode === 'BORROWING_SUSPENSION' && ! $sanctionEffectiveTo && $usesConfiguredRule) {
+            $sanctionEffectiveTo = match ($configuredRule->duration_mode) {
+                'MONTHS' => $effectiveFrom
+                    ->addMonthsNoOverflow(max(1, (int) ($configuredRule->duration_value ?: 1)))
+                    ->endOfDay(),
+                'UNTIL_ACADEMIC_PERIOD_END' => $period->end_date
+                    ? CarbonImmutable::instance($period->end_date)->endOfDay()
+                    : null,
+                default => null,
+            };
+        }
+
+        if ($sanctionCode === 'BORROWING_SUSPENSION' && ! $sanctionEffectiveTo) {
+            throw ValidationException::withMessages([
+                'effective_to' => 'The configured suspension rule has no usable duration. Configure a duration or enter a manual suspension end date.',
+            ]);
+        }
+
+        $sanction = Sanction::query()->create([
+            'borrower_violation_id' => $locked->id,
+            'borrower_user_id' => $locked->borrower_user_id,
+            'academic_period_id' => $period->id,
+            'sanction_rule_id' => $usesConfiguredRule ? $configuredRule->id : null,
+            'offense_no' => $offenseNo,
+            'sanction_code' => $sanctionCode,
+            'sanction_label' => $sanctionLabel,
+            'effective_from' => $effectiveFrom,
+            'effective_to' => $sanctionEffectiveTo,
+            'status' => 'ACTIVE',
+            'confirmed_by_user_id' => $actor->id,
+            'confirmed_at' => now(),
+            'remarks' => $remarks,
+        ]);
+
+        if ($sanctionCode === 'BORROWING_SUSPENSION') {
+            BorrowerRestriction::query()->create([
                 'borrower_user_id' => $locked->borrower_user_id,
-                'academic_period_id' => $period->id,
-                'sanction_rule_id' => $usesConfiguredRule ? $configuredRule->id : null,
-                'offense_no' => $offenseNo,
-                'sanction_code' => $sanctionCode,
-                'sanction_label' => $sanctionLabel,
+                'restriction_type' => 'SANCTION_SUSPENSION',
+                'reason' => $sanctionLabel,
                 'effective_from' => $effectiveFrom,
                 'effective_to' => $sanctionEffectiveTo,
                 'status' => 'ACTIVE',
-                'confirmed_by_user_id' => $spmuHead->id,
-                'confirmed_at' => now(),
-                'remarks' => $remarks,
+                'imposed_by_user_id' => $actor->id,
+                'sanction_id' => $sanction->id,
             ]);
+        }
 
-            if ($sanctionCode === 'BORROWING_SUSPENSION') {
-                BorrowerRestriction::query()->create([
-                    'borrower_user_id' => $locked->borrower_user_id,
-                    'restriction_type' => 'SANCTION_SUSPENSION',
-                    'reason' => $sanctionLabel,
-                    'effective_from' => $effectiveFrom,
-                    'effective_to' => $sanctionEffectiveTo,
-                    'status' => 'ACTIVE',
-                    'imposed_by_user_id' => $spmuHead->id,
-                    'sanction_id' => $sanction->id,
-                ]);
-            }
+        $this->audit->record(
+            'SANCTION_CONFIRMED',
+            $sanction,
+            reason: $remarks,
+            after: [
+                'offense_no' => $offenseNo,
+                'academic_period' => $period->term_name,
+                'sanction_code' => $sanctionCode,
+                'sanction_label' => $sanctionLabel,
+                'effective_to' => $sanctionEffectiveTo?->toIso8601String(),
+                'decision_source' => 'SPMU_HEAD_CASE_REVIEW',
+                'configured_rule_applied' => (bool) $usesConfiguredRule,
+                'duration_mode' => $usesConfiguredRule ? $configuredRule->duration_mode : 'MANUAL_OVERRIDE',
+            ]
+        );
 
-            $this->audit->record(
-                'SANCTION_CONFIRMED',
-                $sanction,
-                reason: $remarks,
-                after: [
-                    'offense_no' => $offenseNo,
-                    'academic_period' => $period->term_name,
-                    'sanction_code' => $sanctionCode,
-                    'sanction_label' => $sanctionLabel,
-                    'effective_to' => $sanctionEffectiveTo?->toIso8601String(),
-                    'decision_source' => 'SPMU_HEAD_CASE_REVIEW',
-                    'configured_rule_applied' => (bool) $usesConfiguredRule,
-                    'duration_mode' => $usesConfiguredRule ? $configuredRule->duration_mode : 'MANUAL_OVERRIDE',
-                ]
-            );
-
-            return $sanction;
-        }, 3);
+        return $sanction;
     }
 
     private function violationIsEnabledForOffense(BorrowerViolation $violation): bool

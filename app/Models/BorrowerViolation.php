@@ -13,6 +13,7 @@ class BorrowerViolation extends Model
         'custody_transaction_id',
         'academic_period_id',
         'violation_code',
+        'violation_source',
         'details_json',
         'status',
         'detected_at',

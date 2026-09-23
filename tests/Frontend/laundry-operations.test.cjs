@@ -8,7 +8,6 @@ const root = path.resolve(__dirname, '../..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const partial = (name) => read(`resources/views/laundry/partials/${name}.blade.php`);
 const page = read('resources/views/laundry/index.blade.php');
-const guide = partial('flow-guide');
 const styles = partial('operations-styles');
 const interactions = partial('operations-interactions');
 const detail = read('resources/views/laundry/show.blade.php');
@@ -69,58 +68,63 @@ function mount({ paginated = false, recordsPresent = true } = {}) {
     return { records, list, search, status, sort, count, empty, reset, context };
 }
 
-test('the compact tracker appears above both the empty and populated states', () => {
-    const include = "@include('laundry.partials.flow-guide')";
-    assert.equal(page.split(include).length - 1, 1);
-    assert.ok(page.indexOf(include) < page.indexOf('@if($hasLaundryCases)'));
+/*
+ * The standalone "Laundry flow" guide/tracker card was intentionally removed
+ * from this page (see commit fd43ad3, which dropped its @include from both
+ * laundry/index.blade.php and laundry/show.blade.php in the same redesign
+ * that reworked this page's headings and empty-state copy). The orphaned
+ * partial it rendered (laundry.partials.flow-guide) has been deleted as dead
+ * code. This test now covers only the empty/populated branching that is
+ * still current.
+ */
+test('the page branches between empty and populated laundry-case states', () => {
     assert.match(page, /\$hasLaundryCases = \$jobs->total\(\) > 0;/);
     assert.match(page, /@if\(\$hasLaundryCases\)\s+<section class="card laundry-toolbar"/);
     assert.match(page, /@else\s+<section class="card laundry-empty-card"/);
-    assert.match(page, /No laundry cases need action\./);
-    assert.match(page, /New linen cases will appear here after physical release\./);
-});
-
-test('the guide explains the four physical steps without inventing job states', () => {
-    assert.equal((guide.match(/class="laundry-flow-number"/g) || []).length, 4);
-    for (const label of ['Linen issued', 'Returned to Laundry', 'SPMU records form', 'Clean &amp; available']) {
-        assert.ok(guide.includes(`<strong>${label}</strong>`));
-    }
-    assert.match(guide, /aria-label="Laundry process overview"/);
-    assert.match(guide, /aria-describedby="laundry-receipt-guidance"/);
-    assert.match(guide, /SPMU uploads the accomplished Laundry Form and records the findings written by Laundry Personnel\./);
-    assert.doesNotMatch(guide, /Internal washing|second Laundry turnover confirmation/i);
-    assert.doesNotMatch(guide, /aria-current|\$job|data-status|<form|type="submit"/);
+    assert.match(page, /No active laundry cases need action\./);
+    assert.match(page, /Ongoing linen cases will appear here after physical release/);
 });
 
 test('detail view uses the accomplished form as one record instead of tracking wet signatures separately', () => {
-    assert.match(detail, /Accomplished & verified/);
-    assert.match(detail, /SPMU return:/);
-    assert.match(detail, /Serviceable in Laundry:/);
-    assert.match(detail, /Laundry processing:/);
-    assert.match(detail, /Archive pending/);
+    /*
+     * $formArchived (hasVerifiedAccomplishedForm()) is the single source of
+     * truth driving both the "Completed form" fact and the Availability
+     * state below - there is no separate wet-signature/reclassification
+     * record to keep in sync with it.
+     */
+    assert.match(detail, /\$formArchived = \$job->hasVerifiedAccomplishedForm\(\);/);
+    assert.match(detail, /Completed form:<\/dt><dd>\{\{ \$formArchived \? 'Received by SPMU' : 'Pending from Laundry Personnel' \}\}<\/dd>/);
+    assert.match(detail, /SPMU return encoding:<\/dt><dd>\{\{ \$returnEncoded \? 'Complete' : 'Pending' \}\}<\/dd>/);
+    assert.match(detail, /Serviceable quantity:/);
+    assert.match(detail, /Received by Laundry:/);
     assert.doesNotMatch(detail, /<dt>.*Issued by:|<dt>.*Received by:|Pending return/);
-    assert.match(detail, /No further linen action is required from the borrower\./);
-    assert.match(detail, /No reclassification is needed here\./);
+    assert.match(detail, /No Action Officer action is required\./);
+    assert.match(detail, /No second linen inspection is required\./);
 });
 
 test('detail tracker is monotonic after SPMU return encoding', () => {
-    for (const label of ['Laundry Return', 'SPMU Return Encoding', 'Laundry Processing', 'Available']) {
+    /* The tracker was consolidated from 4 steps down to 3: Laundry Processing -> SPMU Return Encoding -> Return Reconciled. */
+    for (const label of ['Laundry Processing', 'SPMU Return Encoding', 'Return Reconciled']) {
         assert.ok(progress.includes(`'label' => '${label}'`));
     }
     assert.match(progress, /\$returnEncoded = \$inspectionComplete/);
-    assert.match(progress, /\$laundryReturnComplete = \$formComplete \|\| \$returnEncoded/);
+    assert.match(progress, /\$available = \$job->status === 'LAUNDRY_COMPLETED';/);
     assert.doesNotMatch(progress, /Laundry Receipt & Form|Laundry Complete \/ Available/);
-    assert.match(detailStyles, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+    assert.match(detailStyles, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
 });
 
 test('return workspace keeps the linen instructions concise', () => {
-    assert.match(returnWorkspace, /Required for linen return\./);
-    assert.match(returnWorkspace, /I confirm this is the accomplished Laundry Form signed by Laundry Personnel\./);
-    assert.match(returnWorkspace, />Upload Form</);
-    assert.match(returnWorkspace, /Linen return completed/);
-    assert.match(returnWorkspace, /No further borrower action is required\./);
-    assert.match(returnWorkspace, /Open Laundry Processing/);
-    assert.doesNotMatch(returnWorkspace, /Open Internal Laundry Processing/);
+    /*
+     * The upload disclosure no longer carries a separate self-attestation
+     * checkbox or an external "Open Laundry Processing" navigation link -
+     * the inline upload form, its one-line date helper, and the recorded/
+     * awaiting status text are the whole instruction set now.
+     */
+    assert.match(returnWorkspace, /Use the RECEIVED BY date written on the accomplished form\./);
+    assert.match(returnWorkspace, />Record Laundry Form</);
+    assert.match(returnWorkspace, /Accomplished form recorded\./);
+    assert.match(returnWorkspace, /Awaiting accomplished form\./);
+    assert.doesNotMatch(returnWorkspace, /I confirm this is the accomplished Laundry Form signed by Laundry Personnel\.|Open (?:Internal )?Laundry Processing/);
 });
 
 test('flow card stays within the content width and reflows without widening the page', () => {
@@ -140,13 +144,14 @@ test('case table preserves live data, current statuses and protected navigation'
     assert.match(page, /route\('laundry\.completed'\)/);
     assert.match(page, /route\('laundry\.show', \$job\)/);
     assert.match(page, /@foreach\(\$jobs as \$job\)/);
-    assert.match(page, /\{\{ \$jobs->links\(\) \}\}/);
+    assert.match(page, /\{\{ \$jobs->links\('partials\.pagination'\) \}\}/);
     assert.match(page, /<x-status-badge :status="\$job->status" :label="\$statusText"/);
     for (const field of ['request_no', 'custody_no', 'full_name', 'unit_name', 'purpose_event', 'received_at', 'description_snapshot']) {
         assert.ok(page.includes(field), `Missing live field: ${field}`);
     }
-    assert.match(page, /'FOR_LAUNDRY' => 'Awaiting Laundry Return'/);
-    assert.match(page, /'TURNED_OVER_TO_LAUNDRY' => 'Internal Laundry Pending'/);
+    /* The hardcoded two-arm status match was replaced by the richer $laundryFilterStatus closure. */
+    assert.match(page, /\$job->status === 'FOR_LAUNDRY' && \$job->hasVerifiedAccomplishedForm\(\)\s+=> \['key' => 'READY_FOR_SPMU_ENCODING', 'label' => 'Ready for SPMU Encoding'\]/);
+    assert.match(page, /\$job->status === 'TURNED_OVER_TO_LAUNDRY'\s+=> \['key' => 'RECONCILIATION_PENDING', 'label' => 'Reconciliation Pending'\]/);
     assert.doesNotMatch(page, /FOR_SPMU_FINAL_CHECK|AWAITING_FINAL_FORM_UPLOAD|READY_FOR_SPMU_RETURN|For SPMU Acceptance/);
     assert.doesNotMatch(page, /Juan Dela Cruz|CSPC Foundation Day 2026|CUS-2026/);
 });
@@ -223,7 +228,12 @@ test('the new Blade branches are balanced and use existing theme variables', () 
     assert.deepEqual(stack, []);
     const globalStyles = read('public/css/app.css');
     const variables = new Set([...`${globalStyles}\n${styles}`.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]));
-    for (const [, name] of styles.matchAll(/var\((--[\w-]+)/g)) {
+    /*
+     * A var() call that supplies its own fallback (e.g. var(--shadow-md, ...))
+     * degrades safely even when the custom property isn't globally defined,
+     * so only a parameterless var(--x) is required to resolve to a real token.
+     */
+    for (const [, name] of styles.matchAll(/var\((--[\w-]+)\)/g)) {
         assert.ok(variables.has(name), `Undefined CSS variable: ${name}`);
     }
 });

@@ -9,6 +9,7 @@ use App\Models\BillingStatement;
 use App\Models\OrganizationalUnit;
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\NotificationService;
 use App\Services\UserRoleAssignmentService;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -142,6 +143,7 @@ class ProductionCorrectnessHardeningTest extends TestCase
                 $borrower,
                 app(AuditService::class),
                 app(UserRoleAssignmentService::class),
+                app(NotificationService::class),
             );
 
             $this->fail('A non-ICTU user must not reach the User Administration update action.');

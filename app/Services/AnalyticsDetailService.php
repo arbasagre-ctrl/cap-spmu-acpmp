@@ -696,72 +696,49 @@ class AnalyticsDetailService
      */
     private function openAccountability(array $scope, array $returns): array
     {
-        $incidentIds = Incident::query()
-            ->whereBetween('reported_at', [$scope['from'], $scope['to']])
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->pluck('custody_transaction_id');
+        $records = $this->analytics->openAccountabilityRecords(
+            $scope['from'],
+            $scope['to'],
+            $scope['division'],
+            $scope['unit'],
+            $scope['borrower']
+        );
 
-        $lateIds = DB::table('overdue_cases')
-            ->whereNotNull('actual_return_date')
-            ->whereBetween('actual_return_date', [
-                Carbon::parse($scope['from'])->toDateString(),
-                Carbon::parse($scope['to'])->toDateString(),
-            ])
-            ->where('status', '!=', 'RESOLVED')
-            ->pluck('custody_transaction_id');
-
-        $billingIds = DB::table('billing_statements')
-            ->join('billing_lines', 'billing_lines.billing_statement_id', '=', 'billing_statements.id')
-            ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
-            ->whereBetween('billing_statements.issued_at', [$scope['from'], $scope['to']])
-            ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
-            ->pluck('penalties.custody_transaction_id');
-
-        $ids = $incidentIds->concat($lateIds)->concat($billingIds)->filter()->unique()->values();
-
-        $query = CustodyTransaction::query()
-            ->whereIn('id', $ids)
-            ->with(['borrower', 'request', 'incidents', 'overdueCase']);
-
-        if ($scope['division'] !== null || $scope['unit'] !== null) {
-            $versionIds = DB::table('request_versions')
-                ->when($scope['division'] !== null, fn ($versions) => $versions->where('division_code', $scope['division']))
-                ->when($scope['unit'] !== null, fn ($versions) => $versions->where('office_unit', $scope['unit']))
-                ->select('id');
-            $query->whereIn('request_version_id', $versionIds);
-        }
-
-        if ($scope['borrower'] !== null) {
-            $query->where('borrower_user_id', $scope['borrower']);
-        }
-
-        $rows = $query->latest('updated_at')->limit(self::RECORD_LIMIT)->get();
+        $listed = $records->take(self::RECORD_LIMIT);
+        $hasStandaloneLegacy = $records->contains(
+            fn (array $row): bool => in_array($row['kind'], ['billing', 'restriction'], true)
+        );
 
         return [
             'title' => 'Open Accountability',
             'value' => $returns['open_cases'],
             'context' => 'Unresolved accountability opened in this reporting period',
-            'table' => $rows->isEmpty() ? null : [
-                'columns' => ['Borrower', 'Custody No.', 'Request No.', 'Accountability', 'Status'],
-                'rows' => $rows->map(function (CustodyTransaction $custody): array {
-                    $indicator = $custody->activeAccountabilityIndicator();
-
-                    return [
-                        (string) ($custody->borrower?->full_name ?? ''),
-                        (string) $custody->custody_no,
-                        (string) ($custody->request?->request_no ?? ''),
-                        (string) ($indicator['label'] ?? 'Accountability Pending'),
-                        str((string) $custody->status)->replace('_', ' ')->title()->toString(),
-                    ];
-                })->all(),
+            'note' => $hasStandaloneLegacy
+                ? 'The total includes a standalone legacy billing or restriction record that is not linked to a separate open Incident or Late Return case.'
+                : 'Each property Incident and each Late Return is counted as its own accountability case, even when both belong to the same custody transaction.',
+            'table' => $listed->isEmpty() ? null : [
+                'columns' => ['Borrower', 'Reference', 'Custody No.', 'Request No.', 'Accountability', 'Status'],
+                'rows' => $listed->map(fn (array $row): array => [
+                    $row['borrower'],
+                    $row['reference'],
+                    $row['custody_no'],
+                    $row['request_no'],
+                    $row['accountability'],
+                    $row['status'],
+                ])->all(),
             ],
             'empty' => $returns['open_cases'] === 0
                 ? 'No accountability case is open for this reporting period.'
                 : null,
-            'reports_url' => AnalyticsDrilldown::returns(
-                $scope['period'], $scope['division'], $scope['unit'],
-                ['open_accountability' => 'OPEN']
-            ),
+            'reports_url' => $hasStandaloneLegacy
+                ? null
+                : AnalyticsDrilldown::report(
+                    'accountability-cases',
+                    $scope['period'],
+                    $scope['division'],
+                    $scope['unit'],
+                    ['accountability_status' => 'OPEN_CURRENT']
+                ),
         ];
     }
 
@@ -923,14 +900,12 @@ class AnalyticsDetailService
      *
      * REPORTS
      * -------
-     * The Borrowing Activity Report lists the activity scope and filters on
-     * operational status, where custody wins once it exists. It therefore
-     * cannot show a cancelled or expired request at all, and an approved
-     * request already released appears under its custody state, not as
-     * approved. So this panel is the authoritative grouped view: Reports is
-     * offered with the scope it understands, a status is passed only where
-     * it is exactly the same population (Rejected, Returned for Revision),
-     * and no link is offered for a group Reports cannot list.
+     * The Borrowing Activity Report filters on operational status, where
+     * custody wins once it exists. Cancelled and expired filed requests are
+     * explicitly supported there when those status filters are selected. An
+     * approved request already released still appears under its custody state,
+     * so only outcome groups with an exact report equivalent carry a status
+     * filter into Reports.
      *
      * @param  array<string, mixed>  $scope
      */
@@ -975,7 +950,12 @@ class AnalyticsDetailService
         }
 
         $reportsUrl = match ($group) {
-            'cancelled', 'expired' => null,
+            'cancelled' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit'], ['status' => RequestStatus::Cancelled->value]
+            ),
+            'expired' => AnalyticsDrilldown::borrowing(
+                $scope['period'], $scope['division'], $scope['unit'], ['status' => RequestStatus::Expired->value]
+            ),
             'rejected' => AnalyticsDrilldown::borrowing(
                 $scope['period'], $scope['division'], $scope['unit'], ['status' => RequestStatus::Rejected->value]
             ),
@@ -986,8 +966,6 @@ class AnalyticsDetailService
         };
 
         $reportsNote = match ($group) {
-            'cancelled', 'expired' => 'The Borrowing Activity Report lists filed activity only and does not include '
-                .strtolower(RequestOutcomes::label($group)).' requests, so no source-record view is offered for this group.',
             'approved', 'in_review', '' => 'Reports show each request by its operational status: an approved request '
                 .'that has already been released appears there under its custody state.',
             default => null,

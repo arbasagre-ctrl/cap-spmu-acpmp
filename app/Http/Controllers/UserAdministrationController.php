@@ -8,6 +8,7 @@ use App\Enums\EmploymentType;
 use App\Models\OrganizationalUnit;
 use App\Models\User;
 use App\Services\AuditService;
+use App\Services\NotificationService;
 use App\Services\UserRoleAssignmentService;
 use App\Support\OrganizationalStructure;
 use Illuminate\Http\RedirectResponse;
@@ -124,6 +125,7 @@ class UserAdministrationController extends Controller
         User $user,
         AuditService $audit,
         UserRoleAssignmentService $roleAssignments,
+        NotificationService $notifications,
     ): RedirectResponse {
         $this->authorizeIctu($request);
 
@@ -142,8 +144,11 @@ class UserAdministrationController extends Controller
             $data['access_classification'] = $user->access_classification->value;
         }
 
-        DB::transaction(function () use ($data, $user, $audit, $roleAssignments, $request): void {
+        $accountDisabled = false;
+
+        DB::transaction(function () use ($data, $user, $audit, $roleAssignments, $request, &$accountDisabled): void {
             $before = $user->load(['roles', 'organizationalUnit', 'authorizedOrganizationalUnits'])->toArray();
+            $beforeAccountStatus = $user->account_status?->value;
             $classification = AccessClassification::from($data['access_classification']);
             $unit = $this->resolveOrganizationalUnit($data, $classification, $user);
 
@@ -163,6 +168,9 @@ class UserAdministrationController extends Controller
             }
 
             $user->update($updates);
+
+            $accountDisabled = $beforeAccountStatus === AccountStatus::Active->value
+                && in_array($user->account_status?->value, [AccountStatus::Inactive->value, AccountStatus::Suspended->value], true);
 
             $this->synchronizeOrganizationalAssignments(
                 $user,
@@ -185,6 +193,17 @@ class UserAdministrationController extends Controller
                 after: $user->fresh(['roles', 'organizationalUnit', 'authorizedOrganizationalUnits'])->toArray(),
             );
         });
+
+        if ($accountDisabled) {
+            $user->refresh();
+            $notifications->send(
+                'ACCOUNT_ACCESS_DISABLED',
+                collect([$user]),
+                'Your account access has been disabled. Contact ICTU for assistance.',
+                $user,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
 
         return redirect()
             ->route('administration.users.index')

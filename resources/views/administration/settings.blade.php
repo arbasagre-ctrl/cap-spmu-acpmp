@@ -50,9 +50,17 @@
         : '';
 
     $smsEndpointConfigured = $isIctu
-        && filled(config('services.sms.webhook_url'));
+        && filled(config('services.sms.webhook_url'))
+        && filled(config('services.sms.token'));
+
+    $smsEnabled = $isIctu && (bool) config('services.sms.enabled', false);
+
+    $smsSenderName = $isIctu
+        ? trim((string) config('services.sms.sender_name'))
+        : '';
 
     $smsReady = $isIctu
+        && $smsEnabled
         && filled($effectiveSmsProvider)
         && $smsEndpointConfigured;
 
@@ -144,13 +152,17 @@
                     <h3>SMS Delivery</h3>
                 </div>
                 <span class="ictu-config-state {{ $smsReady ? 'is-ready' : 'is-pending' }}">
-                    {{ $smsReady ? 'Ready' : 'Not configured' }}
+                    {{ $smsReady ? 'Ready' : ($smsEnabled ? 'Not configured' : 'Disabled') }}
                 </span>
             </div>
-            <p>SMS delivery requires both a provider name and the protected webhook configuration.</p>
+            <p>SMS delivery is queued after the related workflow commits. Provider credentials remain protected in environment configuration.</p>
             <div class="ictu-readonly-value">
-                <span>Effective provider</span>
-                <strong>{{ filled($effectiveSmsProvider) ? $effectiveSmsProvider : 'Not configured' }}</strong>
+                <span>Enabled</span>
+                <strong>{{ $smsEnabled ? 'Yes' : 'No' }}</strong>
+            </div>
+            <div class="ictu-readonly-value">
+                <span>Provider / sender</span>
+                <strong>{{ filled($effectiveSmsProvider) ? $effectiveSmsProvider : 'Not configured' }}{{ $smsSenderName !== '' ? ' / '.$smsSenderName : '' }}</strong>
             </div>
         </article>
     </div>

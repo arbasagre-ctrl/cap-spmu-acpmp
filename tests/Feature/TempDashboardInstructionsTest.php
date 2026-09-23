@@ -48,7 +48,8 @@ class TempDashboardInstructionsTest extends TestCase
         }
 
         // Operational content is untouched.
-        $this->assertStringContainsString('Requests Awaiting Final Approval', $html);
+        $this->assertStringContainsString('Approval Queue', $html);
+        $this->assertStringContainsString('Verified requests awaiting final approval.', $html);
         $this->assertStringContainsString('For Approval', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
         $this->assertStringContainsString('Open Approval Queue', $html);
@@ -69,7 +70,8 @@ class TempDashboardInstructionsTest extends TestCase
             $this->assertStringNotContainsString($instruction, $html);
         }
 
-        $this->assertStringContainsString('Requests Awaiting SPMU Verification', $html);
+        $this->assertStringContainsString('Verification Queue', $html);
+        $this->assertStringContainsString('Requests awaiting SPMU verification.', $html);
         $this->assertStringContainsString('Open Verification Queue', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
     }
@@ -89,7 +91,8 @@ class TempDashboardInstructionsTest extends TestCase
             $this->assertStringNotContainsString($instruction, $html);
         }
 
-        $this->assertStringContainsString('Recent Account Activity', $html);
+        $this->assertStringContainsString('Recent Accounts', $html);
+        $this->assertStringContainsString('Recently added user accounts.', $html);
         $this->assertStringContainsString('Manage User Accounts', $html);
         $this->assertStringContainsString('dashboard-kpi-card', $html);
     }
@@ -105,7 +108,8 @@ class TempDashboardInstructionsTest extends TestCase
 
             // The queue is the only panel and the grid is a single column.
             $this->assertStringContainsString('dashboard-single-panel', $html);
-            $this->assertStringContainsString('.dashboard-balanced-grid.dashboard-single-panel { grid-template-columns:minmax(0,1fr); }', $html);
+            $this->assertStringContainsString('.dashboard-balanced-grid.dashboard-single-panel,', $html);
+            $this->assertStringContainsString('grid-template-columns:minmax(0,1fr);', $html);
             $this->assertSame(1, substr_count($html, 'class="card queue-card dashboard-panel-equal'));
             $this->assertStringNotContainsString('workflow-mini-list', $html);
         }

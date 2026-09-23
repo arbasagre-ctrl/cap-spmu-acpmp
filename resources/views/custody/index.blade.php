@@ -93,16 +93,7 @@
      * each transaction row. This keeps the dropdown aligned with workflow
      * wording instead of maintaining a second, stale list in JavaScript.
      */
-    $operationalStatusForCustody = static function ($custody) use ($mode): array {
-        if ($mode === 'return' && $custody->relationLoaded('earlyReturnRequests')) {
-            $earlyReturn = $custody->earlyReturnRequests
-                ->first(fn ($request) => $request->status === 'REQUESTED');
-
-            if ($earlyReturn) {
-                return ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested'];
-            }
-        }
-
+    $operationalStatusForCustody = static function ($custody): array {
         $workflow = $custody->workflowStatus();
 
         return ['key' => $workflow['key'], 'label' => $workflow['label']];
@@ -125,7 +116,6 @@
 
     $returnFilterStatuses = collect([
         ['key' => 'BORROWED', 'label' => 'Items Released / On Custody'],
-        ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested'],
         ['key' => 'RETURN_PROCESSING', 'label' => 'Return Processing'],
         ['key' => 'OVERDUE', 'label' => 'Overdue'],
         ['key' => 'ACCOUNTABILITY_REVIEW', 'label' => 'Accountability Review'],
@@ -134,7 +124,7 @@
         ['key' => 'RSLDDP_AWAITING_UPLOAD', 'label' => 'RSLDDP Processing'],
         ['key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'label' => 'For Accounting Processing'],
         ['key' => 'RSLDDP_PAYMENT_REQUIRED', 'label' => 'Payment Required'],
-        ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Resolution'],
+        ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Final Review'],
         ['key' => 'BILLING_ISSUED', 'label' => 'Billing Unpaid'],
         ['key' => 'PAYMENT_VERIFICATION', 'label' => 'Payment Verification'],
         ['key' => 'LATE_RETURN', 'label' => 'Late Return Processing'],
@@ -348,27 +338,23 @@
                     $scheduleDate = $custody->request->currentVersion?->schedule_date
                         ?: $custody->request->currentVersion?->needed_from;
 
-                    $returnDate = $custody->request->currentVersion?->return_date
+                    $originalReturnDate = $custody->original_due_at
+                        ?: $custody->request->currentVersion?->return_date
                         ?: $custody->request->currentVersion?->return_due_at
                         ?: $custody->due_at;
+                    $returnDate = $custody->due_at ?: $originalReturnDate;
+                    $returnDateAdjusted = $originalReturnDate && $returnDate
+                        && ! $originalReturnDate->isSameDay($returnDate);
 
                     $hasActivePickupSchedule = (bool) $custody->scheduled_release_at
                         && (bool) $custody->pickup_expires_at
                         && (bool) $custody->pickup_scheduled_at
                         && ! $custody->pickup_expired_at;
 
-                    $activeEarlyReturn = $mode === 'return'
-                        && $custody->relationLoaded('earlyReturnRequests')
-                        ? $custody->earlyReturnRequests
-                            ->first(fn ($earlyReturn) => $earlyReturn->status === 'REQUESTED')
-                        : null;
-
                     $workflowStatus = $custody->workflowStatus();
                     $operationalLabel = $workflowStatus['label'];
                     $operationalStatusKey = $workflowStatus['key'];
-                    $operationalFilterStatus = $activeEarlyReturn
-                        ? ['key' => 'EARLY_RETURN_REQUESTED', 'label' => 'Early Return Requested']
-                        : ['key' => $operationalStatusKey, 'label' => $operationalLabel];
+                    $operationalFilterStatus = ['key' => $operationalStatusKey, 'label' => $operationalLabel];
                     $isCompleted = $workflowStatus['group'] === 'completed';
                     $isCancelled = $workflowStatus['group'] === 'cancelled';
                     $isFullyComplete = $operationalStatusKey === 'COMPLETED';
@@ -384,7 +370,7 @@
                     @if(in_array($mode, ['release','return'], true))
                     data-operational-record
                     data-created="{{ optional($custody->updated_at)->timestamp ?? 0 }}"
-                    data-priority="{{ $activeEarlyReturn ? 1 : 0 }}"
+                    data-priority="0"
                     data-status="{{ $operationalFilterStatus['key'] }}"
                     data-search="{{ strtolower(trim(($custody->borrower?->full_name ?? '').' '.($custody->request?->request_no ?? '').' '.($custody->custody_no ?? '').' '.($custody->request?->currentVersion?->purpose_event ?? ''))) }}"
                     @endif
@@ -392,7 +378,10 @@
                     <span class="operational-record-primary">
                         <strong>{{ $isBorrower ? $custody->custody_no : $custody->borrower->full_name }}</strong>
                         <span>Request {{ $custody->request->request_no }}</span>
-                        <small>Schedule {{ optional($scheduleDate)->format('d M Y') }} · Return {{ optional($returnDate)->format('d M Y') }}</small>
+                        <small>Schedule {{ optional($scheduleDate)->format('d M Y') }} · {{ $returnDateAdjusted ? 'Effective Return' : 'Return' }} {{ optional($returnDate)->format('d M Y') }}</small>
+                        @if($returnDateAdjusted)
+                            <small>Adjusted from {{ optional($originalReturnDate)->format('d M Y') }}</small>
+                        @endif
                     </span>
 
                     <span class="operational-record-facts">
@@ -402,14 +391,7 @@
                             <span><small>Issued</small><strong>Not yet</strong></span>
                         @elseif($mode === 'return')
                             <span><small>Issued</small><strong>{{ optional($custody->released_at)->format('d M Y, g:i A') ?: '—' }}</strong></span>
-                            @if($activeEarlyReturn)
-                                <span class="early-return-fact">
-                                    <small>Early Return</small>
-                                    <strong>{{ optional($activeEarlyReturn->proposed_return_at)->format('d M Y, g:i A') ?: 'Schedule pending' }}</strong>
-                                </span>
-                            @else
-                                <span><small>Return Due</small><strong>{{ optional($returnDate)->format('d M Y') ?: '—' }}</strong></span>
-                            @endif
+                            <span><small>{{ $returnDateAdjusted ? 'Effective Return' : 'Return Due' }}</small><strong>{{ optional($returnDate)->format('d M Y') ?: '—' }}</strong></span>
                             <span><small>{{ $custody->status === 'OVERDUE' ? 'Overdue' : 'On Custody' }}</small><strong>{{ $outstanding + 0 }}</strong></span>
                         @else
                             <span><small>Pickup</small><strong>{{ optional($custody->scheduled_release_at)->format('d M Y, g:i A') ?: 'Not scheduled' }}</strong></span>
@@ -425,9 +407,6 @@
                     </span>
 
                     <span class="operational-record-action">
-                        @if($activeEarlyReturn)
-                            <x-status-badge status="INFORMATIONAL" label="Early Return Requested" />
-                        @endif
                         <x-status-badge
                             :status="$operationalStatusKey"
                             :label="$operationalLabel"
@@ -459,7 +438,6 @@
     .operational-browser-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,230px) minmax(150px,190px);gap:12px;align-items:end;margin-bottom:14px;padding:14px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:var(--radius)}
     .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--text-muted)}
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
-    .early-return-fact small,.early-return-fact strong{color:#0b6f8c}
     .operational-record-action{align-content:center}
     @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
     </style>

@@ -425,14 +425,14 @@ class LateReturnAccountabilityTest extends TestCase
             'correction_remarks' => 'Recheck the recorded date.',
         ]);
 
-        $this->accountability($officer)
+        $this->accountability($officer, $custody->borrower_user_id)
             ->assertOk()
             ->assertSee('Late Return - Returned for Correction')
             ->assertSee('Recheck the recorded date.')
             ->assertDontSee('Confirm Late Return')
             ->assertDontSee('Confirm Late Return Assessment');
 
-        $this->accountability($head)
+        $this->accountability($head, $custody->borrower_user_id)
             ->assertOk()
             ->assertSee('Late Return - Returned for Correction')
             ->assertSee('Approve Late Return Assessment')
@@ -473,6 +473,79 @@ class LateReturnAccountabilityTest extends TestCase
         $this->assertSame(LateReturnService::STATUS_AWAITING_PAYMENT, $case->fresh()->status);
         /* The same case is reused, not replaced. */
         $this->assertDatabaseCount('overdue_cases', 1);
+    }
+
+    /**
+     * LateReturnService::assess() freezes rate_snapshot/accrued_amount from
+     * whatever daily_overdue_tariff held at the moment of return, even when
+     * it was never configured - and never re-evaluates it afterward. Without
+     * AccountabilityController::resolveOverdueWithoutCharge(), such a case
+     * (and its OVERDUE_RETURN restriction) would have no resolution path at
+     * all once billOverdue() correctly refuses to bill it.
+     */
+    public function test_the_head_can_resolve_without_a_charge_when_no_fee_policy_applied_at_return(): void
+    {
+        SystemSetting::query()->where('setting_key', 'daily_overdue_tariff')->delete();
+
+        $custody = $this->custody($this->borrower());
+        $officer = $this->officer();
+        $head = $this->spmuHead();
+
+        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
+        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
+
+        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $case->status);
+        $this->assertNull($case->rate_snapshot);
+        $this->assertSame(0.0, (float) $case->accrued_amount);
+
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'custody_transaction_id' => $custody->id,
+            'restriction_type' => 'OVERDUE_RETURN',
+            'status' => 'ACTIVE',
+        ]);
+
+        // Billing is genuinely blocked - no fee policy applied at the time of return.
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->post(route('overdue.bill', $case), ['basis' => 'No policy configured.'])
+            ->assertSessionHasErrors('overdue');
+
+        $this->assertDatabaseCount('billing_statements', 0);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->post(route('overdue.resolve-without-charge', $case), [
+                'resolution_remarks' => 'No late-return fee policy was configured at the time of return.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(LateReturnService::STATUS_RESOLVED, $case->fresh()->status);
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'custody_transaction_id' => $custody->id,
+            'restriction_type' => 'OVERDUE_RETURN',
+            'status' => 'LIFTED',
+        ]);
+    }
+
+    public function test_resolve_without_charge_is_rejected_when_a_fee_policy_applies(): void
+    {
+        $custody = $this->custody($this->borrower());
+        $officer = $this->officer();
+        $head = $this->spmuHead();
+
+        $this->recordReturn($custody, Carbon::create(2026, 9, 4, 14), $officer);
+        $case = $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
+
+        $this->assertSame(225.0, (float) $case->accrued_amount);
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($head)
+            ->post(route('overdue.resolve-without-charge', $case), [
+                'resolution_remarks' => 'Attempted bypass.',
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame(LateReturnService::STATUS_FOR_HEAD_APPROVAL, $case->fresh()->status);
     }
 
     /* ================================================================== */
@@ -924,11 +997,16 @@ class LateReturnAccountabilityTest extends TestCase
     /* Rendered states on Accountability Oversight                        */
     /* ================================================================== */
 
-    private function accountability(User $actor)
+    /**
+     * Per-case detail now lives behind the borrower-scoped deep link on the
+     * Oversight overview (the default view is borrower-centered), so every
+     * caller passes the borrower whose case it expects to see.
+     */
+    private function accountability(User $actor, int $borrowerUserId)
     {
         return $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($actor)
-            ->get(route('accountability.index'));
+            ->get(route('accountability.index', ['borrower' => $borrowerUserId]));
     }
 
     public function test_an_overdue_case_shows_an_estimate_and_no_approval_control(): void
@@ -936,13 +1014,13 @@ class LateReturnAccountabilityTest extends TestCase
         $custody = $this->custody($this->borrower());
         $this->overdueCase($custody);
 
-        $this->accountability($this->officer())
+        $this->accountability($this->officer(), $custody->borrower_user_id)
             ->assertOk()
             ->assertSee('Overdue - Item Not Returned')
             ->assertSee('Estimated Fee So Far')
+            ->assertSee('Awaiting return')
             ->assertSee('Still overdue', false)
-            ->assertSee('A formal Late Return Notice cannot be issued until the physical return is recorded and the SPMU Head approves the assessment.')
-            ->assertSee('Awaiting borrower return')
+            ->assertSee('Record the physical return from Return & Inspection. The final late-return assessment is created after the complete return.', false)
             /* No confirmation or approval control while it is merely overdue. */
             ->assertDontSee('Confirm Late Return')
             ->assertDontSee('Approve Late Return Assessment');
@@ -958,7 +1036,7 @@ class LateReturnAccountabilityTest extends TestCase
         $this->lateReturns->assess($custody->fresh(['lines', 'returns']), $officer);
 
         /* The Action Officer sees the finalized figures but cannot act on them. */
-        $this->accountability($officer)
+        $this->accountability($officer, $custody->borrower_user_id)
             ->assertOk()
             ->assertSee('For Head Review')
             ->assertSee('Final Late Return Fee')
@@ -973,7 +1051,7 @@ class LateReturnAccountabilityTest extends TestCase
          * gates it, and there is no "return for correction" dead end since
          * no route anywhere can correct an authoritative physical return.
          */
-        $this->accountability($this->spmuHead())
+        $this->accountability($this->spmuHead(), $custody->borrower_user_id)
             ->assertOk()
             ->assertSee('For Head Review')
             ->assertSee('Approve Late Return Assessment')
@@ -982,12 +1060,13 @@ class LateReturnAccountabilityTest extends TestCase
 
     public function test_an_approved_case_reads_as_awaiting_payment(): void
     {
-        [, , $officer] = $this->approvedLateReturn();
+        [$case, , $officer] = $this->approvedLateReturn();
 
-        $this->accountability($officer)
+        $this->accountability($officer, $case->borrower_user_id)
             ->assertOk()
             ->assertSee('Approved - Awaiting Payment')
-            ->assertSee('The Late Return Notice and Late Return Billing Statement have been issued.');
+            ->assertSee('Late Return Notice')
+            ->assertSee('Late Return Billing Statement');
     }
 
     public function test_linen_awaiting_its_laundry_receipt_shows_the_attestation_field(): void
@@ -1001,7 +1080,7 @@ class LateReturnAccountabilityTest extends TestCase
             ->get(route('custody.return.show', $custody))
             ->assertOk()
             ->assertSee('Laundry Received Date')
-            ->assertSee('Use the RECEIVED BY date on the form.');
+            ->assertSee('Use the RECEIVED BY date written on the accomplished form.');
     }
 
     public function test_linen_with_worker_received_date_but_no_accomplished_form_still_requires_form_upload(): void
@@ -1013,9 +1092,9 @@ class LateReturnAccountabilityTest extends TestCase
             ->actingAs($this->officer())
             ->get(route('custody.return.show', $custody))
             ->assertOk()
-            ->assertSee('Record Accomplished Form')
+            ->assertSee('Record Form')
             ->assertSee('Laundry Received Date')
-            ->assertSee('Use the RECEIVED BY date on the form.')
+            ->assertSee('Use the RECEIVED BY date written on the accomplished form.')
             ->assertSee('name="laundry_received_on"', false)
             ->assertDontSee('03 Sep 2026');
     }
@@ -1123,7 +1202,7 @@ class LateReturnAccountabilityTest extends TestCase
 
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($officer)
-            ->get(route('accountability.index'))
+            ->get(route('accountability.index', ['borrower' => $custody->borrower_user_id]))
             ->assertOk()
             ->assertSee('For Head Review')
             ->assertDontSee('Confirm Late Return');

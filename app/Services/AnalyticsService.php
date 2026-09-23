@@ -3,10 +3,13 @@
 namespace App\Services;
 
 use App\Enums\RequestStatus;
+use App\Models\BillingStatement;
+use App\Models\BorrowerRestriction;
 use App\Models\BorrowingRequest;
 use App\Models\CustodyTransaction;
 use App\Models\Incident;
 use App\Models\InventoryItem;
+use App\Models\OverdueCase;
 use App\Support\OrganizationalStructure;
 use App\Support\PeriodComparison;
 use App\Support\RequestOutcomes;
@@ -519,9 +522,218 @@ class AnalyticsService
     }
 
     /**
-     * Unresolved accountability opened in the selected period, de-duplicated
-     * to one case per custody transaction.
+     * Unresolved accountability opened in the selected period.
+     *
+     * This uses the same canonical case definition as the Dashboard and
+     * Accountability workspace: one Incident is one case and one OverdueCase
+     * is one separate case, even when both belong to the same custody. Linked
+     * billings/restrictions are details of those cases; only true standalone
+     * open billing/restriction records count on their own.
+     *
+     * @return Collection<int, array<string, mixed>>
      */
+    public function openAccountabilityRecords(
+        CarbonInterface $from,
+        CarbonInterface $to,
+        ?string $division,
+        ?string $unit,
+        ?int $borrower = null
+    ): Collection {
+        $hasOrgFilter = ($division !== null && $division !== '' && $division !== 'all')
+            || ($unit !== null && $unit !== '' && $unit !== 'all');
+
+        $allowedCustodyIds = $hasOrgFilter
+            ? $this->currentCustodyScope($division, $unit, $borrower)->pluck('id')->map(fn ($id): int => (int) $id)
+            : null;
+
+        $incidents = Incident::query()
+            ->with(['borrower', 'custody.request'])
+            ->whereBetween('reported_at', [$from, $to])
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', $borrower))
+            ->when($allowedCustodyIds !== null, fn ($query) => $query->whereIn('custody_transaction_id', $allowedCustodyIds))
+            ->get();
+
+        $overdueCases = OverdueCase::query()
+            ->with(['borrower', 'custody.request'])
+            ->whereNotNull('actual_return_date')
+            ->whereBetween('actual_return_date', [
+                Carbon::parse($from)->toDateString(),
+                Carbon::parse($to)->toDateString(),
+            ])
+            ->where('status', '!=', 'RESOLVED')
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', $borrower))
+            ->when($allowedCustodyIds !== null, fn ($query) => $query->whereIn('custody_transaction_id', $allowedCustodyIds))
+            ->get();
+
+        $billings = BillingStatement::query()
+            ->with([
+                'borrower',
+                'lines.incident:id,custody_transaction_id',
+                'lines.penalty:id,overdue_case_id,custody_transaction_id',
+            ])
+            ->whereBetween('issued_at', [$from, $to])
+            ->whereNotIn('status', ['SETTLED', 'WAIVED', 'VOID'])
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', $borrower))
+            ->get();
+
+        $restrictions = BorrowerRestriction::query()
+            ->with(['borrower', 'custody.request'])
+            ->where('status', 'ACTIVE')
+            ->where(fn ($query) => $query->whereNull('effective_from')->orWhere('effective_from', '<=', now()))
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhere('effective_to', '>', now()))
+            ->where(function ($query) use ($from, $to): void {
+                $query->whereBetween('effective_from', [$from, $to])
+                    ->orWhere(function ($legacy) use ($from, $to): void {
+                        $legacy->whereNull('effective_from')
+                            ->whereBetween('created_at', [$from, $to]);
+                    });
+            })
+            ->when($borrower !== null, fn ($query) => $query->where('borrower_user_id', $borrower))
+            ->get();
+
+        /*
+         * "Standalone" is global, not period-relative. A billing/restriction
+         * linked to an open case reported before this period is still only a
+         * detail of that case and must not become a new case just because the
+         * billing/restriction happened inside the selected dates.
+         */
+        $allOpenIncidentIds = Incident::query()
+            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id);
+        $allOpenOverdueIds = OverdueCase::query()
+            ->where('status', '!=', 'RESOLVED')
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id);
+        $allOpenOverdueCustodyIds = OverdueCase::query()
+            ->where('status', '!=', 'RESOLVED')
+            ->pluck('custody_transaction_id')
+            ->filter()
+            ->map(fn ($id): int => (int) $id);
+
+        $billings = $billings->reject(function (BillingStatement $billing) use ($allOpenIncidentIds, $allOpenOverdueIds): bool {
+            return $billing->lines->contains(function ($line) use ($allOpenIncidentIds, $allOpenOverdueIds): bool {
+                $incidentId = (int) ($line->incident_id ?? 0);
+                $overdueId = (int) ($line->penalty?->overdue_case_id ?? 0);
+
+                return ($incidentId > 0 && $allOpenIncidentIds->contains($incidentId))
+                    || ($overdueId > 0 && $allOpenOverdueIds->contains($overdueId));
+            });
+        })->values();
+
+        $restrictions = $restrictions->reject(function (BorrowerRestriction $restriction) use ($allOpenIncidentIds, $allOpenOverdueCustodyIds): bool {
+            $incidentId = (int) ($restriction->incident_id ?? 0);
+            if ($incidentId > 0 && $allOpenIncidentIds->contains($incidentId)) {
+                return true;
+            }
+
+            $custodyId = (int) ($restriction->custody_transaction_id ?? 0);
+
+            return $incidentId === 0
+                && $custodyId > 0
+                && $allOpenOverdueCustodyIds->contains($custodyId);
+        })->values();
+
+        if ($allowedCustodyIds !== null) {
+            $allowed = $allowedCustodyIds->flip();
+
+            $billings = $billings->filter(function (BillingStatement $billing) use ($allowed): bool {
+                return $billing->lines->contains(function ($line) use ($allowed): bool {
+                    $custodyId = (int) ($line->incident?->custody_transaction_id
+                        ?? $line->penalty?->custody_transaction_id
+                        ?? 0);
+
+                    return $custodyId > 0 && $allowed->has($custodyId);
+                });
+            })->values();
+
+            $restrictionIncidentCustodies = Incident::query()
+                ->whereIn('id', $restrictions->pluck('incident_id')->filter())
+                ->pluck('custody_transaction_id', 'id');
+
+            $restrictions = $restrictions->filter(function (BorrowerRestriction $restriction) use ($allowed, $restrictionIncidentCustodies): bool {
+                $custodyId = (int) ($restriction->custody_transaction_id
+                    ?? $restrictionIncidentCustodies->get($restriction->incident_id)
+                    ?? 0);
+
+                return $custodyId > 0 && $allowed->has($custodyId);
+            })->values();
+        }
+
+        $tally = AccountabilityCaseTally::forOpenRecords(
+            $incidents,
+            $overdueCases,
+            $billings,
+            $restrictions
+        );
+
+        $rows = collect();
+
+        foreach ($incidents as $incident) {
+            $rows->push([
+                'kind' => 'incident',
+                'reference' => (string) $incident->incident_no,
+                'borrower' => (string) ($incident->borrower?->full_name ?? ''),
+                'custody_no' => (string) ($incident->custody?->custody_no ?? ''),
+                'request_no' => (string) ($incident->custody?->request?->request_no ?? ''),
+                'accountability' => 'Property Accountability',
+                'status' => str((string) $incident->status)->replace('_', ' ')->title()->toString(),
+                'opened_at' => $incident->reported_at,
+            ]);
+        }
+
+        foreach ($overdueCases as $overdue) {
+            $rows->push([
+                'kind' => 'overdue',
+                'reference' => (string) ($overdue->custody?->custody_no ?? ''),
+                'borrower' => (string) ($overdue->borrower?->full_name ?? ''),
+                'custody_no' => (string) ($overdue->custody?->custody_no ?? ''),
+                'request_no' => (string) ($overdue->custody?->request?->request_no ?? ''),
+                'accountability' => 'Late Return',
+                'status' => str((string) $overdue->status)->replace('_', ' ')->title()->toString(),
+                'opened_at' => $overdue->actual_return_date ?? $overdue->overdue_started_at,
+            ]);
+        }
+
+        foreach ($tally->standaloneBillings() as $billing) {
+            $custodyId = (int) ($billing->lines->first()?->incident?->custody_transaction_id
+                ?? $billing->lines->first()?->penalty?->custody_transaction_id
+                ?? 0);
+            $custody = $custodyId > 0
+                ? CustodyTransaction::query()->with('request')->find($custodyId)
+                : null;
+
+            $rows->push([
+                'kind' => 'billing',
+                'reference' => (string) $billing->billing_no,
+                'borrower' => (string) ($billing->borrower?->full_name ?? ''),
+                'custody_no' => (string) ($custody?->custody_no ?? ''),
+                'request_no' => (string) ($custody?->request?->request_no ?? ''),
+                'accountability' => 'Standalone Billing',
+                'status' => str((string) $billing->status)->replace('_', ' ')->title()->toString(),
+                'opened_at' => $billing->issued_at ?? $billing->created_at,
+            ]);
+        }
+
+        foreach ($tally->standaloneRestrictions() as $restriction) {
+            $rows->push([
+                'kind' => 'restriction',
+                'reference' => 'Restriction #'.$restriction->id,
+                'borrower' => (string) ($restriction->borrower?->full_name ?? ''),
+                'custody_no' => (string) ($restriction->custody?->custody_no ?? ''),
+                'request_no' => (string) ($restriction->custody?->request?->request_no ?? ''),
+                'accountability' => 'Borrowing Restriction',
+                'status' => 'Active',
+                'opened_at' => $restriction->effective_from ?? $restriction->created_at,
+            ]);
+        }
+
+        return $rows
+            ->sortByDesc(fn (array $row): int => $row['opened_at']?->timestamp ?? 0)
+            ->values();
+    }
+
     private function openAccountabilityCount(
         CarbonInterface $from,
         CarbonInterface $to,
@@ -529,61 +741,7 @@ class AnalyticsService
         ?string $unit,
         ?int $borrower = null
     ): int {
-        $incidentIds = Incident::query()
-            ->whereBetween('reported_at', [$from, $to])
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->pluck('custody_transaction_id');
-
-        $lateReturnIds = DB::table('overdue_cases')
-            ->whereNotNull('actual_return_date')
-            ->whereBetween('actual_return_date', [
-                Carbon::parse($from)->toDateString(),
-                Carbon::parse($to)->toDateString(),
-            ])
-            ->where('status', '!=', 'RESOLVED')
-            ->pluck('custody_transaction_id');
-
-        $billingIds = DB::table('billing_statements')
-            ->join('billing_lines', 'billing_lines.billing_statement_id', '=', 'billing_statements.id')
-            ->join('penalties', 'penalties.id', '=', 'billing_lines.penalty_id')
-            ->whereBetween('billing_statements.issued_at', [$from, $to])
-            ->whereNotIn('billing_statements.status', ['SETTLED', 'WAIVED', 'VOID'])
-            ->pluck('penalties.custody_transaction_id');
-
-        $ids = $incidentIds
-            ->concat($lateReturnIds)
-            ->concat($billingIds)
-            ->filter()
-            ->unique()
-            ->values();
-
-        if ($ids->isEmpty()) {
-            return 0;
-        }
-
-        $query = CustodyTransaction::query()->whereIn('id', $ids);
-
-        if (($division !== null && $division !== '' && $division !== 'all')
-            || ($unit !== null && $unit !== '' && $unit !== 'all')) {
-            $versionIds = DB::table('request_versions')
-                ->when(
-                    $division !== null && $division !== '' && $division !== 'all',
-                    fn ($versions) => $versions->where('division_code', $division)
-                )
-                ->when(
-                    $unit !== null && $unit !== '' && $unit !== 'all',
-                    fn ($versions) => $versions->where('office_unit', $unit)
-                )
-                ->select('id');
-
-            $query->whereIn('request_version_id', $versionIds);
-        }
-
-        if ($borrower !== null) {
-            $query->where('borrower_user_id', $borrower);
-        }
-
-        return $query->count();
+        return $this->openAccountabilityRecords($from, $to, $division, $unit, $borrower)->count();
     }
 
         /**
@@ -1498,9 +1656,10 @@ class AnalyticsService
         $overdue = $this->currentlyOverdueQuery($division, $unit, $borrower)->count();
 
         /*
-         * One custody equals one accountability case in Analytics. Incident,
-         * late-return and billing records are de-duplicated by custody id so a
-         * single obligation never appears as two or three separate cases.
+         * Accountability uses the same canonical case definition as the
+         * operational workspace. An Incident and a Late Return on the same
+         * custody are two distinct cases; linked billings/restrictions remain
+         * details and are not counted again.
          */
         $openCases = $this->openAccountabilityCount($from, $to, $division, $unit, $borrower);
 

@@ -39,6 +39,7 @@ function mount({ paginated = false, withRecords = true } = {}) {
     ] : [];
     const search = element();
     const outcome = element();
+    const sort = element();
     const empty = element();
     const count = element({
         total: paginated ? '25' : String(records.length),
@@ -52,6 +53,7 @@ function mount({ paginated = false, withRecords = true } = {}) {
         querySelector: (selector) => ({
             '[data-completed-search]': search,
             '[data-completed-outcome]': outcome,
+            '[data-completed-sort]': sort,
             '[data-completed-empty]': empty,
             '[data-completed-count]': count,
             '[data-completed-reset]': reset,
@@ -60,7 +62,7 @@ function mount({ paginated = false, withRecords = true } = {}) {
     };
     const context = { document: { querySelector: () => browser } };
     vm.runInNewContext(script, context);
-    return { records, search, outcome, empty, count, reset, context };
+    return { records, search, outcome, sort, empty, count, reset, context };
 }
 
 test('completed laundry has separate empty and populated states matching the reference', () => {
@@ -71,7 +73,8 @@ test('completed laundry has separate empty and populated states matching the ref
     assert.match(page, /No completed laundry cases yet\./);
     assert.match(page, /Completed laundry cases will appear here after processing is finalized\./);
     assert.match(page, /@include\('laundry\.partials\.completed-empty-illustration'\)/);
-    assert.match(page, /@else\s+<section class="card completed-laundry-card"/);
+    assert.match(page, /@else\s+<section class="card completed-laundry-filter-card"/);
+    assert.match(page, /<section class="card completed-laundry-card"/);
     assert.equal(page.split("@include('laundry.partials.completed-back-link')").length - 1, 2);
     assert.match(back, /route\('laundry\.index'\)/);
     assert.match(page, /Completed cases are archived for record keeping and inventory management\./);
@@ -79,7 +82,7 @@ test('completed laundry has separate empty and populated states matching the ref
 });
 
 test('table shows live case identity, borrower, units, dates and the original details route', () => {
-    for (const heading of ['Case ID', 'Borrower', 'Items', 'Completed Date', 'Outcome', 'Action']) {
+    for (const heading of ['Case ID', 'Borrower', 'Items', 'Completed Date', 'Outcome', 'Actions']) {
         assert.ok(page.includes(`<th scope="col">${heading}</th>`));
     }
     assert.match(page, /@foreach\(\$jobs as \$job\)/);
@@ -95,15 +98,23 @@ test('table shows live case identity, borrower, units, dates and the original de
 });
 
 test('outcomes reflect recorded quantities, including mixed and unknown results', () => {
-    assert.match(row, /\$cleanedQuantity = \(int\) \$job->lines->sum\('completed_quantity'\)/);
-    assert.match(row, /where\('issue_type', 'DAMAGED'\)->sum\('affected_quantity'\)/);
+    /*
+     * The outcome taxonomy is now available / accountability / completed
+     * (fallback), reading the same return-line condition codes the return
+     * inspection system uses instead of a separate laundry-only issue_type/
+     * affected_quantity field, and a late-return check instead of a distinct
+     * "unrecorded" state.
+     */
+    assert.match(row, /\$serviceableQuantity = \(int\) \$job->lines->sum\('completed_quantity'\)/);
+    assert.match(row, /flatMap\(fn \(\$line\) => \$line->custodyLine\?->returnLines \?\? collect\(\)\)/);
+    assert.match(row, /filter\(fn \(\$condition\) => \$condition !== '' && \$condition !== 'FINE'\)/);
     assert.match(row, /every\(fn \(\$line\) => \$line->received_quantity !== null\)/);
-    assert.match(row, /\$noProcessingRequired = \$hasRecordedQuantities && \$receivedQuantity === 0 && \$job->worker_received_at/);
-    assert.match(row, /@if\(\$cleanedQuantity > 0\)[\s\S]*?@endif\s+@if\(\$maintenanceQuantity > 0\)/);
-    assert.match(row, /\$cleanedQuantity > 0 \? 'available' : null/);
-    assert.match(row, /\$maintenanceQuantity > 0 \? 'maintenance' : null/);
-    assert.match(row, /'not-needed' : 'unrecorded'/);
-    assert.match(row, /Outcome not recorded/);
+    assert.match(row, /\$hasAccountability = \$hasAdverseFinding \|\| \$isLateReturn;/);
+    assert.match(row, /@if\(\$serviceableQuantity > 0\)[\s\S]*?@endif\s+@if\(\$hasAccountability\)/);
+    assert.match(row, /\$serviceableQuantity > 0 \? 'available' : null/);
+    assert.match(row, /\$hasAccountability \? 'accountability' : null/);
+    assert.match(row, /if \(! \$caseOutcomes\) \{\s+\$caseOutcomes = \['completed'\];\s+\}/);
+    assert.match(row, /Accountability Required/);
     assert.doesNotMatch(row, /status === 'LAUNDRY_COMPLETED'[^;]*'available'/);
 });
 
@@ -170,7 +181,7 @@ test('true empty pages and out-of-range server pages are handled without errors'
     const ui = mount({ withRecords: false, paginated: true });
     assert.equal(ui.count.textContent, 'Showing 0 to 0 of 25 completed cases');
     assert.equal(ui.empty.hidden, false);
-    assert.match(page, /Search and outcome filters apply to this page\./);
+    assert.match(page, /Search, outcome, and sort apply to the cases on this page\./);
 });
 
 test('completed UI contains no processing forms or workflow mutations', () => {
@@ -184,7 +195,7 @@ test('responsive styles stay scoped and use valid theme variables', () => {
     assert.match(styles, /\.completed-laundry \[hidden\] \{ display: none !important; \}/);
     assert.match(styles, /\.completed-laundry-table-wrap \{[^}]*overflow-x: auto/);
     assert.match(styles, /@media \(max-width: 700px\)/);
-    assert.match(styles, /@media \(max-width: 450px\)/);
+    assert.match(styles, /@media \(max-width: 430px\)/);
     assert.match(styles, /\.completed-laundry \.button\.ui-pressable\.secondary:not\(:disabled\):hover/);
     assert.match(styles, /prefers-reduced-motion/);
     const theme = read('public/css/app.css');

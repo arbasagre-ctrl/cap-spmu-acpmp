@@ -30,6 +30,7 @@ use App\Models\UserSignature;
 use App\Reports\Builders\AccountabilityCasesReport;
 use App\Reports\ReportCatalogue;
 use App\Reports\ReportFilters;
+use App\Services\DocumentService;
 use App\Services\InventoryService;
 use Carbon\Carbon;
 use Database\Seeders\DatabaseSeeder;
@@ -72,39 +73,153 @@ class RsldppWorkflowTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_head_compliance_decision_requires_a_specific_action_that_matches_the_finding(): void
+    /**
+     * Replaces the retired upfront compliance_action/requires_rslddp/
+     * count_as_offense contract: a fresh OPEN incident's only decision is
+     * Confirm Accountability or Clear Finding, with no other field
+     * accepted or required.
+     */
+    public function test_no_count_as_offense_decision_remains_for_a_fresh_open_incident(): void
     {
         [$custody, $line] = $this->custody('Damaged Test Fixture');
+        [$head, $officer] = $this->headAndOfficer();
+        $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
+
+        // A missing decision is rejected...
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.resolve', $incident), [
+                'resolution_remarks' => 'Missing decision.',
+                '_action_token' => 'test-no-count-as-offense-missing-decision',
+            ])
+            ->assertSessionHasErrors('decision');
+
+        // ...but the retired fields are never required or read, even when
+        // submitted (a stale client/bookmark posting the old form shape).
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.resolve', $incident), [
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Accountability confirmed.',
+                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
+                'compliance_action' => 'RECOVERY',
+                'requires_rslddp' => '0',
+                'count_as_offense' => '0',
+                '_action_token' => 'test-no-count-as-offense-stale-fields-ignored',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status);
+        $this->assertSame('V2', $incident->accountability_flow_version);
+        $this->assertNull($incident->compliance_action);
+        $this->assertTrue((bool) $incident->requires_rslddp);
+    }
+
+    public function test_clear_decision_creates_no_offense_and_resolves_immediately(): void
+    {
+        [$custody, $line] = $this->custody('Clearable Test Fixture');
         [$head, $officer] = $this->headAndOfficer();
         $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
 
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
-                'resolution_remarks' => 'Physical compliance required.',
-                'requires_rslddp' => '0',
-                'count_as_offense' => '0',
-                '_action_token' => 'test-compliance-action-required',
+                'decision' => 'CLEAR',
+                'resolution_remarks' => 'Finding was not substantiated on review.',
+                '_action_token' => 'test-clear-decision',
             ])
-            ->assertSessionHasErrors('compliance_action');
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RESOLVED', $incident->status);
+        $this->assertSame('V2', $incident->accountability_flow_version);
+        $this->assertDatabaseMissing('borrower_violations', ['custody_transaction_id' => $custody->id]);
+        $this->assertDatabaseMissing('sanctions', ['borrower_user_id' => $incident->borrower_user_id]);
+        $this->assertDatabaseMissing('generated_documents', [
+            'subject_type' => Incident::class,
+            'subject_id' => $incident->id,
+            'document_type' => 'RSLDDP',
+        ]);
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'incident_id' => $incident->id,
+            'status' => 'LIFTED',
+        ]);
+    }
+
+    public function test_confirm_decision_auto_records_offense_and_sanction_when_eligible(): void
+    {
+        [$custody, $line] = $this->custody('Sanctioned Test Fixture');
+        [$head, $officer] = $this->headAndOfficer();
+        $this->sanctionRules();
+        $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
+
+        AcademicPeriod::query()->firstOrCreate(
+            ['academic_year' => '2026-2027', 'term_code' => 'RSLDDP-TEST-TERM'],
+            [
+                'term_name' => 'RSLDDP Test Term',
+                'start_date' => $this->now->copy()->startOfMonth()->toDateString(),
+                'end_date' => $this->now->copy()->endOfMonth()->toDateString(),
+                'status' => 'ACTIVE',
+            ]
+        );
 
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
-                'compliance_action' => 'RECOVERY',
-                'resolution_remarks' => 'Physical compliance required.',
-                'requires_rslddp' => '0',
-                'count_as_offense' => '0',
-                '_action_token' => 'test-compliance-action-mismatch',
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Damage confirmed on inspection.',
+                '_action_token' => 'test-confirm-auto-offense',
             ])
-            ->assertSessionHasErrors('compliance_action');
+            ->assertSessionHasNoErrors();
 
-        $this->assertSame('OPEN', $incident->fresh()->status);
+        $incident->refresh();
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status);
+
+        $violation = BorrowerViolation::where('custody_transaction_id', $custody->id)
+            ->where('violation_source', 'PROPERTY_ACCOUNTABILITY')
+            ->firstOrFail();
+        $this->assertSame('CONFIRMED', $violation->status);
+
+        $sanction = Sanction::where('borrower_violation_id', $violation->id)->firstOrFail();
+        $this->assertSame(1, $sanction->offense_no);
+        $this->assertSame('WRITTEN_REPRIMAND', $sanction->sanction_code);
     }
 
-    public function test_compliance_case_with_requires_rslddp_generates_rslddp_and_still_resolves_via_ao_verification(): void
+    public function test_rslddp_is_generated_only_after_confirmed_accountability(): void
+    {
+        [$custody, $line] = $this->custody('Pre-confirm RSLDDP Fixture');
+        [$head, $officer] = $this->headAndOfficer();
+        $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
+
+        $this->assertDatabaseMissing('generated_documents', [
+            'subject_type' => Incident::class,
+            'subject_id' => $incident->id,
+            'document_type' => 'RSLDDP',
+        ]);
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.resolve', $incident), [
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Confirmed.',
+                '_action_token' => 'test-rslddp-generated-only-after-confirm',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('generated_documents', [
+            'subject_type' => Incident::class,
+            'subject_id' => $incident->id,
+            'document_type' => 'RSLDDP',
+            'status' => 'FINAL',
+        ]);
+        $this->assertSame(1, GeneratedDocument::where('subject_type', Incident::class)
+            ->where('subject_id', $incident->id)
+            ->where('document_type', 'RSLDDP')
+            ->count());
+    }
+
+    public function test_confirmed_replacement_flows_through_upload_disposition_and_ao_verification_to_final_resolution(): void
     {
         [$custody, $line] = $this->custody('Rectangular Table');
         [$head, $officer] = $this->headAndOfficer();
@@ -113,18 +228,14 @@ class RsldppWorkflowTest extends TestCase
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
-                'compliance_action' => 'REPAIR',
-                'resolution_remarks' => 'Repair required.',
-                'requires_rslddp' => '1',
-                'count_as_offense' => '0',
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Accountability confirmed.',
                 '_action_token' => 'test-rslddp-compliance-decide-1',
             ])
             ->assertSessionHasNoErrors();
 
         $incident->refresh();
-        $this->assertSame('COMPLIANCE_RSLDDP_PENDING', $incident->status);
-        $this->assertSame('REPAIR', $incident->compliance_action);
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status);
         $this->assertTrue((bool) $incident->requires_rslddp);
         $this->assertDatabaseHas('generated_documents', [
             'subject_type' => Incident::class,
@@ -139,14 +250,17 @@ class RsldppWorkflowTest extends TestCase
             'document_type' => 'ACCOUNTABILITY_COMPLIANCE_NOTICE',
         ]);
 
-        // AO cannot verify compliance while RSLDDP is still pending.
-        $this->actingAs($officer)
-            ->withSession(['active_workspace' => 'SPMU'])
-            ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_COMPLETED',
-                '_action_token' => 'test-rslddp-compliance-verify-attempt-1',
-            ])
-            ->assertSessionHasErrors('incident');
+        $borrower = User::query()->findOrFail($incident->borrower_user_id);
+
+        // The borrower is never the uploader of record for the accomplished
+        // RSLDDP - only SPMU Head/Admin.
+        $this->actingAs($borrower)
+            ->withSession(['active_workspace' => 'BORROWER'])
+            ->post(route('incidents.rslddp.upload', $incident), [
+                'evidence' => UploadedFile::fake()->create('accomplished-rslddp.pdf', 5, 'application/pdf'),
+                '_action_token' => 'test-rslddp-upload-borrower-blocked',
+            ]);
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->fresh()->status);
 
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
@@ -157,18 +271,51 @@ class RsldppWorkflowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $incident->refresh();
-        $this->assertSame('COMPLIANCE_REQUIRED', $incident->status);
+        $this->assertSame('RSLDDP_DISPOSITION_PENDING', $incident->status);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'borrower_user_id' => $borrower->id,
+            'uploaded_by_user_id' => $head->id,
+            'upload_mode' => 'SPMU_HEAD_RECORDED',
+            'verification_status' => 'PENDING_VERIFICATION',
+            'verified_by_user_id' => null,
+        ]);
 
-        // Existing, unmodified AO verification now resumes.
+        // The Head records ONLY the official disposition actually stated in
+        // the accomplished RSLDDP - here, Repair.
         $this->actingAs($officer)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_COMPLETED',
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'REPAIR',
+                'resolution_remarks' => 'Attempted by Officer.',
+                '_action_token' => 'test-disposition-officer-blocked',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'REPAIR',
+                'resolution_remarks' => 'Accomplished RSLDDP states Repair.',
+                '_action_token' => 'test-disposition-repair',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_COMPLIANCE_VERIFICATION', $incident->status);
+        $this->assertSame('REPAIR', $incident->official_disposition);
+
+        // AO cannot verify compliance until the disposition is recorded -
+        // covered by test_replacement_compliance_updates_inventory_only_after_ao_verification.
+        // Here: the Officer verifies, but does not choose the disposition.
+        $this->actingAs($officer)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.verify', $incident), [
+                'decision' => 'ACCEPTED',
                 '_action_token' => 'test-rslddp-compliance-verify-attempt-2',
             ])
             ->assertSessionHasNoErrors();
 
-        $this->assertSame('RESOLVED', $incident->fresh()->status);
+        $this->assertSame('RSLDDP_FOR_RESOLUTION', $incident->fresh()->status);
         $item = $line->requestItem->inventoryItem;
         $balance = app(InventoryService::class)->availability($item->fresh(), now(), now()->addMinute());
         $this->assertSame(0.0, $balance['incident']);
@@ -180,42 +327,80 @@ class RsldppWorkflowTest extends TestCase
         ]);
         $this->assertDatabaseHas('borrower_restrictions', [
             'incident_id' => $incident->id,
+            'status' => 'ACTIVE',
+        ]);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'borrower_user_id' => $borrower->id,
+            'verification_status' => 'VERIFIED',
+            'verified_by_user_id' => $officer->id,
+        ]);
+
+        // Officer cannot perform final resolution - Head/Admin only.
+        $this->actingAs($officer)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.resolve', $incident), ['resolution_remarks' => 'x'])
+            ->assertForbidden();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.resolve', $incident), [
+                'resolution_remarks' => 'Operational compliance and accomplished RSLDDP verified.',
+                '_action_token' => 'test-rslddp-compliance-final-resolution',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('RESOLVED', $incident->fresh()->status);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'borrower_user_id' => $borrower->id,
+            'verification_status' => 'VERIFIED',
+            'verified_by_user_id' => $officer->id,
+        ]);
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'incident_id' => $incident->id,
             'status' => 'LIFTED',
         ]);
     }
 
-    public function test_compliance_case_without_requires_rslddp_behaves_exactly_as_before(): void
+    /**
+     * "Compliance without RSLDDP" is no longer a reachable outcome for a new
+     * decision (Confirm always requires RSLDDP). This repoints legacy
+     * coverage to resolveIncidentLegacy() directly, by constructing an
+     * incident already at the legacy status (accountability_flow_version
+     * stays NULL, exactly as any row already there before this deploy would
+     * be) - proving the dispatcher split preserves that method unmodified.
+     */
+    public function test_legacy_compliance_case_without_rslddp_still_requires_head_final_resolution(): void
     {
         [$custody, $line] = $this->custody('Monoblock Chair');
         [$head, $officer] = $this->headAndOfficer();
         $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
-
-        $this->actingAs($head)
-            ->withSession(['active_workspace' => 'SPMU'])
-            ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
-                'compliance_action' => 'REPAIR',
-                'resolution_remarks' => 'Repair required.',
-                'requires_rslddp' => '0',
-                'count_as_offense' => '0',
-                '_action_token' => 'test-rslddp-compliance-decide-2',
-            ])
-            ->assertSessionHasNoErrors();
-
-        $incident->refresh();
-        $this->assertSame('COMPLIANCE_REQUIRED', $incident->status);
-        $this->assertFalse((bool) $incident->requires_rslddp);
-        $this->assertDatabaseMissing('generated_documents', [
-            'subject_type' => Incident::class,
-            'subject_id' => $incident->id,
-            'document_type' => 'RSLDDP',
+        $incident->update([
+            'status' => 'COMPLIANCE_REQUIRED',
+            'compliance_action' => 'REPAIR',
+            'requires_rslddp' => false,
         ]);
+
+        $this->assertNull($incident->fresh()->accountability_flow_version);
 
         $this->actingAs($officer)
             ->withSession(['active_workspace' => 'SPMU'])
             ->post(route('incidents.resolve', $incident), [
                 'resolution_outcome' => 'COMPLIANCE_COMPLETED',
                 '_action_token' => 'test-rslddp-compliance-verify-attempt-3',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('RSLDDP_FOR_RESOLUTION', $incident->fresh()->status);
+        $this->assertDatabaseHas('borrower_restrictions', [
+            'incident_id' => $incident->id,
+            'status' => 'ACTIVE',
+        ]);
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.resolve', $incident), [
+                'resolution_remarks' => 'AO compliance verification accepted.',
+                '_action_token' => 'test-compliance-final-resolution',
             ])
             ->assertSessionHasNoErrors();
 
@@ -237,34 +422,59 @@ class RsldppWorkflowTest extends TestCase
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
             ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_REQUIRED',
-                'compliance_action' => 'REPLACEMENT',
-                'resolution_remarks' => 'One-for-one replacement required.',
-                'requires_rslddp' => '0',
-                'count_as_offense' => '0',
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Loss confirmed on inspection.',
                 '_action_token' => 'test-replacement-connected-decision',
             ])
             ->assertSessionHasNoErrors();
 
-        $incident->refresh();
-        $this->assertSame('COMPLIANCE_REQUIRED', $incident->status);
-        $this->assertSame('REPLACEMENT', $incident->compliance_action);
-
-        // Head decision alone does not change physical stock.
+        // Confirmation alone does not change physical stock.
         $afterDecision = $inventory->availability($item->fresh(), now(), now()->addMinute());
         $this->assertSame(1.0, $afterDecision['incident']);
         $this->assertSame(100.0, (float) $item->fresh()->total_quantity);
 
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.upload', $incident), [
+                'evidence' => UploadedFile::fake()->create('accomplished-rslddp.pdf', 5, 'application/pdf'),
+                '_action_token' => 'test-replacement-upload',
+            ])
+            ->assertSessionHasNoErrors();
+
+        // The Officer verifies compliance; the Officer does not choose the
+        // official disposition - the Head-only endpoint rejects the attempt.
         $this->actingAs($officer)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->post(route('incidents.resolve', $incident), [
-                'resolution_outcome' => 'COMPLIANCE_COMPLETED',
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'REPLACEMENT',
+                'resolution_remarks' => 'Attempted by Officer.',
+                '_action_token' => 'test-replacement-disposition-officer-blocked',
+            ])
+            ->assertForbidden();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'REPLACEMENT',
+                'resolution_remarks' => 'One-for-one replacement stated in the accomplished RSLDDP.',
+                '_action_token' => 'test-replacement-connected-disposition',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_COMPLIANCE_VERIFICATION', $incident->status);
+        $this->assertSame('REPLACEMENT', $incident->official_disposition);
+
+        $this->actingAs($officer)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.verify', $incident), [
+                'decision' => 'ACCEPTED',
                 '_action_token' => 'test-replacement-connected-verification',
             ])
             ->assertSessionHasNoErrors();
 
         $afterVerification = $inventory->availability($item->fresh(), now(), now()->addMinute());
-        $this->assertSame('RESOLVED', $incident->fresh()->status);
+        $this->assertSame('RSLDDP_FOR_RESOLUTION', $incident->fresh()->status);
         $this->assertSame(0.0, $afterVerification['incident']);
         $this->assertSame(100.0, (float) $item->fresh()->total_quantity);
         $this->assertSame(100.0, $afterVerification['borrower_available']);
@@ -275,6 +485,92 @@ class RsldppWorkflowTest extends TestCase
             'actor_user_id' => $officer->id,
             'reason' => 'Replacement Received',
         ]);
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.resolve', $incident), [
+                'resolution_remarks' => 'Replacement and AO verification accepted.',
+                '_action_token' => 'test-replacement-final-resolution',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('RESOLVED', $incident->fresh()->status);
+    }
+
+    public function test_official_disposition_cannot_be_recorded_before_required_rslddp_stage(): void
+    {
+        [$custody, $line] = $this->custody('Pre-upload Disposition Fixture');
+        [$head, $officer] = $this->headAndOfficer();
+        $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.resolve', $incident), [
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Confirmed.',
+                '_action_token' => 'test-disposition-before-upload-confirm',
+            ])
+            ->assertSessionHasNoErrors();
+
+        // Still RSLDDP_AWAITING_UPLOAD - the accomplished RSLDDP has not been
+        // uploaded yet, so no disposition can be recorded.
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'REPAIR',
+                'resolution_remarks' => 'Too early.',
+                '_action_token' => 'test-disposition-before-upload',
+            ])
+            ->assertStatus(422);
+
+        $this->assertNull($incident->fresh()->official_disposition);
+    }
+
+    public function test_other_disposition_skips_ao_verification_and_goes_directly_to_final_resolution(): void
+    {
+        [$custody, $line] = $this->custody('Undefined Process Fixture');
+        [$head, $officer] = $this->headAndOfficer();
+        $incident = $this->openIncident($custody, $line, $officer, 'DAMAGED');
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.resolve', $incident), [
+                'decision' => 'CONFIRM',
+                'resolution_remarks' => 'Confirmed.',
+                '_action_token' => 'test-other-disposition-confirm',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.upload', $incident), [
+                'evidence' => UploadedFile::fake()->create('accomplished-rslddp.pdf', 5, 'application/pdf'),
+                '_action_token' => 'test-other-disposition-upload',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.record', $incident), [
+                'official_disposition' => 'OTHER',
+                'official_disposition_details' => 'External office directed a non-standard remedy.',
+                'resolution_remarks' => 'Recorded as stated in the accomplished RSLDDP.',
+                '_action_token' => 'test-other-disposition-record',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_FOR_RESOLUTION', $incident->status);
+        $this->assertSame('OTHER', $incident->official_disposition);
+
+        // No AO verification role is invented for an undefined process.
+        $this->actingAs($officer)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.disposition.verify', $incident), [
+                'decision' => 'ACCEPTED',
+                '_action_token' => 'test-other-disposition-verify-attempt',
+            ])
+            ->assertStatus(422);
     }
 
     public function test_official_billing_statement_can_be_corrected_before_any_payment(): void
@@ -493,13 +789,20 @@ class RsldppWorkflowTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_ao_and_borrower_are_blocked_from_head_only_rslddp_endpoints(): void
+    /**
+     * Inverted from the pre-rework contract: the accomplished RSLDDP is now
+     * uploaded by SPMU Head/Admin only (spec Section F). The Action Officer
+     * is blocked, and the borrower - the previous uploader of record - is
+     * blocked too.
+     */
+    public function test_only_spmu_head_may_upload_accomplished_rslddp(): void
     {
         [$custody, $line] = $this->custody('Projector');
         [$head, $officer] = $this->headAndOfficer();
         $incident = $this->openIncident($custody, $line, $head, 'DAMAGED');
-        $incident->update(['status' => 'RSLDDP_AWAITING_UPLOAD', 'requires_rslddp' => true]);
-        $borrower = User::find($incident->borrower_user_id);
+        $incident->update(['status' => 'RSLDDP_AWAITING_UPLOAD', 'requires_rslddp' => true, 'accountability_flow_version' => 'V2']);
+        app(DocumentService::class)->rslddp($incident->fresh());
+        $borrower = User::query()->findOrFail($incident->borrower_user_id);
 
         $this->actingAs($officer)
             ->withSession(['active_workspace' => 'SPMU'])
@@ -507,18 +810,45 @@ class RsldppWorkflowTest extends TestCase
                 'evidence' => UploadedFile::fake()->create('x.pdf', 5, 'application/pdf'),
             ])
             ->assertForbidden();
+
+        $this->actingAs($head)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.upload', $incident), [
+                'evidence' => UploadedFile::fake()->create('x.pdf', 5, 'application/pdf'),
+            ])
+            ->assertSessionHasNoErrors();
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_DISPOSITION_PENDING', $incident->status);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'id' => $incident->rslddp_evidence_submission_id,
+            'upload_mode' => 'SPMU_HEAD_RECORDED',
+            'uploaded_by_user_id' => $head->id,
+        ]);
+
+        // The final verification/resolution step remains Head-only.
+        $this->actingAs($officer)
+            ->withSession(['active_workspace' => 'SPMU'])
+            ->post(route('incidents.rslddp.resolve', $incident), ['resolution_remarks' => 'x'])
+            ->assertForbidden();
+    }
+
+    public function test_borrower_cannot_upload_accomplished_rslddp(): void
+    {
+        [$custody, $line] = $this->custody('Whiteboard');
+        [$head, $officer] = $this->headAndOfficer();
+        $incident = $this->openIncident($custody, $line, $head, 'DAMAGED');
+        $incident->update(['status' => 'RSLDDP_AWAITING_UPLOAD', 'requires_rslddp' => true, 'accountability_flow_version' => 'V2']);
+        $borrower = User::query()->findOrFail($incident->borrower_user_id);
 
         $this->actingAs($borrower)
             ->withSession(['active_workspace' => 'BORROWER'])
             ->post(route('incidents.rslddp.upload', $incident), [
                 'evidence' => UploadedFile::fake()->create('x.pdf', 5, 'application/pdf'),
-            ])
-            ->assertForbidden();
+            ]);
 
-        $this->actingAs($officer)
-            ->withSession(['active_workspace' => 'SPMU'])
-            ->post(route('incidents.rslddp.resolve', $incident), ['resolution_remarks' => 'x'])
-            ->assertForbidden();
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->fresh()->status);
+        $this->assertNull($incident->fresh()->rslddp_evidence_submission_id);
     }
 
     public function test_review_violation_written_reprimand_creates_no_new_notice(): void
@@ -589,7 +919,7 @@ class RsldppWorkflowTest extends TestCase
             'RSLDDP_AWAITING_UPLOAD' => ['RSLDDP Processing', 'info'],
             'RSLDDP_FOR_ACCOUNTING_PROCESSING' => ['For Accounting Processing', 'info'],
             'RSLDDP_PAYMENT_REQUIRED' => ['Payment Required', 'warning'],
-            'RSLDDP_FOR_RESOLUTION' => ['For Resolution', 'info'],
+            'RSLDDP_FOR_RESOLUTION' => ['For Final Review', 'info'],
             'COMPLIANCE_RSLDDP_PENDING' => ['Compliance - RSLDDP Pending', 'info'],
         ];
 
@@ -613,9 +943,10 @@ class RsldppWorkflowTest extends TestCase
         $incident = $this->openIncident($custody, $line, $head, 'DAMAGED');
         $incident->update(['status' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'requires_rslddp' => true]);
 
+        /* Per-case status labels live behind the borrower-scoped deep link. */
         $this->actingAs($head)
             ->withSession(['active_workspace' => 'SPMU'])
-            ->get(route('accountability.index'))
+            ->get(route('accountability.index', ['borrower' => $incident->borrower_user_id]))
             ->assertOk()
             ->assertSee('For Accounting Processing', false)
             ->assertDontSee('Rslddp For Accounting Processing', false);
@@ -627,9 +958,9 @@ class RsldppWorkflowTest extends TestCase
 
         foreach ([
             'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
-            'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
-            'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
-            'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
+            'RSLDDP_DISPOSITION_PENDING' => 'Official Disposition Pending',
+            'RSLDDP_COMPLIANCE_VERIFICATION' => 'Compliance Verification',
+            'RSLDDP_FOR_RESOLUTION' => 'For Final Review',
             'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
         ] as $key => $label) {
             $this->assertArrayHasKey($key, $options);
@@ -642,6 +973,8 @@ class RsldppWorkflowTest extends TestCase
             'BILLING_PENDING' => 'Billing Pending (Legacy)',
             'FOR_BILLING' => 'Billing Statement Pending (Legacy)',
             'RETURNED_PENDING_SETTLEMENT' => 'Returned for Correction (Legacy)',
+            'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing (Legacy)',
+            'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required (Legacy)',
         ] as $key => $label) {
             $this->assertArrayHasKey($key, $options);
             $this->assertSame($label, $options[$key]);
@@ -660,7 +993,7 @@ class RsldppWorkflowTest extends TestCase
         $response->assertSee('RSLDDP Processing', false);
         $response->assertSee('For Accounting Processing', false);
         $response->assertSee('Payment Required', false);
-        $response->assertSee('For Resolution', false);
+        $response->assertSee('For Final Review', false);
         $response->assertSee('Compliance - RSLDDP Pending', false);
         $response->assertSee('Billing Statement Pending (Legacy)', false);
         $response->assertSee('Billing Pending (Legacy)', false);

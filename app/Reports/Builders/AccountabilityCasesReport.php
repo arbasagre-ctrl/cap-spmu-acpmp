@@ -161,7 +161,15 @@ class AccountabilityCasesReport implements ReportBuilder
             )
             ->when(
                 $status !== null,
-                fn (Collection $rows): Collection => $rows->filter(fn (array $row): bool => $row['_status_code'] === $status)
+                fn (Collection $rows): Collection => $rows->filter(function (array $row) use ($status): bool {
+                    if ($status !== 'OPEN_CURRENT') {
+                        return $row['_status_code'] === $status;
+                    }
+
+                    return $row['_case_type_code'] === 'LATE_RETURN'
+                        ? $row['_status_code'] !== 'RESOLVED'
+                        : ! in_array($row['_status_code'], ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'], true);
+                })
             )
             ->sortByDesc('_date_reported_raw')
             ->values()
@@ -280,9 +288,11 @@ class AccountabilityCasesReport implements ReportBuilder
             'COMPLIANCE_REQUIRED' => 'Compliance Required',
             'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
             'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
-            'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
-            'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
-            'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
+            'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing (Legacy)',
+            'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required (Legacy)',
+            'RSLDDP_DISPOSITION_PENDING' => 'Official Disposition Pending',
+            'RSLDDP_COMPLIANCE_VERIFICATION' => 'Compliance Verification',
+            'RSLDDP_FOR_RESOLUTION' => 'For Final Review',
             'RESOLVED' => 'Resolved',
             'CLOSED' => 'Closed',
             'VOID_CORRECTION' => 'Void Correction',

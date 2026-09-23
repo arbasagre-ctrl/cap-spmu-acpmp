@@ -41,6 +41,7 @@ class DashboardController extends Controller
         $nextCustodies = collect();
         $activeRequestBars = collect();
         $activeRequestTotal = 0;
+        $recentBorrowerActivity = collect();
         $dashboardMode = $workspace;
         $borrowerRestrictionActions = collect();
 
@@ -87,15 +88,13 @@ class DashboardController extends Controller
             $activeObligations = $borrowerObligationOverview['count'];
             $borrowerObligationRows = collect($obligationService->obligationRows($user->id));
 
-            // A standalone administrative restriction (a sanction with no
-            // linked incident, billing, or custody) is the one obligation
-            // type that can exist without a BorrowingRequest behind it, so it
-            // can never appear in the $queue below. It is surfaced here as an
-            // extra "Actions Requiring Your Attention" row instead of a
-            // separate obligation banner, so it is never silently invisible.
+            // Any borrower-action obligation without a linked custody/request
+            // cannot appear through the transaction queue below. Surface it
+            // once in Actions Requiring Your Attention so standalone billing
+            // or administrative restrictions are never hidden.
             $borrowerRestrictionActions = $borrowerObligationRows
-                ->where('category', 'restriction')
                 ->where('action_state', BorrowerObligationService::ACTION_BORROWER)
+                ->filter(fn (array $row): bool => empty($row['custody_transaction_id']))
                 ->values();
 
             // A custody sitting at the coarse OBLIGATION_OPEN/INCIDENT_OPEN
@@ -195,7 +194,7 @@ class DashboardController extends Controller
 
                     return ($right->updated_at?->getTimestamp() ?? 0) <=> ($left->updated_at?->getTimestamp() ?? 0);
                 })
-                ->take(6)
+                ->take(4)
                 ->values();
 
             // Dashboard overview: show several ongoing requests instead of
@@ -257,6 +256,30 @@ class DashboardController extends Controller
             $activeRequestTotal = $activeBorrowerRequests->count();
             $activeRequestBars = $activeBorrowerRequests->take(5)->values();
 
+            // Recent history belongs on the dashboard only when it is no
+            // longer part of the current action or active-monitoring lists.
+            // This keeps the dashboard useful without duplicating the same
+            // live request in multiple sections.
+            $excludedRecentRequestIds = collect($actionRequestIds)
+                ->merge($activeBorrowerRequests->pluck('id'))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $recentBorrowerActivityQuery = BorrowingRequest::query()
+                ->with(['currentVersion', 'custody'])
+                ->where('borrower_user_id', $user->id);
+
+            if ($excludedRecentRequestIds !== []) {
+                $recentBorrowerActivityQuery->whereNotIn('id', $excludedRecentRequestIds);
+            }
+
+            $recentBorrowerActivity = $recentBorrowerActivityQuery
+                ->latest('updated_at')
+                ->limit(3)
+                ->get();
+
             // Pickup and return dates are already shown contextually in the
             // Active Requests rows, so the borrower dashboard no longer performs
             // a second schedule query that would duplicate the same records.
@@ -301,14 +324,31 @@ class DashboardController extends Controller
                     ->where('sequence_no', 1)
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->oldest()
-                ->limit(6)
+                ->limit(4)
                 ->get();
 
             $nextCustodies = CustodyTransaction::query()
-                ->with(['borrower', 'request'])
-                ->whereNotIn('status', ['CLOSED'])
+                ->with(['borrower', 'request', 'lines'])
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+                ->where(function ($query) {
+                    $query->where(function ($pickup) {
+                        $pickup->whereNull('released_at')
+                            ->whereNotNull('scheduled_release_at')
+                            ->whereNull('pickup_expired_at')
+                            ->where(function ($window) {
+                                $window->whereNull('pickup_expires_at')
+                                    ->orWhere('pickup_expires_at', '>=', now());
+                            });
+                    })->orWhere(function ($return) {
+                        $return->whereNotNull('released_at')
+                            ->whereHas('lines', fn ($line) => $line
+                                ->whereColumn('returned_quantity', '<', 'actual_released_quantity'));
+                    });
+                })
+                ->orderByRaw('CASE WHEN released_at IS NULL THEN 0 ELSE 1 END')
+                ->orderBy('scheduled_release_at')
                 ->orderBy('due_at')
-                ->limit(5)
+                ->limit(3)
                 ->get();
         } elseif ($workspace === 'SPMU' && $classification === AccessClassification::SpmuHead) {
             $dashboardMode = 'SPMU_HEAD';
@@ -353,14 +393,31 @@ class DashboardController extends Controller
                     ->where('sequence_no', 2)
                     ->whereIn('decision', ['PENDING', 'RECEIVED']))
                 ->oldest()
-                ->limit(6)
+                ->limit(4)
                 ->get();
 
             $nextCustodies = CustodyTransaction::query()
-                ->with(['borrower', 'request'])
-                ->whereNotIn('status', ['CLOSED'])
+                ->with(['borrower', 'request', 'lines'])
+                ->whereNotIn('status', ['CLOSED', 'CANCELLED'])
+                ->where(function ($query) {
+                    $query->where(function ($pickup) {
+                        $pickup->whereNull('released_at')
+                            ->whereNotNull('scheduled_release_at')
+                            ->whereNull('pickup_expired_at')
+                            ->where(function ($window) {
+                                $window->whereNull('pickup_expires_at')
+                                    ->orWhere('pickup_expires_at', '>=', now());
+                            });
+                    })->orWhere(function ($return) {
+                        $return->whereNotNull('released_at')
+                            ->whereHas('lines', fn ($line) => $line
+                                ->whereColumn('returned_quantity', '<', 'actual_released_quantity'));
+                    });
+                })
+                ->orderByRaw('CASE WHEN released_at IS NULL THEN 0 ELSE 1 END')
+                ->orderBy('scheduled_release_at')
                 ->orderBy('due_at')
-                ->limit(5)
+                ->limit(3)
                 ->get();
         } elseif ($workspace === 'ICTU') {
             $dashboardMode = 'ICTU';
@@ -380,7 +437,7 @@ class DashboardController extends Controller
             $queue = User::query()
                 ->with('organizationalUnit')
                 ->latest()
-                ->limit(6)
+                ->limit(4)
                 ->get();
         }
 
@@ -393,7 +450,8 @@ class DashboardController extends Controller
             'nextCustodies',
             'activeRequestBars',
             'activeRequestTotal',
-            'borrowerRestrictionActions'
+            'borrowerRestrictionActions',
+            'recentBorrowerActivity'
         ));
     }
 

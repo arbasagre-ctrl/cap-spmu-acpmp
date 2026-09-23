@@ -275,7 +275,7 @@ class SpmuDocumentVerificationTest extends TestCase
                 'Permission to Conduct Letter'
             )
             ->assertSeeText(
-                'View Attachment'
+                'Preview'
             );
     }
 

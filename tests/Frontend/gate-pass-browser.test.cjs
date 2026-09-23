@@ -37,7 +37,10 @@ function mount() {
     root.querySelector = selector => selector.includes('="previous"') ? previous
         : selector.includes('="next"') ? next : controls[selector.slice(16, -1)];
     root.querySelectorAll = () => records;
-    const context = { document: { querySelector: () => root, createElement: () => element() } };
+    const context = {
+        document: { querySelector: () => root, createElement: () => element(), addEventListener() {} },
+        window: { addEventListener() {}, requestAnimationFrame() {}, innerWidth: 1024, innerHeight: 768 },
+    };
     vm.runInNewContext(script, context);
     return { ...controls, previous, next, context, records,
         visible: () => controls.list.children.filter(row => !row.hidden).map(row => Number(row.dataset.date)),

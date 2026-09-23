@@ -506,9 +506,9 @@ class AnalyticsRequestOutcomesTest extends TestCase
 
         $cancelled->assertOk();
         $cancelled->assertSee('Cancelled requests');
-        /* Reports cannot list cancelled requests, so no source link pretends otherwise. */
-        $cancelled->assertDontSee('View source records');
-        $cancelled->assertSee('does not include cancelled requests');
+        /* The Borrowing Activity Report can represent this group exactly when explicitly selected, so the source link is offered. */
+        $cancelled->assertSee('View source records');
+        $cancelled->assertSee('status=CANCELLED', false);
 
         /* An unknown group is not a detail. */
         $this->actingAs($head)->get(route('analytics.index', [

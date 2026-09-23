@@ -13,7 +13,6 @@ use App\Http\Controllers\CustodyController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DelegationController;
 use App\Http\Controllers\DocumentController;
-use App\Http\Controllers\EvidenceController;
 use App\Http\Controllers\GatePassController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\LaundryController;
@@ -379,25 +378,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:SPMU')
         ->name('custody.return');
 
-    Route::post('/custody/{custody}/early-return', [CustodyController::class, 'requestEarlyReturn'])
-        ->middleware('workspace:BORROWER')
-        ->name('custody.early-return');
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | Evidence
-    |--------------------------------------------------------------------------
-    */
-
-    Route::post('/documents/{document}/evidence', [EvidenceController::class, 'store'])
-        ->middleware('workspace:BORROWER,SPMU')
-        ->name('evidence.store');
-
-    Route::post('/evidence/{evidence}/verify', [EvidenceController::class, 'verify'])
-        ->middleware('workspace:SPMU')
-        ->name('evidence.verify');
-
 
     /*
     |--------------------------------------------------------------------------
@@ -482,6 +462,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:BORROWER,SPMU')
         ->name('accountability.index');
 
+    Route::get('/accountability/borrowers/{borrower}', [AccountabilityController::class, 'showBorrowerWorkspace'])
+        ->middleware('workspace:SPMU')
+        ->name('accountability.borrower');
+
     Route::post('/incidents/{incident}/bill', [AccountabilityController::class, 'billIncident'])
         ->middleware('workspace:SPMU')
         ->name('incidents.bill');
@@ -489,6 +473,14 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::post('/incidents/{incident}/resolve', [AccountabilityController::class, 'resolveIncident'])
         ->middleware('workspace:SPMU')
         ->name('incidents.resolve');
+
+    Route::post('/incidents/{incident}/disposition', [AccountabilityController::class, 'recordOfficialDisposition'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.disposition.record');
+
+    Route::post('/incidents/{incident}/disposition/verify', [AccountabilityController::class, 'verifyOfficialDispositionCompliance'])
+        ->middleware('workspace:SPMU')
+        ->name('incidents.disposition.verify');
 
     Route::post('/incidents/{incident}/rslddp/upload', [AccountabilityController::class, 'uploadAccomplishedRslddp'])
         ->middleware('workspace:SPMU')
@@ -509,6 +501,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::post('/overdue/{overdue}/bill', [AccountabilityController::class, 'billOverdue'])
         ->middleware('workspace:SPMU')
         ->name('overdue.bill');
+
+    Route::post('/overdue/{overdue}/resolve-without-charge', [AccountabilityController::class, 'resolveOverdueWithoutCharge'])
+        ->middleware('workspace:SPMU')
+        ->name('overdue.resolve-without-charge');
 
     Route::post('/billings/{billing}/payments', [AccountabilityController::class, 'recordPayment'])
         ->middleware('workspace:SPMU')

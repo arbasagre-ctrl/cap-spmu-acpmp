@@ -14,18 +14,18 @@ use App\Models\NotificationDelivery;
 use App\Models\NotificationEvent;
 use App\Models\OverdueCase;
 use App\Models\Sanction;
-use App\Models\SystemSetting;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Mail\Message;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 class NotificationService
 {
+    public function __construct(private SmsNotificationChannel $sms) {}
+
     /** @param iterable<User> $recipients */
     public function send(
         string $eventCode,
@@ -46,8 +46,29 @@ class NotificationService
             'occurred_at' => now(),
         ]);
 
-        foreach ($recipients as $recipient) {
-            foreach ($channels as $channel) {
+        foreach (collect($recipients)->filter()->unique(fn (User $recipient) => $recipient->id) as $recipient) {
+            $smsMessage = $this->sms->messageFor($eventCode, $recipient, $source);
+            $eventChannels = collect($channels)
+                ->map(fn ($channel) => strtoupper((string) $channel))
+                ->when($smsMessage !== null, fn ($configured) => $configured->push('SMS'))
+                ->unique()
+                ->values();
+
+            foreach ($eventChannels as $channel) {
+                if ($channel === 'SMS') {
+                    /*
+                     * An older caller may explicitly include SMS for an
+                     * event that is intentionally not SMS-eligible. Keep
+                     * that workflow in its existing channels rather than
+                     * allowing a null SMS body to affect the transaction.
+                     */
+                    if ($smsMessage !== null) {
+                        $this->sms->stage($event, $recipient, $smsMessage);
+                    }
+
+                    continue;
+                }
+
                 /*
                  * Respect the recipient's own notification preferences
                  * (Account Settings > Notification preferences). Defaults
@@ -159,47 +180,11 @@ class NotificationService
             }
         }
 
-        $provider = SystemSetting::value('sms_provider') ?: config('services.sms.provider');
-        $url = config('services.sms.webhook_url');
-
-        if (blank($provider) || blank($url)) {
-            return [
-                'FAILED',
-                $provider,
-                'SMS provider/webhook is not configured; system and email delivery remain available.',
-            ];
-        }
-
-        try {
-            $request = Http::timeout(10)->acceptJson();
-
-            if (filled(config('services.sms.token'))) {
-                $request = $request->withToken((string) config('services.sms.token'));
-            }
-
-            $response = $request->post($url, [
-                'to' => $address,
-                'message' => $message,
-                'event_code' => $eventCode,
-            ]);
-
-            return [
-                $response->successful() ? 'SENT' : 'FAILED',
-                (string) $provider,
-                'HTTP '.$response->status().' '.mb_substr($response->body(), 0, 900),
-            ];
-        } catch (Throwable $exception) {
-            Log::warning('SPMU SMS delivery failed', [
-                'event' => $eventCode,
-                'error' => $exception->getMessage(),
-            ]);
-
-            return [
-                'FAILED',
-                (string) $provider,
-                mb_substr($exception->getMessage(), 0, 1000),
-            ];
-        }
+        return [
+            'FAILED',
+            strtolower($channel),
+            'Unsupported notification channel.',
+        ];
     }
 
     /**
@@ -406,6 +391,7 @@ HTML;
             'PICKUP_SCHEDULED' => 'Pickup Schedule Updated',
             'RETURN_DUE_TODAY' => 'Return Due Today',
             'RETURN_DUE_TOMORROW' => 'Return Due Tomorrow',
+            'RETURN_SCHEDULE_ADJUSTED' => 'Return Schedule Updated',
             'EARLY_RETURN_REQUESTED' => 'Early Return Request Received',
             'CANCELLATION_REJECTED' => 'Cancellation Request Not Approved',
             'PICKUP_EXPIRED' => 'Pickup Schedule Missed',
@@ -427,21 +413,29 @@ HTML;
             'LATE_RETURN_BILLING_STATEMENT_ISSUED' => 'Late Return Billing Statement Issued',
             'ACCOUNTABILITY_OPENED', 'INCIDENT_RECORDED' => 'Property Accountability Case Opened',
             'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED' => 'Accountability Billing Statement Issued',
-            'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' => 'Property Accountability Decision',
+            'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' => 'Property Accountability Confirmed',
+            'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED' => 'Official Disposition Recorded',
+            'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED' => 'Verification Not Accepted',
             'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' => 'Property Accountability Resolved',
             'PAYMENT_VERIFIED', 'RECEIPT_VERIFIED' => 'Payment Confirmed',
             'EVIDENCE_VERIFIED' => 'Supporting Evidence Verified',
             'EVIDENCE_REJECTED' => 'Action Required: Replace Supporting Evidence',
             'ADMINISTRATIVE_SANCTION_RECORDED' => 'Administrative Sanction Notice',
+            'BORROWING_SUSPENSION_LIFTED' => 'Borrowing Suspension Lifted',
+            'ACCOUNT_ACCESS_DISABLED' => 'Account Access Disabled',
             default => $this->humanize($eventCode),
         };
 
         $headDecisionNext = null;
         if ($eventCode === 'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' && $source instanceof Incident) {
             $headDecisionNext = match (strtoupper((string) $source->status)) {
+                // Current flow: Confirm always means RSLDDP.
+                'RSLDDP_AWAITING_UPLOAD' => 'Complete the required external RSLDDP process. Check My Obligations for the current RSLDDP status.',
+                // Legacy statuses only - reachable exclusively through
+                // resolveIncidentLegacy(), never a new decision.
                 'COMPLIANCE_REQUIRED' => 'Complete the required repair, replacement, or other action shown in My Obligations. After completing it, present the item or required proof to the SPMU Action Officer for verification.',
                 'FOR_BILLING' => 'Follow the payment instructions shown in My Obligations. After payment, present the official Cashier receipt to the SPMU Action Officer for confirmation.',
-                default => 'Review My Obligations for the recorded finding and the action required for this accountability case.',
+                default => 'Review My Obligations for the recorded finding and current case status.',
             };
         }
 
@@ -453,6 +447,7 @@ HTML;
             'REQUEST_REJECTED' => 'Review the reason shown in this notification. Contact SPMU if you need clarification.',
             'REQUEST_CANCELLED' => 'No further pickup action is required for this request. Submit a new borrowing request if you need the items for another date.',
             'PICKUP_SCHEDULED' => 'Follow the updated pickup schedule shown below. Use the same approved request; no new borrowing request is needed.',
+            'RETURN_SCHEDULE_ADJUSTED' => 'Follow the updated Effective Return Date shown below. No reschedule request is needed; this operational-calendar adjustment is not treated as a late return.',
             'PICKUP_EXPIRED' => 'Choose Request Reschedule if you still need the items, or Cancel Request if you no longer need them.',
             'PICKUP_HELD_PREPARATION_ISSUE' => 'No borrower action is required. SPMU is reviewing the reported inventory discrepancy. The approved pickup schedule will not be changed automatically.',
             'PICKUP_RESCHEDULE_REQUESTED' => 'Review the request and assign the next available pickup schedule before the Expected Return Date.',
@@ -472,9 +467,13 @@ HTML;
             'ACCOUNTABILITY_OPENED', 'INCIDENT_RECORDED' => 'The SPMU Head/Admin will review the recorded finding. Check My Obligations for the case status and any required action.',
             'LATE_RETURN_BILLING_STATEMENT_ISSUED', 'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED' => 'Check My Obligations for the Billing Statement and payment instructions. After payment, present the official Cashier receipt to the SPMU Action Officer.',
             'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' => $headDecisionNext,
+            'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED' => 'Check My Obligations for the recorded disposition and the required next step.',
+            'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED' => "Review the SPMU Action Officer's remarks and present the corrected requirement again.",
             'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' => 'This accountability case is resolved. Check My Obligations only if another active obligation remains on your account.',
+            'BORROWING_SUSPENSION_LIFTED' => 'Your timed borrowing suspension has ended. Check My Obligations only if another active requirement remains on your account.',
             'PAYMENT_VERIFIED', 'RECEIPT_VERIFIED' => 'Your Cashier receipt has been confirmed. Check My Obligations for the updated balance or any remaining requirement.',
             'EVIDENCE_REJECTED' => 'Review the reason shown and submit the correct replacement document or evidence.',
+            'ACCOUNT_ACCESS_DISABLED' => 'Contact ICTU if you need help restoring account access.',
             default => null,
         };
 
@@ -518,9 +517,10 @@ HTML;
                 'ADMINISTRATIVE_SANCTION_RECORDED' => 'Sanction Details',
                 'BORROWING_OVERDUE', 'OVERDUE', 'RETURN_OVERDUE' => 'Return Details',
                 'LATE_RETURN_NOTICE_ISSUED' => 'Late Return Details',
+                'RETURN_SCHEDULE_ADJUSTED' => 'Return Schedule Details',
                 'LATE_RETURN_BILLING_STATEMENT_ISSUED' => 'Late Return Billing Details',
                 'ACCOUNTABILITY_BILLING_STATEMENT_ISSUED', 'PAYMENT_VERIFIED', 'RECEIPT_VERIFIED' => 'Billing Details',
-                'ACCOUNTABILITY_OPENED', 'INCIDENT_RECORDED', 'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED', 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' => 'Accountability Details',
+                'ACCOUNTABILITY_OPENED', 'INCIDENT_RECORDED', 'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED', 'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED', 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED', 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' => 'Accountability Details',
                 default => 'Details',
             },
             'itemsHeading' => match ($eventCode) {
@@ -566,14 +566,29 @@ HTML;
             }
 
             $schedule = $version?->getAttribute('schedule_date') ?: $version?->getAttribute('needed_from');
-            $return = $version?->getAttribute('return_date') ?: $version?->getAttribute('return_due_at');
+            $approvedReturn = $version?->getAttribute('return_date') ?: $version?->getAttribute('return_due_at');
+            $effectiveReturn = $eventCode === 'REQUEST_APPROVED'
+                ? ($source->custody?->due_at ?: $approvedReturn)
+                : $approvedReturn;
 
             if ($schedule) {
                 $data['details']['Date Needed'] = $this->date($schedule);
             }
 
-            if ($return) {
-                $data['details']['Expected Return Date'] = $this->date($return);
+            if (
+                $eventCode === 'REQUEST_APPROVED'
+                && $source->custody?->original_due_at
+                && $source->custody?->due_at
+                && ! $source->custody->original_due_at->isSameDay($source->custody->due_at)
+            ) {
+                $data['details']['Original Approved Return Date'] = $this->date($source->custody->original_due_at);
+                $data['details']['Effective Return Date'] = $this->date($source->custody->due_at);
+
+                if ($source->custody->due_adjustment_reason) {
+                    $data['details']['Schedule Adjustment'] = (string) $source->custody->due_adjustment_reason;
+                }
+            } elseif ($effectiveReturn) {
+                $data['details']['Expected Return Date'] = $this->date($effectiveReturn);
             }
 
             if (
@@ -674,16 +689,37 @@ HTML;
             }
 
             $schedule = $version?->getAttribute('schedule_date') ?: $version?->getAttribute('needed_from');
-            $return = $version?->getAttribute('return_date')
-                ?: $version?->getAttribute('return_due_at')
-                ?: $source->due_at;
 
             if ($schedule) {
                 $data['details']['Date Needed'] = $this->date($schedule);
             }
 
-            if ($return) {
-                $data['details']['Expected Return Date'] = $this->date($return);
+            if ($eventCode === 'RETURN_SCHEDULE_ADJUSTED') {
+                if ($source->original_due_at) {
+                    $data['details']['Original Approved Return Date'] = $this->date($source->original_due_at);
+                }
+
+                if ($source->due_at) {
+                    $data['details']['Effective Return Date'] = $this->date($source->due_at);
+                }
+
+                if ($source->due_adjustment_reason) {
+                    $data['details']['Adjustment Reason'] = (string) $source->due_adjustment_reason;
+                }
+            } else {
+                /*
+                 * Once custody exists, its due_at is the authoritative
+                 * operational deadline. The request version keeps the original
+                 * approved date for audit, but borrower/AO/SPMU notifications
+                 * must use the effective calendar-adjusted date.
+                 */
+                $return = $source->due_at
+                    ?: $version?->getAttribute('return_date')
+                    ?: $version?->getAttribute('return_due_at');
+
+                if ($return) {
+                    $data['details']['Expected Return Date'] = $this->date($return);
+                }
             }
 
             if (in_array($eventCode, ['RETURN_RECORDED', 'RETURN_INSPECTED'], true)) {
@@ -784,6 +820,10 @@ HTML;
             }
 
             foreach ($source->lines as $line) {
+                if ($eventCode === 'RETURN_SCHEDULE_ADJUSTED') {
+                    continue;
+                }
+
                 $requestItem = $line->requestItem;
                 $inventoryItem = $requestItem?->inventoryItem;
 
@@ -945,19 +985,31 @@ HTML;
                 $data['details']['Actual Return Date'] = $this->date($source->actual_return_date);
             }
 
-            $data['details']['Final Late Days'] = (string) ((int) $source->late_days);
+            /*
+             * Before the physical return is recorded, late_days/accrued_amount
+             * are only a running snapshot from today's date, not a finalized
+             * figure - never surface them as "final" in a pre-return email.
+             */
+            if ($source->actual_return_date) {
+                $data['details']['Final Late Days'] = (string) ((int) $source->late_days);
 
-            if ($eventCode === 'LATE_RETURN_NOTICE_ISSUED') {
+                if ($eventCode === 'LATE_RETURN_NOTICE_ISSUED') {
+                    $data['details']['Official Daily Late-Return Fee'] = $source->rate_snapshot !== null
+                        ? 'PHP '.number_format((float) $source->rate_snapshot, 2).' per day'
+                        : 'Not configured';
+                    $data['details']['Billing'] = (float) $source->accrued_amount > 0
+                        ? 'Total amount is stated separately in the Late Return Billing Statement'
+                        : 'No separate billing required';
+                } else {
+                    $data['details']['Assessment'] = (float) $source->accrued_amount > 0
+                        ? 'Billing Required — PHP '.number_format((float) $source->accrued_amount, 2)
+                        : 'No Charge';
+                }
+            } elseif ($eventCode === 'LATE_RETURN_NOTICE_ISSUED') {
                 $data['details']['Official Daily Late-Return Fee'] = $source->rate_snapshot !== null
                     ? 'PHP '.number_format((float) $source->rate_snapshot, 2).' per day'
                     : 'Not configured';
-                $data['details']['Billing'] = (float) $source->accrued_amount > 0
-                    ? 'Total amount is stated separately in the Late Return Billing Statement'
-                    : 'No separate billing required';
-            } else {
-                $data['details']['Assessment'] = (float) $source->accrued_amount > 0
-                    ? 'Billing Required — PHP '.number_format((float) $source->accrued_amount, 2)
-                    : 'No Charge';
+                $data['details']['Final Late Days & Total'] = 'Determined once the item is physically returned';
             }
 
             foreach ($custody?->lines ?? collect() as $line) {
@@ -1343,6 +1395,11 @@ HTML;
             'RETURN_DUE_TODAY' =>
                 'Reminder: your borrowed items are due for return today. Please return them to SPMU within the allowed return hours.',
 
+            'RETURN_SCHEDULE_ADJUSTED' =>
+                $isBorrower
+                    ? 'SPMU updated the operational calendar and your return deadline was moved to the next available Return schedule. Use the Effective Return Date shown below. You do not need to request a reschedule, and this calendar adjustment will not be treated as a late return.'
+                    : 'The operational calendar changed and the effective return deadline for this borrowing transaction was moved to the next available Return schedule.',
+
             /*
              * -----------------------------------------------------
              * RETURN
@@ -1397,8 +1454,18 @@ HTML;
 
             'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED' =>
                 $isBorrower
-                    ? 'The SPMU Head/Admin has recorded a decision for this property accountability case. Review the affected property, recorded finding, current case status, and the next required action below.'
-                    : 'The SPMU Head/Admin has recorded a decision for this property accountability case. The affected property and finding are shown below.',
+                    ? 'The SPMU Head/Admin confirmed this property accountability case. RSLDDP Status: For External Processing. Borrowing Status: Restricted. Next Action: Complete the required RSLDDP process.'
+                    : 'The SPMU Head/Admin confirmed this property accountability case. The affected property and finding are shown below.',
+
+            'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED' =>
+                $isBorrower
+                    ? 'The SPMU Head/Admin has recorded the official disposition for this property accountability case, based on the accomplished RSLDDP. Review the required next step below.'
+                    : 'The official disposition has been recorded for this property accountability case.',
+
+            'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED' =>
+                $isBorrower
+                    ? 'The SPMU Action Officer did not accept the presented requirement for this property accountability case. Review the remarks below and present the corrected requirement.'
+                    : 'A compliance verification for this property accountability case was not accepted.',
 
             'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED' =>
                 $isBorrower

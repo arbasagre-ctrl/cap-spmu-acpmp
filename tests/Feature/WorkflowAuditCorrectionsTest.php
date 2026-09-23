@@ -91,13 +91,25 @@ class WorkflowAuditCorrectionsTest extends TestCase
         $item = InventoryItem::where('unique_description', 'Monoblock Chairs')->firstOrFail();
         $beforeAvailable = (float) $inventory->availability($item, now()->subMonth(), now()->addMonth())['current_available'];
 
-        $this->withSession(['active_workspace' => 'BORROWER'])
-            ->actingAs($borrower)
-            ->post(route('custody.early-return', $custody), [
-                'proposed_return_at' => $custody->due_at->copy()->subHour()->format('Y-m-d H:i:s'),
-                'reason' => 'Event ended early.',
-            ])
-            ->assertSessionHasNoErrors();
+        /*
+         * Approved rule: "Early return uses normal Return Inspection; do not
+         * recreate legacy custody.early-return." There is no borrower-facing
+         * route for this anymore - an actual early physical return is
+         * recorded through the ordinary Return Inspection endpoint
+         * (custody.return) exactly like any other return, classified purely
+         * by calendar date (see CustodyService::receiveReturn()'s own
+         * "AUTOMATIC RETURN CLASSIFICATION" comment).
+         * CustodyService::requestEarlyReturn() itself remains as optional
+         * borrower/SPMU coordination-only with no HTTP route to it, so it is
+         * called directly here to prove it still never touches inventory or
+         * returned quantity.
+         */
+        app(CustodyService::class)->requestEarlyReturn(
+            $custody,
+            $borrower,
+            $custody->due_at->copy()->subHour()->format('Y-m-d H:i:s'),
+            'Event ended early.'
+        );
 
         $line->refresh();
         $custody->refresh();

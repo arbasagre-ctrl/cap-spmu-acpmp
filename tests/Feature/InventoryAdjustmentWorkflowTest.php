@@ -54,7 +54,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
         ]);
     }
 
-    private function head(): User
+    private function spmuHead(): User
     {
         return User::factory()->create([
             'access_classification' => AccessClassification::SpmuHead,
@@ -197,7 +197,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_accountability_restoration_can_use_linked_incident_without_duplicate_reason_text(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'RESOLVED');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'REPLACEMENT_RECEIVED',
@@ -217,7 +217,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_stock_increasing_adjustments_still_require_documented_source_or_basis(): void
     {
         $item = $this->item('Reason Required Item', 5);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->expectException(ValidationException::class);
 
@@ -230,7 +230,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_replacement_received_restores_incident_quantity_without_increasing_total_stock(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'RESOLVED');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'REPLACEMENT_RECEIVED',
@@ -256,7 +256,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_write_off_retires_incident_quantity_without_creating_false_available_stock(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'RESOLVED');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'WRITE_OFF_RETIRED',
@@ -277,7 +277,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_additional_stock_and_physical_count_corrections_are_stock_card_movements(): void
     {
         $item = $this->item('Stock Count Item', 5);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'STOCK_ADDITION',
@@ -309,7 +309,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_manual_maintenance_hold_removes_only_free_stock_and_can_be_restored(): void
     {
         $item = $this->item('Preparation Condition Item', 10);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'PLACE_UNDER_MAINTENANCE',
@@ -348,7 +348,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_manual_maintenance_stock_can_be_retired_without_creating_available_stock(): void
     {
         $item = $this->item('Condemn Maintenance Item', 10);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'PLACE_UNDER_MAINTENANCE',
@@ -392,7 +392,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_manual_inventory_adjustment_cannot_duplicate_ao_compliance_restoration(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'COMPLIANCE_REQUIRED');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->post(route('inventory.adjust', $item), [
@@ -412,7 +412,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_inactive_inventory_remains_visible_to_spmu_for_reactivation_and_review(): void
     {
         $item = $this->item('Archived Item', 5, active: false);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->get(route('inventory.index'))
@@ -429,36 +429,45 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_edit_screen_does_not_allow_direct_total_stock_or_condition_changes(): void
     {
         $item = $this->item('Controlled Stock Item', 8);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->get(route('inventory.edit', $item))
             ->assertOk()
             ->assertDontSee('name="total_quantity"', false)
             ->assertDontSee('name="condition_code"', false)
-            ->assertSee('Record Inventory Adjustment');
+            ->assertSee('Managed from Inventory Overview')
+            ->assertSee('View Inventory Overview');
     }
 
-    public function test_laundry_managed_item_uses_laundry_workflow_instead_of_manual_maintenance_actions(): void
+    public function test_laundry_managed_item_can_enter_a_manual_maintenance_hold_when_physically_damaged(): void
     {
         $item = $this->item('Round Table Cloth', 12, laundryRequired: true);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->get(route('inventory.show', $item))
             ->assertOk()
             ->assertSee('Additional Stock Received')
             ->assertSee('Physical Count Correction')
-            ->assertDontSee('Place Stock Under Maintenance')
+            ->assertSee('Place Stock Under Maintenance')
             ->assertDontSee('Return Maintenance Stock to Service')
             ->assertDontSee('Retire / Condemn Maintenance Stock');
-
-        $this->expectException(ValidationException::class);
 
         $this->inventory->recordAdjustment($item, $head, [
             'action' => 'PLACE_UNDER_MAINTENANCE',
             'quantity' => 1,
-            'reason' => 'Crafted maintenance request for a laundry-managed item.',
+            'reason' => 'One unit is physically damaged and requires maintenance.',
+        ]);
+
+        $balance = $this->inventory->availability($item->fresh(), now(), now()->addMinute());
+
+        $this->assertSame(1.0, $balance['condition_hold']);
+        $this->assertSame(11.0, $balance['borrower_available']);
+        $this->assertDatabaseHas('inventory_transactions', [
+            'transaction_type' => 'INVENTORY_CONDITION_HOLD',
+            'source_type' => InventoryItem::class,
+            'source_id' => $item->id,
         ]);
     }
 
@@ -485,7 +494,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_non_linen_return_and_retire_actions_appear_only_when_manual_maintenance_hold_exists(): void
     {
         $item = $this->item('Maintenance Eligibility Item', 8);
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->get(route('inventory.show', $item))
@@ -509,7 +518,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
 
     public function test_non_linen_borrowing_history_does_not_offer_laundry_filter_but_laundry_item_does(): void
     {
-        $head = $this->head();
+        $head = $this->spmuHead();
         $nonLinen = $this->item('Non Linen Filter Item', 4);
         $linen = $this->item('Linen Filter Item', 4, laundryRequired: true);
 
@@ -527,7 +536,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_write_off_is_hidden_until_accountability_case_has_final_resolution(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'OPEN');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->get(route('inventory.show', $item))
@@ -545,7 +554,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_write_off_rejects_non_final_accountability_case_even_with_crafted_request(): void
     {
         [$item, $incident] = $this->incidentItem('LOST', 'OPEN');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->expectException(ValidationException::class);
 
@@ -562,7 +571,7 @@ class InventoryAdjustmentWorkflowTest extends TestCase
     public function test_item_with_active_inventory_commitment_cannot_be_archived(): void
     {
         [$item] = $this->incidentItem('LOST', 'OPEN');
-        $head = $this->head();
+        $head = $this->spmuHead();
 
         $this->actingAs($head)
             ->from(route('inventory.edit', $item))

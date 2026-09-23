@@ -50,9 +50,11 @@ return [
     ],
 
     'sms' => [
+        'enabled' => env('SMS_ENABLED', false),
         'provider' => env('SMS_PROVIDER'),
         'webhook_url' => env('SMS_WEBHOOK_URL'),
         'token' => env('SMS_API_TOKEN'),
+        'sender_name' => env('SMS_SENDER_NAME'),
     ],
 
 ];

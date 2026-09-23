@@ -19,6 +19,7 @@
                 'ITEMS_RELEASED' => 'Borrowed Items Released',
                 'RETURN_DUE_TOMORROW' => 'Return Due Tomorrow',
                 'RETURN_DUE_TODAY' => 'Return Due Today',
+                'RETURN_SCHEDULE_ADJUSTED' => 'Return Schedule Updated',
                 'RETURN_INSPECTED' => 'Return Inspected',
                 'TRANSACTION_CLOSED' => 'Borrowing Transaction Completed',
                 'BORROWING_OVERDUE' => 'Return Overdue',

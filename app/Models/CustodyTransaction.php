@@ -208,9 +208,11 @@ class CustodyTransaction extends Model
                 'COMPLIANCE_REQUIRED' => ['key' => 'COMPLIANCE_REQUIRED', 'label' => 'Compliance Required'],
                 'COMPLIANCE_RSLDDP_PENDING' => ['key' => 'COMPLIANCE_RSLDDP_PENDING', 'label' => 'Compliance - RSLDDP Pending'],
                 'RSLDDP_AWAITING_UPLOAD' => ['key' => 'RSLDDP_AWAITING_UPLOAD', 'label' => 'RSLDDP Processing'],
-                'RSLDDP_FOR_ACCOUNTING_PROCESSING' => ['key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'label' => 'For Accounting Processing'],
-                'RSLDDP_PAYMENT_REQUIRED' => ['key' => 'RSLDDP_PAYMENT_REQUIRED', 'label' => 'Payment Required'],
-                'RSLDDP_FOR_RESOLUTION' => ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Resolution'],
+                'RSLDDP_FOR_ACCOUNTING_PROCESSING' => ['key' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'label' => 'For Accounting Processing'], // legacy only
+                'RSLDDP_PAYMENT_REQUIRED' => ['key' => 'RSLDDP_PAYMENT_REQUIRED', 'label' => 'Payment Required'], // legacy only
+                'RSLDDP_DISPOSITION_PENDING' => ['key' => 'RSLDDP_DISPOSITION_PENDING', 'label' => 'Official Disposition Pending'],
+                'RSLDDP_COMPLIANCE_VERIFICATION' => ['key' => 'RSLDDP_COMPLIANCE_VERIFICATION', 'label' => \App\Support\AccountabilityDispositionLabels::subStatusLabel($incident)],
+                'RSLDDP_FOR_RESOLUTION' => ['key' => 'RSLDDP_FOR_RESOLUTION', 'label' => 'For Final Review'],
                 default => ['key' => 'INCIDENT_OPEN', 'label' => 'Accountability Pending'],
             };
         }
@@ -396,18 +398,30 @@ class CustodyTransaction extends Model
                     'label' => 'For Accounting Processing',
                     'title' => 'Forwarded for Accounting processing',
                     'copy' => 'The accomplished RSLDDP is being processed by the Accounting Office toward an Official Billing Statement.',
-                ],
+                ], // legacy only
                 'RSLDDP_PAYMENT_REQUIRED' => [
                     'key' => 'RSLDDP_PAYMENT_REQUIRED',
                     'label' => 'Payment Required',
                     'title' => 'Payment required',
                     'copy' => 'The Official Billing Statement has been recorded. Payment through the CSPC Cashier is required.',
+                ], // legacy only
+                'RSLDDP_DISPOSITION_PENDING' => [
+                    'key' => 'RSLDDP_DISPOSITION_PENDING',
+                    'label' => 'Official Disposition Pending',
+                    'title' => 'Official disposition pending',
+                    'copy' => 'The accomplished RSLDDP has been received. The SPMU Head/Admin still needs to record the official disposition it states.',
+                ],
+                'RSLDDP_COMPLIANCE_VERIFICATION' => [
+                    'key' => 'RSLDDP_COMPLIANCE_VERIFICATION',
+                    'label' => \App\Support\AccountabilityDispositionLabels::subStatusLabel($incident),
+                    'title' => 'Compliance verification pending',
+                    'copy' => 'The official disposition has been recorded. Payment or compliance verification is still required.',
                 ],
                 'RSLDDP_FOR_RESOLUTION' => [
                     'key' => 'RSLDDP_FOR_RESOLUTION',
-                    'label' => 'For Resolution',
+                    'label' => 'For Final Review',
                     'title' => 'Awaiting final verification',
-                    'copy' => 'Payment has been recorded. The SPMU Head/Admin still needs to verify and resolve the case.',
+                    'copy' => 'The SPMU Head/Admin still needs to complete the final review and resolve the case.',
                 ],
                 default => [
                     'key' => 'ACCOUNTABILITY_REVIEW',
@@ -481,10 +495,45 @@ class CustodyTransaction extends Model
         }
 
         if ((string) $this->status === 'CLOSED') {
+            /*
+             * CLOSED means the physical custody has already ended, but a
+             * historical/late-created accountability record must never make
+             * the UI say Completed while an obligation is still open. This is
+             * a defensive presentation check for legacy/mixed records whose
+             * stored custody status has not yet been reconciled by the normal
+             * workflow trigger.
+             */
+            $activeAccountability = $this->activeAccountabilityIndicator();
+
+            if ($activeAccountability) {
+                $obligation = $this->openObligationSummary();
+
+                return [
+                    'key' => (string) ($obligation['key'] ?? $activeAccountability['key']),
+                    'label' => (string) ($obligation['label'] ?? $activeAccountability['label']),
+                    'group' => 'attention',
+                ];
+            }
+
+            $gatePass = $this->relationLoaded('gatePass')
+                ? $this->gatePass
+                : $this->gatePass()->first();
+
+            if ($gatePass && ! in_array((string) $gatePass->status, ['VERIFIED', 'VOID'], true)) {
+                return ['key' => 'GATE_PASS_PENDING', 'label' => 'Gate Pass Pending', 'group' => 'attention'];
+            }
+
             $hasLaundryItem = $this->lines->contains(
                 fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
             );
             $laundryJob = $this->laundryJob;
+
+            if ($hasLaundryItem
+                && $laundryJob
+                && ! in_array((string) $laundryJob->status, ['TURNED_OVER_TO_LAUNDRY', 'LAUNDRY_COMPLETED'], true)) {
+                return ['key' => 'LINEN_PENDING', 'label' => 'Linen Pending', 'group' => 'return'];
+            }
+
             $fullyComplete = ! $hasLaundryItem
                 || ($laundryJob?->status === 'LAUNDRY_COMPLETED' && $laundryJob?->latestEvidence?->file);
 

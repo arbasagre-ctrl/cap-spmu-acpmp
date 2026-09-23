@@ -59,26 +59,6 @@
         fn ($line) => ! (bool) $line->requestItem?->inventoryItem?->laundry_required
     );
 
-    $activeEarlyReturn = $custody->earlyReturnRequests
-        ->where('status', 'REQUESTED')
-        ->sortByDesc(fn ($notice) => $notice->requested_at?->timestamp ?? 0)
-        ->first();
-
-    $earlyReturnEligibleLines = $custody->lines->filter(
-        fn ($line) => floor(max(
-            0,
-            (float) $line->actual_released_quantity - (float) $line->returned_quantity
-        )) >= 1
-    );
-
-    $canRequestEarlyReturn = $isBorrower
-        && ! $activeEarlyReturn
-        && (bool) $custody->released_at
-        && $custody->status === 'ACTIVE'
-        && ! $custody->closed_at
-        && $earlyReturnEligibleLines->isNotEmpty()
-        && (bool) $custody->due_at
-        && now()->lt($custody->due_at);
     $preparationComplete = (bool) $custody->prepared_at;
     $preparationIssueRecords = collect($preparationIssues ?? []);
     $hasOpenPreparationIssue = $preparationIssueRecords->where('is_resolved', false)->isNotEmpty();
@@ -314,37 +294,6 @@
 </section>
 @endif
 
-@if($activeEarlyReturn && ! $isBorrower)
-    <section class="content-area">
-        <article class="card">
-            <div class="card-header">
-                <div>
-                    <p class="eyebrow">Return coordination</p>
-                    <h2>Early Return Coordination</h2>
-                </div>
-                <span class="status-badge status-info">Active Notice</span>
-            </div>
-
-            <dl class="detail-list compact-detail-list">
-                <dt>Handover Schedule</dt>
-                <dd>{{ optional($activeEarlyReturn->proposed_return_at)->format('d F Y, g:i A') ?: '—' }}</dd>
-
-                <dt>Coordination Note</dt>
-                <dd>{{ $activeEarlyReturn->reason ?: 'No coordination note provided.' }}</dd>
-            </dl>
-
-            <div class="callout info top-gap">
-                <strong>Coordination only</strong>
-                <p>
-                    This notice only tells SPMU when the borrower plans to hand items back.
-                    Actual returned quantities and conditions are recorded by the Action Officer during physical Return &amp; Inspection.
-                    Inventory and custody quantities do not change from this notice.
-                </p>
-            </div>
-        </article>
-    </section>
-@endif
-
 @if($isBorrower)
     @php
         $borrowerItemCount = $custody->lines->count();
@@ -372,6 +321,19 @@
             default => 'Applicable',
         };
 
+        $borrowerCanCancelRequest = $custody->request
+            && ! in_array(
+                $custody->request->status,
+                [
+                    \App\Enums\RequestStatus::Draft,
+                    \App\Enums\RequestStatus::Cancelled,
+                    \App\Enums\RequestStatus::Rejected,
+                    \App\Enums\RequestStatus::Expired,
+                ],
+                true
+            )
+            && ! $custody->released_at;
+
         /*
          * The one date that matters right now, appended to the status line so
          * the borrower does not have to read the summary grid to find it.
@@ -384,7 +346,7 @@
             $custody->status === 'OVERDUE' && $returnDate
                 => ['Was due', $returnDate->format('d M Y')],
             $borrowerReleased && $returnDate
-                => ['Expected return', $returnDate->format('d M Y')],
+                => [$returnDateAdjusted ? 'Effective return' : 'Expected return', $returnDate->format('d M Y')],
             $pickupWindowOpen && $pickupWindowEndsAt
                 => ['Pickup window closes', $pickupWindowEndsAt->format('d M Y, g:i A')],
             $pickupWindowUpcoming && $pickupWindowStartsAt
@@ -405,10 +367,19 @@
             null,
         ];
 
+        $borrowerReturnNote = null;
+        if ($returnDateAdjusted) {
+            $borrowerReturnNote = 'Adjusted from '.$originalReturnDate?->format('d M Y');
+
+            if ($custody->due_adjustment_reason) {
+                $borrowerReturnNote .= ' · '.$custody->due_adjustment_reason;
+            }
+        }
+
         $borrowerFacts[] = [
             $returnDateAdjusted ? 'Effective Return' : 'Expected Return',
             ($returnDateAdjusted ? $returnDate : $originalReturnDate)?->format('d M Y') ?: 'Not available',
-            $returnDateAdjusted ? 'Original: '.$originalReturnDate?->format('d M Y') : null,
+            $borrowerReturnNote,
         ];
 
         $borrowerFacts[] = $borrowerReleased
@@ -480,28 +451,34 @@
                         </form>
                     @endif
 
-                    <a
-                        class="button secondary small ui-pressable borrower-custody-status-action"
-                        href="{{ $accountabilityIndicator ? route('accountability.index') : route('requests.show', $custody->request) }}"
-                    >
-                        {{ $accountabilityIndicator ? 'View Obligation' : ($pickupMissed ? 'Open Request Actions' : 'View Request') }}
-                        <x-icon name="arrow-right" size="15" />
-                    </a>
+                    @if($pickupMissed && $borrowerCanCancelRequest)
+                        @include('requests.partials.borrower-cancel-control', [
+                            'borrowingRequest' => $custody->request,
+                            'cancelTriggerClass' => 'button secondary small ui-pressable borrower-custody-status-action borrower-cancel-trigger is-danger',
+                            'cancelTriggerLabel' => 'Cancel Request',
+                            'cancelDialogTitle' => 'Cancel this approved request?',
+                            'cancelDialogCopy' => 'The reserved items will return to Available inventory and this approved request will close. You can no longer continue this pickup after cancellation.',
+                            'cancelReasonPlaceholder' => 'Briefly explain why you no longer need this approved request...',
+                        ])
+                    @elseif($accountabilityIndicator)
+                        <a
+                            class="button secondary small ui-pressable borrower-custody-status-action"
+                            href="{{ route('accountability.index') }}"
+                        >
+                            View Obligation
+                            <x-icon name="arrow-right" size="15" />
+                        </a>
+                    @elseif(! $pickupMissed)
+                        <a
+                            class="button secondary small ui-pressable borrower-custody-status-action"
+                            href="{{ route('requests.show', $custody->request) }}"
+                        >
+                            View Request
+                            <x-icon name="arrow-right" size="15" />
+                        </a>
+                    @endif
                 </div>
             </div>
-
-            {{-- Coordination already sent: one line, not a card. --}}
-            @if($activeEarlyReturn)
-                <div class="borrower-early-return-notice">
-                    <div>
-                        <strong>Early return requested for {{ optional($activeEarlyReturn->proposed_return_at)->format('d M Y, g:i A') ?: 'a proposed schedule' }}</strong>
-                        <small>
-                            SPMU has your proposed handover schedule. Quantities and conditions are recorded during Return &amp; Inspection.
-                        </small>
-                    </div>
-                    <span class="status-badge status-info">Awaiting SPMU</span>
-                </div>
-            @endif
 
             {{-- Transaction facts --}}
             <article class="card">
@@ -654,109 +631,6 @@
                         </div>
                     @endif
                 </article>
-            @endif
-
-            {{--
-                Optional coordination. Folded away by default so it never
-                competes with the record itself, and opened automatically when
-                a submission comes back with validation errors.
-            --}}
-            @if($canRequestEarlyReturn)
-                <details
-                    class="card borrower-early-return"
-                    id="early-return-request"
-                    @if($errors->any()) open @endif
-                >
-                    <summary class="borrower-early-return-summary">
-                        <span class="borrower-card-icon" aria-hidden="true">
-                            <x-icon name="custody" size="21" />
-                        </span>
-
-                        <span class="borrower-early-return-copy">
-                            <strong>Request early return</strong>
-                            <small>Returning the items sooner? Propose an early return date, then follow the applicable SPMU or Laundry Area return channel.</small>
-                        </span>
-
-                        <span class="borrower-early-return-toggle">
-                            <span class="is-open">Open form</span>
-                            <span class="is-close">Close</span>
-                            <x-icon name="chevron-down" size="16" />
-                        </span>
-                    </summary>
-
-                    <form
-                        method="post"
-                        action="{{ route('custody.early-return', $custody) }}"
-                        class="borrower-early-return-body"
-                    >
-                        @csrf
-
-                        <label for="early-return-proposed-at">
-                            Proposed handover date &amp; time
-                            <input
-                                id="early-return-proposed-at"
-                                type="datetime-local"
-                                name="proposed_return_at"
-                                value="{{ old('proposed_return_at') }}"
-                                min="{{ now()->addMinute()->format('Y-m-d\TH:i') }}"
-                                max="{{ $custody->due_at->format('Y-m-d\TH:i') }}"
-                                required
-                            >
-                            @error('proposed_return_at')
-                                <small class="field-error">{{ $message }}</small>
-                            @enderror
-                        </label>
-
-                        <div class="borrower-early-return-outstanding">
-                            <table class="borrower-early-return-table" aria-label="Outstanding items currently on custody">
-                                <thead>
-                                    {{-- Wording is part of the early-return workflow contract:
-                                         outstanding quantities are read-only context, never an
-                                         input for a quantity to hand over. --}}
-                                    <tr>
-                                        <th scope="col">Outstanding Item</th>
-                                        <th scope="col">Unit</th>
-                                        <th scope="col">Currently On Custody</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach($earlyReturnEligibleLines as $line)
-                                        @php
-                                            $outstanding = max(
-                                                0,
-                                                (float) $line->actual_released_quantity - (float) $line->returned_quantity
-                                            );
-                                        @endphp
-                                        <tr>
-                                            <td>
-                                                <strong>{{ $line->requestItem->description_snapshot }}</strong>
-                                            </td>
-                                            <td>{{ $line->requestItem->unit_snapshot ?: '—' }}</td>
-                                            <td class="is-quantity">{{ $outstanding + 0 }}</td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <p class="meta">
-                            Quantities are shown for reference only. Non-linen is physically inspected by the Action Officer at SPMU. Linen is physically received and checked by Laundry Personnel, then encoded by the Action Officer from the accomplished Laundry Form.
-                        </p>
-
-                        <label for="early-return-reason">
-                            Coordination note (optional)
-                            <textarea id="early-return-reason" name="reason" maxlength="1000">{{ old('reason') }}</textarea>
-                            @error('reason')
-                                <small class="field-error">{{ $message }}</small>
-                            @enderror
-                        </label>
-
-                        <div class="borrower-early-return-actions">
-                            <button class="button primary ui-pressable">Send request</button>
-                            <span class="meta">Coordination only. Inventory and custody quantities do not change.</span>
-                        </div>
-                    </form>
-                </details>
             @endif
 
         </div>

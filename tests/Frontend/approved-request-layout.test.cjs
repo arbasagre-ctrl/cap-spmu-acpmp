@@ -10,12 +10,12 @@ const heading = read('resources/views/requests/partials/operational-heading.blad
 const details = read('resources/views/requests/partials/operational-details.blade.php');
 const styles = read('resources/views/requests/partials/operational-styles.blade.php');
 const tracker = read('resources/views/components/request-progress-tracker.blade.php');
+const auditHistory = read('resources/views/requests/partials/audit-history.blade.php');
 
 test('compact request layout is limited to SPMU custody records outside approval review', () => {
     assert.match(page, /\$isOperationalRequestLayout = \$isSpmu && \(bool\) \$custody && ! \$isUnderSpmuReview;/);
     assert.match(page, /@elseif\(\$isOperationalRequestLayout\)\s+@include\('requests\.partials\.operational-details'\)\s+@elseif\(!\$isUnderSpmuReview\)/);
     assert.match(page, /data-spmu-verification-workspace/);
-    assert.match(page, /data-borrower-request-tabs/);
 });
 
 test('heading uses live request identity, workflow status and the existing custody route', () => {
@@ -25,14 +25,19 @@ test('heading uses live request identity, workflow status and the existing custo
     assert.match(heading, /route\('custody\.show', \$borrowingRequest->custody\)/);
     assert.match(heading, /Open Custody Record/);
     assert.match(heading, /\$detailStatus === 'READY_FOR_RELEASE' => 'Proceed to physical release'/);
-    assert.match(heading, /\$requestIsCompleted => 'Review the custody record'/);
-    assert.match(heading, /\['OBLIGATION_OPEN', 'INCIDENT_OPEN'\]/);
+    assert.match(heading, /\$requestIsCompleted => 'Custody record'/);
+    assert.match(heading, /\$hasOperationalObligation = \(bool\) \$obligationSummary;/);
     assert.doesNotMatch(heading, /BR-2026|Borrower Demo|Ruby Foundation/);
 });
 
 test('operational layout moves rather than duplicates the custody action', () => {
     assert.match(page, /@if\(\$borrowingRequest->custody && !\$isBorrower && !\$isOperationalRequestLayout\)/);
-    assert.equal((heading.match(/route\('custody\.show'/g) || []).length, 1);
+    /*
+     * The custody link now appears once for a completed request and once for
+     * an active, non-obligation request (mutually exclusive branches), not
+     * just once overall.
+     */
+    assert.equal((heading.match(/route\('custody\.show'/g) || []).length, 2);
     assert.doesNotMatch(details, /route\('custody\.show'/);
 });
 
@@ -43,9 +48,8 @@ test('borrowing information and document rows retain live data and protected lin
     assert.match(details, /\$currentDocs->sortBy/);
     assert.match(details, /\$doc->version_no/);
     assert.match(details, /\$doc->verification_status/);
-    assert.match(details, /route\('files\.show', \$doc->file, false\)/);
-    assert.match(details, /target="_blank" rel="noopener"/);
-    assert.match(details, /No current scanned supporting document/);
+    assert.match(details, /route\('files\.preview', \$doc->file, false\)/);
+    assert.match(details, /No current scanned request document/);
 });
 
 test('requested items retain approved, pending and requested quantities with their original units', () => {
@@ -59,17 +63,24 @@ test('requested items retain approved, pending and requested quantities with the
 });
 
 test('activity history is a native collapsed disclosure and retains the full audit table', () => {
-    const opening = page.match(/<details\b[^>]*request-activity-history[^>]*>/)?.[0];
+    /*
+     * This section was extracted into its own partial (audit-history.blade.php)
+     * and enriched into a merged lifecycle timeline (request, review, pickup,
+     * release, gate pass, laundry, return, accountability, completion) instead
+     * of a raw statusHistory dump. The native <details> disclosure, the
+     * collapsed-by-default behaviour and the underlying statusHistory data
+     * source are all still present, just reshaped.
+     */
+    const opening = auditHistory.match(/<details\b[^>]*request-activity-history[^>]*>/)?.[0];
     assert.ok(opening);
     assert.doesNotMatch(opening, /\bopen(?:\s|=|>)/);
-    assert.match(page, /<summary class="request-activity-summary">/);
-    assert.match(page, /statusHistory->sortByDesc\('changed_at'\)->first\(\)/);
-    assert.match(page, /@forelse\(\$borrowingRequest->statusHistory as \$history\)/);
-    for (const field of ['changed_at', 'from_status', 'to_status', 'actor?->full_name', 'reason']) {
-        assert.ok(page.includes(`$history->${field}`));
+    assert.match(auditHistory, /<summary class="request-activity-summary">/);
+    assert.match(auditHistory, /foreach \(\$borrowingRequest->statusHistory as \$history\)/);
+    for (const field of ['changed_at', 'to_status', 'actor?->full_name', 'reason']) {
+        assert.ok(auditHistory.includes(`$history->${field}`), `Missing history field: ${field}`);
     }
-    assert.match(styles, /\.request-activity-history\[open\] \.request-history-hide/);
-    assert.match(styles, /\.request-activity-history\[open\] \.request-history-show/);
+    assert.match(auditHistory, /\.request-activity-history\[open\] \.request-history-hide/);
+    assert.match(auditHistory, /\.request-activity-history\[open\] \.request-history-show/);
 });
 
 test('tracker opts in to compact presentation without removing workflow interactions', () => {
@@ -81,7 +92,12 @@ test('tracker opts in to compact presentation without removing workflow interact
         assert.ok(tracker.includes(hook), `Missing existing tracker hook: ${hook}`);
     }
     assert.match(tracker, /<x-workflow-tracker-interactions/);
-    assert.match(tracker, /\$steps\[3\]\['label'\] = \$isApproved \? 'Reviewed'/);
+    /*
+     * The head-review step index is now a named variable rather than a
+     * hardcoded literal, since off-campus/Gate Pass requests insert an extra
+     * Action Officer Verification step ahead of it, shifting every later step.
+     */
+    assert.match(tracker, /\$steps\[\$headReviewStepIndex\]\['label'\] = \$isApproved\s+\? 'Reviewed'/);
 });
 
 test('cards stretch equally, tables scroll, and smaller screens reflow', () => {

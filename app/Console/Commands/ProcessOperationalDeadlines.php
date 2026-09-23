@@ -4,11 +4,14 @@ namespace App\Console\Commands;
 
 use App\Models\BorrowerRestriction;
 use App\Models\CustodyTransaction;
+use App\Models\GeneratedDocument;
 use App\Models\NotificationEvent;
 use App\Models\OverdueCase;
+use App\Models\Sanction;
 use App\Models\SystemSetting;
 use App\Services\AuditService;
 use App\Services\CustodyService;
+use App\Services\DocumentService;
 use App\Services\NotificationService;
 use App\Services\OperationalCalendarService;
 use App\Services\RequestWorkflowService;
@@ -25,7 +28,8 @@ class ProcessOperationalDeadlines extends Command
         NotificationService $notifications,
         AuditService $audit,
         OperationalCalendarService $operationalCalendar,
-        RequestWorkflowService $requestWorkflow
+        RequestWorkflowService $requestWorkflow,
+        DocumentService $documents
     ): int {
         /*
          * Finalize only missed-pickup cases that have reached their cancellation
@@ -39,10 +43,12 @@ class ProcessOperationalDeadlines extends Command
         $dueSoon = 0;
         $markedOverdue = 0;
         $overdueProcessed = 0;
+        $fullyReturnedReconciled = 0;
 
         $rate = SystemSetting::value('daily_overdue_tariff');
         $today = now()->startOfDay();
         $tomorrow = now()->addDay()->startOfDay();
+        $expiredSuspensionsNotified = $this->notifyExpiredBorrowingSuspensions($notifications);
 
         /*
          * Issuance may be corrected on the actual pickup/release day. After
@@ -88,6 +94,22 @@ class ProcessOperationalDeadlines extends Command
             );
 
             if (! $hasOutstanding) {
+                /*
+                 * Self-heal a fully returned transaction that is still left in
+                 * ACTIVE / RETURN_PROCESSING / OVERDUE / accountability state
+                 * because an earlier workflow branch finished without firing
+                 * its final reconciliation callback. The canonical service
+                 * decides whether the custody can close or must remain open for
+                 * Gate Pass, Laundry, late-return, billing, restriction, or
+                 * property-accountability processing.
+                 */
+                $beforeStatus = (string) $custody->status;
+                $afterStatus = $custodyService->reconcileTransactionStatus($custody);
+
+                if ($afterStatus !== $beforeStatus) {
+                    $fullyReturnedReconciled++;
+                }
+
                 continue;
             }
 
@@ -245,6 +267,44 @@ class ProcessOperationalDeadlines extends Command
                 ]
             );
 
+            /*
+             * Exactly one Late Return Notice per case, issued automatically
+             * the moment it first becomes OVERDUE - before any physical
+             * return, AO confirmation, or Head decision exists. It states
+             * only the Expected Return Date and the official per-day fee
+             * rate; it can never carry final late days or a final total.
+             * billOverdue() later checks this same document existence
+             * before ever generating its own (legacy-only) notice, so a
+             * case is never issued a second one.
+             */
+            $lateReturnNoticeAlreadyExists = GeneratedDocument::query()
+                ->where('subject_type', $case::class)
+                ->where('subject_id', $case->id)
+                ->where('document_type', 'LATE_RETURN_NOTICE')
+                ->exists();
+
+            if (! $lateReturnNoticeAlreadyExists) {
+                $lateReturnNoticeDocument = $documents->lateReturnNoticePreReturn($case);
+
+                $notifications->send(
+                    'LATE_RETURN_NOTICE_ISSUED',
+                    collect([$custody->borrower]),
+                    "A Late Return Notice has been issued for {$custody->custody_no} because it was not returned by the Expected Return Date ({$dueDate->format('F j, Y')}). Check My Obligations for the official daily late-return fee rate. The final number of late days and the total amount due, if any, will be determined once the item is physically returned and will be issued separately through a Late Return Billing Statement.",
+                    $case,
+                    ['SYSTEM']
+                );
+
+                $audit->record(
+                    'LATE_RETURN_NOTICE_ISSUED',
+                    $case,
+                    after: [
+                        'generated_document_id' => $lateReturnNoticeDocument->id,
+                        'rate_snapshot' => $rateSnapshot,
+                        'stage' => 'PRE_RETURN',
+                    ]
+                );
+            }
+
             $overdueNoticeAlreadySent = NotificationEvent::query()
                 ->where('event_code', 'BORROWING_OVERDUE')
                 ->where('source_type', $custody->getMorphClass())
@@ -286,10 +346,51 @@ class ProcessOperationalDeadlines extends Command
             ."{$legacyLaundryReconciled} legacy Laundry availability reconciliation(s), "
             ."{$issuanceLocked} issuance auto-lock(s), "
             ."{$dueSoon} due reminder(s), "
+            ."{$expiredSuspensionsNotified} expired borrowing suspension notice(s), "
             ."{$markedOverdue} newly overdue custody record(s), "
+            ."{$fullyReturnedReconciled} fully returned custody reconciliation(s), "
             ."and {$overdueProcessed} open overdue record(s)."
         );
 
         return self::SUCCESS;
+    }
+
+    /**
+     * A timed borrowing suspension ceases to restrict access when its end time
+     * passes. Record the borrower-facing completion once, without changing the
+     * sanction history itself.
+     */
+    private function notifyExpiredBorrowingSuspensions(NotificationService $notifications): int
+    {
+        $notified = 0;
+
+        Sanction::query()
+            ->with('borrower')
+            ->where('status', 'ACTIVE')
+            ->where('sanction_code', 'BORROWING_SUSPENSION')
+            ->whereNotNull('effective_to')
+            ->where('effective_to', '<', now())
+            ->each(function (Sanction $sanction) use ($notifications, &$notified): void {
+                $alreadySent = NotificationEvent::query()
+                    ->where('event_code', 'BORROWING_SUSPENSION_LIFTED')
+                    ->where('source_type', $sanction->getMorphClass())
+                    ->where('source_id', $sanction->id)
+                    ->exists();
+
+                if ($alreadySent || ! $sanction->borrower) {
+                    return;
+                }
+
+                $notifications->send(
+                    'BORROWING_SUSPENSION_LIFTED',
+                    collect([$sanction->borrower]),
+                    'Your timed borrowing suspension has ended. Check My Obligations for any separate active requirement.',
+                    $sanction,
+                    ['SYSTEM', 'EMAIL']
+                );
+                $notified++;
+            });
+
+        return $notified;
     }
 }

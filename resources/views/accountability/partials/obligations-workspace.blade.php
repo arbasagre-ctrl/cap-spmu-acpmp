@@ -4,19 +4,11 @@
     | Borrower - My Obligations
     |--------------------------------------------------------------------------
     |
-    | Borrower-facing presentation groups related technical records into one
-    | obligation. Example:
-    |
-    | Property Incident + Billing Statement + Borrowing Restriction
-    | = ONE borrower obligation.
-    |
-    | The underlying records remain separate in the database and continue to
-    | be available to SPMU/Admin for audit, enforcement, billing, and reports.
-    |
-    | Row grouping/action-state logic lives in BorrowerObligationService so
-    | the borrower dashboard's counts and this workspace's counts can never
-    | disagree - both read the one implementation.
-    |
+    | Related technical records are intentionally grouped into one borrower
+    | obligation. A Property Incident + linked Billing + linked Restriction is
+    | one obligation here, not three separate cards. The grouping/action-state
+    | comes from BorrowerObligationService, which is also used by the borrower
+    | dashboard so both screens always agree.
     */
 
     $obligationRows = app(\App\Services\BorrowerObligationService::class)->buildRows(
@@ -26,44 +18,42 @@
         $activeRestrictions
     );
 
-    $obligationCount = count($obligationRows);
-    $needsActionCount = collect($obligationRows)
+    $obligationCollection = collect($obligationRows);
+    $obligationCount = $obligationCollection->count();
+    $needsActionCount = $obligationCollection
         ->where('action_state', \App\Services\BorrowerObligationService::ACTION_BORROWER)
-        ->count();
-    $processingCount = collect($obligationRows)
-        ->where('action_state', \App\Services\BorrowerObligationService::ACTION_PROCESSING)
         ->count();
     $resolvedCount = $resolvedHistory->count();
 
-    /*
-     * Four borrower-facing cards: how many grouped obligations exist, how
-     * many need the borrower to do something right now, how many are simply
-     * being processed by SPMU, and how many have already been cleared.
-     * Resolved records never contribute to the first three.
-     */
+    $outstandingBalance = (float) $openBillings->sum(function ($billing): float {
+        $verifiedPayments = $billing->payments
+            ->where('status', 'VERIFIED')
+            ->sum(fn ($payment): float => (float) $payment->amount);
+
+        return max(0, (float) $billing->total_amount - $verifiedPayments);
+    });
+
+    $activeRestrictionCount = $activeRestrictions->count();
+    $borrowingStatus = $activeRestrictionCount > 0 ? 'Restricted' : 'Clear';
+
+    /* Current-account cards only. Resolved records stay in the collapsed
+       history section below instead of competing with current obligations. */
     $summaryCards = [
-        ['info', 'accountability', $obligationCount, 'Outstanding Obligations', 'Unresolved accountability matters'],
-        ['warning', 'warning', $needsActionCount, 'Needs My Action', $needsActionCount ? 'Requires your response' : 'Nothing requires your action'],
-        ['orange', 'clock', $processingCount, 'Under SPMU Processing', $processingCount ? 'Being processed by SPMU' : 'Nothing currently processing'],
-        ['success', 'check-circle', $resolvedCount, 'Resolved History', $resolvedCount ? 'Previously cleared records' : 'No resolved records yet'],
+        ['info', 'accountability', (string) $obligationCount, 'Active Obligations', $obligationCount ? 'Unresolved matters on your account' : 'No unresolved obligations'],
+        ['warning', 'warning', (string) $needsActionCount, 'Needs My Action', $needsActionCount ? 'Requires your response' : 'No action required from you'],
+        ['orange', 'coins', 'PHP '.number_format($outstandingBalance, 2), 'Amount Due', $outstandingBalance > 0 ? 'Outstanding verified balance' : 'No payment currently due'],
+        [$activeRestrictionCount > 0 ? 'warning' : 'success', $activeRestrictionCount > 0 ? 'lock' : 'check-circle', $borrowingStatus, 'Borrowing Status', $activeRestrictionCount > 0 ? 'A borrowing restriction is active' : 'No active borrowing restriction'],
     ];
 @endphp
 
 @include('accountability.partials.obligations-styles')
 
 <section class="content-area ob-workspace" data-borrower-accountability-clean>
-    <div class="ob-section-heading">
-        <div>
-            <span>Accountability summary</span>
-            <p>Related records arising from one accountability matter are grouped as a single obligation.</p>
-        </div>
-    </div>
-
-    <div class="ob-summary" aria-label="Accountability record summary">
+    <div class="ob-summary" aria-label="My obligations overview">
         @foreach($summaryCards as [$tone, $icon, $value, $label, $note])
-            <article class="ob-summary-card is-{{ $tone }} {{ $value === 0 ? 'is-empty' : '' }}">
+            <article class="ob-summary-card is-{{ $tone }}">
                 <span class="ob-summary-icon" aria-hidden="true">
-                    <x-icon :name="$icon" size="22" />
+                    <x-icon :name="$icon" size="20" />
                 </span>
                 <span class="ob-summary-label">{{ $label }}</span>
                 <strong class="ob-summary-value">{{ $value }}</strong>
@@ -72,26 +62,29 @@
         @endforeach
     </div>
 
-    <div class="ob-current-header">
-        <div>
-            <span>Outstanding obligations</span>
-            <h2>{{ $obligationCount }} {{ $obligationCount === 1 ? 'outstanding obligation' : 'outstanding obligations' }}</h2>
+    @if($obligationCount > 0)
+        <div class="ob-current-header">
+            <h2>
+                Current Obligations
+                <span class="accountability-count-chip">{{ $obligationCount }}</span>
+            </h2>
+
+            @if($obligationCount > 5)
+                <label class="ob-search">
+                    <span>Search</span>
+                    <span class="search-input-shell">
+                        <span class="search-input-icon" aria-hidden="true"><x-icon name="search" size="17" /></span>
+                        <input
+                            type="search"
+                            placeholder="Search obligations..."
+                            autocomplete="off"
+                            data-obligation-clean-search
+                        >
+                    </span>
+                </label>
+            @endif
         </div>
 
-        @if($obligationCount > 1)
-            <label class="ob-search">
-                <x-icon name="search" size="17" />
-                <input
-                    type="search"
-                    placeholder="Search obligations"
-                    autocomplete="off"
-                    data-obligation-clean-search
-                >
-            </label>
-        @endif
-    </div>
-
-    @if($obligationCount > 0)
         <div class="ob-case-list" data-obligation-clean-list>
             @foreach($obligationRows as $index => $row)
                 <article
@@ -125,14 +118,27 @@
                     @if($row['restricted'])
                         <div class="ob-linked-restriction">
                             <x-icon name="lock" size="15" />
-                            <span>Borrowing privileges are temporarily restricted until this obligation is resolved.</span>
+                            <span>Borrowing restricted until resolved.</span>
                         </div>
                     @endif
 
                     <div class="ob-next-action is-{{ $row['next_tone'] }}">
-                        <span>Required action</span>
+                        <span>{{ $row['action_state'] === \App\Services\BorrowerObligationService::ACTION_BORROWER ? 'Next step' : 'Current status' }}</span>
                         <strong>{{ $row['next_action'] }}</strong>
                     </div>
+
+                    @if($row['rslddp_upload_incident_id'] ?? null)
+                        <details class="ob-details" open>
+                            <summary><span>Upload Accomplished RSLDDP</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
+                            <div class="ob-detail-body">
+                                <form method="post" action="{{ route('incidents.rslddp.upload', $row['rslddp_upload_incident_id']) }}" enctype="multipart/form-data" class="form-grid">
+                                    @csrf
+                                    <label>Accomplished/Notarized RSLDDP Scan<input type="file" name="evidence" accept="application/pdf,image/png,image/jpeg,image/webp" required></label>
+                                    <button class="button primary">Upload Accomplished RSLDDP</button>
+                                </form>
+                            </div>
+                        </details>
+                    @endif
 
                     @php
                         /*
@@ -150,20 +156,30 @@
 
                     <div class="ob-case-actions">
                         <details class="ob-details">
-                            <summary><span>View Obligation</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
+                            <summary><span>View Details</span><x-icon name="chevron-down" size="14" class="ob-disclosure-chevron" /></summary>
                             <div class="ob-detail-body">
                                 @if($documentActions->isNotEmpty())
                                     <div class="ob-detail-section">
                                         <p class="ob-detail-section-heading">Documents</p>
-                                        <div class="ob-detail-actions">
-                                            @foreach($documentActions as [$label, $url, $newTab, $buttonTone])
-                                                <a
-                                                    class="button {{ $buttonTone === 'primary' ? 'primary' : 'secondary' }} small ui-pressable"
-                                                    href="{{ $url }}"
-                                                    @if($newTab) target="_blank" rel="noopener" @endif
-                                                >
-                                                    {{ $label }}
-                                                </a>
+                                        <div class="ob-document-list">
+                                            @foreach($documentActions as $documentAction)
+                                                @php
+                                                    [$label, $url, $newTab, $buttonTone] = $documentAction;
+                                                    $documentName = $documentAction[5] ?? 'Document';
+                                                @endphp
+                                                <div class="ob-document-item">
+                                                    <span class="ob-document-name">
+                                                        <x-icon name="document" size="14" />
+                                                        <strong>{{ $documentName }}</strong>
+                                                    </span>
+                                                    <a
+                                                        class="table-action ui-pressable"
+                                                        href="{{ $url }}"
+                                                        @if($newTab) target="_blank" rel="noopener" @endif
+                                                    >
+                                                        {{ $label }} <span aria-hidden="true">→</span>
+                                                    </a>
+                                                </div>
                                             @endforeach
                                         </div>
                                     </div>
@@ -233,24 +249,26 @@
         <article class="ob-clear-card">
             <span aria-hidden="true"><x-icon name="check-circle" size="34" /></span>
             <div>
-                <strong>No unresolved obligations.</strong>
-                <p>You currently have no outstanding accountability matters affecting your borrowing privileges.</p>
+                <strong>No unresolved obligations</strong>
+                <p>No property, payment, late-return, or borrowing restriction currently requires your action.</p>
             </div>
         </article>
     @endif
 
-    <details class="ob-resolved-history-disclosure">
-        <summary>
-            <span>Resolved History</span>
-            <span class="ob-resolved-history-meta">
-                <span class="ob-badge is-neutral">{{ $resolvedCount }} {{ $resolvedCount === 1 ? 'record' : 'records' }}</span>
-                <x-icon name="chevron-down" size="16" class="ob-disclosure-chevron" />
-            </span>
-        </summary>
-        <div class="ob-resolved-history-body">
-            @include('accountability.partials.resolved-history')
-        </div>
-    </details>
+    @if($resolvedCount > 0)
+        <details class="ob-resolved-history-disclosure">
+            <summary>
+                <span>Resolved Obligations</span>
+                <span class="ob-resolved-history-meta">
+                    <span class="ob-badge is-neutral">{{ $resolvedCount }} {{ $resolvedCount === 1 ? 'record' : 'records' }}</span>
+                    <x-icon name="chevron-down" size="16" class="ob-disclosure-chevron" />
+                </span>
+            </summary>
+            <div class="ob-resolved-history-body">
+                @include('accountability.partials.resolved-history')
+            </div>
+        </details>
+    @endif
 </section>
 
 <script>

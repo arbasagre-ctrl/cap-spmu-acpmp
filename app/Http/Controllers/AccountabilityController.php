@@ -28,6 +28,7 @@ use App\Services\NotificationService;
 use App\Services\ProtectedFileService;
 use App\Services\PolicyService;
 use App\Services\SignatureService;
+use App\Support\AccountabilityDispositionLabels;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
@@ -129,6 +130,58 @@ class AccountabilityController extends Controller
     private function resolvedHistory(Collection $billings, Collection $overdueCases, Collection $incidents): Collection
     {
         return app(BorrowerObligationService::class)->resolvedHistory($billings, $overdueCases, $incidents);
+    }
+
+    /**
+     * The internal, per-borrower Accountability workspace (spec Section A):
+     * opening a borrower's case from the Oversight list shows ONLY that
+     * borrower's cases, grouped, inside the same application shell - never a
+     * new browser tab and never another borrower's records. Head and Action
+     * Officer share this same view; the case-card partial gates actions by
+     * role, not the page structure itself.
+     */
+    public function showBorrowerWorkspace(
+        Request $request,
+        User $borrower,
+        BorrowerObligationService $obligations
+    ): View {
+        abort_unless(
+            in_array($request->user()?->access_classification, [AccessClassification::SpmuHead, AccessClassification::SpmuOfficer], true),
+            403
+        );
+
+        $records = $obligations->recordsForBorrower($borrower->id);
+        $rows = $obligations->obligationRows($borrower->id);
+        $overview = $obligations->overview($borrower->id);
+        $resolvedHistory = $obligations->resolvedHistory($records['billings'], $records['overdueCases'], $records['incidents']);
+
+        // The Active Cases tab groups by custody transaction rather than
+        // listing each matter flat, so it needs the raw open Incident/
+        // OverdueCase models themselves, not only the grouped obligation rows.
+        $openRecords = $obligations->openRecordsForBorrower($borrower->id);
+
+        $historyService = app(\App\Services\TransactionAccountabilityHistoryService::class);
+        $custodyHistories = $records['incidents']->pluck('custody')
+            ->merge($records['overdueCases']->pluck('custody'))
+            ->filter()
+            ->unique('id')
+            ->mapWithKeys(fn ($custody) => [$custody->id => $historyService->forCustody($custody)]);
+
+        return view('accountability.borrower-workspace', [
+            'borrower' => $borrower,
+            'rows' => $rows,
+            'openIncidents' => $openRecords['incidents'],
+            'openOverdueCases' => $openRecords['overdueCases'],
+            'openBillings' => $openRecords['billings'],
+            'overview' => $overview,
+            'resolvedHistory' => $resolvedHistory,
+            'custodyHistories' => $custodyHistories,
+            'documents' => $records['incidents']->flatMap->documents
+                ->merge($records['billings']->flatMap->documents)
+                ->merge($records['restrictions']->flatMap(fn ($restriction) => $restriction->sanction?->documents ?? collect()))
+                ->unique('id')
+                ->sortByDesc('generated_at'),
+        ]);
     }
 
     /**
@@ -277,7 +330,22 @@ class AccountabilityController extends Controller
             );
 
             $billingDocument = $documents->billingStatement($billing, $billingSignature);
-            $lateReturnNotice = $documents->lateReturnNotice(
+
+            /*
+             * A Late Return Notice is normally already issued automatically
+             * when the custody first became OVERDUE (see
+             * ProcessOperationalDeadlines). Never generate a second one here
+             * - only a legacy case that predates that automation, and so has
+             * no prior notice at all, falls back to generating one now.
+             */
+            $existingLateReturnNotice = GeneratedDocument::query()
+                ->where('subject_type', OverdueCase::class)
+                ->where('subject_id', $overdue->id)
+                ->where('document_type', 'LATE_RETURN_NOTICE')
+                ->latest('id')
+                ->first();
+
+            $lateReturnNotice = $existingLateReturnNotice ?? $documents->lateReturnNotice(
                 $overdue,
                 $request->user(),
                 'Billing Required',
@@ -331,6 +399,88 @@ class AccountabilityController extends Controller
         }
 
         return back()->with('status', "Late Return Notice and Billing Statement {$billing->billing_no} were issued by the SPMU Head/Admin. The borrower was notified to pay through the CSPC Cashier and present the official receipt to the SPMU Action Officer afterward.");
+    }
+
+    /**
+     * LateReturnService::assess() freezes rate_snapshot/accrued_amount from
+     * whatever the configured daily late-return tariff was at the moment of
+     * return, even when it was never configured (null/zero), and never
+     * re-evaluates it afterward. billOverdue() correctly refuses to issue a
+     * Billing Statement in that state - without this action such a case, and
+     * its linked OVERDUE_RETURN restriction, would have no resolution path
+     * at all once already frozen with no billable rate.
+     */
+    public function resolveOverdueWithoutCharge(
+        Request $request,
+        OverdueCase $overdue,
+        AuditService $audit,
+        NotificationService $notifications
+    ): RedirectResponse {
+        $this->authorizeSpmu($request);
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403
+        );
+
+        $data = $request->validate([
+            'resolution_remarks' => ['required', 'string', 'max:2000'],
+        ]);
+
+        abort_unless(
+            (float) $overdue->accrued_amount <= 0 || $overdue->rate_snapshot === null,
+            422,
+            'A late-return fee policy applies to this case. Use Approve Late Return Assessment instead.'
+        );
+
+        if (! in_array($overdue->status, [
+            LateReturnService::STATUS_FOR_AO_CONFIRMATION,
+            LateReturnService::STATUS_FOR_HEAD_APPROVAL,
+        ], true)) {
+            return back()->withErrors([
+                'overdue' => 'This late-return case is not ready for resolution.',
+            ]);
+        }
+
+        DB::transaction(function () use ($overdue, $request, $data, $audit): void {
+            $overdue = OverdueCase::query()->lockForUpdate()->findOrFail($overdue->id);
+
+            $overdue->update(['status' => LateReturnService::STATUS_RESOLVED]);
+
+            BorrowerRestriction::query()
+                ->forCustody($overdue->custody)
+                ->where('restriction_type', 'OVERDUE_RETURN')
+                ->where('status', 'ACTIVE')
+                ->update([
+                    'status' => 'LIFTED',
+                    'effective_to' => now(),
+                    'lifted_by_user_id' => $request->user()->id,
+                ]);
+
+            $this->attemptCloseCustody((int) $overdue->custody_transaction_id);
+
+            $audit->record(
+                'LATE_RETURN_RESOLVED_WITHOUT_CHARGE',
+                $overdue,
+                reason: $data['resolution_remarks'],
+                after: [
+                    'status' => LateReturnService::STATUS_RESOLVED,
+                    'resolved_by_user_id' => $request->user()->id,
+                ]
+            );
+        }, 3);
+
+        $overdue->refresh()->loadMissing('borrower', 'custody');
+        if ($overdue->borrower) {
+            $notifications->send(
+                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                collect([$overdue->borrower]),
+                "The late-return case for {$overdue->custody?->custody_no} was resolved by the SPMU Head/Admin with no charge because no late-return fee policy applied at the time of return. Your linked borrowing restriction has been lifted.",
+                $overdue,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
+
+        return back()->with('status', 'Late-return case resolved without a charge because no late-return fee policy applied at the time of return. No Billing Statement was issued, and the linked restriction has been lifted.');
     }
 
     public function billIncident(
@@ -760,8 +910,18 @@ class AccountabilityController extends Controller
      * Accountability case action endpoint. Head/Admin records the formal
      * decision; when that decision requires repair/replacement/compliance, the
      * Action Officer later uses the same endpoint only to verify completion.
+     * That verification advances the case to the existing Head/Admin final
+     * review stage; it never closes the case by itself.
      * Financial cases continue through billing settlement or an authorized
      * billing waiver instead of a manual compliance closeout.
+     */
+    /**
+     * Dispatches an incident's accountability decision. COMPLIANCE_COMPLETED
+     * is always the Action Officer's legacy compliance-verification step.
+     * Any incident already advanced under the old
+     * compliance/billing-outcome model keeps flowing through the fully
+     * unmodified resolveIncidentLegacy() - only a fresh OPEN incident uses
+     * the new binary Confirm/Clear decision.
      */
     public function resolveIncident(
         Request $request,
@@ -775,12 +935,6 @@ class AccountabilityController extends Controller
     ): RedirectResponse {
         $requestedOutcome = strtoupper(trim((string) $request->input('resolution_outcome')));
 
-        /*
-         * Property compliance is an operational verification step. The SPMU
-         * Head/Admin already made the decision that repair/replacement or
-         * another compliance action is required; the Action Officer is the
-         * staff member who physically checks the completed requirement.
-         */
         if ($requestedOutcome === 'COMPLIANCE_COMPLETED') {
             return $this->completeIncidentCompliance(
                 $request,
@@ -791,6 +945,272 @@ class AccountabilityController extends Controller
             );
         }
 
+        if (in_array($incident->status, ['COMPLIANCE_REQUIRED', 'COMPLIANCE_RSLDDP_PENDING', 'FOR_BILLING', 'BILLING_PENDING'], true)) {
+            return $this->resolveIncidentLegacy(
+                $request,
+                $incident,
+                $audit,
+                $notifications,
+                $policy,
+                $documents,
+                $signatures
+            );
+        }
+
+        return $this->resolveIncidentAccountability(
+            $request,
+            $incident,
+            $audit,
+            $notifications,
+            $policy,
+            $documents,
+            $signatures
+        );
+    }
+
+    /**
+     * The current, final Accountability decision for a property finding: a
+     * binary Confirm Accountability / Clear Finding, with no upfront
+     * compliance_action/requires_rslddp/count_as_offense choice. The actual
+     * disposition (repair/replacement/monetary/etc.) is recorded later, from
+     * the real accomplished RSLDDP, not pre-decided here. Offense
+     * confirmation is automatic when the finding is eligible - the Head
+     * never manually chooses whether it counts.
+     */
+    private function resolveIncidentAccountability(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications,
+        PolicyService $policy,
+        DocumentService $documents,
+        SignatureService $signatures
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()->access_classification === AccessClassification::SpmuHead,
+            403,
+            'Only the SPMU Head/Admin may record the accountability decision.'
+        );
+
+        abort_unless(
+            $incident->status === 'OPEN',
+            422,
+            'This property case has already moved past the initial accountability decision.'
+        );
+
+        $data = $request->validate([
+            'decision' => ['required', 'in:CONFIRM,CLEAR'],
+            'resolution_remarks' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $offensePreview = $policy->incidentOffensePreview($incident);
+        $canConfirmOffense = $offensePreview['is_eligible']
+            && $offensePreview['can_confirm']
+            && ! $offensePreview['existing_sanction'];
+
+        $recordedSanction = null;
+        $headSignature = null;
+        $issuedSanctionDocument = null;
+        $issuedRsldppDocument = null;
+
+        DB::transaction(function () use (
+            $incident,
+            $request,
+            $data,
+            $canConfirmOffense,
+            $audit,
+            $notifications,
+            $policy,
+            $documents,
+            $signatures,
+            &$recordedSanction,
+            &$headSignature,
+            &$issuedSanctionDocument,
+            &$issuedRsldppDocument
+        ): void {
+            $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
+
+            if ($incident->status !== 'OPEN') {
+                return;
+            }
+
+            $previousStatus = $incident->status;
+            $existingRemarks = trim((string) $incident->remarks);
+
+            $headSignature = $signatures->snapshot(
+                $request->user(),
+                'ACCOUNTABILITY_HEAD_DECISION',
+                'SPMU Head',
+                $incident,
+                [
+                    'incident_no' => $incident->incident_no,
+                    'decision' => $data['decision'],
+                ]
+            );
+
+            $incident->update([
+                'head_decision_signature_snapshot_id' => $headSignature->id,
+                'head_decided_by_user_id' => $request->user()->id,
+                'head_decided_at' => now(),
+                'accountability_flow_version' => 'V2',
+            ]);
+
+            if ($data['decision'] === 'CLEAR') {
+                $resolutionNote = 'SPMU Head decision: Finding cleared. '.$data['resolution_remarks'];
+
+                $incident->update([
+                    'status' => 'RESOLVED',
+                    'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$resolutionNote),
+                ]);
+
+                $liftedRestrictionId = (int) BorrowerRestriction::query()
+                    ->where('incident_id', $incident->id)
+                    ->where('status', 'ACTIVE')
+                    ->value('id');
+
+                BorrowerRestriction::query()
+                    ->where('incident_id', $incident->id)
+                    ->where('status', 'ACTIVE')
+                    ->update([
+                        'status' => 'LIFTED',
+                        'effective_to' => now(),
+                        'lifted_by_user_id' => $request->user()->id,
+                    ]);
+
+                $this->attemptCloseCustody((int) $incident->custody_transaction_id);
+
+                $audit->record(
+                    'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                    $incident,
+                    reason: $data['resolution_remarks'],
+                    before: ['status' => $previousStatus],
+                    after: [
+                        'status' => 'RESOLVED',
+                        'resolution_outcome' => 'FINDING_CLEARED',
+                        'head_signature_snapshot_id' => $headSignature->id,
+                    ]
+                );
+
+                $incident->loadMissing('borrower');
+                if ($incident->borrower) {
+                    $notifications->send(
+                        'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                        collect([$incident->borrower]),
+                        "Property accountability case {$incident->incident_no} has been reviewed and cleared by the SPMU Head/Admin. {$this->incidentBorrowerContext($incident)}"
+                            .$this->restrictionStatusNote((int) $incident->borrower_user_id, $liftedRestrictionId),
+                        $incident,
+                        ['SYSTEM', 'EMAIL']
+                    );
+                }
+
+                return;
+            }
+
+            // CONFIRM
+            if ($canConfirmOffense) {
+                $recordedSanction = $policy->confirmIncidentOffense(
+                    $incident,
+                    $request->user(),
+                    $data['resolution_remarks']
+                );
+            }
+
+            if ($recordedSanction) {
+                $recordedSanction->update(['signature_snapshot_id' => $headSignature->id]);
+
+                if (strtoupper((string) $recordedSanction->sanction_code) === 'BORROWING_SUSPENSION') {
+                    $issuedSanctionDocument = $documents->administrativeSanctionNotice(
+                        $recordedSanction->fresh(),
+                        $headSignature
+                    );
+                }
+            }
+
+            $decisionNote = 'SPMU Head decision: Accountability confirmed. '.$data['resolution_remarks'];
+
+            $incident->update([
+                'status' => 'RSLDDP_AWAITING_UPLOAD',
+                'requires_rslddp' => true,
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$decisionNote),
+            ]);
+
+            $issuedRsldppDocument = $documents->rslddp($incident->fresh());
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
+                $incident,
+                reason: $data['resolution_remarks'],
+                before: ['status' => $previousStatus],
+                after: [
+                    'status' => 'RSLDDP_AWAITING_UPLOAD',
+                    'resolution_outcome' => 'ACCOUNTABILITY_CONFIRMED',
+                    'administrative_offense_confirmed' => (bool) $recordedSanction,
+                    'sanction_id' => $recordedSanction?->id,
+                    'head_signature_snapshot_id' => $headSignature->id,
+                    'rslddp_document_id' => $issuedRsldppDocument?->id,
+                    'sanction_notice_document_id' => $issuedSanctionDocument?->id,
+                ]
+            );
+
+            $incident->loadMissing('borrower');
+            if ($incident->borrower) {
+                $notifications->send(
+                    'PROPERTY_ACCOUNTABILITY_HEAD_DECISION_RECORDED',
+                    collect([$incident->borrower]),
+                    "Property accountability case {$incident->incident_no} has been confirmed by the SPMU Head/Admin. {$this->incidentBorrowerContext($incident)} RSLDDP Status: For External Processing. Borrowing Status: Restricted. Next Action: Complete the required RSLDDP process.",
+                    $incident,
+                    ['SYSTEM', 'EMAIL']
+                );
+            }
+        }, 3);
+
+        if ($recordedSanction) {
+            $this->notifyAdministrativeSanction($notifications, $recordedSanction);
+        }
+
+        $sanctionSuffix = $recordedSanction
+            ? ' Administrative offense recorded: '.$recordedSanction->offense_no.' offense — '.$recordedSanction->sanction_label.'.'
+            : '';
+
+        return back()->with('status', $data['decision'] === 'CLEAR'
+            ? 'Property accountability finding cleared. Its linked restriction was lifted.'
+            : 'Accountability confirmed. RSLDDP was generated and the case now requires the accomplished RSLDDP to be uploaded by the SPMU Head/Admin.'.$sanctionSuffix);
+    }
+
+    /**
+     * The "Borrowing Status: RESTRICTED, N other active case remains" / "no
+     * longer restricted by this case" enrichment for a resolution
+     * notification, so resolving one case is never implied to make the
+     * borrower globally eligible when another active restriction remains.
+     */
+    private function restrictionStatusNote(int $borrowerUserId, ?int $excludeRestrictionId): string
+    {
+        $otherActive = BorrowerRestriction::query()
+            ->where('borrower_user_id', $borrowerUserId)
+            ->where('status', 'ACTIVE')
+            ->when($excludeRestrictionId, fn ($query) => $query->where('id', '!=', $excludeRestrictionId))
+            ->count();
+
+        return $otherActive > 0
+            ? " Borrowing Status: RESTRICTED. {$otherActive} other active case remains."
+            : ' Your borrowing status is no longer restricted by this case.';
+    }
+
+    /**
+     * Preserved exactly as it operated before the Accountability rework, for
+     * any incident already advanced under the old
+     * compliance/billing-outcome model. Never reachable from a fresh OPEN
+     * incident, which now always uses resolveIncidentAccountability().
+     */
+    private function resolveIncidentLegacy(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications,
+        PolicyService $policy,
+        DocumentService $documents,
+        SignatureService $signatures
+    ): RedirectResponse {
         abort_unless(
             $request->user()->access_classification === AccessClassification::SpmuHead,
             403,
@@ -1085,27 +1505,35 @@ class AccountabilityController extends Controller
                 ]);
             }
 
+            if ($incident->requires_rslddp && ! $incident->rslddp_evidence_submission_id) {
+                throw ValidationException::withMessages([
+                    'incident' => 'The accomplished RSLDDP must be uploaded before Action Officer compliance verification.',
+                ]);
+            }
+
             $inventoryAdjustments = $inventoryService->recordIncidentCompliance(
                 $incident,
                 $request->user(),
                 $complianceAction
             );
 
+            if ($incident->rslddp_evidence_submission_id) {
+                EvidenceSubmission::query()
+                    ->whereKey($incident->rslddp_evidence_submission_id)
+                    ->lockForUpdate()
+                    ->update([
+                        'verification_status' => 'VERIFIED',
+                        'verified_by_user_id' => $request->user()->id,
+                        'verified_at' => now(),
+                    ]);
+            }
+
             $verificationNote = 'SPMU Action Officer verified '.$this->complianceActionLabel($complianceAction).'.';
 
             $incident->update([
-                'status' => 'RESOLVED',
+                'status' => 'RSLDDP_FOR_RESOLUTION',
                 'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').$verificationNote),
             ]);
-
-            BorrowerRestriction::query()
-                ->where('incident_id', $incident->id)
-                ->where('status', 'ACTIVE')
-                ->update([
-                    'status' => 'LIFTED',
-                    'effective_to' => now(),
-                    'lifted_by_user_id' => $request->user()->id,
-                ]);
 
             $audit->record(
                 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED',
@@ -1113,7 +1541,7 @@ class AccountabilityController extends Controller
                 reason: 'Physical compliance verified by the SPMU Action Officer.',
                 before: ['status' => $previousStatus],
                 after: [
-                    'status' => 'RESOLVED',
+                    'status' => 'RSLDDP_FOR_RESOLUTION',
                     'resolution_outcome' => 'COMPLIANCE_COMPLETED',
                     'compliance_action' => $complianceAction,
                     'inventory_adjustments' => $inventoryAdjustments,
@@ -1122,15 +1550,14 @@ class AccountabilityController extends Controller
                 ]
             );
 
-            $this->attemptCloseCustody((int) $incident->custody_transaction_id);
         }, 3);
 
         $incident->refresh()->loadMissing('borrower');
         if ($incident->borrower) {
             $notifications->send(
-                'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
+                'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED',
                 collect([$incident->borrower]),
-                "The SPMU Action Officer verified the required {$this->complianceActionLabel($this->resolvedComplianceAction($incident))} for property accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} The property case is now resolved and its linked property restriction has been lifted. Any separate administrative sanction or other active obligation/restriction remains subject to its own status.",
+                "The SPMU Action Officer verified the required {$this->complianceActionLabel($this->resolvedComplianceAction($incident))} for property accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} The case is awaiting final SPMU Head/Admin review. The linked borrowing restriction remains active until the final resolution.",
                 $incident,
                 ['SYSTEM', 'EMAIL']
             );
@@ -1138,7 +1565,7 @@ class AccountabilityController extends Controller
 
         return back()->with(
             'status',
-            'Property compliance verified. Inventory and the linked property restriction were updated automatically; any separate sanction remains unchanged.'
+            'Property compliance verified. The case is now awaiting final SPMU Head/Admin review; its linked restriction remains active until resolution.'
         );
     }
 
@@ -1203,11 +1630,11 @@ class AccountabilityController extends Controller
 
     /**
      * SPMU Head/Admin records the accomplished/notarized RSLDDP scan after
-     * external signing. The system never performs notarization itself -
-     * this only records evidence that it happened. Re-callable at any point
-     * before the case is resolved, so a mistaken upload can simply be
-     * replaced; the first successful call also advances the case out of its
-     * RSLDDP-pending stage, later calls only replace the file.
+     * external signing. The system never performs notarization itself, and
+     * the borrower is never the uploader of record - the borrower may only
+     * view the RSLDDP and its status. The upload is accepted only while the
+     * case is expressly awaiting it, then advances the case to its next
+     * operational stage.
      */
     public function uploadAccomplishedRslddp(
         Request $request,
@@ -1215,20 +1642,16 @@ class AccountabilityController extends Controller
         ProtectedFileService $files,
         AuditService $audit
     ): RedirectResponse {
-        $this->authorizeSpmu($request);
         abort_unless(
             $request->user()?->access_classification === AccessClassification::SpmuHead,
             403,
-            'Only the SPMU Head/Admin may record the accomplished RSLDDP.'
+            'Only the SPMU Head/Admin may upload the accomplished RSLDDP.'
         );
 
         abort_unless(
             in_array($incident->status, [
                 'COMPLIANCE_RSLDDP_PENDING',
                 'RSLDDP_AWAITING_UPLOAD',
-                'RSLDDP_FOR_ACCOUNTING_PROCESSING',
-                'RSLDDP_PAYMENT_REQUIRED',
-                'RSLDDP_FOR_RESOLUTION',
             ], true),
             422,
             'This property case is not awaiting an accomplished RSLDDP.'
@@ -1250,25 +1673,41 @@ class AccountabilityController extends Controller
 
         DB::transaction(function () use ($incident, $request, $document, $file, $audit): void {
             $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
-            $isFirstUpload = $incident->rslddp_evidence_submission_id === null;
+
+            if (! in_array($incident->status, ['COMPLIANCE_RSLDDP_PENDING', 'RSLDDP_AWAITING_UPLOAD'], true)) {
+                throw ValidationException::withMessages([
+                    'incident' => 'This property case is no longer awaiting an accomplished RSLDDP.',
+                ]);
+            }
 
             $submission = EvidenceSubmission::query()->create([
                 'generated_document_id' => $document->id,
                 'stored_file_id' => $file->id,
                 'borrower_user_id' => $incident->borrower_user_id,
                 'uploaded_by_user_id' => $request->user()->id,
-                'verified_by_user_id' => $request->user()->id,
-                'upload_mode' => 'SPMU_INTAKE',
+                'verified_by_user_id' => null,
+                'upload_mode' => 'SPMU_HEAD_RECORDED',
                 'submitted_at' => now(),
-                'verification_status' => 'VERIFIED',
-                'verified_at' => now(),
+                'verification_status' => 'PENDING_VERIFICATION',
+                'verified_at' => null,
             ]);
 
+            /*
+             * COMPLIANCE_RSLDDP_PENDING is a legacy status - no new decision
+             * ever sets it (resolveIncidentAccountability() always writes
+             * RSLDDP_AWAITING_UPLOAD), so it always routes to the fully
+             * unmodified legacy destination. A RSLDDP_AWAITING_UPLOAD
+             * incident routes by accountability_flow_version, the one
+             * discriminator that can safely tell a legacy row (created by
+             * the old BILLING_REQUIRED branch, flow_version=null) from a new
+             * Confirm-decision row (flow_version='V2') sharing that same
+             * status name - a legacy row keeps its original legacy
+             * destination and method untouched.
+             */
             $nextStatus = match (true) {
-                ! $isFirstUpload => $incident->status,
                 $incident->status === 'COMPLIANCE_RSLDDP_PENDING' => 'COMPLIANCE_REQUIRED',
-                $incident->status === 'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP_FOR_ACCOUNTING_PROCESSING',
-                default => $incident->status,
+                $incident->status === 'RSLDDP_AWAITING_UPLOAD' && $incident->accountability_flow_version === 'V2' => 'RSLDDP_DISPOSITION_PENDING',
+                default => 'RSLDDP_FOR_ACCOUNTING_PROCESSING',
             };
 
             $incident->update([
@@ -1279,7 +1718,7 @@ class AccountabilityController extends Controller
             $audit->record(
                 'PROPERTY_ACCOUNTABILITY_RSLDDP_RECEIVED',
                 $incident,
-                reason: $isFirstUpload ? 'Accomplished RSLDDP recorded.' : 'Accomplished RSLDDP replaced with a corrected scan.',
+                reason: 'Accomplished RSLDDP recorded.',
                 after: [
                     'status' => $nextStatus,
                     'evidence_submission_id' => $submission->id,
@@ -1288,6 +1727,290 @@ class AccountabilityController extends Controller
         }, 3);
 
         return back()->with('status', 'Accomplished RSLDDP recorded.');
+    }
+
+    /**
+     * SPMU Head/Admin records ONLY the official disposition actually stated
+     * in the accomplished RSLDDP/external decision - this RECORDS the
+     * external result, it does not invent it. SPMU never pre-decides
+     * Repair/Replacement/Payment before this point (spec Section C/G).
+     *
+     * MONETARY_SETTLEMENT immediately creates the payable BillingStatement
+     * from the amount transcribed here (source=RSLDDP_DISPOSITION - not
+     * ACCOUNTING_OFFICE, since no separate Accounting document exists yet;
+     * see recordOfficialBillingStatement() for the optional real-evidence
+     * follow-up). REPAIR/REPLACEMENT/RETURN_RECOVERY route to Action Officer
+     * verification. OTHER is, by definition, an institutional process this
+     * system has no pre-defined workflow for - it is never routed to an
+     * invented Action Officer verification step; it goes straight to the
+     * Head's own Final Resolution review.
+     */
+    public function recordOfficialDisposition(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuHead,
+            403,
+            'Only the SPMU Head/Admin may record the official disposition.'
+        );
+
+        abort_unless(
+            $incident->status === 'RSLDDP_DISPOSITION_PENDING',
+            422,
+            'This property case is not awaiting the official disposition.'
+        );
+
+        $data = $request->validate([
+            'official_disposition' => ['required', 'in:MONETARY_SETTLEMENT,REPAIR,REPLACEMENT,RETURN_RECOVERY,OTHER'],
+            'official_disposition_amount' => ['required_if:official_disposition,MONETARY_SETTLEMENT', 'nullable', 'numeric', 'min:0.01'],
+            'official_disposition_details' => ['required_if:official_disposition,OTHER', 'nullable', 'string', 'max:2000'],
+            'resolution_remarks' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $disposition = $data['official_disposition'];
+
+        if (in_array($disposition, ['REPAIR', 'REPLACEMENT', 'RETURN_RECOVERY'], true)) {
+            $allowed = $this->allowedOfficialDispositions($incident);
+
+            if (! in_array($disposition, $allowed, true)) {
+                throw ValidationException::withMessages([
+                    'official_disposition' => 'The selected disposition does not match the recorded property finding.',
+                ]);
+            }
+        }
+
+        $billing = null;
+
+        DB::transaction(function () use ($incident, $request, $data, $disposition, $audit, &$billing): void {
+            $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
+
+            if ($incident->status !== 'RSLDDP_DISPOSITION_PENDING') {
+                throw ValidationException::withMessages([
+                    'incident' => 'This property case is no longer awaiting the official disposition.',
+                ]);
+            }
+
+            $previousStatus = $incident->status;
+            $existingRemarks = trim((string) $incident->remarks);
+
+            $nextStatus = $disposition === 'OTHER' ? 'RSLDDP_FOR_RESOLUTION' : 'RSLDDP_COMPLIANCE_VERIFICATION';
+
+            $incident->update([
+                'official_disposition' => $disposition,
+                'official_disposition_amount' => $data['official_disposition_amount'] ?? null,
+                'official_disposition_details' => $data['official_disposition_details'] ?? null,
+                'official_disposition_recorded_by_user_id' => $request->user()->id,
+                'official_disposition_recorded_at' => now(),
+                'status' => $nextStatus,
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '')
+                    .'SPMU Head/Admin recorded the official disposition: '.AccountabilityDispositionLabels::officialDispositionLabel($disposition).'. '.$data['resolution_remarks']),
+            ]);
+
+            if ($disposition === 'MONETARY_SETTLEMENT') {
+                $billing = BillingStatement::query()->create([
+                    'billing_no' => 'RSLDDP-'.now()->format('YmdHis').'-'.$incident->id.'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT),
+                    'borrower_user_id' => $incident->borrower_user_id,
+                    'responsible_spmu_user_id' => $request->user()->id,
+                    'issued_at' => now(),
+                    'total_amount' => $data['official_disposition_amount'],
+                    'status' => 'ISSUED',
+                    'source' => 'RSLDDP_DISPOSITION',
+                    'remarks' => 'Monetary Settlement recorded from the accomplished RSLDDP for '.$incident->incident_no.'.',
+                ]);
+
+                $billing->lines()->create([
+                    'incident_id' => $incident->id,
+                    'source_key' => 'INCIDENT:'.$incident->id.':'.$billing->id,
+                    'line_type' => 'PROPERTY_ACCOUNTABILITY_CHARGE',
+                    'description' => str($incident->incident_type)->replace('_', ' ')->title().' accountability charge (accomplished RSLDDP disposition)',
+                    'basis' => 'Official Monetary Settlement disposition recorded from the accomplished RSLDDP.',
+                    'amount' => $data['official_disposition_amount'],
+                ]);
+            }
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED',
+                $incident,
+                reason: $data['resolution_remarks'],
+                before: ['status' => $previousStatus],
+                after: [
+                    'status' => $nextStatus,
+                    'official_disposition' => $disposition,
+                    'official_disposition_amount' => $data['official_disposition_amount'] ?? null,
+                    'billing_statement_id' => $billing?->id,
+                ]
+            );
+        }, 3);
+
+        $incident->refresh()->loadMissing('borrower');
+        if ($incident->borrower) {
+            $notifications->send(
+                'PROPERTY_ACCOUNTABILITY_OFFICIAL_DISPOSITION_RECORDED',
+                collect([$incident->borrower]),
+                $this->officialDispositionBorrowerMessage($incident),
+                $incident,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
+
+        return back()->with('status', 'Official disposition recorded: '.AccountabilityDispositionLabels::officialDispositionLabel($disposition).'.');
+    }
+
+    private function officialDispositionBorrowerMessage(Incident $incident): string
+    {
+        $context = $this->incidentBorrowerContext($incident);
+
+        return match ($incident->official_disposition) {
+            'MONETARY_SETTLEMENT' => "Official Disposition: Monetary Settlement. Amount: PHP ".number_format((float) $incident->official_disposition_amount, 2).". {$context} Next Action: Settle the assessed amount through the authorized CSPC Cashier.",
+            'REPAIR' => "Official Disposition: Repair. {$context} Next Action: Complete the required repair and return/present the item to SPMU.",
+            'REPLACEMENT' => "Official Disposition: Replacement. {$context} Next Action: Provide the required replacement to SPMU.",
+            'RETURN_RECOVERY' => "Official Disposition: Return / Recovery. {$context} Next Action: Return/present the recovered property to SPMU.",
+            default => "Official Disposition: Other. {$context} Next Action: Review the recorded details in My Obligations; the SPMU Head/Admin will confirm final resolution.",
+        };
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function allowedOfficialDispositions(Incident $incident): array
+    {
+        $mapped = collect($this->allowedComplianceActions($incident))
+            ->map(fn (string $action) => $action === 'RECOVERY' ? 'RETURN_RECOVERY' : $action)
+            ->values()
+            ->all();
+
+        return array_values(array_unique(array_merge($mapped, ['MONETARY_SETTLEMENT', 'OTHER'])));
+    }
+
+    /**
+     * SPMU Action Officer verifies REPAIR/REPLACEMENT/RETURN_RECOVERY
+     * compliance against the recorded official disposition. The Officer
+     * verifies; they never choose the disposition and never decide the
+     * administrative offense. MONETARY_SETTLEMENT is verified through the
+     * Cashier receipt/payment flow (recordPayment()) instead, and OTHER
+     * never reaches this stage (spec Section H).
+     */
+    public function verifyOfficialDispositionCompliance(
+        Request $request,
+        Incident $incident,
+        AuditService $audit,
+        NotificationService $notifications,
+        InventoryService $inventoryService
+    ): RedirectResponse {
+        abort_unless(
+            $request->user()?->access_classification === AccessClassification::SpmuOfficer,
+            403,
+            'Only the SPMU Action Officer may verify official disposition compliance.'
+        );
+
+        abort_unless(
+            $incident->status === 'RSLDDP_COMPLIANCE_VERIFICATION'
+                && in_array($incident->official_disposition, ['REPAIR', 'REPLACEMENT', 'RETURN_RECOVERY'], true),
+            422,
+            'This property case is not awaiting Action Officer compliance verification.'
+        );
+
+        $data = $request->validate([
+            'decision' => ['required', 'in:ACCEPTED,NOT_ACCEPTED'],
+            'remarks' => ['required_if:decision,NOT_ACCEPTED', 'nullable', 'string', 'max:2000'],
+        ]);
+
+        $inventoryAdjustments = [];
+
+        DB::transaction(function () use ($incident, $request, $data, $audit, $inventoryService, &$inventoryAdjustments): void {
+            $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
+
+            if (
+                $incident->status !== 'RSLDDP_COMPLIANCE_VERIFICATION'
+                || ! in_array($incident->official_disposition, ['REPAIR', 'REPLACEMENT', 'RETURN_RECOVERY'], true)
+            ) {
+                throw ValidationException::withMessages([
+                    'incident' => 'This property case is no longer awaiting Action Officer compliance verification.',
+                ]);
+            }
+
+            $previousStatus = $incident->status;
+            $existingRemarks = trim((string) $incident->remarks);
+
+            if ($data['decision'] === 'NOT_ACCEPTED') {
+                $incident->update([
+                    'compliance_verification_status' => 'NOT_ACCEPTED',
+                    'compliance_verification_remarks' => $data['remarks'],
+                    'compliance_verified_by_user_id' => $request->user()->id,
+                    'compliance_verified_at' => now(),
+                    'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').'SPMU Action Officer did not accept the presented requirement: '.$data['remarks']),
+                ]);
+
+                $audit->record(
+                    'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED',
+                    $incident,
+                    reason: $data['remarks'],
+                    before: ['status' => $previousStatus],
+                    after: ['status' => $incident->status, 'verified_by_user_id' => $request->user()->id]
+                );
+
+                return;
+            }
+
+            $mappedAction = $incident->official_disposition === 'RETURN_RECOVERY' ? 'RECOVERY' : $incident->official_disposition;
+            $inventoryAdjustments = $inventoryService->recordIncidentCompliance($incident, $request->user(), $mappedAction);
+
+            if ($incident->rslddp_evidence_submission_id) {
+                EvidenceSubmission::query()
+                    ->whereKey($incident->rslddp_evidence_submission_id)
+                    ->where('verification_status', '!=', 'VERIFIED')
+                    ->update([
+                        'verification_status' => 'VERIFIED',
+                        'verified_by_user_id' => $request->user()->id,
+                        'verified_at' => now(),
+                    ]);
+            }
+
+            $incident->update([
+                'status' => 'RSLDDP_FOR_RESOLUTION',
+                'compliance_verification_status' => 'ACCEPTED',
+                'compliance_verification_remarks' => null,
+                'compliance_verified_by_user_id' => $request->user()->id,
+                'compliance_verified_at' => now(),
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').'SPMU Action Officer verified '.$this->complianceActionLabel($mappedAction).'.'),
+            ]);
+
+            $audit->record(
+                'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED',
+                $incident,
+                reason: 'Physical compliance verified by the SPMU Action Officer.',
+                before: ['status' => $previousStatus],
+                after: [
+                    'status' => 'RSLDDP_FOR_RESOLUTION',
+                    'official_disposition' => $incident->official_disposition,
+                    'inventory_adjustments' => $inventoryAdjustments,
+                    'verified_by_user_id' => $request->user()->id,
+                    'verification_role' => 'SPMU_ACTION_OFFICER',
+                ]
+            );
+        }, 3);
+
+        $incident->refresh()->loadMissing('borrower');
+        if ($incident->borrower) {
+            $message = $incident->status === 'RSLDDP_FOR_RESOLUTION'
+                ? "The SPMU Action Officer verified the required ".AccountabilityDispositionLabels::officialDispositionLabel($incident->official_disposition)." for property accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} Verification complete. Final SPMU resolution is pending. Borrowing remains restricted until the case is formally resolved."
+                : "The SPMU Action Officer did not accept the presented requirement for property accountability case {$incident->incident_no}. {$this->incidentBorrowerContext($incident)} Review the recorded remarks and present the corrected requirement.";
+
+            $notifications->send(
+                $incident->status === 'RSLDDP_FOR_RESOLUTION' ? 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_VERIFIED' : 'PROPERTY_ACCOUNTABILITY_COMPLIANCE_NOT_ACCEPTED',
+                collect([$incident->borrower]),
+                $message,
+                $incident,
+                ['SYSTEM', 'EMAIL']
+            );
+        }
+
+        return back()->with('status', $incident->status === 'RSLDDP_FOR_RESOLUTION'
+            ? 'Compliance verified. The case is now awaiting final SPMU Head/Admin review; its linked restriction remains active until resolution.'
+            : 'Compliance not accepted. Recorded for the borrower to present the corrected requirement.');
     }
 
     /**
@@ -1320,9 +2043,15 @@ class AccountabilityController extends Controller
          * "reconciliation required" message below instead of this generic
          * guard's message - the outcome (blocked, nothing changes) is the
          * same either way, but the borrower/Head sees why.
+         *
+         * The new-flow condition is a genuinely OPTIONAL action here (record
+         * a real external Accounting/SOA document as evidence, superseding
+         * the Save-Disposition-created billing) rather than the only path to
+         * a payable billing, unlike the legacy statuses above.
          */
         abort_unless(
-            in_array($incident->status, ['RSLDDP_FOR_ACCOUNTING_PROCESSING', 'RSLDDP_PAYMENT_REQUIRED', 'RSLDDP_FOR_RESOLUTION'], true),
+            in_array($incident->status, ['RSLDDP_FOR_ACCOUNTING_PROCESSING', 'RSLDDP_PAYMENT_REQUIRED', 'RSLDDP_FOR_RESOLUTION'], true)
+                || ($incident->status === 'RSLDDP_COMPLIANCE_VERIFICATION' && $incident->official_disposition === 'MONETARY_SETTLEMENT'),
             422,
             'This property case is not awaiting an official Billing Statement.'
         );
@@ -1337,9 +2066,16 @@ class AccountabilityController extends Controller
             'billing_reference' => 'Accounting Billing/SOA Reference No.',
         ]);
 
+        /*
+         * Widened to also find the auto-created source=RSLDDP_DISPOSITION
+         * billing (Save Disposition, new flow) - without this, a later real
+         * Accounting document would silently create an orphaned second
+         * billing instead of properly superseding the first, and the
+         * payment-protection check below would never see it.
+         */
         $currentBilling = BillingStatement::query()
             ->whereHas('lines', fn ($query) => $query->where('incident_id', $incident->id))
-            ->where('source', 'ACCOUNTING_OFFICE')
+            ->whereIn('source', ['ACCOUNTING_OFFICE', 'RSLDDP_DISPOSITION'])
             ->where('status', '!=', 'VOID')
             ->latest('id')
             ->first();
@@ -1419,7 +2155,18 @@ class AccountabilityController extends Controller
                 'generated_at' => now(),
             ]);
 
-            $incident->update(['status' => 'RSLDDP_PAYMENT_REQUIRED']);
+            /*
+             * The new flow's incident is already at
+             * RSLDDP_COMPLIANCE_VERIFICATION (set when the Head recorded the
+             * disposition and the RSLDDP_DISPOSITION billing was
+             * auto-created) - this action only attaches/supersedes optional
+             * external evidence there, it does not advance the case. Only
+             * the legacy path (where this call is the sole way a billing
+             * ever gets created) advances status here.
+             */
+            if ($incident->accountability_flow_version !== 'V2') {
+                $incident->update(['status' => 'RSLDDP_PAYMENT_REQUIRED']);
+            }
 
             $audit->record(
                 $currentBilling ? 'PROPERTY_ACCOUNTABILITY_OFFICIAL_BILLING_CORRECTED' : 'PROPERTY_ACCOUNTABILITY_OFFICIAL_BILLING_RECORDED',
@@ -1452,10 +2199,10 @@ class AccountabilityController extends Controller
     }
 
     /**
-     * SPMU Head/Admin's final verification and resolution once the
-     * accomplished RSLDDP is on record and the official Billing Statement
-     * is fully settled through a confirmed Cashier payment. No reject path
-     * here - any correction happens earlier, before this final step.
+     * SPMU Head/Admin's final review and resolution for the existing shared
+     * final-review stage. It applies after either Action Officer operational
+     * compliance verification or a fully settled RSLDDP payment path. No
+     * receipt is required for a compliance-only case.
      */
     public function resolveRslddpSettlement(
         Request $request,
@@ -1467,19 +2214,21 @@ class AccountabilityController extends Controller
         abort_unless(
             $request->user()?->access_classification === AccessClassification::SpmuHead,
             403,
-            'Only the SPMU Head/Admin may verify and resolve the RSLDDP settlement.'
+            'Only the SPMU Head/Admin may perform the final accountability review and resolution.'
         );
 
         $data = $request->validate([
             'resolution_remarks' => ['required', 'string', 'max:2000'],
         ]);
 
-        DB::transaction(function () use ($incident, $request, $data, $audit): void {
+        $liftedRestrictionId = null;
+
+        DB::transaction(function () use ($incident, $request, $data, $audit, &$liftedRestrictionId): void {
             $incident = Incident::query()->lockForUpdate()->findOrFail($incident->id);
 
             if ($incident->status !== 'RSLDDP_FOR_RESOLUTION') {
                 throw ValidationException::withMessages([
-                    'incident' => 'This property case is not awaiting RSLDDP settlement resolution.',
+                    'incident' => 'This property case is not awaiting final review and resolution.',
                 ]);
             }
 
@@ -1489,6 +2238,7 @@ class AccountabilityController extends Controller
             if ($incident->rslddp_evidence_submission_id) {
                 EvidenceSubmission::query()
                     ->whereKey($incident->rslddp_evidence_submission_id)
+                    ->where('verification_status', '!=', 'VERIFIED')
                     ->update([
                         'verification_status' => 'VERIFIED',
                         'verified_by_user_id' => $request->user()->id,
@@ -1498,8 +2248,13 @@ class AccountabilityController extends Controller
 
             $incident->update([
                 'status' => 'RESOLVED',
-                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').'SPMU Head/Admin RSLDDP settlement resolution: '.$data['resolution_remarks']),
+                'remarks' => trim($existingRemarks.($existingRemarks !== '' ? "\n" : '').'SPMU Head/Admin final accountability resolution: '.$data['resolution_remarks']),
             ]);
+
+            $liftedRestrictionId = (int) BorrowerRestriction::query()
+                ->where('incident_id', $incident->id)
+                ->where('status', 'ACTIVE')
+                ->value('id');
 
             BorrowerRestriction::query()
                 ->where('incident_id', $incident->id)
@@ -1519,7 +2274,7 @@ class AccountabilityController extends Controller
                 before: ['status' => $previousStatus],
                 after: [
                     'status' => 'RESOLVED',
-                    'resolution_outcome' => 'RSLDDP_SETTLEMENT_VERIFIED',
+                    'resolution_outcome' => 'FINAL_ACCOUNTABILITY_REVIEW',
                     'resolved_by_user_id' => $request->user()->id,
                 ]
             );
@@ -1530,13 +2285,41 @@ class AccountabilityController extends Controller
             $notifications->send(
                 'PROPERTY_ACCOUNTABILITY_CASE_RESOLVED',
                 collect([$incident->borrower]),
-                "Property accountability case {$incident->incident_no} has been resolved by the SPMU Head/Admin after RSLDDP settlement verification. {$this->incidentBorrowerContext($incident)} The restriction linked to this property case has been lifted. Any separate administrative sanction or other active obligation/restriction still applies according to its own status.",
+                "Property accountability case {$incident->incident_no} has been resolved by the SPMU Head/Admin after final review. {$this->incidentBorrowerContext($incident)} The restriction linked to this property case has been lifted."
+                    .$this->restrictionStatusNote((int) $incident->borrower_user_id, $liftedRestrictionId),
                 $incident,
                 ['SYSTEM', 'EMAIL']
             );
         }
 
-        return back()->with('status', 'RSLDDP settlement verified. The property accountability case was resolved and its linked restriction was lifted.');
+        return back()->with('status', 'Final review recorded. The property accountability case was resolved and its linked restriction was lifted.');
+    }
+
+    /**
+     * The read-only checklist shown before "Mark as Resolved" (spec Section
+     * I): accomplished RSLDDP received, the disposition's required
+     * compliance/settlement complete, and verification complete. Purely
+     * presentational - resolveRslddpSettlement() itself is unchanged and
+     * already guards on status===RSLDDP_FOR_RESOLUTION, which this
+     * checklist should always show fully satisfied by construction.
+     *
+     * @return array<string, bool>
+     */
+    public function finalResolutionChecklist(Incident $incident): array
+    {
+        return [
+            'accomplished_rslddp_received' => (bool) $incident->rslddp_evidence_submission_id,
+            'disposition_settlement_complete' => $incident->official_disposition === 'MONETARY_SETTLEMENT'
+                ? DB::table('billing_lines')
+                    ->join('billing_statements', 'billing_statements.id', '=', 'billing_lines.billing_statement_id')
+                    ->where('billing_lines.incident_id', $incident->id)
+                    ->where('billing_statements.status', 'SETTLED')
+                    ->exists()
+                : $incident->compliance_verification_status === 'ACCEPTED',
+            'verification_complete' => $incident->official_disposition === 'OTHER'
+                ? true
+                : $incident->status === 'RSLDDP_FOR_RESOLUTION',
+        ];
     }
 
     /**
@@ -1809,11 +2592,18 @@ class AccountabilityController extends Controller
          * Resolution" only. It never auto-resolves here - Head/Admin still
          * verifies the accomplished RSLDDP and explicitly resolves the case
          * (resolveRslddpSettlement()), unlike the legacy path below.
+         *
+         * RSLDDP_PAYMENT_REQUIRED (legacy, source=ACCOUNTING_OFFICE only) and
+         * RSLDDP_COMPLIANCE_VERIFICATION (new flow, source=RSLDDP_DISPOSITION
+         * or, once optional external evidence is attached,
+         * ACCOUNTING_OFFICE) both reach the same RSLDDP_FOR_RESOLUTION
+         * destination on full settlement - the meaning is identical either
+         * way, only the status name differs by which flow produced it.
          */
-        if ($billing->source === 'ACCOUNTING_OFFICE') {
+        if (in_array($billing->source, ['ACCOUNTING_OFFICE', 'RSLDDP_DISPOSITION'], true)) {
             Incident::query()
                 ->whereKey($incidentIds)
-                ->where('status', 'RSLDDP_PAYMENT_REQUIRED')
+                ->whereIn('status', ['RSLDDP_PAYMENT_REQUIRED', 'RSLDDP_COMPLIANCE_VERIFICATION'])
                 ->update(['status' => 'RSLDDP_FOR_RESOLUTION']);
 
             return true;

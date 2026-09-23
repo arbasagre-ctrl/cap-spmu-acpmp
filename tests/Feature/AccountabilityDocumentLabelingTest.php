@@ -393,12 +393,18 @@ class AccountabilityDocumentLabelingTest extends TestCase
             ->assertOk()
             ->assertSee('Late Return Billing Statement');
 
-        /* Current Accountability actions/details. */
+        /*
+         * Current Accountability actions/details now live behind the
+         * borrower-scoped deep link (accountability.index?borrower=...) -
+         * the default unfiltered Oversight overview is borrower-centered
+         * and no longer lists individual case rows/documents.
+         */
         $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
-            ->get(route('accountability.index'))
+            ->get(route('accountability.index', ['borrower' => $billing->borrower_user_id]))
             ->assertOk()
-            ->assertSee('The Late Return Notice and Late Return Billing Statement have been issued.')
+            ->assertSee('Late Return Notice')
+            ->assertSee('Late Return Billing Statement')
             ->assertSee('Preview')
             ->assertDontSee('Open Late Return Billing Statement');
     }
@@ -463,6 +469,49 @@ class AccountabilityDocumentLabelingTest extends TestCase
 
         $this->assertStringContainsString('A separate Late Return Billing Statement is the financial document used for CSPC Cashier settlement.', $html);
         $this->assertStringNotContainsString('A separate Billing Statement is the financial document', $html);
+    }
+
+    /**
+     * Phase 7: the pre-return notice - issued automatically the moment a
+     * custody first becomes OVERDUE - may only ever show the Expected Return
+     * Date and the official per-day rate. It must never show final late
+     * days, a Head decision/signature, or any total, even if a caller
+     * mistakenly supplied one.
+     */
+    public function test_pre_return_late_return_notice_shows_only_the_daily_rate_and_never_final_days_or_a_total(): void
+    {
+        $html = view('documents.accountability.late-return-notice', [
+            'case' => new \App\Models\OverdueCase(),
+            'reference' => 'LRN-000002',
+            'logoDataUri' => 'data:image/png;base64,',
+            'borrowerName' => 'Test Borrower',
+            'officeUnit' => 'Test Office',
+            'requestNo' => 'BR-0002',
+            'custodyNo' => 'CUS-0002',
+            'expectedReturnDate' => '01 September 2026',
+            'actualReturnDate' => '—',
+            'lateDays' => 0,
+            'rate' => 75.0,
+            'amount' => 999.99,
+            'disposition' => 'Pending Physical Return',
+            'decisionBasis' => 'This preliminary notice was issued automatically because the item was not returned by the Expected Return Date.',
+            'aoConfirmedBy' => null,
+            'aoConfirmedAt' => null,
+            'headName' => '',
+            'headDesignation' => '',
+            'headDate' => '',
+            'headSignatureHtml' => '',
+            'generatedAt' => '11 September 2026, 9:00 AM',
+            'items' => [],
+            'isPreReturn' => true,
+        ])->render();
+
+        $this->assertStringContainsString('Official Late-Return Fee Rate', $html);
+        $this->assertStringContainsString('PHP 75.00 per day', $html);
+        $this->assertStringContainsString('Preliminary', $html);
+        $this->assertStringNotContainsString('Final Late Days', $html);
+        $this->assertStringNotContainsString('999.99', $html);
+        $this->assertStringNotContainsString('Confirmed By — SPMU Head', $html);
     }
 
     /* ------------------------------------------------------------------ */

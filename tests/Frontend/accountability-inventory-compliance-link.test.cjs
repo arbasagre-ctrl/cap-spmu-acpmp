@@ -8,15 +8,16 @@ const accountability = fs.readFileSync(path.join(root, 'resources/views/accounta
 const inventory = fs.readFileSync(path.join(root, 'resources/views/inventory/show.blade.php'), 'utf8');
 
 
-test('Head decision records one specific compliance action only when compliance is selected', () => {
-  assert.match(accountability, /Property Compliance Required/);
-  assert.match(accountability, /Required Compliance Action/);
+test('Head property decision follows Confirm/Clear then records the accomplished RSLDDP disposition', () => {
+  assert.match(accountability, /Confirm Accountability/);
+  assert.match(accountability, /Clear Finding \/ No Accountability/);
+  assert.match(accountability, /RSLDDP_DISPOSITION_PENDING/);
+  assert.match(accountability, /Select the disposition stated in the RSLDDP/);
+  assert.match(accountability, /value="MONETARY_SETTLEMENT"/);
   assert.match(accountability, /value="REPAIR"/);
   assert.match(accountability, /value="REPLACEMENT"/);
-  assert.match(accountability, /value="RECOVERY"/);
-  assert.match(accountability, /data-compliance-action-field hidden/);
-  assert.match(accountability, /data-rslddp-field hidden/);
-  assert.match(accountability, /outcome\?\.value === 'COMPLIANCE_REQUIRED'/);
+  assert.match(accountability, /value="RETURN_RECOVERY"/);
+  assert.doesNotMatch(accountability, /name="count_as_offense"/);
 });
 
 test('AO verification is one-step and does not ask for duplicate remarks or a second decision', () => {

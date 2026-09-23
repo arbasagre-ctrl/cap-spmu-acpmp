@@ -35,13 +35,16 @@
         const selected = laundryDateInput.value;
         const due = laundryDateInput.dataset.dueDate || '';
 
+        laundryDateStatus.dataset.state = '';
+
         if (!selected) {
             laundryDateStatus.textContent = '';
             return;
         }
 
         if (laundryDateInput.min && selected < laundryDateInput.min) {
-            laundryDateStatus.textContent = 'Date cannot be earlier than the physical release date.';
+            laundryDateStatus.textContent = 'Date is before the physical release.';
+            laundryDateStatus.dataset.state = 'error';
             return;
         }
 
@@ -54,9 +57,13 @@
         }
 
         const difference = selectedDay - dueDay;
-        laundryDateStatus.textContent = difference > 0
-            ? `Late return — ${difference} day${difference === 1 ? '' : 's'} after the expected return date.`
-            : 'On time based on the Laundry Form RECEIVED BY date.';
+        if (difference > 0) {
+            laundryDateStatus.textContent = `Late · ${difference} day${difference === 1 ? '' : 's'}`;
+            laundryDateStatus.dataset.state = 'late';
+        } else {
+            laundryDateStatus.textContent = 'On time';
+            laundryDateStatus.dataset.state = 'ontime';
+        }
     };
 
     if (laundryDateInput && laundryDateInput.dataset.dynamicDateInitialized !== '1') {
@@ -72,12 +79,6 @@
 
     const rows = [...form.querySelectorAll('.return-accounting-row')];
     const button = form.querySelector('#record-return-button');
-    const message = form.querySelector('#return-accounting-message');
-    const messageCopy = message?.querySelector('[data-return-accounting-copy]');
-    const warningIcon = message?.querySelector('[data-return-accounting-warning]');
-    const successIcon = message?.querySelector('[data-return-accounting-success]');
-    const remarks = form.querySelector('textarea[name="remarks"]');
-    const remarksCount = form.querySelector('[data-return-remarks-count]');
     const epsilon = 0.0005;
 
     const mixedReturn = form.dataset.mixedReturn === '1';
@@ -89,15 +90,6 @@
         const value = Number.parseFloat(input?.value || '0');
         return Number.isFinite(value) && value > 0 ? value : 0;
     };
-
-    const refreshRemarksCount = () => {
-        if (remarks && remarksCount) {
-            remarksCount.textContent = String(remarks.value.length);
-        }
-    };
-
-    remarks?.addEventListener('input', refreshRemarksCount);
-    refreshRemarksCount();
 
     const refresh = () => {
         const activeRows = rows.filter((row) => row.dataset.linenPending !== '1');
@@ -183,73 +175,41 @@
 
         if (!button || activeRows.length === 0) {
             if (button) button.disabled = true;
-            if (message) message.hidden = true;
             return;
         }
 
         button.disabled = !ready;
 
-        if (message) {
-            message.hidden = selectedRows === 0;
-            message.classList.toggle('warning', !ready);
-            message.classList.toggle('success', ready);
-        }
-
-        if (warningIcon) warningIcon.hidden = ready;
-        if (successIcon) successIcon.hidden = !ready;
-
-        if (!messageCopy) return;
-
         if (selectedBranches > 1) {
             button.textContent = 'Record Return Inspection';
-            messageCopy.textContent = 'Record one complete return branch at a time so each branch keeps the correct physical return date: AO inspection time for non-linen, Laundry RECEIVED BY for linen.';
             return;
         }
 
-        if (ready && nonLinen.selected) {
+        if (nonLinen.selected) {
             button.textContent = mixedReturn
                 ? 'Record Non-Linen Return Inspection'
                 : 'Record Return Inspection';
-            messageCopy.textContent = hasPendingLinen
-                ? 'Ready to record the complete non-linen branch. Linen remains pending.'
-                : 'Ready to record the complete non-linen return branch.';
             return;
         }
 
-        if (ready && linen.selected) {
+        if (linen.selected) {
             button.textContent = 'Record Linen Return Findings';
-            messageCopy.textContent = 'Ready to record every outstanding linen item from the accomplished Laundry Form.';
-            return;
-        }
-
-        if (selectedBranches > 0 && !selectedBranchesComplete) {
-            messageCopy.textContent = 'No partial return: once a return branch is started, account for every outstanding item type in that branch and the full outstanding quantity of each item.';
-            return;
-        }
-
-        if (selectedBranches > 0 && !browserValidityOkay) {
-            messageCopy.textContent = 'Complete the required supporting details before recording this return.';
             return;
         }
 
         if (nonLinenOnly) {
             button.textContent = 'Record Return Inspection';
-            messageCopy.textContent = 'Account for every outstanding non-linen item type in one return inspection.';
             return;
         }
 
         if (linenOnly) {
             button.textContent = 'Record Linen Return Findings';
-            messageCopy.textContent = 'Account for every outstanding linen item type from the accomplished Laundry Form.';
             return;
         }
 
         button.textContent = hasPendingLinen
             ? 'Record Non-Linen Return Inspection'
             : 'Record Return Inspection';
-        messageCopy.textContent = hasPendingLinen
-            ? 'Account for every outstanding non-linen item type. Linen remains pending until the accomplished Laundry Form is ready.'
-            : 'Choose a return branch and account for every outstanding item type in that branch.';
     };
 
     rows.forEach((row) => {

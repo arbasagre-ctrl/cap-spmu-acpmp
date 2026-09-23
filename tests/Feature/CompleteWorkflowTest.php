@@ -16,6 +16,7 @@ use App\Models\RequestSupportingDocument;
 use App\Models\StoredFile;
 use App\Models\NotificationEvent;
 use App\Models\OperationalWeeklySchedule;
+use App\Models\OverdueCase;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\CustodyService;
@@ -309,19 +310,21 @@ class CompleteWorkflowTest extends TestCase
             ->actingAs($borrower)
             ->get(route('custody.show', $custody))
             ->assertOk()
-            ->assertSeeText('Currently On Custody')
+            ->assertSeeText('On Custody')
             ->assertDontSeeText('Quantity to Hand Over');
 
-        $this->withSession(['active_workspace' => 'BORROWER'])
-            ->actingAs($borrower)
-            ->post(
-                route('custody.early-return', $custody),
-                [
-                    'proposed_return_at' => $proposedReturnAt->format('Y-m-d H:i:s'),
-                    'reason' => 'Event ended earlier than planned.',
-                ]
-            )
-            ->assertSessionHasNoErrors();
+        /*
+         * Approved rule: "Early return uses normal Return Inspection; do not
+         * recreate legacy custody.early-return." There is no borrower-facing
+         * route for this coordination-only notice anymore - call the service
+         * directly, exactly as WorkflowAuditCorrectionsTest does.
+         */
+        app(CustodyService::class)->requestEarlyReturn(
+            $custody,
+            $borrower,
+            $proposedReturnAt->format('Y-m-d H:i:s'),
+            'Event ended earlier than planned.'
+        );
 
         $this->assertDatabaseHas('notification_events', [
             'event_code' => 'EARLY_RETURN_REQUESTED',
@@ -998,6 +1001,191 @@ class CompleteWorkflowTest extends TestCase
         ]);
     }
 
+    /**
+     * Regression: PolicyService::autoConfirmLateReturnViolation() must reach
+     * applyConfirmedDecision() with $effectiveTo=null and the allowed-sanctions
+     * array in the correct positional slot. This only reproduces when the
+     * violation is actually eligible for offense counting (an active
+     * AcademicPeriod covers the return date and an ACTIVE offense_no=1
+     * SanctionRule exists) - without both, autoConfirmLateReturnViolation()
+     * returns early and never reaches the buggy call.
+     */
+    public function test_an_overdue_physical_return_auto_confirms_the_late_return_violation_without_error(): void
+    {
+        [$borrower, $spmu, $spmuOfficer, $request, $version] =
+            $this->approvedRequest(5);
+
+        $custody = $request
+            ->custody()
+            ->with('lines')
+            ->firstOrFail();
+
+        $this->schedulePickupAndPrepare(
+            $custody,
+            $spmuOfficer,
+            $version
+        );
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmuOfficer)
+            ->post(
+                route('custody.release', $custody),
+                [
+                    'physical_signatures_confirmed' => '1',
+                    'remarks' => 'Physical issuance completed.',
+                ]
+            )
+            ->assertSessionHasNoErrors();
+
+        \App\Models\AcademicPeriod::query()->create([
+            'academic_year' => '2026-2027',
+            'term_code' => 'SEM1',
+            'term_name' => 'First Semester',
+            'start_date' => now()->subMonth()->toDateString(),
+            'end_date' => now()->addMonth()->toDateString(),
+            'status' => 'ACTIVE',
+        ]);
+
+        $custody->update([
+            'due_at' => now()->subDay()->endOfDay(),
+            'original_due_at' => now()->subDay()->endOfDay(),
+        ]);
+
+        SystemSetting::where('setting_key', 'daily_overdue_tariff')
+            ->firstOrFail()
+            ->update(['value_json' => 75]);
+
+        $this->artisan('spmu:process-deadlines')->assertSuccessful();
+
+        $this->assertSame('OVERDUE', $custody->fresh()->status);
+
+        $line = $custody->fresh()->lines()->firstOrFail();
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmuOfficer)
+            ->post(
+                route('custody.return', $custody),
+                [
+                    'quantities' => [$line->id => 5],
+                    'conditions' => [$line->id => 'FINE'],
+                    'remarks' => 'Late physical return - regression for auto-confirm TypeError.',
+                ]
+            )
+            ->assertSessionHasNoErrors();
+
+        $violation = \App\Models\BorrowerViolation::where('custody_transaction_id', $custody->id)
+            ->where('violation_source', 'LATE_RETURN')
+            ->firstOrFail();
+
+        $this->assertSame('CONFIRMED', $violation->status);
+
+        $sanction = $violation->sanction()->firstOrFail();
+        $this->assertSame(1, $sanction->offense_no);
+        $this->assertSame('WRITTEN_REPRIMAND', $sanction->sanction_code);
+    }
+
+    /**
+     * Phase 7: the Late Return Notice is issued automatically the moment a
+     * custody first becomes OVERDUE - a repeated scheduler tick, and later
+     * Head billing with the final total, must never produce a second one.
+     */
+    public function test_late_return_notice_is_issued_once_at_first_overdue_and_billing_never_duplicates_it(): void
+    {
+        [$borrower, $spmu, $spmuOfficer, $request, $version] =
+            $this->approvedRequest(5);
+
+        $custody = $request
+            ->custody()
+            ->with('lines')
+            ->firstOrFail();
+
+        $this->schedulePickupAndPrepare(
+            $custody,
+            $spmuOfficer,
+            $version
+        );
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmuOfficer)
+            ->post(
+                route('custody.release', $custody),
+                [
+                    'physical_signatures_confirmed' => '1',
+                    'remarks' => 'Physical issuance completed.',
+                ]
+            )
+            ->assertSessionHasNoErrors();
+
+        $custody->update([
+            'due_at' => now()->subDay()->endOfDay(),
+            'original_due_at' => now()->subDay()->endOfDay(),
+        ]);
+
+        SystemSetting::where('setting_key', 'daily_overdue_tariff')
+            ->firstOrFail()
+            ->update(['value_json' => 75]);
+
+        $this->assertSame(0, GeneratedDocument::where('document_type', 'LATE_RETURN_NOTICE')->count());
+
+        $this->artisan('spmu:process-deadlines')->assertSuccessful();
+
+        $overdue = OverdueCase::where('custody_transaction_id', $custody->id)->firstOrFail();
+
+        $noticeQuery = fn () => GeneratedDocument::where('subject_type', OverdueCase::class)
+            ->where('subject_id', $overdue->id)
+            ->where('document_type', 'LATE_RETURN_NOTICE');
+
+        $this->assertSame(1, $noticeQuery()->count());
+        $notice = $noticeQuery()->firstOrFail();
+
+        $this->assertDatabaseHas('notification_events', [
+            'event_code' => 'LATE_RETURN_NOTICE_ISSUED',
+            'source_type' => OverdueCase::class,
+            'source_id' => $overdue->id,
+        ]);
+
+        /* A second scheduler tick, still unreturned, must not issue a second notice. */
+        $this->artisan('spmu:process-deadlines')->assertSuccessful();
+
+        $this->assertSame(1, $noticeQuery()->count());
+        $this->assertSame(
+            1,
+            NotificationEvent::where('event_code', 'LATE_RETURN_NOTICE_ISSUED')
+                ->where('source_type', OverdueCase::class)
+                ->where('source_id', $overdue->id)
+                ->count()
+        );
+
+        /* Physical return, then Head billing with the finalized total. */
+        $line = $custody->fresh()->lines()->firstOrFail();
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmuOfficer)
+            ->post(
+                route('custody.return', $custody),
+                [
+                    'quantities' => [$line->id => 5],
+                    'conditions' => [$line->id => 'FINE'],
+                    'remarks' => 'Complete late physical return.',
+                ]
+            )
+            ->assertSessionHasNoErrors();
+
+        $this->withSession(['active_workspace' => 'SPMU'])
+            ->actingAs($spmu)
+            ->post(
+                route('overdue.bill', $overdue->fresh()),
+                ['basis' => 'Configured daily tariff for the recorded late calendar day(s).']
+            )
+            ->assertSessionHasNoErrors();
+
+        $billing = BillingStatement::where('borrower_user_id', $borrower->id)->firstOrFail();
+        $this->assertGreaterThan(0, (float) $billing->total_amount);
+
+        $this->assertSame(1, $noticeQuery()->count());
+        $this->assertSame($notice->id, $noticeQuery()->value('id'));
+    }
+
     public function test_stolen_property_requires_blotter_and_evidence_and_can_generate_approved_rslddp(): void
     {
         [$borrower, $spmu, $spmuOfficer, $request, $version] =
@@ -1117,8 +1305,10 @@ class CompleteWorkflowTest extends TestCase
         );
 
         /*
-         * Billing / Payment Required always requires RSLDDP - it is now the
-         * only path to a monetary property settlement.
+         * Confirming accountability always requires RSLDDP - it is the only
+         * path to an official disposition, monetary or otherwise. The Head
+         * never chooses Repair/Replacement/Payment upfront; only Confirm or
+         * Clear.
          */
         $this->actingAs($spmu)
             ->post(
@@ -1127,19 +1317,15 @@ class CompleteWorkflowTest extends TestCase
                     $incident
                 ),
                 [
-                    'resolution_outcome' => 'BILLING_REQUIRED',
-                    'resolution_remarks' => 'Stolen property requires borrower billing.',
-                    // This stolen-property incident is offense-eligible, so
-                    // the SPMU Head must explicitly choose whether it also
-                    // counts as an administrative offense. This scenario is
-                    // financial liability only, not a sanction.
-                    'count_as_offense' => false,
+                    'decision' => 'CONFIRM',
+                    'resolution_remarks' => 'Stolen property accountability confirmed.',
                 ]
             )
             ->assertSessionHasNoErrors();
 
         $incident->refresh();
         $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status);
+        $this->assertSame('V2', $incident->accountability_flow_version);
         $this->assertTrue((bool) $incident->requires_rslddp);
         $this->assertDatabaseHas('generated_documents', [
             'subject_type' => Incident::class,
@@ -1159,6 +1345,22 @@ class CompleteWorkflowTest extends TestCase
             )
             ->assertSessionHasErrors('incident');
 
+        /*
+         * The accomplished/notarized RSLDDP scan is uploaded by the SPMU
+         * Head/Admin, not the borrower (spec Section F) - the borrower may
+         * only view the case and its RSLDDP status.
+         */
+        $this->withSession(['active_workspace' => 'BORROWER'])
+            ->actingAs($borrower)
+            ->post(
+                route('incidents.rslddp.upload', $incident),
+                ['evidence' => UploadedFile::fake()->create('accomplished-rslddp.pdf', 10, 'application/pdf')]
+            );
+
+        $incident->refresh();
+        $this->assertSame('RSLDDP_AWAITING_UPLOAD', $incident->status, 'Borrower upload attempt must not advance the case.');
+        $this->assertNull($incident->rslddp_evidence_submission_id);
+
         $this->actingAs($spmu)
             ->post(
                 route('incidents.rslddp.upload', $incident),
@@ -1167,25 +1369,37 @@ class CompleteWorkflowTest extends TestCase
             ->assertSessionHasNoErrors();
 
         $incident->refresh();
-        $this->assertSame('RSLDDP_FOR_ACCOUNTING_PROCESSING', $incident->status);
+        $this->assertSame('RSLDDP_DISPOSITION_PENDING', $incident->status);
         $this->assertNotNull($incident->rslddp_evidence_submission_id);
+        $this->assertDatabaseHas('evidence_submissions', [
+            'id' => $incident->rslddp_evidence_submission_id,
+            'upload_mode' => 'SPMU_HEAD_RECORDED',
+        ]);
 
+        /*
+         * Save Disposition: the Head records ONLY the official disposition
+         * actually stated in the accomplished RSLDDP - here, a Monetary
+         * Settlement. The amount recorded here already creates the payable
+         * BillingStatement; no separate Accounting Office upload is
+         * required to reach the Cashier receipt step.
+         */
         $this->actingAs($spmu)
             ->post(
-                route('incidents.rslddp.billing', $incident),
+                route('incidents.disposition.record', $incident),
                 [
-                    'evidence' => UploadedFile::fake()->create('official-billing.pdf', 10, 'application/pdf'),
-                    'amount' => 500,
-                    'billing_reference' => 'ACCTG-SOA-2026-001',
+                    'official_disposition' => 'MONETARY_SETTLEMENT',
+                    'official_disposition_amount' => 500,
+                    'resolution_remarks' => 'Accomplished RSLDDP states a Monetary Settlement of PHP 500.',
                 ]
             )
             ->assertSessionHasNoErrors();
 
         $incident->refresh();
-        $this->assertSame('RSLDDP_PAYMENT_REQUIRED', $incident->status);
+        $this->assertSame('RSLDDP_COMPLIANCE_VERIFICATION', $incident->status);
+        $this->assertSame('MONETARY_SETTLEMENT', $incident->official_disposition);
 
         $billing = BillingStatement::where('borrower_user_id', $borrower->id)
-            ->where('source', 'ACCOUNTING_OFFICE')
+            ->where('source', 'RSLDDP_DISPOSITION')
             ->firstOrFail();
         $this->assertSame(500.0, (float) $billing->total_amount);
 

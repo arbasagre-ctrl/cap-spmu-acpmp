@@ -482,6 +482,7 @@ class TransactionAccountabilityHistoryService
             'COMPLIANCE_REQUIRED' => ucfirst($this->complianceActionLabel($complianceAction)).' required',
             'BILLING_REQUIRED' => 'Billing / payment required',
             'COMPLIANCE_COMPLETED' => ucfirst($this->complianceActionLabel($complianceAction)).' verified',
+            'FINAL_ACCOUNTABILITY_REVIEW' => 'Final review completed',
             'BILLING_SETTLED' => 'Billing settled',
             'BILLING_WAIVED' => 'Billing waived',
             'ADMINISTRATIVELY_CLEARED' => 'Administratively cleared',

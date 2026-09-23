@@ -23,16 +23,16 @@ class ItemPreparationStep2ContractTest extends TestCase
         $this->assertStringContainsString('Items prepared.', $prepare);
 
         $this->assertStringContainsString('public function reportPreparationIssue(', $source);
-        $this->assertStringContainsString("Rule::requiredIf(fn () => $request->input('issue_type') === 'QUANTITY_AVAILABILITY')", $source);
-        $this->assertStringContainsString("Rule::requiredIf(fn () => $request->input('issue_type') === 'PHYSICAL_CONDITION')", $source);
-        $this->assertStringContainsString("Rule::requiredIf(fn () => $request->input('issue_type') === 'OTHER')", $source);
+        $this->assertStringContainsString("Rule::requiredIf(fn () => \$request->input('issue_type') === 'QUANTITY_AVAILABILITY')", $source);
+        $this->assertStringContainsString("Rule::requiredIf(fn () => \$request->input('issue_type') === 'PHYSICAL_CONDITION')", $source);
+        $this->assertStringContainsString("Rule::requiredIf(fn () => \$request->input('issue_type') === 'OTHER')", $source);
         $this->assertStringContainsString('$service->reportPreparationIssue(', $source);
         $this->assertStringContainsString('public function resolvePreparationIssue(', $source);
         $this->assertStringContainsString("'INVENTORY_REVIEW_COMPLETE'", $source);
         $this->assertStringContainsString("'UNABLE_TO_FULFILL_APPROVED_REQUEST'", $source);
         $this->assertStringContainsString('$service->resolvePreparationIssue(', $source);
         $this->assertStringContainsString('$workflow->cancelApprovedForPreparationDiscrepancy(', $source);
-        $this->assertStringContainsString("'inventory_item_id' => $inventoryItemId", $source);
+        $this->assertStringContainsString("'inventory_item_id' => \$inventoryItemId", $source);
     }
 
     #[Test]
@@ -48,9 +48,9 @@ class ItemPreparationStep2ContractTest extends TestCase
         $method = substr($source, $start, $end - $start);
 
         $this->assertStringContainsString("'PREPARATION_ISSUE_REPORTED'", $method);
-        $this->assertStringContainsString("'observed_usable_quantity' => $observedUsableQuantity", $method);
-        $this->assertStringContainsString("'condition_observed' => $conditionObserved !== '' ? $conditionObserved : null", $method);
-        $this->assertStringContainsString("'details' => $details !== '' ? $details : null", $method);
+        $this->assertStringContainsString("'observed_usable_quantity' => \$observedUsableQuantity", $method);
+        $this->assertStringContainsString("'condition_observed' => \$conditionObserved !== '' ? \$conditionObserved : null", $method);
+        $this->assertStringContainsString("'details' => \$details !== '' ? \$details : null", $method);
         $this->assertStringContainsString("'prepared_at' => null", $method);
         $this->assertStringContainsString("'prepared_by_user_id' => null", $method);
         $this->assertStringNotContainsString('InventoryItem::', $method);
@@ -131,7 +131,7 @@ class ItemPreparationStep2ContractTest extends TestCase
         $source = (string) file_get_contents(app_path('Http/Controllers/CustodyController.php'));
 
         $this->assertStringContainsString(
-            "Rule::requiredIf(fn () => $request->input('resolution_type') === 'UNABLE_TO_FULFILL_APPROVED_REQUEST')",
+            "Rule::requiredIf(fn () => \$request->input('resolution_type') === 'UNABLE_TO_FULFILL_APPROVED_REQUEST')",
             $source
         );
         $this->assertStringContainsString("'nullable',", $source);
@@ -156,15 +156,15 @@ class ItemPreparationStep2ContractTest extends TestCase
         $method = substr($source, $start, $end - $start);
 
         $this->assertStringContainsString('$approved = (float) $line->approved_quantity;', $method);
-        $this->assertStringContainsString("'quantity_to_receive' => $approved", $method);
+        $this->assertStringContainsString("'quantity_to_receive' => \$approved", $method);
         $this->assertStringContainsString("'item_status' => 'PREPARED'", $method);
-        $this->assertStringContainsString("'prepared_by_user_id' => $spmu->id", $method);
+        $this->assertStringContainsString("'prepared_by_user_id' => \$spmu->id", $method);
         $this->assertStringContainsString("'prepared_at' => now()", $method);
         $this->assertStringContainsString("'RELEASE_PREPARED'", $method);
         $this->assertStringContainsString('$preparedQuantities = [];', $method);
-        $this->assertStringContainsString("'prepared_quantities' => $preparedQuantities", $method);
+        $this->assertStringContainsString("'prepared_quantities' => \$preparedQuantities", $method);
         $transactionEnd = strrpos($method, '}, 3);');
-        $auditPosition = strpos($method, "$this->audit->record(");
+        $auditPosition = strpos($method, "\$this->audit->record(");
         $this->assertNotFalse($transactionEnd);
         $this->assertNotFalse($auditPosition);
         $this->assertLessThan($transactionEnd, $auditPosition, 'RELEASE_PREPARED audit must be written inside the preparation transaction.');

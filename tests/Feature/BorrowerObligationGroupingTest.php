@@ -468,10 +468,16 @@ class BorrowerObligationGroupingTest extends TestCase
             ->actingAs($borrower)
             ->get(route('dashboard'));
 
-        /* Custody status stays ACTIVE (no real Incident-open transition was
-           applied by this fixture), so the record correctly needs no action. */
+        /*
+         * An OPEN incident is still an active obligation - it just does not
+         * require the borrower's action yet (see BorrowerObligationService::
+         * buildRows(), which only sets action_state to ACTION_BORROWER for
+         * specific statuses like COMPLIANCE_REQUIRED or a billing awaiting
+         * payment; OPEN stays the ACTION_PROCESSING default). The dashboard's
+         * empty-queue copy reflects that distinction.
+         */
         $response->assertOk()
-            ->assertSee('No current action is required.');
+            ->assertSee('No action is required from you right now.');
     }
 
     public function test_dashboard_shows_no_obligation_alert_when_there_are_none(): void
@@ -496,11 +502,11 @@ class BorrowerObligationGroupingTest extends TestCase
             ->get(route('accountability.index'));
 
         $response->assertOk()
-            ->assertSee('Outstanding Obligations')
+            ->assertSee('Active Obligations')
             ->assertSee('Needs My Action')
-            ->assertSee('Under SPMU Processing')
-            ->assertSee('Resolved History')
-            ->assertSee('No unresolved obligations.')
+            ->assertSee('Amount Due')
+            ->assertSee('Borrowing Status')
+            ->assertSee('No unresolved obligations')
             ->assertDontSee('Overdue Returns')
             ->assertDontSee('Open Billings')
             ->assertDontSee('Active Restrictions');

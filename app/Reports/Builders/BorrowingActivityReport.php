@@ -17,6 +17,9 @@ use Illuminate\Support\Collection;
  *
  * Request-level activity for the period, reported under the authoritative
  * operational status (see OperationalStatus: custody wins once it exists).
+ * Drafts are never reportable. Cancelled/expired requests remain outside the
+ * default handled-activity population, but become reportable when the user
+ * explicitly selects either status and the request has proof of filing.
  *
  * Borrower affiliation is read from the request version snapshot
  * (division_code / office_unit) captured when the request was filed, never
@@ -38,6 +41,11 @@ class BorrowingActivityReport implements ReportBuilder
         );
 
         $borrower = $filters->get('borrower');
+        $status = $filters->get('status');
+        $explicitClosedOutcome = in_array($status, [
+            RequestStatus::Cancelled->value,
+            RequestStatus::Expired->value,
+        ], true);
 
         $requests = BorrowingRequest::query()
             ->join('request_versions', function ($join): void {
@@ -45,14 +53,26 @@ class BorrowingActivityReport implements ReportBuilder
                     ->on('request_versions.version_no', '=', 'borrowing_requests.current_version_no');
             })
             ->with(['borrower', 'currentVersion', 'custody'])
-            ->where(function ($scope) use ($filters): void {
-                $scope->whereBetween('request_versions.submitted_at', [$filters->from, $filters->to])
-                    ->orWhere(function ($legacy) use ($filters): void {
+            ->where(function ($scope) use ($filters, $explicitClosedOutcome): void {
+                $scope->whereBetween('request_versions.submitted_at', [$filters->from, $filters->to]);
+
+                /*
+                 * CANCELLED / EXPIRED only belong in the report when there is
+                 * proof they were actually filed. Their raw status alone does
+                 * not prove that: a draft can be cancelled before submission.
+                 */
+                if (! $explicitClosedOutcome) {
+                    $scope->orWhere(function ($legacy) use ($filters): void {
                         $legacy->whereNull('request_versions.submitted_at')
                             ->whereBetween('borrowing_requests.created_at', [$filters->from, $filters->to]);
                     });
+                }
             })
-            ->whereNotIn('borrowing_requests.status', $excluded)
+            ->when(
+                $explicitClosedOutcome,
+                fn ($query) => $query->where('borrowing_requests.status', $status),
+                fn ($query) => $query->whereNotIn('borrowing_requests.status', $excluded)
+            )
             ->when(
                 $borrower !== null,
                 fn ($query) => $query->where('borrowing_requests.borrower_user_id', (int) $borrower)
@@ -63,7 +83,6 @@ class BorrowingActivityReport implements ReportBuilder
 
         $division = $filters->get('division');
         $unit = $filters->get('unit');
-        $status = $filters->get('status');
 
         $rows = $requests
             ->map(function (BorrowingRequest $request): array {

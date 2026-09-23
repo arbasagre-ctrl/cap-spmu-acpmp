@@ -9,8 +9,10 @@ use App\Models\OperationalDateException;
 use App\Models\OperationalWeeklySchedule;
 use App\Models\SanctionRule;
 use App\Models\SystemSetting;
+use App\Models\User;
 use App\Services\AuditService;
 use App\Services\OperationalCalendarService;
+use App\Services\NotificationService;
 use App\Services\PolicyService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -473,7 +475,8 @@ class PolicyController extends Controller
         Request $request,
         int $weekday,
         AuditService $audit,
-        OperationalCalendarService $calendar
+        OperationalCalendarService $calendar,
+        NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeHead($request);
         abort_unless($weekday >= 1 && $weekday <= 7, 404);
@@ -524,16 +527,20 @@ class PolicyController extends Controller
         $rule->fill($data + ['configured_by_user_id' => $request->user()->id])->save();
 
         $audit->record('OPERATIONAL_WEEKLY_SCHEDULE_UPDATED', $rule, before: $before, after: $rule->fresh()->toArray());
-        $this->synchronizeOpenCustodyDueDates($calendar, $audit);
+        $calendarChanges = $this->synchronizeOpenCustodySchedules($calendar, $audit, $notifications);
 
         return redirect()->to(route('policies.index', ['section' => 'transaction-schedule']).'#transaction-schedule')
-            ->with('status', 'Weekly operational schedule updated. Existing open custody return dates were re-evaluated.');
+            ->with('status', $this->calendarUpdateStatus(
+                'Weekly operational schedule updated.',
+                $calendarChanges
+            ));
     }
 
     public function updateWeeklyScheduleBatch(
         Request $request,
         AuditService $audit,
-        OperationalCalendarService $calendar
+        OperationalCalendarService $calendar,
+        NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeHead($request);
 
@@ -673,19 +680,23 @@ class PolicyController extends Controller
                 ->with('status', 'No schedule changes to save.');
         }
 
-        $this->synchronizeOpenCustodyDueDates($calendar, $audit);
+        $calendarChanges = $this->synchronizeOpenCustodySchedules($calendar, $audit, $notifications);
 
         return redirect()
             ->to(route('policies.index', ['section' => 'transaction-schedule']).'#transaction-schedule')
-            ->with('status', $saved === 1
-                ? 'Weekly operational schedule updated. Existing open custody return dates were re-evaluated.'
-                : $saved.' schedule days updated. Existing open custody return dates were re-evaluated.');
+            ->with('status', $this->calendarUpdateStatus(
+                $saved === 1
+                    ? 'Weekly operational schedule updated.'
+                    : $saved.' schedule days updated.',
+                $calendarChanges
+            ));
     }
 
     public function storeDateException(
         Request $request,
         AuditService $audit,
-        OperationalCalendarService $calendar
+        OperationalCalendarService $calendar,
+        NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeHead($request);
 
@@ -740,34 +751,140 @@ class PolicyController extends Controller
         $exception->fill($data + ['configured_by_user_id' => $request->user()->id])->save();
 
         $audit->record('OPERATIONAL_DATE_EXCEPTION_SAVED', $exception, before: $before, after: $exception->fresh()->toArray());
-        $this->synchronizeOpenCustodyDueDates($calendar, $audit);
+        $calendarChanges = $this->synchronizeOpenCustodySchedules($calendar, $audit, $notifications);
 
         return redirect()->to(route('policies.index', ['section' => 'special-dates']).'#special-dates')
-            ->with('status', 'Special operational date saved. Affected open custody return dates were re-evaluated.');
+            ->with('status', $this->calendarUpdateStatus(
+                'Special operational date saved.',
+                $calendarChanges
+            ));
     }
 
     public function destroyDateException(
         Request $request,
         OperationalDateException $exception,
         AuditService $audit,
-        OperationalCalendarService $calendar
+        OperationalCalendarService $calendar,
+        NotificationService $notifications
     ): RedirectResponse {
         $this->authorizeHead($request);
 
         $before = $exception->toArray();
         $audit->record('OPERATIONAL_DATE_EXCEPTION_REMOVED', $exception, before: $before);
         $exception->delete();
-        $this->synchronizeOpenCustodyDueDates($calendar, $audit);
+        $calendarChanges = $this->synchronizeOpenCustodySchedules($calendar, $audit, $notifications);
 
         return redirect()->to(route('policies.index', ['section' => 'special-dates']).'#special-dates')
-            ->with('status', 'Special operational date removed. Affected return dates were recalculated from the weekly schedule.');
+            ->with('status', $this->calendarUpdateStatus(
+                'Special operational date removed. Previously communicated return extensions are not shortened automatically.',
+                $calendarChanges
+            ));
+    }
+
+    /**
+     * Reconcile both physical pickup windows and effective return deadlines
+     * after any Operational Calendar edit. Pickup closures are handled as SPMU
+     * schedule changes, never as borrower no-shows.
+     *
+     * @return array{pickup: int, return: int}
+     */
+    private function synchronizeOpenCustodySchedules(
+        OperationalCalendarService $calendar,
+        AuditService $audit,
+        NotificationService $notifications
+    ): array {
+        return [
+            'pickup' => $this->synchronizeOpenCustodyPickups($calendar, $audit, $notifications),
+            'return' => $this->synchronizeOpenCustodyDueDates($calendar, $audit, $notifications),
+        ];
+    }
+
+    private function synchronizeOpenCustodyPickups(
+        OperationalCalendarService $calendar,
+        AuditService $audit,
+        NotificationService $notifications
+    ): int {
+        $adjusted = 0;
+
+        CustodyTransaction::query()
+            ->with(['borrower', 'request.currentVersion', 'lines.requestItem'])
+            ->where('status', 'PREPARING_RELEASE')
+            ->whereNull('released_at')
+            ->whereNull('closed_at')
+            ->whereNotNull('scheduled_release_at')
+            ->whereNotNull('pickup_expires_at')
+            ->whereNull('pickup_expired_at')
+            ->each(function (CustodyTransaction $custody) use ($calendar, $audit, $notifications, &$adjusted): void {
+                $result = $calendar->synchronizeCustodyPickupSchedule($custody, $audit);
+
+                if (! ($result['changed'] ?? false)) {
+                    return;
+                }
+
+                $adjusted++;
+                $synced = $custody->fresh(['borrower', 'request.currentVersion', 'lines.requestItem']);
+                $previousStart = $result['previous_start'];
+                $newStart = $result['new_start'];
+                $newEnd = $result['new_end'];
+                $reason = $result['reason'] ?: 'SPMU operational availability changed.';
+
+                if ($synced->borrower) {
+                    $message = ($result['mode'] ?? null) === 'RESCHEDULED' && $newStart && $newEnd
+                        ? 'Your pickup schedule for '.$synced->custody_no
+                            .' was automatically adjusted because the SPMU Operational Calendar changed. Previous pickup: '
+                            .$previousStart?->format('F j, Y g:i A').'. New pickup: '
+                            .$newStart->format('F j, Y g:i A').' to '.$newEnd->format('g:i A').'. Reason: '
+                            .$reason.' This is not recorded as a missed pickup, your same approved request and reservation remain active, and no reschedule request is required from you.'
+                        : 'Your previous pickup schedule for '.$synced->custody_no
+                            .' is no longer available because the SPMU Operational Calendar changed. Reason: '
+                            .$reason.' No valid replacement pickup window is currently available before the approved return date. This is not recorded as a missed pickup. Your approved request and reservation remain active while SPMU resolves the schedule.';
+
+                    $notifications->send(
+                        'PICKUP_SCHEDULED',
+                        collect([$synced->borrower]),
+                        $message,
+                        $synced,
+                        ['SYSTEM', 'EMAIL'],
+                        ['SYSTEM', 'EMAIL']
+                    );
+                }
+
+                $actionOfficers = User::query()
+                    ->where('account_status', 'ACTIVE')
+                    ->where('access_classification', AccessClassification::SpmuOfficer->value)
+                    ->get();
+
+                if ($actionOfficers->isNotEmpty()) {
+                    $officerMessage = ($result['mode'] ?? null) === 'RESCHEDULED' && $newStart && $newEnd
+                        ? 'Operational Calendar adjustment moved pickup for '.$synced->custody_no
+                            .' to '.$newStart->format('F j, Y g:i A').'–'.$newEnd->format('g:i A')
+                            .'. Keep the same approved request/reservation and prepare for the new window. Do not treat this as a borrower missed pickup.'
+                        : 'Operational Calendar adjustment removed the invalid pickup window for '.$synced->custody_no
+                            .'. No valid replacement window remains before the approved return date. Review the borrowing dates/calendar and coordinate the next administrative action. Do not treat this as a borrower missed pickup.';
+
+                    $notifications->send(
+                        'PICKUP_SCHEDULED',
+                        $actionOfficers,
+                        $officerMessage,
+                        $synced,
+                        ['SYSTEM'],
+                        ['SYSTEM']
+                    );
+                }
+            });
+
+        return $adjusted;
     }
 
     private function synchronizeOpenCustodyDueDates(
         OperationalCalendarService $calendar,
-        AuditService $audit
-    ): void {
+        AuditService $audit,
+        NotificationService $notifications
+    ): int {
+        $adjusted = 0;
+
         CustodyTransaction::query()
+            ->with(['borrower', 'lines'])
             ->whereNotNull('due_at')
             ->whereNull('closed_at')
             ->whereIn('status', [
@@ -778,9 +895,91 @@ class PolicyController extends Controller
                 'INCIDENT_OPEN',
                 'OBLIGATION_OPEN',
             ])
-            ->each(function (CustodyTransaction $custody) use ($calendar, $audit): void {
-                $calendar->synchronizeCustodyDueDate($custody, $audit);
+            ->each(function (CustodyTransaction $custody) use ($calendar, $audit, $notifications, &$adjusted): void {
+                $previousDue = $custody->due_at?->copy()->endOfDay();
+                $synced = $calendar->synchronizeCustodyDueDate($custody, $audit);
+                $effectiveDue = $synced->due_at?->copy()->endOfDay();
+
+                if (! $previousDue || ! $effectiveDue || $previousDue->isSameDay($effectiveDue)) {
+                    return;
+                }
+
+                /*
+                 * Calendar-driven deadlines only move forward automatically.
+                 * This protects a borrower from a deadline being shortened
+                 * after an extension has already been communicated.
+                 */
+                if ($effectiveDue->lt($previousDue)) {
+                    return;
+                }
+
+                $hasOutstandingProperty = $synced->lines->contains(
+                    fn ($line) => (float) $line->returned_quantity < (float) $line->actual_released_quantity
+                );
+                $stillAwaitingRelease = $synced->status === 'PREPARING_RELEASE';
+
+                /*
+                 * Do not send a new return-schedule notice for a transaction
+                 * whose physical property is already completely back and that
+                 * remains open only for accountability/documentation.
+                 */
+                if (! $hasOutstandingProperty && ! $stillAwaitingRelease) {
+                    return;
+                }
+
+                $adjusted++;
+
+                if (! $synced->borrower) {
+                    return;
+                }
+
+                $profile = $calendar->profile($previousDue);
+                $reason = $profile['reason']
+                    ?: $synced->due_adjustment_reason
+                    ?: 'SPMU return transactions are unavailable on the previous effective return date.';
+
+                $notifications->send(
+                    'RETURN_SCHEDULE_ADJUSTED',
+                    collect([$synced->borrower]),
+                    'Your return schedule for '.$synced->custody_no
+                        .' was adjusted because SPMU return transactions are unavailable on '
+                        .$previousDue->format('F j, Y').'. Effective return date: '
+                        .$effectiveDue->format('F j, Y').'. Reason: '.$reason
+                        .' This calendar adjustment will not be treated as a late return.',
+                    $synced,
+                    ['SYSTEM', 'EMAIL'],
+                    ['SYSTEM', 'EMAIL']
+                );
             });
+
+        return $adjusted;
+    }
+
+    /** @param array{pickup: int, return: int} $changes */
+    private function calendarUpdateStatus(string $prefix, array $changes): string
+    {
+        $pickupAdjusted = (int) ($changes['pickup'] ?? 0);
+        $returnAdjusted = (int) ($changes['return'] ?? 0);
+
+        if ($pickupAdjusted < 1 && $returnAdjusted < 1) {
+            return $prefix.' No active pickup or return schedule changed.';
+        }
+
+        $parts = [];
+
+        if ($pickupAdjusted > 0) {
+            $parts[] = $pickupAdjusted.' active pickup '
+                .($pickupAdjusted === 1 ? 'schedule was' : 'schedules were')
+                .' reconciled with the new calendar';
+        }
+
+        if ($returnAdjusted > 0) {
+            $parts[] = $returnAdjusted.' active return '
+                .($returnAdjusted === 1 ? 'deadline was' : 'deadlines were')
+                .' moved to the next available Return schedule';
+        }
+
+        return $prefix.' '.ucfirst(implode(' and ', $parts)).'. Affected users were notified where applicable.';
     }
 
     private function termNameFor(

@@ -382,6 +382,228 @@ class OperationalCalendarService
         ]);
     }
 
+    /**
+     * Reconcile an approved but unreleased pickup schedule after the
+     * Operational Calendar changes. A calendar closure or operating-hour
+     * change is an SPMU scheduling event, not a borrower missed pickup.
+     *
+     * @return array{
+     *     changed: bool,
+     *     mode: 'RESCHEDULED'|'UNAVAILABLE'|null,
+     *     previous_start: ?CarbonImmutable,
+     *     previous_end: ?CarbonImmutable,
+     *     new_start: ?CarbonImmutable,
+     *     new_end: ?CarbonImmutable,
+     *     reason: ?string
+     * }
+     */
+    public function synchronizeCustodyPickupSchedule(
+        CustodyTransaction $custody,
+        ?AuditService $audit = null
+    ): array {
+        $empty = [
+            'changed' => false,
+            'mode' => null,
+            'previous_start' => $custody->scheduled_release_at
+                ? $this->asDateTime($custody->scheduled_release_at)
+                : null,
+            'previous_end' => $custody->pickup_expires_at
+                ? $this->asDateTime($custody->pickup_expires_at)
+                : null,
+            'new_start' => null,
+            'new_end' => null,
+            'reason' => null,
+        ];
+
+        if (
+            $custody->status !== 'PREPARING_RELEASE'
+            || $custody->released_at
+            || $custody->pickup_expired_at
+            || ! $custody->scheduled_release_at
+            || ! $custody->pickup_expires_at
+        ) {
+            return $empty;
+        }
+
+        $timezone = config('app.timezone') ?: 'Asia/Manila';
+        $now = CarbonImmutable::now($timezone);
+        $scheduled = $this->asDateTime($custody->scheduled_release_at);
+        $expires = $this->asDateTime($custody->pickup_expires_at);
+
+        // A window that had already ended before the calendar edit remains a
+        // genuine missed-pickup case and must follow the borrower response flow.
+        if ($expires->lte($now)) {
+            return $empty;
+        }
+
+        $profile = $this->profile($scheduled);
+        $reason = $profile['reason']
+            ?: 'SPMU Pickup / Release availability changed on the previously scheduled date.';
+
+        $sameDateStillAllowsPickup = $this->isOpenFor(self::PICKUP, $scheduled, false);
+        [$open, $close] = $sameDateStillAllowsPickup
+            ? $this->operatingWindow(self::PICKUP, $scheduled, $profile)
+            : [null, null];
+
+        if ($open && $close && $open->lt($close)) {
+            // Keep a still-valid appointment when possible. If only the office
+            // hours changed, clip the existing window to the newly valid hours
+            // instead of unnecessarily moving the pickup to another day.
+            $sameDayStart = $scheduled->lt($open) ? $open : $scheduled;
+            $sameDayEnd = $expires->gt($close) ? $close : $expires;
+
+            if ($sameDayStart->lt($sameDayEnd) && $sameDayEnd->gt($now)) {
+                $changed = ! $sameDayStart->equalTo($scheduled)
+                    || ! $sameDayEnd->equalTo($expires);
+
+                if (! $changed) {
+                    return $empty;
+                }
+
+                $before = [
+                    'scheduled_release_at' => $scheduled->toIso8601String(),
+                    'pickup_expires_at' => $expires->toIso8601String(),
+                    'pickup_scheduled_by_user_id' => $custody->pickup_scheduled_by_user_id,
+                    'pickup_scheduled_at' => $custody->pickup_scheduled_at?->toIso8601String(),
+                ];
+
+                $custody->forceFill([
+                    'scheduled_release_at' => $sameDayStart,
+                    'pickup_expires_at' => $sameDayEnd,
+                    'pickup_expired_at' => null,
+                    'pickup_scheduled_by_user_id' => null,
+                    'pickup_scheduled_at' => now(),
+                ])->save();
+
+                if ($audit) {
+                    $audit->record(
+                        'PICKUP_SCHEDULE_CALENDAR_ADJUSTED',
+                        $custody,
+                        before: $before,
+                        after: [
+                            'mode' => 'OPERATING_HOURS_ADJUSTED',
+                            'pickup_at' => $sameDayStart->toIso8601String(),
+                            'pickup_expires_at' => $sameDayEnd->toIso8601String(),
+                            'reason' => $reason,
+                            'borrower_missed_pickup' => false,
+                            'same_request_retained' => true,
+                            'reservation_released' => false,
+                        ]
+                    );
+                }
+
+                return [
+                    'changed' => true,
+                    'mode' => 'RESCHEDULED',
+                    'previous_start' => $scheduled,
+                    'previous_end' => $expires,
+                    'new_start' => $sameDayStart,
+                    'new_end' => $sameDayEnd,
+                    'reason' => $reason,
+                ];
+            }
+        }
+
+        $anchor = $scheduled->startOfDay()->gt($now)
+            ? $scheduled->startOfDay()
+            : $now;
+        $nextStart = $this->nextPickupWindow($anchor);
+        $dueAt = $custody->original_due_at ?: $custody->due_at;
+        $dueDay = $dueAt ? $this->asDateTime($dueAt)->startOfDay() : null;
+
+        if ($nextStart && (! $dueDay || $nextStart->startOfDay()->lt($dueDay))) {
+            [, $nextEnd] = $this->operatingWindow(self::PICKUP, $nextStart);
+
+            if ($nextEnd && $nextStart->lt($nextEnd)) {
+                $before = [
+                    'scheduled_release_at' => $scheduled->toIso8601String(),
+                    'pickup_expires_at' => $expires->toIso8601String(),
+                    'pickup_scheduled_by_user_id' => $custody->pickup_scheduled_by_user_id,
+                    'pickup_scheduled_at' => $custody->pickup_scheduled_at?->toIso8601String(),
+                ];
+
+                $custody->forceFill([
+                    'scheduled_release_at' => $nextStart,
+                    'pickup_expires_at' => $nextEnd,
+                    'pickup_expired_at' => null,
+                    'pickup_scheduled_by_user_id' => null,
+                    'pickup_scheduled_at' => now(),
+                ])->save();
+
+                if ($audit) {
+                    $audit->record(
+                        'PICKUP_SCHEDULE_CALENDAR_ADJUSTED',
+                        $custody,
+                        before: $before,
+                        after: [
+                            'mode' => 'NEXT_VALID_OPERATIONAL_WINDOW',
+                            'pickup_at' => $nextStart->toIso8601String(),
+                            'pickup_expires_at' => $nextEnd->toIso8601String(),
+                            'reason' => $reason,
+                            'borrower_missed_pickup' => false,
+                            'same_request_retained' => true,
+                            'reservation_released' => false,
+                        ]
+                    );
+                }
+
+                return [
+                    'changed' => true,
+                    'mode' => 'RESCHEDULED',
+                    'previous_start' => $scheduled,
+                    'previous_end' => $expires,
+                    'new_start' => $nextStart,
+                    'new_end' => $nextEnd,
+                    'reason' => $reason,
+                ];
+            }
+        }
+
+        // No valid replacement window remains before the approved return date.
+        // Remove the now-invalid appointment so the scheduler cannot classify
+        // the borrower as a no-show. The request and reservation remain active
+        // for SPMU to resolve through calendar/date revision or cancellation.
+        $before = [
+            'scheduled_release_at' => $scheduled->toIso8601String(),
+            'pickup_expires_at' => $expires->toIso8601String(),
+            'pickup_scheduled_by_user_id' => $custody->pickup_scheduled_by_user_id,
+            'pickup_scheduled_at' => $custody->pickup_scheduled_at?->toIso8601String(),
+        ];
+
+        $custody->forceFill([
+            'scheduled_release_at' => null,
+            'pickup_expires_at' => null,
+            'pickup_expired_at' => null,
+            'pickup_scheduled_by_user_id' => null,
+            'pickup_scheduled_at' => null,
+        ])->save();
+
+        if ($audit) {
+            $audit->record(
+                'PICKUP_SCHEDULE_CALENDAR_ADJUSTED',
+                $custody,
+                before: $before,
+                after: [
+                    'mode' => 'NO_VALID_WINDOW_BEFORE_RETURN_DATE',
+                    'reason' => $reason,
+                    'borrower_missed_pickup' => false,
+                    'same_request_retained' => true,
+                    'reservation_released' => false,
+                ]
+            );
+        }
+
+        return [
+            'changed' => true,
+            'mode' => 'UNAVAILABLE',
+            'previous_start' => $scheduled,
+            'previous_end' => $expires,
+            'new_start' => null,
+            'new_end' => null,
+            'reason' => $reason,
+        ];
+    }
+
     public function synchronizeCustodyDueDate(CustodyTransaction $custody, ?AuditService $audit = null): CustodyTransaction
     {
         if (! $custody->due_at && ! $custody->original_due_at) {
@@ -389,15 +611,45 @@ class OperationalCalendarService
         }
 
         $original = $this->asDateTime($custody->original_due_at ?: $custody->due_at)->endOfDay();
-        $effective = $this->effectiveReturnDeadline($original);
-        $changed = ! $custody->original_due_at || ! $custody->due_at || ! $custody->due_at->isSameDay($effective);
+        $current = $custody->due_at
+            ? $this->asDateTime($custody->due_at)->endOfDay()
+            : null;
 
-        $profile = $this->profile($original);
-        $reason = $original->isSameDay($effective)
-            ? null
-            : ($profile['reason'] ?: 'Original Expected Return Date is not an open SPMU return date.');
+        /*
+         * Once an operational-calendar closure has extended a borrower's
+         * return deadline, never silently shorten that communicated deadline
+         * just because an earlier date is later reopened. The current
+         * effective deadline becomes the floor for future recalculation; if
+         * that date is also closed, it can move forward again.
+         */
+        $baseline = $original;
+        $hasCommunicatedExtension = $custody->due_adjusted_at
+            && $current
+            && $current->startOfDay()->gt($original->startOfDay());
 
-        if ($changed || (string) $custody->due_adjustment_reason !== (string) $reason) {
+        if ($hasCommunicatedExtension) {
+            $baseline = $current;
+        }
+
+        $effective = $this->effectiveReturnDeadline($baseline);
+        $dueDateChanged = ! $current || ! $current->isSameDay($effective);
+        $isAdjustedFromOriginal = ! $original->isSameDay($effective);
+
+        if (! $isAdjustedFromOriginal) {
+            $reason = null;
+        } elseif (! $baseline->isSameDay($effective)) {
+            $profile = $this->profile($baseline);
+            $reason = $profile['reason'] ?: 'SPMU return transactions are unavailable on the previous effective return date.';
+        } else {
+            $reason = $custody->due_adjustment_reason
+                ?: ($this->profile($original)['reason'] ?: 'The original expected return date is not an open SPMU return date.');
+        }
+
+        $changed = ! $custody->original_due_at
+            || $dueDateChanged
+            || (string) $custody->due_adjustment_reason !== (string) $reason;
+
+        if ($changed) {
             $before = [
                 'original_due_at' => $custody->original_due_at?->toIso8601String(),
                 'due_at' => $custody->due_at?->toIso8601String(),
@@ -408,7 +660,9 @@ class OperationalCalendarService
                 'original_due_at' => $original,
                 'due_at' => $effective,
                 'due_adjustment_reason' => $reason,
-                'due_adjusted_at' => $reason ? now() : null,
+                'due_adjusted_at' => $reason
+                    ? ($dueDateChanged ? now() : ($custody->due_adjusted_at ?: now()))
+                    : null,
             ])->save();
 
             if (
@@ -423,7 +677,15 @@ class OperationalCalendarService
                     || in_array($overdueCase->status, ['OVERDUE', 'OPEN', 'CALENDAR_ADJUSTED'], true);
 
                 if ($canReverseAutomaticLateState) {
-                    $custody->forceFill(['status' => 'ACTIVE'])->save();
+                    $hasRecordedReturn = $custody->lines()
+                        ->where('returned_quantity', '>', 0)
+                        ->exists();
+
+                    $restoredStatus = $hasRecordedReturn
+                        ? 'RETURN_PROCESSING'
+                        : ($custody->released_at ? 'ACTIVE' : 'PREPARING_RELEASE');
+
+                    $custody->forceFill(['status' => $restoredStatus])->save();
 
                     if ($overdueCase) {
                         $overdueCase->update(['status' => 'CALENDAR_ADJUSTED']);

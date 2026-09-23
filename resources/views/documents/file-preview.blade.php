@@ -21,6 +21,9 @@
         :file="$file"
         :title="$fileTitle"
         :preview-url="route('files.show', $file, false)"
+        eyebrow=""
+        :expanded="true"
+        :compact-header="true"
     />
 </section>
 @endsection

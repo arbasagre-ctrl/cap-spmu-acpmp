@@ -25,7 +25,7 @@ Copy `.env.docker.example` to the protected, untracked `.env.docker` file. Do no
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Required only when enabling Google sign-in | Register the exact HTTPS callback `${APP_URL}/auth/google/callback` in Google Cloud Console. Missing values keep Google sign-in unavailable; local account authorization remains unchanged. |
 | `GOOGLE_ALLOWED_DOMAINS` | Required deployment policy when Google sign-in is enabled | Set to `cspc.edu.ph` for CSPC production. The variable supports a comma-separated list only when ICTU has an approved institutional exception. |
 | `MAIL_*` | Required for production email delivery | Use the approved institutional SMTP service and sender identity. |
-| `SMS_PROVIDER`, `SMS_WEBHOOK_URL`, `SMS_API_TOKEN` | Optional | Leave blank until an approved provider, sender identity, privacy terms, and delivery contract exist. |
+| `SMS_ENABLED`, `SMS_PROVIDER`, `SMS_WEBHOOK_URL`, `SMS_API_TOKEN`, `SMS_SENDER_NAME` | Optional | Keep `SMS_ENABLED=false` until an approved provider/gateway, sender identity, privacy terms, and delivery contract exist. |
 | `SEED_DEMO_USERS` | Required | Set `false` in production. |
 | `RUN_MIGRATIONS` | Environment-specific | `true` lets the entrypoint run migrations and idempotent master/reference seeders; set `false` only for a planned maintenance/recovery procedure. |
 
@@ -95,7 +95,7 @@ No automated backup service is included in this deployment architecture. `backup
 
    `--force-recreate` is mandatory, not optional. The `app` and `scheduler` containers run a baked image with no live source mount: after any code change, `docker compose up -d --build` alone can leave a stale container running against a newer image without visibly failing. A verified incident (a stale image left `spmu:process-deadlines` failing on every scheduled run for over a week with no symptom besides accumulating log errors) confirms this is a real, not theoretical, risk. Confirm `docker compose ps` shows both containers freshly recreated and healthy, and that `migrate:status` shows no pending migration, before continuing.
 5. With `RUN_MIGRATIONS=true`, the entrypoint performs the required migration/seed and cache refresh steps automatically on container start; the `migrate:status` check above confirms this completed.
-6. Check `/up`, sign-in, scheduler logs, database health, protected-storage write access, LibreOffice document runtime, email, SMS when configured, and one non-destructive role test.
+6. Check `/up`, sign-in, scheduler and queue logs, database health, protected-storage write access, LibreOffice document runtime, email, SMS when configured, and one non-destructive role test.
 7. Record the release and validation as an ICTU technical operation/change record.
 
 ## Security checklist
@@ -115,6 +115,7 @@ No automated backup service is included in this deployment architecture. `backup
 - Container state: `docker compose ps`.
 - App logs: `docker compose logs app`.
 - Scheduler logs: `docker compose logs scheduler`.
+- SMS queue logs: `docker compose logs queue`.
 - Database logs: `docker compose logs database`.
 
 Test local SQLite and production MariaDB separately before institutional acceptance; different database engines can expose constraint or date-query differences.

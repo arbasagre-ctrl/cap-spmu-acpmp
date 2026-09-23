@@ -58,6 +58,7 @@
                 outstanding
             </span>
         </div>
+
         <div class="table-wrap return-inspection-scroll">
             <table class="return-inspection-table">
                 <colgroup>
@@ -68,7 +69,7 @@
                 <thead>
                     <tr>
                         <th scope="col">Item / Outstanding</th>
-                        <th scope="col">Fine / Good</th>
+                        <th scope="col">Good</th>
                         <th scope="col">Damaged</th>
                         <th scope="col">Destroyed</th>
                         <th scope="col">Missing</th>
@@ -85,8 +86,7 @@
 
                             $outstanding = max(
                                 0,
-                                (float) $line->actual_released_quantity
-                                    - (float) $line->returned_quantity
+                                (float) $line->actual_released_quantity - (float) $line->returned_quantity
                             );
 
                             $oldBreakdown = old('accounting.'.$line->id, []);
@@ -104,18 +104,15 @@
                             $oldStolen = (float) ($oldBreakdown['STOLEN'] ?? 0);
                         @endphp
 
-                        @if(!$isLinenLine && !$shownNonLinenHeading)
+                        @if($mixedReturn && !$isLinenLine && !$shownNonLinenHeading)
                             @php($shownNonLinenHeading = true)
                             <tr class="return-inspection-section-row return-inspection-section-row--non-linen">
                                 <td colspan="8">
                                     <div class="return-inspection-section-heading">
                                         <div>
-                                            <strong>Non-linen return inspection</strong>
-                                            <small>
-                                                Account for every outstanding non-linen item type in this AO inspection. No item-type or quantity splitting.
-                                            </small>
+                                            <strong>Non-linen items</strong>
+                                            <small>Record the full quantity for each item returned to SPMU.</small>
                                         </div>
-                                        <span class="status-badge status-info">AO inspection</span>
                                     </div>
                                 </td>
                             </tr>
@@ -127,18 +124,15 @@
                                 <td colspan="8">
                                     <div class="return-inspection-section-heading">
                                         <div>
-                                            <strong>Linen return</strong>
+                                            <strong>{{ $mixedReturn ? 'Linen items' : 'Linen return' }}</strong>
                                             <small>
                                                 @if($laundryFormMissing)
-                                                    Record the accomplished Laundry Form before encoding linen return quantities.
+                                                    Record the accomplished Laundry Form before entering linen quantities.
                                                 @else
-                                                    Encode every outstanding linen item type from the accomplished Laundry Form. RECEIVED BY determines linen timeliness.
+                                                    Encode linen quantities from the accomplished Laundry Form.
                                                 @endif
                                             </small>
                                         </div>
-                                        <span class="status-badge {{ $laundryFormMissing ? 'status-warning' : 'status-info' }}">
-                                            {{ $laundryFormMissing ? 'Laundry Form Required' : 'Form ready' }}
-                                        </span>
                                     </div>
                                 </td>
                             </tr>
@@ -152,22 +146,11 @@
                         >
                             <td class="return-item-cell">
                                 <strong>{{ $line->requestItem->description_snapshot }}</strong>
-                                <small>
-                                    {{ $isLinenLine ? 'Linen' : 'Non-linen' }}
-                                    · {{ $line->requestItem->unit_snapshot }}
-                                </small>
+                                <small>{{ $isLinenLine ? 'Linen' : 'Non-linen' }} · {{ $line->requestItem->unit_snapshot }}</small>
                                 <small>Outstanding: {{ $outstanding + 0 }}</small>
-
                             </td>
 
-                            @foreach([
-                                'FINE',
-                                'DAMAGED',
-                                'DESTROYED',
-                                'MISSING',
-                                'LOST',
-                                'STOLEN',
-                            ] as $conditionCode)
+                            @foreach(['FINE', 'DAMAGED', 'DESTROYED', 'MISSING', 'LOST', 'STOLEN'] as $conditionCode)
                                 <td>
                                     <input
                                         type="number"
@@ -189,21 +172,13 @@
                                 @if($linenLinePending)
                                     <span class="return-accounted-state" title="Available after the accomplished Laundry Form is recorded">—</span>
                                 @else
-                                    <strong class="return-accounted-total">
-                                        0 / {{ $outstanding + 0 }}
-                                    </strong>
-                                    <small class="return-accounted-state">
-                                        Not returned in this inspection
-                                    </small>
+                                    <strong class="return-accounted-total">0 / {{ $outstanding + 0 }}</strong>
+                                    <small class="return-accounted-state">Not yet accounted</small>
                                 @endif
                             </td>
                         </tr>
 
-                        <tr
-                            class="return-issue-details"
-                            data-return-issue-details
-                            @if($linenLinePending || $oldNonFine <= 0) hidden @endif
-                        >
+                        <tr class="return-issue-details" data-return-issue-details @if($linenLinePending || $oldNonFine <= 0) hidden @endif>
                             <td colspan="8">
                                 <div class="return-issue-details__grid">
                                     <label data-evidence-wrap>
@@ -216,26 +191,17 @@
                                         >
                                         <small>
                                             @if($isLinenLine)
-                                                Optional for linen because the accomplished Laundry Form is the authoritative condition record.
+                                                Optional for linen. The accomplished Laundry Form remains the main condition record.
                                             @else
                                                 Required when Damaged, Destroyed, Missing, Lost, or Stolen is greater than zero.
                                             @endif
                                         </small>
                                     </label>
 
-                                    <label
-                                        data-police-wrap
-                                        @if($oldStolen <= 0) hidden @endif
-                                    >
+                                    <label data-police-wrap @if($oldStolen <= 0) hidden @endif>
                                         Police / blotter reference
-                                        <input
-                                            class="return-police-input"
-                                            name="police_blotter_references[{{ $line->id }}]"
-                                            value="{{ old('police_blotter_references.'.$line->id) }}"
-                                        >
-                                        <small>
-                                            Required only when Stolen is greater than zero.
-                                        </small>
+                                        <input class="return-police-input" name="police_blotter_references[{{ $line->id }}]" value="{{ old('police_blotter_references.'.$line->id) }}">
+                                        <small>Required only when Stolen is greater than zero.</small>
                                     </label>
                                 </div>
                             </td>
@@ -247,42 +213,15 @@
 
         @if(!($linenOnly && $laundryFormMissing))
             <div class="return-action-area" id="return-action-area">
-                <div
-                    class="callout warning return-accounting-message"
-                    id="return-accounting-message"
-                    role="status"
-                    hidden
-                >
-                    <x-icon name="warning" size="21" data-return-accounting-warning />
-                    <x-icon name="success" size="21" data-return-accounting-success hidden />
-                    <span data-return-accounting-copy>
-                        Enter returned quantities.
-                    </span>
-                </div>
-
                 <div class="return-action-footer">
                     <label>
-                        Inspection Remarks
+                        Inspection Note (optional)
                         <span class="return-remarks-input">
-                            <textarea
-                                name="remarks"
-                                rows="4"
-                                maxlength="2000"
-                                aria-describedby="return-remarks-counter"
-                                placeholder="Optional inspection note"
-                            >{{ old('remarks') }}</textarea>
-                            <span class="return-remarks-counter" id="return-remarks-counter">
-                                <span data-return-remarks-count>{{ mb_strlen((string) old('remarks', '')) }}</span> / 2000
-                            </span>
+                            <textarea name="remarks" rows="2" maxlength="2000" placeholder="Add a note about this inspection">{{ old('remarks') }}</textarea>
                         </span>
                     </label>
 
-                    <button
-                        class="button primary ui-pressable link-button"
-                        id="record-return-button"
-                        type="submit"
-                        disabled
-                    >
+                    <button class="button primary ui-pressable link-button" id="record-return-button" type="submit" disabled>
                         @if($linenOnly)
                             Record Linen Return Findings
                         @elseif($mixedReturn && $laundryFormMissing)
@@ -293,10 +232,6 @@
                     </button>
                 </div>
             </div>
-        @else
-            <p class="helper return-linen-waiting-note">
-                No AO inspection action is required yet. Record the accomplished Laundry Form first.
-            </p>
         @endif
     </form>
 @endif

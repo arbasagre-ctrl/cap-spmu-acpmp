@@ -82,9 +82,8 @@ final class ReportCatalogue
             'status' => [
                 'label' => 'Status',
                 'type' => 'select',
-                'placeholder' => 'All statuses',
+                'placeholder' => 'All activity statuses',
                 'options' => fn (): array => [
-                    'DRAFT' => 'Draft',
                     'UNDER_SPMU' => 'Under SPMU Review',
                     'RETURNED_FOR_REVISION' => 'Returned for Revision',
                     'APPROVED_READY_FOR_RELEASE' => 'Approved / Ready for Release',
@@ -258,14 +257,17 @@ final class ReportCatalogue
                 'type' => 'select',
                 'placeholder' => 'All statuses',
                 'options' => fn (): array => [
+                    'OPEN_CURRENT' => 'Open / Unresolved',
                     // Current - property accountability (Incident)
                     'OPEN' => 'Open',
                     'COMPLIANCE_REQUIRED' => 'Compliance Required',
                     'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
                     'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
-                    'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
-                    'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
-                    'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
+                    'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing (Legacy)',
+                    'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required (Legacy)',
+                    'RSLDDP_DISPOSITION_PENDING' => 'Official Disposition Pending',
+                    'RSLDDP_COMPLIANCE_VERIFICATION' => 'Compliance Verification',
+                    'RSLDDP_FOR_RESOLUTION' => 'For Final Review',
                     'CLOSED' => 'Closed',
                     'VOID_CORRECTION' => 'Void Correction',
                     // Current - late return (OverdueCase)

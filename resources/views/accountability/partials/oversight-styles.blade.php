@@ -9,7 +9,7 @@
 /* Page header ------------------------------------------------------------ */
 .accountability-page-heading { align-items: flex-start; margin-bottom: 16px; }
 .accountability-page-heading h1 { margin: 2px 0 4px; font-size: clamp(20px, 1.6vw, 24px); }
-.accountability-page-heading p:not(.eyebrow) { max-width: 680px; font-size: 12.5px; line-height: 1.5; }
+.accountability-page-heading p:not(.eyebrow) { max-width: 680px; font-size: 12px; line-height: 1.5; }
 
 /* Section headings ------------------------------------------------------- */
 .accountability-section-heading { align-items: flex-start; margin-bottom: 12px; }
@@ -23,7 +23,7 @@
 .accountability-case-card { padding: 15px 17px; }
 .accountability-case-card > .card-header { margin-bottom: 0; gap: 12px; }
 .accountability-case-card > .card-header h3 { margin: 2px 0 0; font-size: 14px; }
-.accountability-case-card > .card-header strong { color: var(--interactive); font-size: 11px; font-weight: 800; letter-spacing: .04em; }
+.accountability-case-card > .card-header strong { color: var(--interactive); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; }
 
 .accountability-case-facts {
     display: grid;
@@ -184,107 +184,62 @@ html[data-theme="dark"] .kpi-accent-restriction {
     text-align: center;
 }
 
-.accountability-cases-tools { display: flex; align-items: center; gap: 8px; }
-
-.accountability-search {
-    position: relative;
-    display: flex;
-    align-items: center;
-}
-
-.accountability-search .ui-icon {
-    position: absolute;
-    left: 11px;
-    color: var(--text-soft);
-    pointer-events: none;
-}
-
-.accountability-search input {
-    width: 260px;
-    max-width: 100%;
-    height: 34px;
-    margin: 0;
-    padding: 0 12px 0 33px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text-primary);
-    font-size: 12px;
-}
-
-.accountability-search input::placeholder { color: var(--text-soft); }
-.accountability-search input:focus-visible { outline: none; border-color: var(--interactive); box-shadow: var(--focus-ring); }
-.accountability-search input::-webkit-search-cancel-button { cursor: pointer; }
-
-.accountability-filter { position: relative; }
-
-/* Sized off .icon-button, which the shared button rule deliberately skips. */
-.accountability-filter-button {
-    width: 34px;
-    height: 34px;
-    flex: 0 0 34px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: border-color var(--motion) ease, color var(--motion) ease, background-color var(--motion) ease;
-}
-
-.accountability-filter-button:hover { color: var(--interactive); border-color: var(--border-strong); }
-.accountability-filter-button:focus-visible { outline: none; border-color: var(--interactive); box-shadow: var(--focus-ring); }
-.accountability-filter-button[aria-expanded="true"] { color: var(--interactive); border-color: var(--interactive); background: var(--info-bg); }
-
-/* Narrows the rows already rendered; it never re-queries. */
-.accountability-filter-menu {
-    position: absolute;
-    z-index: 30;
-    top: calc(100% + 6px);
-    right: 0;
+.accountability-case-workspace {
     display: grid;
-    gap: 3px;
-    min-width: 214px;
-    padding: 9px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface-elevated);
-    box-shadow: var(--shadow);
+    gap: 14px;
 }
 
-.accountability-filter-menu__heading {
-    margin: 0 0 3px;
-    padding: 0 5px;
-    color: var(--text-muted);
-    font-size: 9.5px;
-    font-weight: 800;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-}
-
-.accountability-filter-menu label {
+/* Compact record controls live inside the Active Cases card. They appear
+   only when they can actually narrow the list, so a three-row queue does not
+   waste a full card on filters. */
+.accountability-browser-toolbar {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0;
-    padding: 6px 6px;
-    border-radius: 7px;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 16px 11px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-subtle);
 }
 
-.accountability-filter-menu label:hover { background: var(--surface-hover); }
-.accountability-filter-menu input { width: 15px; height: 15px; margin: 0; flex: 0 0 auto; }
+.accountability-browser-toolbar label {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 800;
+}
+
+.accountability-browser-search {
+    flex: 1 1 280px;
+    max-width: 440px;
+}
+
+.accountability-browser-filter {
+    flex: 0 1 180px;
+    min-width: 148px;
+}
+
+.accountability-browser-toolbar input,
+.accountability-browser-toolbar select {
+    width: 100%;
+    min-height: 36px;
+    margin: 0;
+    font-size: 12px;
+}
+
+.accountability-browser-toolbar .search-input-shell { width: 100%; }
 
 /* Case table ------------------------------------------------------------- */
-.accountability-cases-table table { min-width: 860px; }
-.accountability-cases-table th { white-space: nowrap; }
+.accountability-cases-table table { min-width: 800px; }
+.accountability-cases-table th { padding-top: 9px; padding-bottom: 9px; white-space: nowrap; }
+.accountability-cases-table td { padding-top: 10px; padding-bottom: 10px; line-height: 1.35; }
 .accountability-cases-table .is-numeric { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Inherits the universal .table-wrap th/td padding and font-size instead of a page-specific shrink. */
 .accountability-case-row > td { vertical-align: middle; }
-.accountability-case-row > td:first-child { min-width: 210px; }
+.accountability-case-row > td:first-child { min-width: 188px; }
 
 /* Reference above the person it belongs to, as one identity block. */
 .accountability-case-ref {
@@ -328,6 +283,67 @@ html[data-theme="dark"] .kpi-accent-restriction {
     line-height: 1.3;
 }
 
+.accountability-cases-card [data-case-toggle] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--interactive);
+    font-size: 10.5px;
+    font-weight: 800;
+}
+
+.accountability-cases-card [data-case-toggle]:hover,
+.accountability-cases-card [data-case-toggle]:focus-visible {
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
+}
+
+.accountability-cases-card [data-case-toggle][aria-expanded="true"] .accountability-toggle-chevron {
+    transform: rotate(180deg);
+}
+
+.accountability-next-link {
+    text-decoration: none;
+}
+
+.accountability-next-link > span:last-child {
+    font-size: 13px;
+    line-height: 1;
+}
+
+/* Waiting is a state, not a fake button. Only the role that can act gets a
+   clickable control in the Next Action column. */
+.accountability-next-state {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.accountability-next-state-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.accountability-view-detail {
+    min-height: 26px !important;
+    padding: 2px 6px !important;
+    border: 0 !important;
+    background: transparent !important;
+    font-size: 10.5px !important;
+}
+
 .accountability-row-none { color: var(--text-soft); }
 .accountability-row-note { color: var(--text-muted); font-size: 11px; font-weight: 700; }
 .accountability-row-action { min-height: 30px; padding: 0 14px; font-size: 11.5px; }
@@ -340,29 +356,103 @@ html[data-theme="dark"] .kpi-accent-restriction {
 .accountability-cases-table tbody tr:hover { background: transparent; }
 .accountability-cases-table tbody tr.accountability-case-row:hover { background: var(--row-hover); }
 
-.accountability-detail-panel {
-    display: flex;
-    align-items: flex-start;
-    gap: 11px;
-    padding: 11px 13px;
+.accountability-detail-stack { display: grid; gap: 10px; }
+
+.accountability-detail-note {
+    padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: 8px;
     background: var(--surface-subtle);
 }
 
-.accountability-detail-panel .ui-icon { flex: 0 0 auto; margin-top: 1px; }
-.accountability-detail-panel > div { min-width: 0; }
-.accountability-detail-panel strong { display: block; color: var(--heading); font-size: 12px; }
-.accountability-detail-panel p { margin: 3px 0 0; color: var(--text-secondary); font-size: 11.5px; line-height: 1.5; }
-.accountability-detail-panel small { display: block; margin-top: 4px; color: var(--text-muted); font-size: 10.5px; line-height: 1.5; }
+.accountability-detail-note strong {
+    display: block;
+    color: var(--heading);
+    font-size: 11px;
+    font-weight: 800;
+}
 
-.accountability-detail-panel.is-warning { border-color: var(--warning-border); background: var(--warning-bg); }
-.accountability-detail-panel.is-warning .ui-icon,
-.accountability-detail-panel.is-warning strong { color: var(--warning); }
+.accountability-detail-note p {
+    margin: 3px 0 0;
+    color: var(--text-secondary);
+    font-size: 10.75px;
+    line-height: 1.45;
+}
 
-.accountability-detail-panel.is-info { border-color: var(--info-border); background: var(--info-bg); }
-.accountability-detail-panel.is-info .ui-icon,
-.accountability-detail-panel.is-info strong { color: var(--info); }
+.accountability-detail-note small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.accountability-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--border);
+}
+
+.accountability-detail-grid > div {
+    min-width: 0;
+    padding: 9px 11px;
+    background: var(--surface);
+}
+
+.accountability-detail-grid dt {
+    margin: 0 0 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.accountability-detail-grid dd {
+    margin: 0;
+    color: var(--heading);
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.accountability-document-list {
+    display: grid;
+    gap: 1px;
+    overflow: hidden;
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--border);
+}
+
+.accountability-document-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding: 6px 10px 6px 12px;
+    background: var(--surface);
+}
+
+.accountability-document-item > span {
+    color: var(--heading);
+    font-size: 11.25px;
+    font-weight: 700;
+}
+
+.accountability-document-item .table-action {
+    flex: 0 0 auto;
+    min-height: 28px;
+    padding: 3px 7px;
+    font-size: 10.75px;
+}
 
 /* The Head's decision forms, kept out of the Action cell. */
 .accountability-detail-forms {
@@ -401,6 +491,7 @@ html[data-theme="dark"] .kpi-accent-restriction {
 /* Responsive ------------------------------------------------------------- */
 @media (max-width: 900px) {
     .accountability-detail-forms { grid-template-columns: minmax(0, 1fr); }
+    .accountability-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
     /*
      | Below the table's 860px minimum the row area scrolls sideways, and the
@@ -414,7 +505,9 @@ html[data-theme="dark"] .kpi-accent-restriction {
     .accountability-cases-table { container-type: inline-size; }
     .accountability-case-detail-row > td { padding-left: 0; padding-right: 0; }
 
-    .accountability-detail-panel,
+    .accountability-detail-note,
+    .accountability-detail-grid,
+    .accountability-action-body,
     .accountability-detail-forms {
         position: sticky;
         left: 14px;
@@ -423,23 +516,70 @@ html[data-theme="dark"] .kpi-accent-restriction {
     }
 }
 
-@media (max-width: 720px) {
-    .accountability-cases-head { align-items: stretch; flex-direction: column; }
-    .accountability-cases-tools { justify-content: space-between; }
-    .accountability-search { flex: 1 1 auto; }
-    .accountability-search input { width: 100%; }
+@media (max-width: 760px) {
+    .accountability-browser-toolbar { align-items: stretch; }
+    .accountability-browser-search,
+    .accountability-browser-filter { flex: 1 1 100%; max-width: none; min-width: 0; }
+    .accountability-detail-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .accountability-filter-button { transition: none; }
+
+/* Sanction history -------------------------------------------------------
+   Uses the same card/header/table rhythm as Active and Resolved cases. */
+.accountability-sanctions-section { margin-top: 14px; }
+.accountability-sanctions-table table { min-width: 850px; }
+.accountability-sanctions-table th,
+.accountability-sanctions-table td { vertical-align: middle; }
+.accountability-sanctions-table td { font-size: 11.5px; }
+.accountability-sanctions-table th { font-size: 10px; }
+
+.accountability-sanction-row > td:first-child { min-width: 145px; }
+.accountability-sanction-row > td:nth-child(3) { max-width: 340px; }
+
+.accountability-sanction-offense,
+.accountability-sanction-action {
+    color: var(--heading);
+    font-size: 11.5px;
+    font-weight: 700;
+}
+
+.accountability-sanction-note {
+    display: -webkit-box !important;
+    margin-top: 2px !important;
+    overflow: hidden;
+    color: var(--text-muted) !important;
+    font-size: 10px !important;
+    font-weight: 500;
+    line-height: 1.35 !important;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.accountability-sanction-row td > small:not(.accountability-sanction-note) {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.3;
+}
+
+.accountability-sanction-notice {
+    gap: 6px;
+    min-height: 30px;
+    padding: 4px 8px;
+    font-size: 10.75px;
+}
+
+@media (max-width: 760px) {
+    .accountability-sanctions-table table { min-width: 760px; }
 }
 
 /* ========================================================================
    Accountability overview row.
 
-   Four soft-tinted cards, each stacked: a round icon tile, the name of the
-   reading, the figure, then one line of context. The tint carries the tone,
-   so nothing needs a border rule or an arrow.
+   Four universal summary cards: white surface, colored top accent, a
+   softly tinted icon tile, the reading name, figure, and one line of context.
+   Navigation stays in the lists and explicit controls below.
 
    Named -overview rather than -summary because public/css/app.css already
    owns .accountability-summary for an older four-cell strip, and its
@@ -456,7 +596,6 @@ html[data-theme="dark"] .kpi-accent-restriction {
 .accountability-overview-card {
     --tone: #1769e0;
     --tone-tile: rgba(23, 105, 224, .14);
-    --tone-fill: #eaf1fd;
 
     position: relative;
     display: grid;
@@ -466,45 +605,23 @@ html[data-theme="dark"] .kpi-accent-restriction {
     padding: 18px 20px 20px;
     border: 1px solid var(--border);
     border-radius: 14px;
-    /* One flat, light tint across the whole card rather than a fading wash. */
-    background: var(--tone-fill);
+    background: var(--surface-elevated);
+    /* Single top accent: inset stripe only; do not pair with border-top. */
+    box-shadow: inset 0 3px 0 var(--tone), var(--shadow-sm);
     color: inherit;
     text-decoration: none;
-    transition: border-color var(--motion) ease, box-shadow var(--motion) ease, transform var(--motion) ease;
+    cursor: default;
 }
 
-/*
-| Each card opens the queue its figure was counted from. The tone carries the
-| hover so the card that lifts is unmistakably the one under the cursor.
-*/
+
+/* Summary cards are informational only. Navigation lives in the case lists,
+   filters, and explicit action controls below. */
 .accountability-overview-card:hover {
-    border-color: var(--tone);
-    box-shadow: var(--shadow);
-    transform: translateY(-1px);
+    border-color: var(--border);
+    box-shadow: inset 0 3px 0 var(--tone), var(--shadow-sm);
+    transform: none;
 }
-
-.accountability-overview-card:focus-visible { outline: 0; box-shadow: var(--focus-ring); }
-
-/* The chevron is affordance only; the whole card is the target. */
-.accountability-overview-arrow {
-    position: absolute;
-    top: 18px;
-    right: 18px;
-    color: var(--text-soft);
-    transition: color var(--motion) ease, transform var(--motion) ease;
-}
-
-.accountability-overview-card:hover .accountability-overview-arrow {
-    color: var(--tone);
-    transform: translateX(2px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .accountability-overview-card,
-    .accountability-overview-arrow { transition: none; }
-    .accountability-overview-card:hover { transform: none; }
-    .accountability-overview-card:hover .accountability-overview-arrow { transform: none; }
-}
+.accountability-overview-arrow { display: none; }
 
 .accountability-overview-icon {
     display: inline-grid;
@@ -544,31 +661,27 @@ html[data-theme="dark"] .kpi-accent-restriction {
 .accountability-overview-card.tone-open {
     --tone: #2563eb;
     --tone-tile: rgba(37, 99, 235, .13);
-    --tone-fill: #e9f1fd;
 }
 
 .accountability-overview-card.tone-overdue {
     --tone: #dc2626;
     --tone-tile: rgba(220, 38, 38, .12);
-    --tone-fill: #fdecec;
 }
 
 .accountability-overview-card.tone-balance {
     --tone: #d97706;
     --tone-tile: rgba(217, 119, 6, .14);
-    --tone-fill: #fdf3e2;
 }
 
 .accountability-overview-card.tone-resolved {
     --tone: #16a34a;
     --tone-tile: rgba(22, 163, 74, .13);
-    --tone-fill: #e8f7ee;
 }
 
-html[data-theme="dark"] .accountability-overview-card.tone-open { --tone: #6aa6f5; --tone-fill: #141c33; }
-html[data-theme="dark"] .accountability-overview-card.tone-overdue { --tone: #f08d82; --tone-fill: #2a1618; }
-html[data-theme="dark"] .accountability-overview-card.tone-balance { --tone: #e0b354; --tone-fill: #291f11; }
-html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5fc6a8; --tone-fill: #10261d; }
+html[data-theme="dark"] .accountability-overview-card.tone-open { --tone: #6aa6f5; }
+html[data-theme="dark"] .accountability-overview-card.tone-overdue { --tone: #f08d82; }
+html[data-theme="dark"] .accountability-overview-card.tone-balance { --tone: #e0b354; }
+html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5fc6a8; }
 
 /* A peso amount is a longer string than a case count, so it takes less size. */
 .accountability-overview-card.tone-balance .accountability-overview-value { font-size: 27px; }
@@ -583,32 +696,5 @@ html[data-theme="dark"] .accountability-overview-card.tone-resolved { --tone: #5
     .accountability-overview-card { padding: 16px 18px 18px; }
     .accountability-overview-icon { width: 46px; height: 46px; margin-bottom: 12px; }
     .accountability-overview-value { font-size: 27px; }
-}
-
-/* Resolved History centered empty state */
-.accountability-empty.resolved-history-empty {
-    min-height: 125px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: nowrap;
-    gap: 5px;
-    padding: 22px 24px;
-    text-align: center;
-}
-
-.accountability-empty.resolved-history-empty strong {
-    color: var(--heading);
-    font-size: 13.5px;
-    font-weight: 700;
-    line-height: 1.4;
-}
-
-.accountability-empty.resolved-history-empty span {
-    max-width: 560px;
-    color: var(--text-muted);
-    font-size: 11.5px;
-    line-height: 1.5;
 }
 </style>

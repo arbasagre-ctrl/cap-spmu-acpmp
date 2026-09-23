@@ -12,7 +12,7 @@
 
 .ob-workspace {
     display: grid;
-    gap: 16px;
+    gap: 18px;
 }
 
 .ob-section-heading {
@@ -22,8 +22,7 @@
     gap: 16px;
 }
 
-.ob-section-heading span,
-.ob-current-header > div > span {
+.ob-section-heading span {
     display: block;
     color: var(--text-muted);
     font-size: 10px;
@@ -143,38 +142,37 @@ html[data-theme="dark"] .ob-summary-card.is-success {
 
 .ob-current-header {
     display: flex;
-    align-items: center;
+    align-items: end;
     justify-content: space-between;
-    gap: 16px;
+    gap: 18px;
     padding-top: 2px;
 }
 
 .ob-current-header h2 {
-    margin: 3px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0;
     color: var(--heading);
-    font-size: 19px;
+    font-size: 15.5px;
 }
 
 .ob-search {
-    position: relative;
-    display: flex;
-    align-items: center;
+    display: grid;
+    gap: 6px;
     width: min(100%, 330px);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 800;
 }
 
-.ob-search > svg {
-    position: absolute;
-    left: 12px;
-    color: var(--text-muted);
-    pointer-events: none;
-}
+.ob-search .search-input-shell { width: 100%; }
 
 .ob-search input {
     width: 100%;
-    min-height: 40px;
+    min-height: 38px;
     margin: 0;
-    padding-left: 38px;
-    background: var(--input-bg);
 }
 
 /* Obligation cards ------------------------------------------------------- */
@@ -185,7 +183,7 @@ html[data-theme="dark"] .ob-summary-card.is-success {
 }
 
 .ob-case-card {
-    padding: 18px 20px;
+    padding: 16px 18px;
     background: var(--surface-elevated);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -287,7 +285,7 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
 .ob-badge.is-neutral { color:var(--neutral); background:var(--neutral-bg); border-color:var(--neutral-border); }
 
 .ob-case-summary {
-    margin: 12px 0 0 55px;
+    margin: 10px 0 0 55px;
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 1.45;
@@ -307,8 +305,8 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 14px 0 0 55px;
-    padding: 10px 12px;
+    margin: 12px 0 0 55px;
+    padding: 9px 11px;
     border-left: 3px solid var(--border);
     background: var(--surface-subtle);
     border-radius: 7px;
@@ -338,7 +336,7 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
-    margin: 14px 0 0 55px;
+    margin: 12px 0 0 55px;
 }
 
 .ob-details {
@@ -421,6 +419,52 @@ html[data-theme="dark"] .ob-case-icon.is-orange  { --ob-tint:#33210f; --ob-ink:#
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.ob-document-list {
+    display: grid;
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--border);
+}
+
+.ob-document-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 42px;
+    padding: 7px 10px 7px 12px;
+    background: var(--surface);
+}
+
+.ob-document-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: var(--text-secondary);
+}
+
+.ob-document-name .ui-icon {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+}
+
+.ob-document-name strong {
+    color: var(--heading);
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.ob-document-item .table-action {
+    flex: 0 0 auto;
+    min-height: 28px;
+    padding: 3px 7px;
+    font-size: 10.75px;
 }
 
 .ob-detail-grid {
@@ -669,4 +713,67 @@ html[data-theme="dark"] .ob-summary-card:hover { background:var(--surface-hover)
 .ob-resolved-history-body { padding-top: 2px; }
 .ob-resolved-history-body > .content-area { margin: 0; }
 
+</style>
+<style>
+/* Final borrower-facing obligation cleanup: current information first,
+   no hover affordance on summary-only cards, and one consistent disclosure. */
+.ob-workspace { gap: 18px; }
+
+.ob-summary-card {
+    min-height: 124px;
+    cursor: default;
+    transition: none;
+}
+.ob-summary-card:hover {
+    transform: none;
+    background: var(--surface);
+    border-color: var(--border);
+    border-top-color: var(--ob-accent);
+    box-shadow: 0 1px 2px rgba(7, 27, 53, .05);
+}
+.ob-summary-value {
+    font-size: clamp(20px, 1.55vw, 25px);
+    overflow-wrap: anywhere;
+}
+.ob-current-header {
+    align-items: flex-end;
+    padding-top: 4px;
+}
+.ob-current-header h2 { margin: 0; }
+
+.ob-case-card { padding: 17px 19px; }
+.ob-case-summary { margin-top: 10px; }
+.ob-next-action { margin-top: 12px; }
+.ob-case-actions { margin-top: 12px; }
+
+/* Expanders use the universal outlined treatment; primary color is reserved
+   for real workflow actions, not simply showing more information. */
+.ob-details > summary {
+    min-height: 34px;
+    color: var(--interactive);
+    background: var(--surface-elevated);
+    border-color: var(--interactive);
+}
+.ob-details > summary:hover,
+.ob-details > summary:focus-visible {
+    color: var(--interactive-strong, var(--interactive));
+    background: var(--surface-hover);
+    border-color: var(--interactive);
+}
+
+.ob-clear-card {
+    min-height: 104px;
+    padding: 20px 22px;
+    border-left: 3px solid var(--success);
+}
+.ob-clear-card > span { flex: 0 0 auto; }
+.ob-clear-card strong { font-size: 14px; }
+.ob-clear-card p { max-width: 780px; line-height: 1.5; }
+
+.ob-resolved-history-disclosure { margin-top: 0; }
+
+@media (max-width: 720px) {
+    .ob-current-header { align-items: stretch; flex-direction: column; }
+    .ob-search { width: 100%; }
+}
 </style>

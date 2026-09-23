@@ -71,7 +71,7 @@
 
     <div class="release-schedule-exception release-pickup-exception-actions">
         <div>
-            <strong>{{ $pickupRescheduleRequested ? 'Reschedule requested' : 'Pickup missed' }}</strong>
+            <strong>{{ $pickupRescheduleRequested ? 'Reschedule requested' : 'Borrower options' }}</strong>
 
             @if($pickupRescheduleRequested)
                 <p>The borrower requested a new pickup schedule.</p>

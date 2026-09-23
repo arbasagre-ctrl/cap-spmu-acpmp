@@ -90,7 +90,7 @@
         <div class="scanned-pdf-stage">
             <iframe
                 class="scanned-pdf-frame"
-                src="{{ $previewUrl }}#page=1&zoom=page-fit&toolbar=1&navpanes=0&scrollbar=1&view=Fit"
+                src="{{ $previewUrl }}#page=1&view=Fit&toolbar=1&navpanes=0&scrollbar=1"
                 title="{{ $title }}"
             ></iframe>
         </div>
@@ -230,10 +230,11 @@
     .scanned-image-stage {
         height: clamp(460px, 56vh, 610px);
         min-height: 460px;
-        overflow: auto;
+        overflow: hidden;
         padding: 22px;
         background: #e7ecf1;
-        text-align: center;
+        display: grid;
+        place-items: center;
     }
 
     .scanned-image-stage img {
@@ -241,7 +242,9 @@
         width: auto;
         max-width: 100%;
         height: auto;
+        max-height: 100%;
         margin: 0 auto;
+        object-fit: contain;
         background: #fff;
     }
 
@@ -414,25 +417,27 @@
 
 <style>
 /*
- * Dynamic standalone preview geometry.
+ * Universal standalone preview.
  *
- * The wrapper reacts to the physical first-page aspect ratio detected from
- * the PDF itself. No form names or document types are hard-coded here, so a
- * newly uploaded/generated portrait or landscape document automatically gets
- * the same treatment. Unknown/mixed geometry keeps a safe neutral layout.
+ * The default is always FULL-PAGE FIT: the whole first page stays visible,
+ * while the available preview height changes from the physical page geometry.
+ * There are no document-name rules and no forced numerical zoom. Portrait,
+ * landscape, square, and future document types all use the same component.
  */
 .scanned-document-card--expanded {
     width: 100%;
     margin-inline: auto;
-    transition: max-width .15s ease;
 }
 
+/* A portrait sheet does not need a full desktop-wide card. Keeping the card
+ * moderately narrow plus a tall viewer makes the full page materially more
+ * readable without cropping it. */
 .scanned-document-card--expanded[data-preview-orientation="portrait"] {
-    max-width: 1040px;
+    max-width: 920px;
 }
 
 .scanned-document-card--expanded[data-preview-orientation="square"] {
-    max-width: 1220px;
+    max-width: 1120px;
 }
 
 .scanned-document-card--expanded[data-preview-orientation="landscape"],
@@ -442,25 +447,38 @@
 
 .scanned-document-card--expanded[data-preview-orientation="portrait"] .scanned-pdf-stage,
 .scanned-document-card--expanded[data-preview-orientation="portrait"] .scanned-image-stage {
-    height: clamp(660px, 76vh, 900px) !important;
-    min-height: 660px !important;
-    max-height: 900px !important;
+    height: clamp(760px, 82vh, 980px) !important;
+    min-height: 760px !important;
+    max-height: 980px !important;
 }
 
 .scanned-document-card--expanded[data-preview-orientation="landscape"] .scanned-pdf-stage,
 .scanned-document-card--expanded[data-preview-orientation="landscape"] .scanned-image-stage {
-    height: clamp(540px, 64vh, 760px) !important;
-    min-height: 540px !important;
-    max-height: 760px !important;
+    height: clamp(600px, 70vh, 820px) !important;
+    min-height: 600px !important;
+    max-height: 820px !important;
 }
 
 .scanned-document-card--expanded[data-preview-orientation="square"] .scanned-pdf-stage,
 .scanned-document-card--expanded[data-preview-orientation="square"] .scanned-image-stage,
 .scanned-document-card--expanded[data-preview-orientation="unknown"] .scanned-pdf-stage,
 .scanned-document-card--expanded[data-preview-orientation="unknown"] .scanned-image-stage {
-    height: clamp(580px, 70vh, 820px) !important;
-    min-height: 580px !important;
-    max-height: 820px !important;
+    height: clamp(660px, 74vh, 880px) !important;
+    min-height: 660px !important;
+    max-height: 880px !important;
+}
+
+/* Image previews follow the same full-page-fit rule as PDFs. */
+.scanned-document-card--expanded .scanned-image-stage {
+    overflow: hidden !important;
+}
+
+.scanned-document-card--expanded .scanned-image-stage img {
+    width: auto !important;
+    height: auto !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;
 }
 
 @media (max-width: 900px) {
@@ -471,9 +489,9 @@
 
     .scanned-document-card--expanded[data-preview-orientation] .scanned-pdf-stage,
     .scanned-document-card--expanded[data-preview-orientation] .scanned-image-stage {
-        height: 64vh !important;
-        min-height: 500px !important;
-        max-height: 700px !important;
+        height: 70vh !important;
+        min-height: 560px !important;
+        max-height: 760px !important;
     }
 }
 
@@ -487,9 +505,9 @@
 
     .scanned-document-card--expanded[data-preview-orientation] .scanned-pdf-stage,
     .scanned-document-card--expanded[data-preview-orientation] .scanned-image-stage {
-        height: 58vh !important;
-        min-height: 380px !important;
-        max-height: 560px !important;
+        height: 64vh !important;
+        min-height: 420px !important;
+        max-height: 620px !important;
     }
 }
 </style>

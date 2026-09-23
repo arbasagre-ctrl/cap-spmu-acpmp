@@ -317,7 +317,16 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $borrower = $this->borrower();
         $service = app(BorrowerObligationService::class);
 
-        foreach (['RSLDDP_AWAITING_UPLOAD', 'RSLDDP_FOR_ACCOUNTING_PROCESSING', 'RSLDDP_FOR_RESOLUTION'] as $status) {
+        /*
+         * RSLDDP_AWAITING_UPLOAD is deliberately excluded from this list:
+         * AccountabilityController::uploadAccomplishedRslddp() requires the
+         * accomplished/notarized RSLDDP to be uploaded by the case's own
+         * borrower - never the Action Officer or Head - and accepts exactly
+         * this status, so it IS borrower-actionable (see
+         * test_dashboard_action_queue_includes_rslddp_awaiting_upload_incident()
+         * below).
+         */
+        foreach (['RSLDDP_FOR_ACCOUNTING_PROCESSING', 'RSLDDP_FOR_RESOLUTION'] as $status) {
             $custody = $this->custody($borrower, ['status' => 'OBLIGATION_OPEN'], ['returned_quantity' => 5]);
             $this->incident($custody, $status);
 
@@ -345,7 +354,7 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         );
     }
 
-    public function test_dashboard_action_queue_excludes_processing_only_rslddp_incident(): void
+    public function test_dashboard_action_queue_excludes_rslddp_awaiting_upload_incident(): void
     {
         $borrower = $this->borrower();
         $custody = $this->custody($borrower, ['status' => 'OBLIGATION_OPEN'], ['returned_quantity' => 5]);
@@ -357,11 +366,14 @@ class DashboardAccountabilityReconciliationTest extends TestCase
 
         $response->assertOk();
 
-        $this->assertTrue(
-            $response->viewData('queue')->isEmpty(),
-            'An RSLDDP case that is only awaiting upload must not appear in the borrower action queue.'
-        );
-        $response->assertSee('class="borrower-dash-empty"', false);
+        /*
+         * The accomplished/notarized RSLDDP is uploaded by SPMU Head/Admin,
+         * never the borrower (spec Section F) - a case awaiting that upload
+         * requires no borrower action, so it must not appear in the
+         * borrower's own action queue.
+         */
+        $queue = $response->viewData('queue');
+        $this->assertCount(0, $queue, 'A case awaiting the SPMU-Head-only RSLDDP upload must not require borrower action.');
     }
 
     public function test_dashboard_action_queue_includes_rslddp_payment_required_with_genuine_billing(): void
@@ -640,6 +652,14 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $headDashboard->assertOk();
         $this->assertSame($expectedCaseCount, $headDashboard->viewData('statistics')['Open Accountability Cases']);
 
+        /*
+         * The Oversight overview is borrower-centered: the KPI card still
+         * reconciles the total case count with the dashboards, and the
+         * borrower-summary table (all 3 cases above belong to the same
+         * borrower) reconciles its own distinct-borrower count.
+         */
+        $expectedBorrowerCount = 1;
+
         $accountabilityPage = $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
             ->get(route('accountability.index'));
@@ -649,7 +669,7 @@ class DashboardAccountabilityReconciliationTest extends TestCase
                 false
             )
             ->assertSee(
-                '<span class="accountability-count-chip">'.$expectedCaseCount.'</span>',
+                'id="accountability-borrower-count" data-total="'.$expectedBorrowerCount.'">'.$expectedBorrowerCount.'</span>',
                 false
             );
     }
@@ -691,9 +711,15 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $dashboard->assertOk();
         $this->assertSame(3, $dashboard->viewData('statistics')['Active Restrictions']);
 
+        /*
+         * The per-case detail this destination shows now lives behind the
+         * borrower-scoped deep link; all the fixture records above belong
+         * to the same borrower, so this reaches the exact same content the
+         * dashboard card always meant to land on.
+         */
         $response = $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
-            ->get(route('accountability.index', ['view' => 'restrictions']));
+            ->get(route('accountability.index', ['view' => 'restrictions', 'borrower' => $borrower->id]));
         $response->assertOk();
 
         $html = $response->getContent();
@@ -725,10 +751,10 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $standaloneRestrictionTag = $tagWindow('id="restriction-'.$standaloneRestriction->id.'"');
         $this->assertStringNotContainsString('hidden', $standaloneRestrictionTag);
         $this->assertStringContainsString('data-has-restriction="1"', $standaloneRestrictionTag);
-        $response->assertSee('value="ACTIVE" checked', false);
+        $response->assertSee('value="ACTIVE"', false);
 
-        /* The "Restrictions" type chip starts pre-selected for this destination. */
-        $response->assertSee('accountability-type-chip is-active" data-type-filter="RESTRICTION"', false);
+        /* The visible Case Type select starts on Restrictions for this destination. */
+        $response->assertSee('value="RESTRICTION" selected', false);
 
         $interactions = file_get_contents(resource_path('views/accountability/partials/cases-interactions.blade.php'));
         $this->assertStringContainsString("type === 'RESTRICTION'", $interactions);
@@ -744,12 +770,13 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $nonmatchingIncident = $this->incident($nonmatchingCustody, 'COMPLIANCE_REQUIRED');
         $head = $this->spmuHead();
 
+        /* The case type/status filter and per-case rows live behind the borrower-scoped deep link. */
         $response = $this->withSession(['active_workspace' => 'SPMU'])
             ->actingAs($head)
-            ->get(route('accountability.index'));
+            ->get(route('accountability.index', ['borrower' => $borrower->id]));
 
         $response->assertOk()
-            ->assertSee('value="RSLDDP_FOR_ACCOUNTING_PROCESSING" checked', false);
+            ->assertSee('value="RSLDDP_FOR_ACCOUNTING_PROCESSING"', false);
 
         $html = $response->getContent();
         $tagWindow = function (string $marker) use ($html): string {
@@ -765,7 +792,7 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $this->assertStringContainsString('data-status="COMPLIANCE_REQUIRED"', $tagWindow('id="incident-'.$nonmatchingIncident->id.'"'));
 
         $interactions = file_get_contents(resource_path('views/accountability/partials/cases-interactions.blade.php'));
-        $this->assertStringContainsString('const statusMatches = statuses.has(row.dataset.status);', $interactions);
+        $this->assertStringContainsString("const matchesStatus = status === 'all' || row.dataset.status === status;", $interactions);
         $this->assertStringNotContainsString("row.dataset.caseType !== 'LATE_RETURN'", $interactions);
     }
 
@@ -774,12 +801,15 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $view = file_get_contents(resource_path('views/accountability/index.blade.php'));
 
         $this->assertStringContainsString(
-            'An RSLDDP will be generated as part of the compliance process and retained as this case\'s paper trail.',
+            'Record ONLY the official disposition actually stated in the accomplished RSLDDP.',
             $view
         );
-        $this->assertStringNotContainsString('An RSLDDP is not prepared', $view);
         $this->assertStringContainsString(
-            'Administrative offense confirmation can proceed only when the required academic-period and sanction configuration is complete and this transaction has not already been dismissed for offense purposes.',
+            'The Action Officer verifies the presented requirement; the Action Officer does not choose the disposition.',
+            $view
+        );
+        $this->assertStringContainsString(
+            'The offense and sanction, when applicable, apply automatically - this is not a manual choice.',
             $view
         );
         $this->assertStringContainsString('No cases match the current search or filters.', $view);

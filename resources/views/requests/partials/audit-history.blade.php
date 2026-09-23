@@ -128,19 +128,157 @@
     $custody = $borrowingRequest->custody;
 
     if ($custody) {
-        // 4) Pickup / release preparation.
-        $addHistoryEvent(
-            $custody->pickup_scheduled_at ?: $custody->scheduled_release_at,
-            'Pickup',
-            'Pickup schedule activated',
-            $custody->pickupScheduledBy?->full_name ?: 'System',
-            $custody->scheduled_release_at
-                ? 'Pickup/issuance scheduled for '.$custody->scheduled_release_at->format('d M Y, g:i A').'.'
-                : 'Pickup/issuance schedule recorded.',
-            'pickup-scheduled',
-            50
+        // 4) Pickup / operational-schedule lifecycle. These events are read
+        // from the audit/notification records because the current custody
+        // fields alone cannot preserve a missed window or an older schedule
+        // after a reschedule overwrites scheduled_release_at.
+        $operationalAuditEvents = collect($operationalHistoryAuditEvents ?? []);
+        $operationalNotificationEvents = collect($operationalHistoryNotificationEvents ?? []);
+
+        $formatOperationalDateTime = static function ($value): ?string {
+            if (blank($value)) {
+                return null;
+            }
+
+            try {
+                return \Carbon\Carbon::parse($value)->format('d M Y, g:i A');
+            } catch (\Throwable) {
+                return null;
+            }
+        };
+
+        foreach ($operationalAuditEvents as $auditEvent) {
+            $actionCode = strtoupper((string) $auditEvent->action_code);
+            $after = is_array($auditEvent->after_json) ? $auditEvent->after_json : [];
+            $actor = $auditEvent->actor?->full_name;
+            $pickupAt = $formatOperationalDateTime(data_get($after, 'pickup_at'));
+            $pickupUntil = $formatOperationalDateTime(data_get($after, 'pickup_expires_at'));
+            $window = $pickupAt
+                ? ' New pickup: '.$pickupAt.($pickupUntil ? ' to '.$pickupUntil.'.' : '.')
+                : '';
+
+            [$stage, $event, $defaultActor, $details, $sortOrder] = match ($actionCode) {
+                'PICKUP_SCHEDULE_AUTOMATICALLY_ACTIVATED' => [
+                    'Pickup',
+                    'Initial pickup schedule activated',
+                    'System',
+                    'The initial pickup/issuance schedule was activated from the SPMU Operational Calendar.'.$window,
+                    50,
+                ],
+                'PICKUP_SCHEDULE_CONFIRMED' => [
+                    'Pickup',
+                    'Pickup schedule confirmed',
+                    'SPMU Action Officer',
+                    'SPMU confirmed the pickup/issuance schedule for this approved request.'.$window,
+                    52,
+                ],
+                'PICKUP_WINDOW_EXPIRED' => [
+                    'Pickup',
+                    'Pickup missed',
+                    'System',
+                    'The confirmed pickup window passed before physical release. The reservation remained active while the borrower could request rescheduling or cancel the unreleased request.',
+                    54,
+                ],
+                'PICKUP_RESCHEDULE_REQUESTED' => [
+                    'Pickup',
+                    'Pickup reschedule requested',
+                    'Borrower',
+                    'The borrower requested another valid pickup schedule on the same approved request.',
+                    56,
+                ],
+                'PICKUP_RESCHEDULED' => [
+                    'Pickup',
+                    'Pickup rescheduled',
+                    'SPMU Action Officer',
+                    'SPMU assigned the next valid pickup/issuance window while retaining the same approved request and reservation.'.$window,
+                    58,
+                ],
+                'PICKUP_HELD_FOR_PREPARATION_ISSUE' => [
+                    'Preparation',
+                    'Pickup held for inventory review',
+                    'System',
+                    'The pickup could not proceed because SPMU was resolving an item-preparation or inventory discrepancy. This was not recorded as a borrower missed pickup.',
+                    61,
+                ],
+                'PREPARATION_ISSUE_REPORTED' => [
+                    'Preparation',
+                    'Preparation discrepancy reported',
+                    'SPMU Action Officer',
+                    filled($auditEvent->reason)
+                        ? trim((string) $auditEvent->reason)
+                        : 'A physical item-preparation discrepancy was recorded for SPMU review before release.',
+                    62,
+                ],
+                'PREPARATION_ISSUE_RESOLVED' => [
+                    'Preparation',
+                    'Preparation discrepancy resolved',
+                    'SPMU Head / Administrator',
+                    filled($auditEvent->reason)
+                        ? trim((string) $auditEvent->reason)
+                        : 'The reported preparation discrepancy was reviewed and resolved before the release workflow continued or was closed.',
+                    64,
+                ],
+                default => [null, null, null, null, 0],
+            };
+
+            if ($event) {
+                $addHistoryEvent(
+                    $auditEvent->occurred_at,
+                    $stage,
+                    $event,
+                    $actor ?: $defaultActor,
+                    $details,
+                    'operational-audit-'.$auditEvent->id,
+                    $sortOrder
+                );
+            }
+        }
+
+        // Legacy/fallback transactions may predate the operational audit
+        // events above. In that case preserve the current schedule row.
+        $hasPickupScheduleHistory = $operationalAuditEvents->contains(
+            fn ($event) => in_array(strtoupper((string) $event->action_code), [
+                'PICKUP_SCHEDULE_AUTOMATICALLY_ACTIVATED',
+                'PICKUP_SCHEDULE_CONFIRMED',
+                'PICKUP_RESCHEDULED',
+            ], true)
         );
 
+        if (! $hasPickupScheduleHistory) {
+            $addHistoryEvent(
+                $custody->pickup_scheduled_at ?: $custody->scheduled_release_at,
+                'Pickup',
+                'Pickup schedule activated',
+                $custody->pickupScheduledBy?->full_name ?: 'System',
+                $custody->scheduled_release_at
+                    ? 'Pickup/issuance scheduled for '.$custody->scheduled_release_at->format('d M Y, g:i A').'.'
+                    : 'Pickup/issuance schedule recorded.',
+                'pickup-scheduled',
+                50
+            );
+        }
+
+        foreach ($operationalNotificationEvents as $notificationEvent) {
+            if (strtoupper((string) $notificationEvent->event_code) !== 'RETURN_SCHEDULE_ADJUSTED') {
+                continue;
+            }
+
+            $message = trim((string) data_get($notificationEvent->payload_snapshot_json, 'message', ''));
+
+            $addHistoryEvent(
+                $notificationEvent->occurred_at,
+                'Return Schedule',
+                'Effective return date adjusted',
+                'System / SPMU Calendar',
+                $message !== ''
+                    ? $message
+                    : 'The SPMU Operational Calendar moved the effective return date to the next available Return schedule. The adjustment is not treated as a late return.',
+                'return-schedule-adjusted-'.$notificationEvent->id,
+                95
+            );
+        }
+
+        // 5) Release preparation and physical issuance.
         $addHistoryEvent(
             $custody->prepared_at,
             'Release',
@@ -161,7 +299,7 @@
             70
         );
 
-        // 5) Applicable Gate Pass evidence.
+        // 6) Applicable Gate Pass evidence.
         $gatePass = $custody->gatePass;
         if ($gatePass) {
             $gatePassRecordedAt = $gatePass->verified_at ?: $gatePass->uploaded_at;
@@ -179,7 +317,7 @@
             );
         }
 
-        // 6) Applicable Laundry evidence / completion.
+        // 7) Applicable Laundry evidence / completion.
         $laundryJob = $custody->laundryJob;
         if ($laundryJob) {
             $addHistoryEvent(
@@ -203,7 +341,7 @@
             );
         }
 
-        // 7) Current return workflow: one persisted ReturnTransaction represents
+        // 8) Current return workflow: one persisted ReturnTransaction represents
         // the completed inspection for one physical channel. Non-linen is
         // inspected directly by the Action Officer. Linen is encoded by SPMU
         // from the accomplished Laundry Form, whose RECEIVED BY date is the
@@ -268,7 +406,7 @@
             );
         }
 
-        // 8) Accountability continues the SAME borrowing transaction after the
+        // 9) Accountability continues the SAME borrowing transaction after the
         // physical return. It must remain visible for Borrower, Action Officer,
         // and Head/Admin until every linked obligation is resolved.
         $borrowerHistoryView = strtoupper((string) session('active_workspace')) === 'BORROWER';
@@ -289,7 +427,7 @@
             );
         }
 
-        // 9) Final completion is shown only when the custody closure gate has
+        // 10) Final completion is shown only when the custody closure gate has
         // cleared return/documentation AND all linked accountability records.
         $addHistoryEvent(
             $custody->closed_at,

@@ -12,10 +12,12 @@ use App\Models\CustodyTransaction;
 use App\Models\DocumentTemplate;
 use App\Models\GeneratedDocument;
 use App\Models\Incident;
+use App\Models\IncidentLine;
 use App\Models\OverdueCase;
 use App\Models\RequestVersion;
 use App\Models\Sanction;
 use App\Models\SignatureSnapshot;
+use App\Models\SystemSetting;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -26,7 +28,7 @@ use Throwable;
 
 class DocumentService
 {
-    private const NOTHING_FOLLOWS_MARKER = '*** NOTHING FOLLOWS ***';
+    private const NOTHING_FOLLOWS_MARKER = '— NOTHING FOLLOWS —';
 
     public function __construct(
         private SimplePdfService $pdf,
@@ -378,7 +380,7 @@ HTML;
 <div class="borrower-control-footer">
     <div class="footer-left">Effectivity Date&nbsp;&nbsp;&nbsp;<strong>September 2026</strong></div>
     <div class="footer-revision">Rev. 4</div>
-    <div class="footer-right"></div>
+    <div class="footer-right">Page {$pageNumber} of {$pageCount}</div>
 </div>
 HTML;
 
@@ -580,16 +582,25 @@ HTML;
     .borrower-items th, .borrower-items td { border: .55pt solid #777; padding: {$cellPadding}; vertical-align: middle; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
     .borrower-items th { height: 20pt; text-align: center; font-weight: bold; font-size: 6.0pt; }
     .borrower-items tbody td { height: {$rowHeight}; }
-    .borrower-items .col-qty, .borrower-items .c-qty { width: 5.3%; text-align: center; }
-    .borrower-items .col-unit, .borrower-items .c-unit { width: 6.7%; text-align: center; }
-    .borrower-items .col-desc, .borrower-items .c-desc { width: 18.0%; text-align: left; }
-    .borrower-items .col-purpose, .borrower-items .c-purpose { width: 15.5%; text-align: left; }
-    .borrower-items .col-expected, .borrower-items .c-expected { width: 10.5%; text-align: center; }
-    .borrower-items .col-gap, .borrower-items .split-gap { width: 4%; border: 0 !important; background: #fff; padding: 0 !important; }
-    .borrower-items .col-release-date, .borrower-items .c-release-date { width: 9.5%; text-align: center; }
-    .borrower-items .col-release-time, .borrower-items .c-release-time { width: 9.5%; text-align: center; }
-    .borrower-items .col-return-date, .borrower-items .c-return-date { width: 9.5%; text-align: center; }
-    .borrower-items .col-remarks, .borrower-items .c-remarks { width: 11.5%; text-align: left; }
+    /* Widths live on the colgroup only.  Dompdf can re-balance a table when
+       the same percentage width is repeated on both <col> and <td>; that was
+       why the Supply Staff grid and the Returned-by signature grid could look
+       horizontally offset even though their percentages added to 100. */
+    .borrower-items col.col-qty { width: 5.3%; }
+    .borrower-items col.col-unit { width: 6.7%; }
+    .borrower-items col.col-desc { width: 18.0%; }
+    .borrower-items col.col-purpose { width: 15.5%; }
+    .borrower-items col.col-expected { width: 10.5%; }
+    .borrower-items col.col-gap { width: 4%; }
+    .borrower-items col.col-release-date { width: 9.5%; }
+    .borrower-items col.col-release-time { width: 9.5%; }
+    .borrower-items col.col-return-date { width: 9.5%; }
+    .borrower-items col.col-remarks { width: 11.5%; }
+    .borrower-items .c-qty, .borrower-items .c-unit,
+    .borrower-items .c-expected, .borrower-items .c-release-date,
+    .borrower-items .c-release-time, .borrower-items .c-return-date { text-align: center; }
+    .borrower-items .c-desc, .borrower-items .c-purpose, .borrower-items .c-remarks { text-align: left; }
+    .borrower-items .col-gap, .borrower-items .split-gap { border: 0 !important; background: #fff; padding: 0 !important; }
     .borrower-items thead { display: table-header-group; }
     .borrower-items tr { page-break-inside: avoid; }
     .nothing-follows td { background: #fff; }
@@ -612,14 +623,20 @@ HTML;
     /* One table with a borderless separator creates the exact visual split of
        the official left and right signature sections without a nested table
        row that Dompdf can push wholesale onto page 2. */
-    .borrower-signatures { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 7pt; font-size: {$signatureFont}; line-height: 1.08; }
-    .borrower-signatures th, .borrower-signatures td { height: 10pt; border: .55pt solid #777; padding: 1.4pt 2.5pt; text-align: center; vertical-align: middle; white-space: normal; overflow-wrap: anywhere; }
+    .borrower-signatures { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8pt; font-size: {$signatureFont}; line-height: 1.12; }
+    .borrower-signatures th, .borrower-signatures td { height: 11pt; border: .55pt solid #777; padding: 1.8pt 2.8pt; text-align: center; vertical-align: middle; white-space: normal; overflow-wrap: anywhere; }
     .borrower-signatures th { height: 9pt; font-weight: bold; }
-    .borrower-signatures .sig-label-col, .borrower-signatures .sig-row-label { width: 10.5%; text-align: left; }
-    .borrower-signatures .sig-left-col { width: 10.8%; }
-    .borrower-signatures .sig-gap-col, .borrower-signatures .signature-gap { width: 4.3%; border: 0 !important; background: #fff; padding: 0 !important; }
-    .borrower-signatures .sig-right-col { width: 14%; }
-    .borrower-signatures .signature-row td { height: 21pt; }
+    /* Match the exact 56% / 4% / 40% geometry used by the item grid above.
+       Keeping the widths on <col> makes the right signature block start on
+       exactly the same vertical line as Date Released / Release Time / Date
+       Returned / Remarks, regardless of how many request rows are generated. */
+    .borrower-signatures col.sig-label-col { width: 11%; }
+    .borrower-signatures col.sig-left-col { width: 11.25%; }
+    .borrower-signatures col.sig-gap-col { width: 4%; }
+    .borrower-signatures col.sig-right-col { width: 13.333333%; }
+    .borrower-signatures .sig-row-label { text-align: left; }
+    .borrower-signatures .signature-gap { border: 0 !important; background: #fff; padding: 0 !important; }
+    .borrower-signatures .signature-row td { height: 22pt; }
     .borrower-signatures .esign { height: 18pt; text-align: center; }
     .borrower-signatures .esign img { display: block; max-width: 72pt; max-height: 17pt; margin: 0 auto; object-fit: contain; }
 
@@ -769,8 +786,6 @@ CSS;
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
         $gatePass = $custody->gatePass;
-        $activeTemplate = $this->activeTemplate('GATE_PASS');
-
         $templateConfig = $this->templateDefinitions->resolve('GATE_PASS');
 
         $formCode = e($templateConfig['form_code']);
@@ -799,539 +814,246 @@ CSS;
         $footerRevision = e($templateConfig['footer_revision']);
 
         $logoPath = resource_path('images/cspc-logo-print.jpg');
-
         $logo = is_file($logoPath)
-            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo" style="width:54px;height:54px;object-fit:contain;">'
-            : '<div style="font-size:10px;font-weight:bold;">CSPC</div>';
+            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
+            : '<div class="gp-logo-fallback">CSPC</div>';
 
         $borrowerName = e((string) $borrower->full_name);
         $purpose = e((string) ($version?->purpose_event ?: ''));
-        /*
-         * The printed Remarks field carries no automatically generated text.
-         * Destination, location, designations and approval/signature metadata
-         * are never placed here: a designation belongs only under its
-         * signatory's printed name, and the destination stays on the Gate Pass
-         * record for the workflow without being printed as a remark. The row
-         * stays on the form and is filled in by hand when needed.
-         */
-
         $custodyNumber = e((string) $custody->custody_no);
-
         $formDate = $custody->scheduled_release_at
             ? $custody->scheduled_release_at->format('m-d-Y')
             : ($gatePass?->approved_at?->format('m-d-Y') ?: now()->format('m-d-Y'));
 
-        /*
-         * The final Gate Pass carries three immutable system E-signatures:
-         *
-         * - Bearer / Accountable Person: the borrower signature captured when
-         *   the approved request version was E-signed and submitted.
-         * - "Verified By": the SPMU Action Officer who verified the submitted
-         *   request and required documents before Head review.
-         * - "Approved By": the SPMU Head whose approval authorized the request
-         *   and therefore the off-campus movement.
-         *
-         * The guard's "Released by" line remains handwritten at the gate.
-         */
         $verifiedName = $gatePass?->preparedVerifier?->full_name
             ? e((string) $gatePass->preparedVerifier->full_name)
             : 'SPMU ACTION OFFICER';
-
         $approvedName = $gatePass?->approver?->full_name
             ? e((string) $gatePass->approver->full_name)
             : 'SPMU HEAD';
 
-        /*
-         * One shared geometry for every Gate Pass signature block so the
-         * Bearer, Verified By and Approved By blocks stay identical.
-         */
-        $verifiedSignature = $this->centeredSignatureImage(
-            $gatePass?->preparedVerifierSignature,
-            140,
-            26
-        );
-
-        $approvedSignature = $this->centeredSignatureImage(
-            $gatePass?->approverSignature,
-            140,
-            26
-        );
-
-        $borrowerSignature = $this->centeredSignatureImage(
-            $version?->borrowerSignature,
-            140,
-            26
-        );
+        $verifiedSignature = $this->centeredSignatureImage($gatePass?->preparedVerifierSignature, 130, 24);
+        $approvedSignature = $this->centeredSignatureImage($gatePass?->approverSignature, 130, 24);
+        $borrowerSignature = $this->centeredSignatureImage($version?->borrowerSignature, 130, 24);
 
         $offCampusLines = $custody->lines->filter(
-            fn ($line) =>
-                $line->requestItem?->use_location === 'OFF_CAMPUS'
+            fn ($line) => $line->requestItem?->use_location === 'OFF_CAMPUS'
                 && (float) $line->quantity_to_receive > 0
         );
 
         $itemRows = '';
-
         foreach ($offCampusLines as $line) {
-            $quantity = (int) round((float) $line->quantity_to_receive);
+            $quantity = (float) $line->quantity_to_receive;
+            $quantityText = floor($quantity) === $quantity
+                ? (string) (int) $quantity
+                : rtrim(rtrim(number_format($quantity, 3, '.', ''), '0'), '.');
             $unit = e((string) $line->requestItem?->unit_snapshot);
             $description = e((string) $line->requestItem?->description_snapshot);
-            $lineRemarks = e((string) ($remarksByCustodyLineId->get($line->id) ?? ''));
 
-            $itemRows .=
-                '<tr>'
-                .'<td style="border:1px solid #222;height:23px;text-align:center;padding:3px 5px;">'.$quantity.'</td>'
-                .'<td style="border:1px solid #222;text-align:center;padding:3px 5px;">'.$unit.'</td>'
-                .'<td style="border:1px solid #222;padding:3px 7px;">'.$description.'</td>'
+            $itemRows .= '<tr class="gp-item-row">'
+                .'<td>'.$quantityText.'</td>'
+                .'<td>'.$unit.'</td>'
+                .'<td class="gp-description">'.$description.'</td>'
                 .'</tr>';
         }
 
-        // Close the approved item list formally. The marker occupies the first
-        // row after the last approved item so blank rows cannot be mistaken for
-        // space where more property may be added later.
-        $itemRows .=
-            '<tr>'
-            .'<td colspan="3" style="border:1px solid #222;height:23px;text-align:center;padding:3px 7px;font-weight:bold;letter-spacing:.3px;">'
-            .self::NOTHING_FOLLOWS_MARKER
-            .'</td>'
-            .'</tr>';
-
-        $minimumRows = 9;
-        $existingRows = $offCampusLines->count() + 1; // includes terminal marker
-
-        for ($i = $existingRows; $i < $minimumRows; $i++) {
-            $itemRows .=
-                '<tr>'
-                .'<td style="border:1px solid #222;height:23px;"></td>'
-                .'<td style="border:1px solid #222;"></td>'
-                .'<td style="border:1px solid #222;"></td>'
-                .'</tr>';
+        // Keep short Gate Passes balanced without filling the page with empty
+        // lines. The controlled closure marker is always the final table row.
+        $blankRows = max(0, 5 - $offCampusLines->count());
+        for ($i = 0; $i < $blankRows; $i++) {
+            $itemRows .= '<tr class="gp-item-row gp-blank-row"><td></td><td></td><td></td></tr>';
         }
+        if ($offCampusLines->isNotEmpty()) {
+            $itemRows .= '<tr class="gp-nothing-follows"><td colspan="3">'.self::NOTHING_FOLLOWS_MARKER.'</td></tr>';
+        }
+
+        $pageHeader = <<<HTML
+<div class="gp-header-inner">
+    <table class="gp-header-table">
+        <tr>
+            <td class="gp-logo">{$logo}</td>
+            <td class="gp-school">
+                <div>Republic of the Philippines</div>
+                <strong>CAMARINES SUR POLYTECHNIC COLLEGES</strong>
+                <div>Nabua, Camarines Sur</div>
+            </td>
+            <td class="gp-form-code">{$formCode}</td>
+        </tr>
+    </table>
+    <div class="gp-blue-rule"></div>
+    <div class="gp-title">{$documentTitle}</div>
+</div>
+HTML;
+
+        $pageFooter = <<<HTML
+<div class="gp-footer-inner">
+    <div class="gp-footer-left">Effective Date&nbsp;&nbsp;<strong>{$footerEffectivity}</strong></div>
+    <div class="gp-footer-center">{$footerRevision}</div>
+    <div class="gp-footer-right">Page {$pageNumber} of {$pageCount}</div>
+</div>
+HTML;
+
+        $inlineHeader = $documentShell ? '' : '<div class="gp-header-inline">'.$pageHeader.'</div>';
+        $inlineFooter = $documentShell ? '' : '<div class="gp-footer-inline">'.$pageFooter.'</div>';
 
         $body = <<<HTML
-<section style="
-    width:100%;
-    box-sizing:border-box;
-    font-family:'Times New Roman', Times, serif;
-    font-size:12px;
-    line-height:1.25;
-    color:#111;
-">
+<section class="gate-pass-form">
+    {$inlineHeader}
 
-    <!-- ======================================================
-         INSTITUTIONAL HEADER
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        border-bottom:1.5px solid #222;
-        margin-bottom:12px;
-    ">
+    <table class="gp-meta">
         <tr>
-            <td style="width:62px;padding:2px 6px 5px 2px;vertical-align:middle;">
-                {$logo}
-            </td>
-
-            <td style="vertical-align:middle;padding:2px 4px 5px;">
-                <div style="font-size:10px;">Republic of the Philippines</div>
-                <div style="font-size:12px;font-weight:bold;">
-                    CAMARINES SUR POLYTECHNIC COLLEGES
-                </div>
-                <div style="font-size:10px;">
-                    Nabua, Camarines Sur
-                </div>
-            </td>
-
-            <td style="
-                width:120px;
-                text-align:right;
-                vertical-align:bottom;
-                padding-bottom:6px;
-                font-size:9px;
-                font-weight:bold;
-            ">
-                {$formCode}
-            </td>
+            <td class="gp-meta-spacer"></td>
+            <td class="gp-meta-label">{$gpNoLabel}</td>
+            <td class="gp-meta-value">{$custodyNumber}</td>
+        </tr>
+        <tr>
+            <td class="gp-meta-spacer"></td>
+            <td class="gp-meta-label">{$dateLabel}</td>
+            <td class="gp-meta-value">{$formDate}</td>
         </tr>
     </table>
 
+    <table class="gp-to-row"><tr><td class="gp-to-label">{$toLabel}</td><td><strong>{$toValue}</strong></td></tr></table>
 
-    <!-- ======================================================
-         NUMBER + DATE
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        margin-bottom:2px;
-    ">
-        <tr>
-            <td style="width:67%;"></td>
-
-            <td style="width:33%;font-size:11px;">
-                <div>
-                    <strong>{$gpNoLabel}</strong>
-                    <span style="
-                        display:inline-block;
-                        width:110px;
-                        border-bottom:1px solid #111;
-                        text-align:center;
-                    ">
-                        {$custodyNumber}
-                    </span>
-                </div>
-
-                <div style="margin-top:3px;">
-                    <strong>{$dateLabel}</strong>
-                    <span style="
-                        display:inline-block;
-                        width:110px;
-                        border-bottom:1px solid #111;
-                        text-align:center;
-                    ">
-                        {$formDate}
-                    </span>
-                </div>
-            </td>
-        </tr>
-    </table>
-
-
-    <!-- ======================================================
-         TITLE
-    ======================================================= -->
-
-    <div style="
-        text-align:center;
-        font-weight:bold;
-        font-size:15px;
-        margin:2px 0 16px;
-    ">
-        {$documentTitle}
+    <div class="gp-intro">
+        {$introPrefix}
+        <span class="gp-bearer-inline">{$borrowerName}</span>
+        {$introSuffix}
     </div>
 
-
-    <!-- ======================================================
-         INTRO
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        margin-bottom:10px;
-    ">
-        <tr>
-            <td style="
-                width:44px;
-                vertical-align:top;
-                font-weight:bold;
-            ">
-                {$toLabel}
-            </td>
-
-            <td style="vertical-align:top;">
-                <strong>{$toValue}</strong>
-            </td>
-        </tr>
-    </table>
-
-    <p style="
-        margin:0 0 12px 44px;
-        text-align:justify;
-        line-height:1.4;
-    ">
-        {$introPrefix}
-        <span style="
-            display:inline-block;
-            min-width:190px;
-            border-bottom:1px solid #111;
-            text-align:center;
-            font-weight:bold;
-        ">
-            {$borrowerName}
-        </span>
-        {$introSuffix}
-    </p>
-
-
-    <!-- ======================================================
-         ITEMS
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        table-layout:fixed;
-        font-size:11px;
-    ">
-        <colgroup>
-            <col style="width:13%;">
-            <col style="width:14%;">
-            <col style="width:73%;">
-        </colgroup>
-
-        <thead>
-            <tr>
-                <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    {$quantityLabel}
-                </th>
-
-                <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    {$unitLabel}
-                </th>
-
-                <th style="border:1px solid #222;padding:4px;text-align:center;">
-                    {$descriptionLabel}
-                </th>
-            </tr>
-        </thead>
-
+    <table class="gp-items">
+        <colgroup><col class="gp-col-qty"><col class="gp-col-unit"><col class="gp-col-desc"></colgroup>
+        <thead><tr><th>{$quantityLabel}</th><th>{$unitLabel}</th><th>{$descriptionLabel}</th></tr></thead>
         <tbody>
             {$itemRows}
-
-            <tr>
-                <td colspan="3" style="
-                    border:1px solid #222;
-                    padding:6px;
-                    min-height:24px;
-                ">
-                    <strong>{$purposeLabel}</strong>
-                    &nbsp; {$purpose}
-                </td>
-            </tr>
-
-            <tr>
-                <td colspan="3" style="
-                    border:1px solid #222;
-                    padding:6px;
-                    min-height:24px;
-                ">
-                    <strong>{$remarksLabel}</strong>
-                    &nbsp;
-                </td>
-            </tr>
+            <tr><td colspan="3" class="gp-purpose"><strong>{$purposeLabel}</strong><span>{$purpose}</span></td></tr>
+            <tr><td colspan="3" class="gp-remarks"><strong>{$remarksLabel}</strong><span></span></td></tr>
         </tbody>
     </table>
 
-
-    <!-- ======================================================
-         BEARER
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        table-layout:fixed;
-        margin-top:16px;
-    ">
-        <tr>
-            <td style="
-                width:50%;
-                border:0;
-                padding:0 24px 0 0;
-                vertical-align:top;
-            ">
-                <div style="font-weight:bold;font-size:10px;">
-                    {$bearerLabel}
-                </div>
-
-                <div style="
-                    height:30px;
-                    line-height:30px;
-                    text-align:center;
-                    border-bottom:1px solid #111;
-                ">{$borrowerSignature}</div>
-
-                <div style="
-                    text-align:center;
-                    font-weight:bold;
-                    text-transform:uppercase;
-                    margin-top:3px;
-                ">
-                    {$borrowerName}
-                </div>
+    <div class="gp-signature-section">
+        <table class="gp-bearer-block"><tr>
+            <td>
+                <div class="gp-signature-label">{$bearerLabel}</div>
+                <div class="gp-signature-line">{$borrowerSignature}</div>
+                <div class="gp-signature-name">{$borrowerName}</div>
             </td>
+            <td></td>
+        </tr></table>
 
-            <td style="width:50%;border:0;padding:0;"></td>
-        </tr>
-    </table>
-
-
-    <!-- ======================================================
-         VERIFIED + APPROVED
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        table-layout:fixed;
-        margin-top:26px;
-    ">
-        <tr>
-            <td style="
-                width:50%;
-                border:0;
-                vertical-align:top;
-                padding:0 24px 0 0;
-            ">
-
-                <div style="font-weight:bold;margin-bottom:4px;">
-                    {$verifiedByLabel}
-                </div>
-
-                <div style="
-                    height:30px;
-                    line-height:30px;
-                    text-align:center;
-                    border-bottom:1px solid #111;
-                ">{$verifiedSignature}</div>
-
-                <div style="
-                    text-align:center;
-                    font-weight:bold;
-                    margin-top:3px;
-                ">
-                    {$verifiedName}
-                </div>
-
-                <div style="
-                    text-align:center;
-                    font-size:10px;
-                ">
-                    {$verifiedRole}
-                </div>
-
+        <table class="gp-approval-block"><tr>
+            <td>
+                <div class="gp-signature-label">{$verifiedByLabel}</div>
+                <div class="gp-signature-line">{$verifiedSignature}</div>
+                <div class="gp-signature-name">{$verifiedName}</div>
+                <div class="gp-signature-role">{$verifiedRole}</div>
             </td>
-
-            <td style="
-                width:50%;
-                border:0;
-                vertical-align:top;
-                padding:0 0 0 24px;
-            ">
-
-                <div style="font-weight:bold;margin-bottom:4px;">
-                    {$approvedByLabel}
-                </div>
-
-                <div style="
-                    height:30px;
-                    line-height:30px;
-                    text-align:center;
-                    border-bottom:1px solid #111;
-                ">{$approvedSignature}</div>
-
-                <div style="
-                    text-align:center;
-                    font-weight:bold;
-                    margin-top:3px;
-                ">
-                    {$approvedName}
-                </div>
-
-                <div style="
-                    text-align:center;
-                    font-size:10px;
-                ">
-                    {$approvedRole}
-                </div>
-
+            <td>
+                <div class="gp-signature-label">{$approvedByLabel}</div>
+                <div class="gp-signature-line">{$approvedSignature}</div>
+                <div class="gp-signature-name">{$approvedName}</div>
+                <div class="gp-signature-role">{$approvedRole}</div>
             </td>
-        </tr>
-    </table>
+        </tr></table>
 
-
-    <!-- ======================================================
-         GUARD / RELEASE CONTROL
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        table-layout:fixed;
-        margin-top:28px;
-    ">
-        <tr>
-            <td style="
-                width:50%;
-                border:0;
-                padding:0 24px 0 0;
-                vertical-align:top;
-            ">
-        <div style="font-weight:bold;margin-bottom:8px;">
-            {$releasedByLabel}
-        </div>
-
-        <div style="
-            height:30px;
-            border-bottom:1px solid #111;
-        "></div>
-
-        <div style="
-            text-align:center;
-            font-weight:bold;
-            font-size:10px;
-            margin-top:3px;
-        ">
-            {$guardRole}
-        </div>
-
-        <div style="margin-top:8px;font-size:10px;">
-            {$releasedDateLabel}
-            <span style="
-                display:inline-block;
-                width:105px;
-                border-bottom:1px solid #111;
-            "></span>
-        </div>
-
-        <div style="margin-top:6px;font-size:10px;">
-            {$releasedTimeLabel}
-            <span style="
-                display:inline-block;
-                width:105px;
-                border-bottom:1px solid #111;
-            "></span>
-        </div>
+        <table class="gp-release-block"><tr>
+            <td>
+                <div class="gp-signature-label">{$releasedByLabel}</div>
+                <div class="gp-signature-line gp-handwritten-line"></div>
+                <div class="gp-signature-name">{$guardRole}</div>
+                <div class="gp-release-meta"><strong>{$releasedDateLabel}</strong><span></span></div>
+                <div class="gp-release-meta"><strong>{$releasedTimeLabel}</strong><span></span></div>
             </td>
+            <td></td>
+        </tr></table>
+    </div>
 
-            <td style="width:50%;border:0;padding:0;"></td>
-        </tr>
-    </table>
-
-
-    <!-- ======================================================
-         DOCUMENT CONTROL FOOTER
-    ======================================================= -->
-
-    <table style="
-        width:100%;
-        border-collapse:collapse;
-        border-top:1px solid #222;
-        margin-top:36px;
-        font-size:8px;
-    ">
-        <tr>
-            <td style="width:33%;padding-top:4px;">
-                Effective Date: {$footerEffectivity}
-            </td>
-
-            <td style="width:34%;padding-top:4px;text-align:center;">
-                {$footerRevision}
-            </td>
-
-            <td style="width:33%;padding-top:4px;text-align:right;">
-                Page {$pageNumber} of {$pageCount}
-            </td>
-        </tr>
-    </table>
-
+    {$inlineFooter}
 </section>
 HTML;
 
-        return $documentShell
-            ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
-            : $body;
+        $css = <<<CSS
+<style>
+    @page { size: A4 portrait; margin: 72pt 34pt 38pt; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #111; font-family: DejaVu Sans, Arial, sans-serif; }
+    .gate-pass-form { width: 100%; font-family: DejaVu Sans, Arial, sans-serif; font-size: 8pt; line-height: 1.18; color: #111; }
+
+    .gp-page-header { position: fixed; top: -60pt; left: 0; right: 0; height: 56pt; }
+    .gp-header-inline { margin-bottom: 9pt; }
+    .gp-header-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .gp-header-table td { border: 0; padding: 0; vertical-align: middle; }
+    .gp-logo { width: 40pt; padding-right: 7pt !important; }
+    .gp-logo img { width: 30pt; height: 30pt; object-fit: contain; display: block; }
+    .gp-logo-fallback { font-weight: bold; font-size: 7pt; }
+    .gp-school { font-size: 6.5pt; line-height: 1.15; }
+    .gp-school strong { display: block; font-size: 8.2pt; line-height: 1.08; }
+    .gp-form-code { width: 110pt; text-align: right; vertical-align: bottom !important; font-size: 6.4pt; font-weight: bold; }
+    .gp-blue-rule { border-top: .9pt solid #78a6c8; margin: 6pt 0 5pt; }
+    .gp-title { text-align: center; font-size: 9.2pt; font-weight: bold; letter-spacing: .08pt; }
+
+    .gp-meta { width: 100%; border-collapse: collapse; margin: 0 0 7pt; font-size: 7.2pt; }
+    .gp-meta td { border: 0; padding: 1.2pt 0; }
+    .gp-meta-spacer { width: 66%; }
+    .gp-meta-label { width: 12%; font-weight: bold; white-space: nowrap; padding-right: 4pt !important; }
+    .gp-meta-value { width: 22%; border-bottom: .55pt solid #111 !important; text-align: center; }
+
+    .gp-to-row { width: 100%; border-collapse: collapse; margin: 2pt 0 6pt; font-size: 7.8pt; }
+    .gp-to-row td { border: 0; padding: 0; vertical-align: top; }
+    .gp-to-label { width: 34pt; font-weight: bold; }
+    .gp-intro { margin: 0 0 9pt 34pt; text-align: justify; font-size: 7.6pt; line-height: 1.3; }
+    .gp-bearer-inline { display: inline-block; min-width: 145pt; padding: 0 5pt 1pt; border-bottom: .55pt solid #111; text-align: center; font-weight: bold; }
+
+    .gp-items { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; line-height: 1.16; }
+    .gp-items th, .gp-items td { border: .55pt solid #555; padding: 3.2pt 4pt; vertical-align: middle; }
+    .gp-items th { height: 20pt; text-align: center; font-size: 7.2pt; }
+    .gp-col-qty { width: 13%; } .gp-col-unit { width: 15%; } .gp-col-desc { width: 72%; }
+    .gp-item-row td { min-height: 20pt; text-align: center; }
+    .gp-item-row .gp-description { text-align: left; padding-left: 6pt; }
+    .gp-blank-row td { height: 18pt; }
+    .gp-nothing-follows td { height: 18pt; text-align: center; font-size: 6.8pt; font-weight: bold; letter-spacing: .35pt; background: #fff; }
+    .gp-purpose, .gp-remarks { min-height: 22pt; }
+    .gp-purpose strong, .gp-remarks strong { display: inline-block; width: 52pt; }
+    .gp-purpose span, .gp-remarks span { display: inline-block; padding-left: 4pt; }
+
+    .gp-signature-section { page-break-inside: avoid; }
+    .gp-bearer-block, .gp-approval-block, .gp-release-block { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .gp-bearer-block { margin-top: 12pt; }
+    .gp-approval-block { margin-top: 13pt; }
+    .gp-release-block { margin-top: 13pt; }
+    .gp-bearer-block td, .gp-approval-block td, .gp-release-block td { width: 50%; border: 0; vertical-align: top; padding: 0; }
+    .gp-bearer-block td:first-child, .gp-release-block td:first-child { padding-right: 18pt; }
+    .gp-approval-block td:first-child { padding-right: 14pt; }
+    .gp-approval-block td:last-child { padding-left: 14pt; }
+    .gp-signature-label { font-size: 7.2pt; font-weight: bold; margin-bottom: 3pt; }
+    .gp-signature-line { height: 25pt; border-bottom: .55pt solid #111; text-align: center; vertical-align: bottom; }
+    .gp-signature-line img { max-height: 22pt; max-width: 120pt; object-fit: contain; }
+    .gp-handwritten-line { height: 22pt; }
+    .gp-signature-name { margin-top: 2.5pt; text-align: center; font-size: 7pt; font-weight: bold; }
+    .gp-signature-role { margin-top: 1pt; text-align: center; font-size: 6.4pt; line-height: 1.15; }
+    .gp-release-meta { margin-top: 5pt; font-size: 6.7pt; }
+    .gp-release-meta strong { display: inline-block; width: 28pt; }
+    .gp-release-meta span { display: inline-block; width: 88pt; border-bottom: .55pt solid #111; }
+
+    .gp-page-footer { position: fixed; left: 0; right: 0; bottom: -24pt; height: 20pt; }
+    .gp-footer-inline { margin-top: 18pt; }
+    .gp-footer-inner { width: 100%; border-top: .9pt solid #78a6c8; padding-top: 5pt; font-size: 5.4pt; line-height: 1; position: relative; min-height: 12pt; }
+    .gp-footer-left { position: absolute; left: 0; top: 5pt; width: 40%; text-align: left; }
+    .gp-footer-center { position: absolute; left: 40%; top: 5pt; width: 20%; text-align: center; }
+    .gp-footer-right { position: absolute; right: 0; top: 5pt; width: 40%; text-align: right; }
+</style>
+CSS;
+
+        if (! $documentShell) {
+            $packetCss = str_replace('@page { size: A4 portrait; margin: 72pt 34pt 38pt; }', '', $css);
+            return $packetCss.$body;
+        }
+
+        return '<!doctype html><html><head><meta charset="utf-8">'.$css.'</head><body>'
+            .'<div class="gp-page-header">'.$pageHeader.'</div>'
+            .'<div class="gp-page-footer">'.$pageFooter.'</div>'
+            .$body
+            .'</body></html>';
     }
     private function laundryFormHtml(
         CustodyTransaction $custody,
@@ -1343,13 +1065,14 @@ HTML;
             'request.borrower',
             'request.borrower.organizationalUnit',
             'request.currentVersion',
+            'request.currentVersion.borrowerSignature.file',
+            'request.currentVersion.approvalSteps.approver',
+            'request.currentVersion.approvalSteps.signatureSnapshot.file',
             'lines.requestItem.inventoryItem',
         ]);
 
         $version = $custody->request->currentVersion;
         $borrower = $custody->request->borrower;
-        $activeTemplate = $this->activeTemplate('LAUNDRY_FORM');
-
         $templateConfig = $this->templateDefinitions->resolve('LAUNDRY_FORM');
 
         $formCode = e($templateConfig['form_code']);
@@ -1372,81 +1095,33 @@ HTML;
         $footerEffectivity = e($templateConfig['footer_effectivity']);
         $footerRevision = e($templateConfig['footer_revision']);
 
-        /*
-         * =========================================================
-         * CSPC HEADER
-         * =========================================================
-         */
-
         $logoPath = resource_path('images/cspc-logo-print.jpg');
-
         $logo = is_file($logoPath)
-            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo" style="width:50px;height:50px;object-fit:contain;">'
-            : '<div style="font-weight:bold;font-size:7pt;">CSPC</div>';
+            ? '<img src="data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath)).'" alt="CSPC logo">'
+            : '<div class="lf-logo-fallback">CSPC</div>';
 
-
-        /*
-         * =========================================================
-         * REQUEST INFORMATION
-         * =========================================================
-         */
-
-        /*
-         * Use the immutable Office / Unit snapshot selected on the borrowing
-         * request. The borrower profile organizational unit is only a legacy
-         * fallback for older records that predate request-level snapshots.
-         */
         $requestingOffice = e((string) (
             $version?->office_unit
             ?: $version?->represented_program_department
             ?: $borrower?->organizationalUnit?->unit_name
             ?: ''
         ));
-
         $requestNumber = e((string) $custody->request->request_no);
         $borrowerName = e((string) $borrower->full_name);
 
-        /*
-         * These dates already exist once this controlled Laundry Form can be
-         * generated: the borrower's request/submission date and the SPMU Head
-         * approval date. Physical Laundry fields (Date Completed, Issued by,
-         * Received by) remain blank for the offline Laundry Personnel.
-         */
-        $laundryRequestDateSource = $version?->signed_at
-            ?: $version?->submitted_at
-            ?: $version?->created_at;
+        $laundryRequestDateSource = $version?->signed_at ?: $version?->submitted_at ?: $version?->created_at;
         $laundryRequestDate = $laundryRequestDateSource
             ? e($laundryRequestDateSource->format('F j, Y'))
             : '';
 
-        /*
-         * SIGNATURE / CONTROL MATRIX SIGNATORIES
-         * --------------------------------------
-         * Requested by : Borrower — request certification E-signature
-         * Approved By  : SPMU Head — approval E-signature for this version
-         * Issued by    : Laundry Personnel — HANDWRITTEN/WET signature at pickup
-         * Received by  : Laundry Personnel — HANDWRITTEN/WET signature when the
-         *                same linen and the same printed Laundry Form are returned.
-         *
-         * Laundry Personnel are not system users, so the application must never
-         * place the SPMU Action Officer's E-signature in either physical Laundry
-         * signature cell.
-         */
         $laundryApproval = $this->approvalSignatory($version);
         $laundryApproverName = e((string) $laundryApproval['name']);
-        $laundryApproverDesignation = e((string) (
-            $laundryApproval['designation'] ?: 'ADMIN. OFFICER V, SPMU'
-        ));
+        $laundryApproverDesignation = e((string) ($laundryApproval['designation'] ?: 'SPMU Admin / Head'));
         $laundryApprovalDate = $laundryApproval['signed_at']
             ? e($laundryApproval['signed_at']->format('F j, Y'))
             : '';
-        $laundryApproverSignature = $this->signatureImage($laundryApproval['snapshot'], 110, 20);
-
-        $laundryBorrowerSignature = $this->signatureImage(
-            $version?->borrowerSignature,
-            110,
-            20
-        );
+        $laundryApproverSignature = $this->signatureImage($laundryApproval['snapshot'], 100, 20);
+        $laundryBorrowerSignature = $this->signatureImage($version?->borrowerSignature, 100, 20);
 
         $laundryBorrowerDesignationValue = trim((string) ($borrower?->designation ?? ''));
         if ($laundryBorrowerDesignationValue === ''
@@ -1456,884 +1131,175 @@ HTML;
         }
         $laundryBorrowerDesignation = e($laundryBorrowerDesignationValue);
 
-
-        /*
-         * =========================================================
-         * LAUNDRY ITEMS ONLY
-         * =========================================================
-         */
-
         $laundryLines = $custody->lines->filter(
-            fn ($line) =>
-                (bool) $line->requestItem?->inventoryItem?->laundry_required
+            fn ($line) => (bool) $line->requestItem?->inventoryItem?->laundry_required
                 && (float) $line->quantity_to_receive > 0
         );
 
-
-        /*
-         * The official physical form uses one large uninterrupted
-         * writing area instead of one bordered row per item.
-         */
-
-        $quantityContent = '';
-        $unitContent = '';
-        $descriptionContent = '';
-
+        $itemRows = '';
         foreach ($laundryLines as $line) {
-            $quantity = (int) round(
-                (float) $line->quantity_to_receive
-            );
+            $quantity = (float) $line->quantity_to_receive;
+            $quantityText = floor($quantity) === $quantity
+                ? (string) (int) $quantity
+                : rtrim(rtrim(number_format($quantity, 3, '.', ''), '0'), '.');
+            $unit = e((string) $line->requestItem?->unit_snapshot);
+            $description = e((string) $line->requestItem?->description_snapshot);
 
-            $unit = e(
-                (string) $line->requestItem?->unit_snapshot
-            );
-
-            $description = e(
-                (string) $line->requestItem?->description_snapshot
-            );
-
-            $quantityContent .=
-                '<div style="
-                    height:17pt;
-                    line-height:17pt;
-                    white-space:nowrap;
-                ">'
-                .e((string) $quantity)
-                .'</div>';
-
-            $unitContent .=
-                '<div style="
-                    height:17pt;
-                    line-height:17pt;
-                    white-space:nowrap;
-                ">'
-                .$unit
-                .'</div>';
-
-            $descriptionContent .=
-                '<div style="
-                    min-height:17pt;
-                    line-height:17pt;
-                ">'
-                .$description
-                .'</div>';
+            $itemRows .= '<tr class="lf-item-row">'
+                .'<td class="lf-center">'.$quantityText.'</td>'
+                .'<td class="lf-center">'.$unit.'</td>'
+                .'<td>'.$description.'</td>'
+                .'<td class="lf-center">'.$laundryRequestDate.'</td>'
+                .'<td></td>'
+                .'</tr>';
         }
 
-        if ($laundryLines->isEmpty()) {
-            $quantityContent = '&nbsp;';
-            $unitContent = '&nbsp;';
-            $descriptionContent = '&nbsp;';
-        } else {
-            // Keep the official uninterrupted writing area while formally closing
-            // the approved linen list immediately beneath the final description.
-            $quantityContent .= '<div style="height:17pt;line-height:17pt;">&nbsp;</div>';
-            $unitContent .= '<div style="height:17pt;line-height:17pt;">&nbsp;</div>';
-            $descriptionContent .=
-                '<div style="min-height:17pt;line-height:17pt;text-align:center;font-weight:bold;letter-spacing:.3px;">'
-                .self::NOTHING_FOLLOWS_MARKER
-                .'</div>';
+        // Five visible item lines are enough for short requests. This avoids the
+        // oversized writing box while preserving a modest handwritten area.
+        $blankRows = max(0, 5 - $laundryLines->count());
+        for ($i = 0; $i < $blankRows; $i++) {
+            $itemRows .= '<tr class="lf-item-row lf-blank-row"><td></td><td></td><td></td><td></td><td></td></tr>';
+        }
+        if ($laundryLines->isNotEmpty()) {
+            $itemRows .= '<tr class="lf-nothing-follows"><td colspan="5">'.self::NOTHING_FOLLOWS_MARKER.'</td></tr>';
         }
 
+        $pageHeader = <<<HTML
+<div class="lf-header-inner">
+    <table class="lf-header-table">
+        <tr>
+            <td class="lf-logo">{$logo}</td>
+            <td class="lf-school">
+                <div>Republic of the Philippines</div>
+                <strong>CAMARINES SUR POLYTECHNIC COLLEGES</strong>
+                <div>Nabua, Camarines Sur</div>
+            </td>
+            <td class="lf-form-code">{$formCode}</td>
+        </tr>
+    </table>
+    <div class="lf-blue-rule"></div>
+    <div class="lf-title">{$documentTitle}</div>
+</div>
+HTML;
+
+        $pageFooter = <<<HTML
+<div class="lf-footer-inner">
+    <div class="lf-footer-left">Effective Date&nbsp;&nbsp;<strong>{$footerEffectivity}</strong></div>
+    <div class="lf-footer-center">{$footerRevision}</div>
+    <div class="lf-footer-right">Page {$pageNumber} of {$pageCount}</div>
+</div>
+HTML;
+
+        $inlineHeader = $documentShell ? '' : '<div class="lf-header-inline">'.$pageHeader.'</div>';
+        $inlineFooter = $documentShell ? '' : '<div class="lf-footer-inline">'.$pageFooter.'</div>';
 
         $body = <<<HTML
-<section style="
-    width:100%;
-    box-sizing:border-box;
+<section class="laundry-form-clean">
+    {$inlineHeader}
 
-    font-family:Arial, Helvetica, sans-serif;
-    font-size:8pt;
-    line-height:1.08;
-
-    color:#111;
-">
-
-
-    <!-- ======================================================
-         INSTITUTIONAL HEADER
-         ====================================================== -->
-
-    <table style="
-        width:94%;
-        margin:0 auto;
-
-        border-collapse:collapse;
-        border-bottom:1px solid #222;
-    ">
-
+    <table class="lf-request-meta">
         <tr>
-
-            <td style="
-                width:57px;
-
-                padding:0 6px 4px 0;
-
-                vertical-align:middle;
-            ">
-                {$logo}
-            </td>
-
-
-            <td style="
-                vertical-align:middle;
-
-                padding-bottom:4px;
-            ">
-
-                <div style="
-                    font-size:6.8pt;
-                    line-height:1.02;
-                ">
-                    Republic of the Philippines
-                </div>
-
-                <div style="
-                    margin-top:1pt;
-
-                    font-size:8.2pt;
-                    font-weight:bold;
-                    line-height:1.02;
-                ">
-                    CAMARINES SUR POLYTECHNIC COLLEGES
-                </div>
-
-                <div style="
-                    margin-top:1pt;
-
-                    font-size:6.8pt;
-                    line-height:1.02;
-                ">
-                    Nabua, Camarines Sur
-                </div>
-
-            </td>
-
-
-            <td style="
-                width:112px;
-
-                padding-bottom:4px;
-
-                vertical-align:bottom;
-
-                text-align:right;
-
-                font-size:6.5pt;
-                font-weight:bold;
-            ">
-                {$formCode}
-            </td>
-
+            <td class="lf-meta-label">{$requestingOfficeLabel}</td>
+            <td class="lf-meta-value">{$requestingOffice}</td>
+            <td class="lf-meta-gap"></td>
+            <td class="lf-meta-label lf-request-no-label">{$requestNoLabel}</td>
+            <td class="lf-meta-value lf-request-no-value">{$requestNumber}</td>
         </tr>
-
     </table>
 
-
-
-    <!-- ======================================================
-         TITLE
-         ====================================================== -->
-
-    <div style="
-        width:94%;
-
-        margin:8pt auto 11pt;
-
-        text-align:center;
-
-        font-size:9.3pt;
-        font-weight:bold;
-        line-height:1;
-    ">
-        {$documentTitle}
-    </div>
-
-
-
-    <!-- ======================================================
-         REQUESTING OFFICE / REQUEST NUMBER
-
-         Separate cells are used so labels and values do not
-         visually collide.
-         ====================================================== -->
-
-    <table style="
-        width:94%;
-
-        margin:0 auto 9pt;
-
-        border-collapse:collapse;
-
-        font-size:7.8pt;
-        line-height:1;
-    ">
-
+    <table class="lf-items">
         <colgroup>
-            <col style="width:12.5%;">
-            <col style="width:49.5%;">
-            <col style="width:14%;">
-            <col style="width:24%;">
+            <col class="lf-col-qty"><col class="lf-col-unit"><col class="lf-col-desc"><col class="lf-col-date"><col class="lf-col-date">
         </colgroup>
-
-
-        <tr>
-
-            <td colspan="2" style="
-                padding:0;
-                vertical-align:bottom;
-            ">
-                <table style="
-                    width:100%;
-                    border:0;
-                    border-collapse:collapse;
-                    margin:0;
-                    padding:0;
-                    table-layout:auto;
-                ">
-                    <tr>
-                        <td style="
-                            width:1%;
-                            border:0;
-                            padding:0 2pt 2pt 0;
-                            vertical-align:bottom;
-                            font-weight:bold;
-                            white-space:nowrap;
-                        ">{$requestingOfficeLabel}</td>
-
-                        <td style="
-                            border:0;
-                            border-bottom:1px solid #111;
-                            padding:0 3pt 2pt;
-                            vertical-align:bottom;
-                            text-align:center;
-                            white-space:nowrap;
-                        ">{$requestingOffice}</td>
-                    </tr>
-                </table>
-            </td>
-
-
-            <td style="
-                padding-left:15pt;
-                padding-right:6pt;
-
-                vertical-align:bottom;
-
-                text-align:right;
-
-                font-weight:bold;
-                white-space:nowrap;
-            ">
-                {$requestNoLabel}
-            </td>
-
-
-            <td style="
-                padding:0 4pt 2pt;
-
-                vertical-align:bottom;
-
-                border-bottom:1px solid #111;
-
-                text-align:center;
-
-                white-space:nowrap;
-            ">
-                {$requestNumber}
-            </td>
-
-        </tr>
-
+        <thead><tr>
+            <th>{$qtyLabel}</th><th>{$unitLabel}</th><th>{$descriptionLabel}</th><th>{$dateRequestedLabel}</th><th>{$dateCompletedLabel}</th>
+        </tr></thead>
+        <tbody>{$itemRows}</tbody>
     </table>
 
-
-
-    <!-- ======================================================
-         MAIN LAUNDRY TABLE
-
-         Proportions patterned after the scanned CSPC form.
-
-           QTY              11%
-           UNIT              9%
-           DESCRIPTION      41%
-           DATE REQUESTED   19%
-           DATE COMPLETED   20%
-
-         ====================================================== -->
-
-    <table style="
-        width:94%;
-
-        margin:0 auto;
-
-        border-collapse:collapse;
-        table-layout:fixed;
-
-        font-size:8pt;
-        line-height:1.05;
-    ">
-
-        <colgroup>
-            <col style="width:11%;">
-            <col style="width:9%;">
-            <col style="width:41%;">
-            <col style="width:19%;">
-            <col style="width:20%;">
-        </colgroup>
-
-
-        <thead>
-
-            <tr style="height:28pt;">
-
-
-                <th style="
-                    width:11%;
-
-                    border:1px solid #222;
-
-                    padding:2pt 1pt;
-
-                    text-align:center;
-                    vertical-align:middle;
-
-                    font-weight:bold;
-                ">
-                    {$qtyLabel}
-                </th>
-
-
-                <th style="
-                    width:9%;
-
-                    border:1px solid #222;
-
-                    padding:2pt 1pt;
-
-                    text-align:center;
-                    vertical-align:middle;
-
-                    font-weight:bold;
-                ">
-                    {$unitLabel}
-                </th>
-
-
-                <th style="
-                    width:41%;
-
-                    border:1px solid #222;
-
-                    padding:2pt;
-
-                    text-align:center;
-                    vertical-align:middle;
-
-                    font-weight:bold;
-                ">
-                    {$descriptionLabel}
-                </th>
-
-
-                <th style="
-                    width:19%;
-
-                    border:1px solid #222;
-
-                    padding:2pt 1pt;
-
-                    text-align:center;
-                    vertical-align:middle;
-
-                    font-size:7.6pt;
-                    font-weight:bold;
-
-                    white-space:nowrap;
-                ">
-                    {$dateRequestedLabel}
-                </th>
-
-
-                <th style="
-                    width:20%;
-
-                    border:1px solid #222;
-
-                    padding:2pt 1pt;
-
-                    text-align:center;
-                    vertical-align:middle;
-
-                    font-size:7.6pt;
-                    font-weight:bold;
-
-                    white-space:nowrap;
-                ">
-                    {$dateCompletedLabel}
-                </th>
-
-
-            </tr>
-
-        </thead>
-
-
-
+    <table class="lf-signatures">
+        <colgroup><col class="lf-sig-label"><col class="lf-sig-value"><col class="lf-sig-value"><col class="lf-sig-value"><col class="lf-sig-value"></colgroup>
+        <thead><tr>
+            <th></th><th>{$requestedByLabel}</th><th>{$approvedByLabel}</th><th>{$issuedByLabel}</th><th>{$receivedByLabel}</th>
+        </tr></thead>
         <tbody>
-
-            <tr>
-
-
-                <td style="
-                    width:11%;
-
-                    height:160pt;
-
-                    border:1px solid #222;
-
-                    padding:7pt 2pt;
-
-                    text-align:center;
-                    vertical-align:top;
-                ">
-                    {$quantityContent}
-                </td>
-
-
-                <td style="
-                    width:9%;
-
-                    height:160pt;
-
-                    border:1px solid #222;
-
-                    padding:7pt 2pt;
-
-                    text-align:center;
-                    vertical-align:top;
-                ">
-                    {$unitContent}
-                </td>
-
-
-                <td style="
-                    width:41%;
-
-                    height:160pt;
-
-                    border:1px solid #222;
-
-                    padding:7pt 7pt;
-
-                    text-align:left;
-                    vertical-align:top;
-                ">
-                    {$descriptionContent}
-                </td>
-
-
-                <!-- DATE REQUESTED:
-                     borrower request/submission date from the approved version -->
-
-                <td style="
-                    width:19%;
-
-                    height:160pt;
-
-                    border:1px solid #222;
-
-                    padding:7pt 4pt;
-
-                    text-align:center;
-                    vertical-align:top;
-                ">{$laundryRequestDate}</td>
-
-
-                <!-- DATE COMPLETED:
-                     remains blank for physical completion -->
-
-                <td style="
-                    width:20%;
-
-                    height:160pt;
-
-                    border:1px solid #222;
-
-                    padding:7pt 4pt;
-
-                    vertical-align:top;
-                "></td>
-
-
-            </tr>
-
+            <tr class="lf-signature-row"><td>{$signatureLabel}</td><td>{$laundryBorrowerSignature}</td><td>{$laundryApproverSignature}</td><td></td><td></td></tr>
+            <tr><td>{$printedNameLabel}</td><td>{$borrowerName}</td><td><strong>{$laundryApproverName}</strong></td><td></td><td></td></tr>
+            <tr><td>{$designationLabel}</td><td>{$laundryBorrowerDesignation}</td><td>{$laundryApproverDesignation}</td><td></td><td></td></tr>
+            <tr><td>{$dateRowLabel}</td><td>{$laundryRequestDate}</td><td>{$laundryApprovalDate}</td><td></td><td></td></tr>
         </tbody>
-
     </table>
 
-
-
-    <!-- ======================================================
-         SIGNATURE / CONTROL MATRIX
-
-         Larger Approved By area for the official name.
-         ====================================================== -->
-
-    <table style="
-        width:94%;
-
-        margin:28pt auto 0;
-
-        border-collapse:collapse;
-        table-layout:fixed;
-
-        font-size:7pt;
-        line-height:1.05;
-    ">
-
-
-        <colgroup>
-            <col style="width:15%;">
-            <col style="width:15%;">
-            <col style="width:38%;">
-            <col style="width:16%;">
-            <col style="width:16%;">
-        </colgroup>
-
-
-
-        <!-- RESPONSIBILITY HEADINGS -->
-
-        <tr style="height:17pt;">
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt;
-            "></td>
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 3pt;
-
-                text-align:center;
-                vertical-align:middle;
-            ">
-                {$requestedByLabel}
-            </td>
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 3pt;
-
-                text-align:center;
-                vertical-align:middle;
-            ">
-                {$approvedByLabel}
-            </td>
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 3pt;
-
-                text-align:center;
-                vertical-align:middle;
-            ">
-                {$issuedByLabel}
-            </td>
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 3pt;
-
-                text-align:center;
-                vertical-align:middle;
-            ">
-                {$receivedByLabel}
-            </td>
-
-
-        </tr>
-
-
-
-        <!-- SIGNATURE -->
-
-        <tr style="height:20pt;">
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 4pt;
-
-                vertical-align:middle;
-            ">
-                {$signatureLabel}
-            </td>
-
-
-            <!-- Requested by: borrower request certification E-signature -->
-            <td style="border:1px solid #222;padding:1pt;vertical-align:middle;">{$laundryBorrowerSignature}</td>
-
-            <!-- Approved By: SPMU Head approval E-signature -->
-            <td style="border:1px solid #222;padding:1pt;vertical-align:middle;">{$laundryApproverSignature}</td>
-
-            <!-- Issued by: handwritten/wet signature of Laundry Personnel at pickup -->
-            <td style="border:1px solid #222;"></td>
-
-            <!-- Received by: handwritten/wet signature of Laundry Personnel at return -->
-            <td style="border:1px solid #222;"></td>
-
-
-        </tr>
-
-
-
-        <!-- PRINTED NAME -->
-
-        <tr style="height:22pt;">
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 4pt;
-
-                vertical-align:middle;
-            ">
-                {$printedNameLabel}
-            </td>
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 4pt;
-
-                text-align:center;
-                vertical-align:middle;
-
-                font-size:6.8pt;
-                font-weight:normal;
-
-                line-height:1.05;
-            ">
-                {$borrowerName}
-            </td>
-
-
-            <td style="
-                border:1px solid #222;
-                padding:1pt 0;
-                text-align:center;
-                vertical-align:middle;
-                font-family:Helvetica, Arial, sans-serif;
-                font-size:6.2pt;
-                font-weight:bold;
-                line-height:1;
-                letter-spacing:0;
-                white-space:nowrap;
-            ">{$laundryApproverName}</td>
-
-
-            <!-- Laundry Personnel writes/prints their name physically. -->
-            <td style="border:1px solid #222;"></td>
-
-            <!-- Laundry Personnel writes/prints their name physically. -->
-            <td style="border:1px solid #222;"></td>
-
-
-        </tr>
-
-
-
-        <!-- DESIGNATION -->
-
-        <tr style="height:20pt;">
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 4pt;
-
-                vertical-align:middle;
-            ">
-                {$designationLabel}
-            </td>
-
-
-            <!-- Requested By designation from the borrower's actual profile. -->
-            <td style="
-                border:1px solid #222;
-                padding:1pt 2pt;
-                text-align:center;
-                vertical-align:middle;
-                font-size:6.5pt;
-                line-height:1.05;
-            ">{$laundryBorrowerDesignation}</td>
-
-
-            <td style="
-                border:1px solid #222;
-                padding:1pt 0;
-                text-align:center;
-                vertical-align:middle;
-                font-family:Helvetica, Arial, sans-serif;
-                font-size:6.2pt;
-                font-weight:normal;
-                line-height:1;
-                letter-spacing:0;
-                white-space:nowrap;
-            ">{$laundryApproverDesignation}</td>
-
-
-            <td style="border:1px solid #222;"></td>
-
-            <td style="border:1px solid #222;"></td>
-
-
-        </tr>
-
-
-
-        <!-- DATE -->
-
-        <tr style="height:19pt;">
-
-
-            <td style="
-                border:1px solid #222;
-
-                padding:2pt 4pt;
-
-                vertical-align:middle;
-            ">
-                {$dateRowLabel}
-            </td>
-
-
-            <td style="border:1px solid #222;text-align:center;vertical-align:middle;">{$laundryRequestDate}</td>
-
-            <td style="border:1px solid #222;text-align:center;vertical-align:middle;">{$laundryApprovalDate}</td>
-
-            <!-- Issued by date is handwritten by Laundry Personnel at issuance. -->
-            <td style="border:1px solid #222;"></td>
-
-            <!-- Received by date is handwritten by Laundry Personnel at return. -->
-            <td style="border:1px solid #222;"></td>
-
-
-        </tr>
-
-
-    </table>
-
-
-
-    <!-- ======================================================
-         DOCUMENT CONTROL FOOTER
-
-         IMPORTANT:
-         width is EXACTLY 94%, same as:
-           - request information
-           - main table
-           - signature/control table
-
-         This makes the horizontal rule align exactly with both
-         left and right edges of the form tables.
-         ====================================================== -->
-
-    <table style="
-        width:94%;
-
-        margin:31pt auto 0;
-
-        border-collapse:collapse;
-        border-top:1px solid #222;
-
-        font-size:6.2pt;
-        line-height:1;
-    ">
-
-
-        <tr>
-
-
-            <td style="
-                width:33%;
-
-                padding-top:5pt;
-
-                text-align:left;
-
-                font-weight:bold;
-            ">
-                Effective Date: {$footerEffectivity}
-            </td>
-
-
-            <td style="
-                width:34%;
-
-                padding-top:5pt;
-
-                text-align:center;
-
-                font-weight:bold;
-            ">
-                {$footerRevision}
-            </td>
-
-
-            <td style="
-                width:33%;
-
-                padding-top:5pt;
-
-                text-align:right;
-
-                font-weight:bold;
-            ">
-                Page {$pageNumber} of {$pageCount}
-            </td>
-
-
-        </tr>
-
-
-    </table>
-
-
-    <!--
-        Intentional large blank area below this point.
-
-        This mirrors the physical CSPC-F-SPMU-62 form instead
-        of forcing the document-control footer to the absolute
-        bottom edge of the A4 page.
-    -->
-
-
+    {$inlineFooter}
 </section>
 HTML;
 
+        $css = <<<CSS
+<style>
+    @page { size: A4 portrait; margin: 72pt 34pt 38pt; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #111; font-family: DejaVu Sans, Arial, sans-serif; }
+    .laundry-form-clean { width: 100%; font-family: DejaVu Sans, Arial, sans-serif; font-size: 7.5pt; line-height: 1.16; color: #111; }
 
-        return $documentShell
-            ? '<!doctype html><html><head>'.$this->officialCss().'</head><body>'.$body.'</body></html>'
-            : $body;
+    .lf-page-header { position: fixed; top: -60pt; left: 0; right: 0; height: 56pt; }
+    .lf-header-inline { margin-bottom: 9pt; }
+    .lf-header-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .lf-header-table td { border: 0; padding: 0; vertical-align: middle; }
+    .lf-logo { width: 40pt; padding-right: 7pt !important; }
+    .lf-logo img { width: 30pt; height: 30pt; object-fit: contain; display: block; }
+    .lf-logo-fallback { font-weight: bold; font-size: 7pt; }
+    .lf-school { font-size: 6.5pt; line-height: 1.15; }
+    .lf-school strong { display: block; font-size: 8.2pt; line-height: 1.08; }
+    .lf-form-code { width: 110pt; text-align: right; vertical-align: bottom !important; font-size: 6.4pt; font-weight: bold; }
+    .lf-blue-rule { border-top: .9pt solid #78a6c8; margin: 6pt 0 5pt; }
+    .lf-title { text-align: center; font-size: 9.2pt; font-weight: bold; letter-spacing: .08pt; }
+
+    .lf-request-meta { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 1pt 0 9pt; font-size: 7.2pt; }
+    .lf-request-meta td { border: 0; padding: 0 3pt 2pt 0; vertical-align: bottom; }
+    .lf-meta-label { width: 15%; font-weight: bold; white-space: nowrap; }
+    .lf-meta-value { width: 37%; border-bottom: .55pt solid #111 !important; text-align: center; overflow-wrap: anywhere; }
+    .lf-meta-gap { width: 5%; }
+    .lf-request-no-label { width: 15%; text-align: right; padding-right: 5pt !important; }
+    .lf-request-no-value { width: 28%; }
+
+    .lf-items { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.3pt; line-height: 1.16; }
+    .lf-items th, .lf-items td { border: .55pt solid #555; padding: 3.2pt 4pt; vertical-align: middle; overflow-wrap: anywhere; }
+    .lf-items th { height: 22pt; text-align: center; font-size: 7pt; }
+    .lf-col-qty { width: 10%; } .lf-col-unit { width: 11%; } .lf-col-desc { width: 39%; } .lf-col-date { width: 20%; }
+    .lf-item-row td { min-height: 21pt; }
+    .lf-center { text-align: center; }
+    .lf-blank-row td { height: 19pt; }
+    .lf-nothing-follows td { height: 18pt; text-align: center; font-size: 6.8pt; font-weight: bold; letter-spacing: .35pt; background: #fff; }
+
+    .lf-signatures { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 16pt; font-size: 6.6pt; line-height: 1.14; page-break-inside: avoid; }
+    .lf-signatures th, .lf-signatures td { border: .55pt solid #555; padding: 2.2pt 3pt; text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
+    .lf-signatures th { height: 18pt; font-size: 6.7pt; }
+    .lf-signatures td:first-child { text-align: left; font-weight: normal; }
+    .lf-sig-label { width: 17%; }
+    .lf-signatures .lf-sig-value { width: 20.75%; }
+    .lf-signature-row td { height: 25pt; }
+    .lf-signature-row img { max-height: 21pt; max-width: 92pt; margin: 0 auto; object-fit: contain; }
+
+    .lf-page-footer { position: fixed; left: 0; right: 0; bottom: -24pt; height: 20pt; }
+    .lf-footer-inline { margin-top: 18pt; }
+    .lf-footer-inner { width: 100%; border-top: .9pt solid #78a6c8; padding-top: 5pt; font-size: 5.4pt; line-height: 1; position: relative; min-height: 12pt; }
+    .lf-footer-left { position: absolute; left: 0; top: 5pt; width: 40%; text-align: left; }
+    .lf-footer-center { position: absolute; left: 40%; top: 5pt; width: 20%; text-align: center; }
+    .lf-footer-right { position: absolute; right: 0; top: 5pt; width: 40%; text-align: right; }
+</style>
+CSS;
+
+        if (! $documentShell) {
+            $packetCss = str_replace('@page { size: A4 portrait; margin: 72pt 34pt 38pt; }', '', $css);
+            return $packetCss.$body;
+        }
+
+        return '<!doctype html><html><head><meta charset="utf-8">'.$css.'</head><body>'
+            .'<div class="lf-page-header">'.$pageHeader.'</div>'
+            .'<div class="lf-page-footer">'.$pageFooter.'</div>'
+            .$body
+            .'</body></html>';
     }
-
-
-
 
     private function officialPacketRequestHtml(CustodyTransaction $custody, int $pageNumber, int $pageCount): string
     {
@@ -2580,18 +1546,7 @@ HTML;
         $custody = $case->custody;
         $request = $custody?->request;
         $reference = 'LRN-'.str_pad((string) $case->id, 6, '0', STR_PAD_LEFT);
-        $items = ($custody?->lines ?? collect())
-            ->map(function ($line): array {
-                $requestItem = $line->requestItem;
-                $inventoryItem = $requestItem?->inventoryItem;
-
-                return [
-                    'description' => (string) ($requestItem?->description_snapshot ?: $inventoryItem?->unique_description ?: 'Inventory item'),
-                    'quantity' => (float) ($line->actual_released_quantity ?? 0),
-                    'unit' => (string) ($requestItem?->unit_snapshot ?: $inventoryItem?->unit?->unit_name ?: ''),
-                ];
-            })
-            ->values();
+        $items = $this->lateReturnNoticeItems($custody);
 
         $html = view('documents.accountability.late-return-notice', [
             'case' => $case,
@@ -2618,6 +1573,7 @@ HTML;
             'headSignatureHtml' => $this->signatureImage($headSignature, 150, 42),
             'generatedAt' => now()->timezone('Asia/Manila')->format('d F Y, g:i A'),
             'items' => $items,
+            'isPreReturn' => false,
         ])->render();
 
         return $this->saveHtml(
@@ -2629,6 +1585,83 @@ HTML;
             'FINAL',
             ($custody?->custody_no ?: $reference).'-LATE-RETURN-NOTICE.pdf',
         );
+    }
+
+    /**
+     * Issued exactly once, automatically, the moment a custody first becomes
+     * OVERDUE - before any physical return, AO confirmation, or Head decision
+     * exists. Shows only the Expected Return Date and the official per-day
+     * fee rate; it can never show final late days or a final total, because
+     * neither is knowable yet. lateReturnNotice() (above) remains the only
+     * method that renders those finalized figures, and only ever runs after
+     * an actual physical return.
+     */
+    public function lateReturnNoticePreReturn(OverdueCase $case): GeneratedDocument
+    {
+        $case->loadMissing([
+            'borrower.organizationalUnit',
+            'custody.request.currentVersion',
+            'custody.lines.requestItem.inventoryItem.unit',
+        ]);
+
+        $custody = $case->custody;
+        $request = $custody?->request;
+        $reference = 'LRN-'.str_pad((string) $case->id, 6, '0', STR_PAD_LEFT);
+
+        $html = view('documents.accountability.late-return-notice', [
+            'case' => $case,
+            'reference' => $reference,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'borrowerName' => (string) ($case->borrower?->full_name ?? ''),
+            'officeUnit' => (string) ($case->borrower?->organizationalUnit?->unit_name
+                ?? $case->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($request?->request_no ?? ''),
+            'custodyNo' => (string) ($custody?->custody_no ?? ''),
+            'expectedReturnDate' => $case->grace_expires_at?->copy()->timezone('Asia/Manila')->format('d F Y') ?: '—',
+            'actualReturnDate' => '—',
+            'lateDays' => 0,
+            'rate' => $case->rate_snapshot !== null ? (float) $case->rate_snapshot : null,
+            'amount' => 0.0,
+            'disposition' => 'Pending Physical Return',
+            'decisionBasis' => 'This preliminary notice was issued automatically because the item was not returned by the Expected Return Date. The final number of late days and the applicable fee, if any, will be determined once the item is physically returned.',
+            'aoConfirmedBy' => null,
+            'aoConfirmedAt' => null,
+            'headName' => '',
+            'headDesignation' => '',
+            'headDate' => '',
+            'headSignatureHtml' => '',
+            'generatedAt' => now()->timezone('Asia/Manila')->format('d F Y, g:i A'),
+            'items' => $this->lateReturnNoticeItems($custody),
+            'isPreReturn' => true,
+        ])->render();
+
+        return $this->saveHtml(
+            'LATE_RETURN_NOTICE',
+            $html,
+            $request?->currentVersion,
+            $case::class,
+            $case->id,
+            'FINAL',
+            ($custody?->custody_no ?: $reference).'-LATE-RETURN-NOTICE.pdf',
+        );
+    }
+
+    /** @return \Illuminate\Support\Collection<int, array{description: string, quantity: float, unit: string}> */
+    private function lateReturnNoticeItems(?CustodyTransaction $custody): \Illuminate\Support\Collection
+    {
+        return ($custody?->lines ?? collect())
+            ->map(function ($line): array {
+                $requestItem = $line->requestItem;
+                $inventoryItem = $requestItem?->inventoryItem;
+
+                return [
+                    'description' => (string) ($requestItem?->description_snapshot ?: $inventoryItem?->unique_description ?: 'Inventory item'),
+                    'quantity' => (float) ($line->actual_released_quantity ?? 0),
+                    'unit' => (string) ($requestItem?->unit_snapshot ?: $inventoryItem?->unit?->unit_name ?: ''),
+                ];
+            })
+            ->values();
     }
 
     public function accountabilityComplianceNotice(
@@ -2979,64 +2012,67 @@ HTML;
         return 'data:image/jpeg;base64,'.base64_encode((string) file_get_contents($logoPath));
     }
 
+    /**
+     * The RSLDDP's official content, appraisal fields, signatories, and
+     * layout remain client-confirmation-required
+     * (docs/CONFIGURATION-REGISTER.md). This renders the two relationships
+     * the schema can actually prove - Incident::reportedBy (the SPMU Action
+     * Officer who inspected) and Incident::headDecidedBy (the SPMU
+     * Head/Admin who confirmed) - under literal labels, never a claimed
+     * "custodian" role the data model does not have. The generated document
+     * carries a visible provisional marker (RsldppLayoutVersion) until both
+     * the layout is code-approved and rslddp_template_status is APPROVED.
+     */
     public function rslddp(Incident $incident): GeneratedDocument
     {
-        $incident->loadMissing(['borrower', 'custody.request.currentVersion', 'lines.custodyLine.requestItem', 'reportedBy']);
-        if ($customTemplate = $this->activeUploadedTemplate('RSLDDP')) {
-            $document = $this->saveRenderedTemplate(
-                $customTemplate,
-                'RSLDDP',
-                $this->renderCustomTemplate($customTemplate, $this->rslddpRenderData($incident)),
-                $incident->custody->request->currentVersion,
-                $incident::class,
-                $incident->id,
-                'FINAL',
-                $incident->incident_no.'-RSLDDP.pdf',
-            );
-            $incident->update(['rslddp_reference' => $document->document_no]);
+        $incident->loadMissing([
+            'borrower.organizationalUnit',
+            'custody.request.currentVersion',
+            'lines.custodyLine.requestItem.inventoryItem',
+            'reportedBy',
+            'headDecidedBy',
+            'headDecisionSignature.file',
+        ]);
 
-            return $document;
-        }
-        $lines = [
-            'CAMARINES SUR POLYTECHNIC COLLEGES - SPMU',
-            'OFFICIAL RSLDDP REPORT',
-            'Controlled output enabled after client approval of the configured template status.',
-            'Incident No.: '.$incident->incident_no,
-            'Borrower: '.$incident->borrower->full_name,
-            'Custody No.: '.$incident->custody->custody_no,
-            'Incident type: '.$incident->incident_type,
-            'Reported: '.$incident->reported_at->format('F j, Y g:i A'),
-            'Police blotter reference: '.($incident->police_blotter_reference ?: 'Not applicable'),
-            'Remarks: '.($incident->remarks ?: 'None'),
-            '',
-            'AFFECTED PROPERTY',
-        ];
-        foreach ($incident->lines as $line) {
-            $lines[] = sprintf('Custody line %s | Quantity: %s | Condition: %s', $line->custody_line_id, $line->quantity + 0, $line->observed_condition);
-        }
+        $layoutVersion = app(\App\Support\RsldppLayoutVersion::class);
+        $isProvisional = SystemSetting::value('rslddp_template_status') !== 'APPROVED'
+            || ! $layoutVersion->isApprovedLayout();
 
-        /*
-         * The RSLDDP is a printed controlled report. It is reported by the SPMU
-         * Action Officer who inspected the property and noted by the SPMU Head.
-         * Both are handwritten signatures on the printed report; previously the
-         * report carried no signature area at all.
-         */
-        $incident->loadMissing('reportedBy');
+        $items = $incident->lines->map(function (IncidentLine $line): array {
+            $requestItem = $line->custodyLine?->requestItem;
+            $inventoryItem = $requestItem?->inventoryItem;
 
-        $lines[] = '';
-        $lines[] = 'REPORTED BY (SPMU Action Officer):';
-        $lines[] = '_________________________________________';
-        $lines[] = strtoupper((string) ($incident->reportedBy?->full_name ?: 'SPMU Action Officer'));
-        $lines[] = 'Signature over Printed Name / Date';
-        $lines[] = '';
-        $lines[] = 'NOTED BY (Head, Supply and Property Management Unit):';
-        $lines[] = '_________________________________________';
-        $lines[] = 'Signature over Printed Name / Date';
+            return [
+                'description' => (string) ($requestItem?->description_snapshot ?: $inventoryItem?->unique_description ?: 'Custody line '.$line->custody_line_id),
+                'quantity' => (float) $line->quantity,
+                'condition' => (string) (str($line->observed_condition ?: '')->replace('_', ' ')->title() ?: '—'),
+                'assessed_value' => $line->assessed_value !== null ? (float) $line->assessed_value : null,
+            ];
+        })->values()->all();
 
-        $document = $this->save(
+        $html = view('documents.accountability.rslddp', [
+            'incident' => $incident,
+            'logoDataUri' => $this->institutionalLogoDataUri(),
+            'isProvisional' => $isProvisional,
+            'officeUnit' => (string) ($incident->borrower?->organizationalUnit?->unit_name
+                ?? $incident->borrower?->organizationalUnit?->name
+                ?? ''),
+            'requestNo' => (string) ($incident->custody?->request?->request_no ?? ''),
+            'items' => $items,
+            'reportedByName' => (string) ($incident->reportedBy?->full_name ?: 'SPMU Action Officer'),
+            'reportedByDesignation' => $this->templatePrintedDesignation($incident->reportedBy),
+            'reportedByDate' => $incident->reported_at?->timezone('Asia/Manila')->format('d F Y'),
+            'headName' => (string) ($incident->headDecidedBy?->full_name ?: 'SPMU Head/Admin'),
+            'headDesignation' => $this->templatePrintedDesignation($incident->headDecidedBy),
+            'headSignatureHtml' => $this->signatureImage($incident->headDecisionSignature, 150, 42),
+            'headDate' => $incident->head_decided_at?->timezone('Asia/Manila')->format('d F Y'),
+            'generatedAt' => now()->timezone('Asia/Manila')->format('d F Y, g:i A'),
+        ])->render();
+
+        $document = $this->saveHtml(
             'RSLDDP',
-            $lines,
-            $incident->custody->request->currentVersion,
+            $html,
+            $incident->custody?->request?->currentVersion,
             $incident::class,
             $incident->id,
             'FINAL',

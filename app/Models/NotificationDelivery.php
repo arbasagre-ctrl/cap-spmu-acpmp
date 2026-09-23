@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class NotificationDelivery extends Model
 {
-    protected $fillable = ['notification_event_id', 'template_id', 'recipient_user_id', 'channel', 'address_snapshot', 'attempt_no', 'provider', 'attempted_at', 'delivery_status', 'provider_response', 'read_at'];
+    protected $fillable = ['notification_event_id', 'template_id', 'recipient_user_id', 'channel', 'sms_deduplication_key', 'address_snapshot', 'attempt_no', 'provider', 'attempted_at', 'delivery_status', 'provider_response', 'read_at'];
 
     protected function casts(): array
     {

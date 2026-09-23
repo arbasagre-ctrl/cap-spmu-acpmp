@@ -139,6 +139,20 @@ class DocumentController extends Controller
                 ->value('borrower_user_id')
             : null;
 
+        /*
+         * RSLDDP's subject is the Incident directly. Before this explicit
+         * branch, a borrower's RSLDDP access was authorized only indirectly
+         * through request_version_id -> BorrowingRequest.borrower_user_id
+         * (which rslddp() does populate) - correct today, but implicit.
+         * This makes the borrower-ownership check explicit and correct even
+         * if that indirect linkage is ever changed.
+         */
+        $incidentBorrowerId = $document->subject_type === Incident::class
+            ? Incident::query()
+                ->whereKey($document->subject_id)
+                ->value('borrower_user_id')
+            : null;
+
         abort_unless(
             ($borrowingRequest
                 && (int) $borrowingRequest->borrower_user_id === (int) $user->id)
@@ -146,6 +160,7 @@ class DocumentController extends Controller
             || (int) $overdueBorrowerId === (int) $user->id
             || (int) $restrictionBorrowerId === (int) $user->id
             || (int) $sanctionBorrowerId === (int) $user->id
+            || (int) $incidentBorrowerId === (int) $user->id
             || $user->hasRole(UserRole::Spmu)
             || $user->hasRole(UserRole::Ictu),
             403

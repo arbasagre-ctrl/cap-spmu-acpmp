@@ -104,7 +104,7 @@
                             @if($pickupHeldForPreparationIssue)
                                 <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup could not proceed because an inventory discrepancy is still under SPMU review. This is not a borrower missed pickup.</p>
                             @elseif($pickupMissed)
-                                <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup window passed. Waiting for borrower action.</p>
+                                <p class="release-step-notified"><x-icon name="warning" size="16" />Pickup window passed.</p>
                             @elseif($hasPickupSchedule)
                                 <p class="release-step-notified"><x-icon name="approval" size="16" />Scheduled automatically from the SPMU Operational Calendar.</p>
                             @else
@@ -182,9 +182,11 @@
                         @include('custody.partials.release-documents')
                         @if($hasOffCampusItem)
                             <p class="release-step-note">For an off-campus barricade, validate the Borrower Slip and approved Gate Pass. The Guard on Duty completes <strong>Released by</strong>, Date, and Time at the campus exit; the borrower keeps the accomplished Gate Pass for return.</p>
-                        @elseif($hasLaundryItem)
+                        @endif
+                        @if($hasLaundryItem)
                             <p class="release-step-note">For linen, Laundry Personnel completes the <strong>ISSUED BY</strong> section before Physical Release is recorded.</p>
-                        @else
+                        @endif
+                        @if(! $hasOffCampusItem && ! $hasLaundryItem)
                             <p class="release-step-note">Validate the Borrower Slip and approved item before recording the physical handover.</p>
                         @endif
                     </div>

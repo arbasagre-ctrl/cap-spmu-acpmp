@@ -46,7 +46,6 @@ function fakeElement(attributes = {}) {
 test('release layout is scoped to unreleased preparing records in the officer release workspace', () => {
     assert.match(page, /\$useReleaseProcessLayout = \$isSpmuOfficer\s+&& \$showReleaseWorkflow\s+&& \$custody->status === 'PREPARING_RELEASE'\s+&& ! \$custody->released_at;/);
     assert.match(page, /@if\(\$useReleaseProcessLayout\)\s+@include\('custody\.partials\.release-process'\)\s+@else/);
-    assert.match(page, /route\('custody\.early-return', \$custody\)/);
     assert.match(partial('return-inspection-form'), /route\('custody\.return', \$custody\)/);
     assert.match(page, /@if\(\$showReturnWorkflow\)/);
 });
@@ -62,7 +61,7 @@ test('summary and item table display live record data instead of screenshot samp
 });
 
 test('release preparation and physical handover reuse the existing forms and operational document links', () => {
-    for (const title of ['Pickup Schedule', 'Item Preparation', 'Release Documents']) {
+    for (const title of ['Pickup &amp; Issuance Schedule', 'Item Preparation', 'Release Documents']) {
         assert.ok(processLayout.includes(`<h3>${title}</h3>`));
     }
     for (const name of ['pickup-schedule-form', 'item-preparation-form', 'physical-release-form', 'release-documents']) {
@@ -72,79 +71,52 @@ test('release preparation and physical handover reuse the existing forms and ope
     assert.match(processLayout, /id="release-actions"/);
 });
 
-test('pickup editor retains its route, required date fields, old input and errors', () => {
-    assert.match(schedule, /method="post" action="\{\{ route\('custody\.schedule-pickup', \$custody\) \}\}"/);
+test('pickup schedule panel is a read-only status display fed by the automatic system schedule', () => {
+    /*
+     * Manual pickup date/time entry was replaced by an automatically
+     * system-generated schedule (from the SPMU Operational Calendar); the
+     * Action Officer confirms/reschedules it but no longer types a date.
+     */
+    assert.doesNotMatch(schedule, /type="datetime-local"|name="pickup_at"|name="pickup_expires_at"/);
+    assert.match(schedule, /Waiting for automatic schedule activation/);
+    assert.match(schedule, /SPMU follow-up required/);
+    assert.match(schedule, /Borrower notification/);
+    assert.match(schedule, /\{\{ \$scheduleNotificationFailed \? 'Needs attention' : 'Sent' \}\}/);
+    assert.match(schedule, /method="post" action="\{\{ route\('custody\.reschedule-pickup', \$custody\) \}\}"/);
     assert.match(schedule, /@csrf/);
-    for (const field of ['pickup_at', 'pickup_expires_at']) {
-        assert.match(schedule, new RegExp(`type="datetime-local"\\s+name="${field}"[\\s\\S]*?required`));
-        assert.ok(schedule.includes(`old('${field}'`));
-        assert.ok(processLayout.includes(`$errors->has('${field}')`));
-    }
-    assert.match(schedule, /\$hasPickupSchedule \? 'Update Pickup Schedule' : 'Schedule Pickup'/);
-    assert.match(schedule, /type="button" data-release-schedule-cancel/);
-    assert.doesNotMatch(schedule, /Borrower will be notified automatically|Next step:|Set the pickup window first/);
+    assert.match(schedule, /Set Next Valid Pickup Schedule/);
+    assert.match(schedule, /Pickup missed|Pickup schedule needs SPMU follow-up/);
 });
 
-test('preparation keeps quantity names, validation attributes and matching hooks', () => {
+/*
+ * Manual per-line quantity re-entry (with live stepper +/- buttons and a
+ * match/mismatch JS validator) was removed. Preparation is now a single
+ * "Confirm Items Prepared" action - the approved quantities are used as-is
+ * (see ItemPreparationStep2ContractTest, which asserts the controller no
+ * longer accepts a 'quantities' payload) - with a separate discrepancy
+ * report flow for the exception case. There is no longer any <script> in
+ * this partial to test a stepper/mismatch interaction against.
+ */
+test('preparation keeps its confirm action, discrepancy report contract and matching hooks', () => {
     assert.match(preparation, /route\('custody\.prepare', \$custody\)/);
+    assert.match(preparation, /route\('custody\.report-preparation-issue', \$custody\)/);
     assert.match(preparation, /@csrf/);
     assert.match(preparation, /@if\(!\$preparationComplete\)/);
-    for (const fragment of ['data-item-preparation-form', 'data-prepared-quantity', 'data-approved-display', 'data-preparation-result', 'data-preparation-message', 'data-confirm-preparation disabled', 'step="1"', 'min="0"', 'required', 'name="quantities[{{ $line->id }}]"', "old('quantities.'.$line->id)"]) {
-        assert.ok(preparation.includes(fragment), `Missing original contract: ${fragment}`);
+    for (const fragment of [
+        'data-item-preparation-form',
+        'data-release-panel-toggle',
+        'data-preparation-issue-type',
+        'data-preparation-quantity-field',
+        'data-preparation-condition-field',
+        'data-preparation-details-field',
+        '@disabled($openPreparationIssues->isNotEmpty())',
+        'Confirm Items Prepared',
+        'Report Inventory Discrepancy',
+        'Submit Discrepancy Report',
+    ]) {
+        assert.ok(preparation.includes(fragment), `Missing current contract: ${fragment}`);
     }
-});
-
-test('preparation confirmation enables only when every prepared quantity matches', () => {
-    const resultNodes = [fakeElement(), fakeElement()];
-    const inputs = ['100', '5'].map((approved, index) => {
-        const input = fakeElement();
-        input.value = '';
-        input.dataset.approved = approved;
-
-        /*
-         * The field sits inside .prepared-quantity-stepper alongside a minus
-         * and a plus button, and inside the row that carries the result cell,
-         * so closest() has to answer for both ancestors.
-         */
-        const steps = ['-1', '1'].map((delta) => {
-            const step = fakeElement();
-            step.dataset.preparedStep = delta;
-            return step;
-        });
-
-        const stepper = { querySelectorAll: () => steps };
-        const row = { querySelector: () => resultNodes[index] };
-
-        input.closest = (selector) =>
-            selector === '.prepared-quantity-stepper' ? stepper : row;
-        input.steps = steps;
-
-        return input;
-    });
-    const button = { disabled: true };
-    const message = fakeElement();
-    const form = {
-        querySelectorAll: () => inputs,
-        querySelector: (selector) => selector === '[data-confirm-preparation]' ? button : message,
-    };
-    vm.runInNewContext(script(preparation), { document: { querySelector: () => form } });
-    assert.equal(button.disabled, true);
-    assert.equal(resultNodes[0].textContent, 'Not Checked');
-    inputs[0].value = '100';
-    inputs[0].dispatch('input');
-    assert.equal(button.disabled, true);
-    inputs[1].value = '4';
-    inputs[1].dispatch('change');
-    assert.equal(button.disabled, true);
-    assert.equal(resultNodes[1].textContent, 'Mismatch');
-    assert.ok(message.classList.contains('warning'));
-    inputs[1].value = '5';
-    inputs[1].dispatch('input');
-    assert.equal(button.disabled, false);
-    assert.ok(message.classList.contains('success'));
-    inputs[0].value = '';
-    inputs[0].dispatch('input');
-    assert.equal(button.disabled, true);
+    assert.doesNotMatch(preparation, /<script>|data-prepared-quantity|name="quantities\[/);
 });
 
 test('physical release retains one required confirmation and optional remarks', () => {
@@ -203,8 +175,8 @@ test('document links preserve current-document filtering and Gate Pass preview/f
     assert.match(documents, /route\('documents\.preview', \$document\)/);
     assert.doesNotMatch(documents, /route\('documents\.download', \$document\)/);
     assert.match(documents, /\['READY_FOR_PRINTING', 'VERIFIED'\]/);
-    assert.match(documents, /FINAL SPMU GATE PASS/);
-    assert.match(documents, /SPMU PREVIEW — NOT FOR BORROWER PRINTING/);
+    assert.match(documents, /APPROVED GATE PASS — VALIDATE PRESENTED COPY/);
+    assert.match(documents, /INVALID — DO NOT RELEASE/);
     assert.match(documents, /Borrower Copy \/ Reference/);
 });
 
@@ -266,7 +238,8 @@ test('compact release tracker is opt-in and only overrides labels and icons', ()
     assert.match(tracker, /'releaseView' => false/);
     assert.match(processLayout, /:show-current-status="false" :compact="true" :release-view="true"/);
     const override = tracker.match(/if \(\$releaseView\) \{([\s\S]*?)\}/)[1];
-    assert.match(override, /\$steps\[6\]\['label'\] = 'Release'/);
-    assert.match(override, /\$steps\[7\]\['icon'\] = 'chevron-right'/);
+    /* Step indices are named variables now (off-campus requests insert an extra step), not hardcoded literals. */
+    assert.match(override, /\$steps\[\$releaseStepIndex\]\['label'\] = 'Release'/);
+    assert.match(override, /\$steps\[\$returnStepIndex\]\['icon'\] = 'chevron-right'/);
     assert.doesNotMatch(override, /status|completed|current|pending|date/i);
 });

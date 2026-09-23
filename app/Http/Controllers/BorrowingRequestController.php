@@ -4,7 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Enums\AccessClassification;
 use App\Enums\RequestStatus;
+use App\Models\AuditEvent;
 use App\Models\BorrowingRequest;
+use App\Models\CustodyTransaction;
+use App\Models\NotificationEvent;
 use App\Models\InventoryItem;
 use App\Models\OrganizationalUnit;
 use App\Models\RequestItem;
@@ -483,6 +486,48 @@ class BorrowingRequestController extends Controller
 
         $accountabilityHistory = $transactionHistory->forCustody($borrowingRequest->custody);
 
+        /*
+         * The request detail timeline is shared by Borrower, Action Officer,
+         * and Head/Admin. Pull only significant operational events that are
+         * not represented by request status history or the persisted return /
+         * accountability records already loaded above. Keeping this list
+         * narrow prevents duplicate history rows while ensuring newer pickup
+         * and Operational Calendar branches remain visible in one transaction
+         * history.
+         */
+        $operationalHistoryAuditEvents = collect();
+        $operationalHistoryNotificationEvents = collect();
+
+        if ($borrowingRequest->custody) {
+            $custody = $borrowingRequest->custody;
+
+            $operationalHistoryAuditEvents = AuditEvent::query()
+                ->with('actor')
+                ->where('record_type', CustodyTransaction::class)
+                ->where('record_id', $custody->id)
+                ->whereIn('action_code', [
+                    'PICKUP_SCHEDULE_AUTOMATICALLY_ACTIVATED',
+                    'PICKUP_SCHEDULE_CONFIRMED',
+                    'PICKUP_WINDOW_EXPIRED',
+                    'PICKUP_RESCHEDULE_REQUESTED',
+                    'PICKUP_RESCHEDULED',
+                    'PICKUP_HELD_FOR_PREPARATION_ISSUE',
+                    'PREPARATION_ISSUE_REPORTED',
+                    'PREPARATION_ISSUE_RESOLVED',
+                ])
+                ->orderBy('occurred_at')
+                ->get();
+
+            $operationalHistoryNotificationEvents = NotificationEvent::query()
+                ->where('source_type', $custody->getMorphClass())
+                ->where('source_id', $custody->id)
+                ->whereIn('event_code', [
+                    'RETURN_SCHEDULE_ADJUSTED',
+                ])
+                ->orderBy('occurred_at')
+                ->get();
+        }
+
         return view(
             'requests.show',
             compact(
@@ -491,7 +536,9 @@ class BorrowingRequestController extends Controller
                 'canVerify',
                 'reviewMode',
                 'approvalStage',
-                'accountabilityHistory'
+                'accountabilityHistory',
+                'operationalHistoryAuditEvents',
+                'operationalHistoryNotificationEvents'
             )
         );
     }
@@ -774,6 +821,21 @@ class BorrowingRequestController extends Controller
         BorrowingRequest $borrowingRequest,
         RequestWorkflowService $workflow
     ): RedirectResponse {
+        if (strtoupper((string) $request->session()->get('active_workspace')) === 'SPMU') {
+            $user = $request->user();
+            $hasFinalAuthority = $user?->access_classification === AccessClassification::SpmuHead
+                || (
+                    $user?->access_classification === AccessClassification::SpmuOfficer
+                    && $user->activeDelegationFor('SPMU') !== null
+                );
+
+            abort_unless(
+                $hasFinalAuthority,
+                403,
+                'Only the SPMU Head/Admin or a formally delegated Action Officer may cancel an unreleased approved request.'
+            );
+        }
+
         $data = $request->validate([
             'reason' => [
                 'required',

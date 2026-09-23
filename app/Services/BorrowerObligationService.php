@@ -141,6 +141,25 @@ class BorrowerObligationService
     }
 
     /**
+     * The same open-record filter buildRows()/overview() already apply,
+     * exposed so a caller that needs the raw Incident/OverdueCase models
+     * themselves (not the grouped obligation rows) - such as the borrower
+     * workspace grouping its Active Cases by custody transaction - reads
+     * exactly the same "open" definition instead of a second one drifting
+     * out of sync with it.
+     *
+     * @return array{incidents: Collection, overdueCases: Collection, billings: Collection, restrictions: Collection}
+     */
+    public function openRecordsForBorrower(int $borrowerUserId): array
+    {
+        [$incidents, $overdueCases, $billings, $restrictions] = $this->filterOpenRecords(
+            $this->recordsForBorrower($borrowerUserId)
+        );
+
+        return compact('incidents', 'overdueCases', 'billings', 'restrictions');
+    }
+
+    /**
      * @param  array{incidents: Collection, billings: Collection, restrictions: Collection, overdueCases: Collection}  $records
      * @return array{0: Collection, 1: Collection, 2: Collection, 3: Collection}
      */
@@ -251,26 +270,60 @@ class BorrowerObligationService
             $nextAction = 'No borrower action is required while the SPMU decision is pending.';
             $nextTone = 'info';
             $actionState = self::ACTION_PROCESSING;
+            $rslddpUploadIncidentId = null;
 
-            if (in_array($incident->status, ['COMPLIANCE_REQUIRED', 'COMPLIANCE_RSLDDP_PENDING'], true)) {
-                /* RSLDDP paperwork tracked in parallel here is Admin-internal
-                   only - the borrower's compliance experience is unchanged
-                   whether or not this case requires one. */
+            if ($incident->status === 'COMPLIANCE_REQUIRED') {
                 $statusLabel = 'Compliance Required';
                 $statusTone = 'warning';
                 $nextAction = 'Complete the required '.$complianceActionLabel.', then present the property to the SPMU Action Officer for physical verification.';
                 $nextTone = 'warning';
                 $actionState = self::ACTION_BORROWER;
+            } elseif ($incident->status === 'COMPLIANCE_RSLDDP_PENDING') {
+                /*
+                 * Legacy status only - no new decision ever sets this. Kept
+                 * exactly as it operated before the Accountability rework,
+                 * including the borrower-upload copy, since a row already
+                 * sitting here predates the SPMU-Head-only upload
+                 * authorization change and its own linked EvidenceSubmission
+                 * flow is unaffected by that change.
+                 */
+                $statusLabel = 'RSLDDP Pending Upload';
+                $statusTone = 'warning';
+                $nextAction = 'Print the generated RSLDDP for external signing/notarization, then upload the accomplished scan below to resume Action Officer compliance verification.';
+                $nextTone = 'warning';
+                $actionState = self::ACTION_BORROWER;
+                $rslddpUploadIncidentId = $incident->id;
             } elseif ($incident->status === 'RSLDDP_AWAITING_UPLOAD') {
+                /*
+                 * The borrower is never the uploader of the accomplished
+                 * RSLDDP (spec Section F) - SPMU Head/Admin uploads it, for
+                 * both legacy and new-flow incidents reaching this status,
+                 * so this is SPMU_PROCESSING regardless of
+                 * accountability_flow_version.
+                 */
                 $statusLabel = 'RSLDDP Processing';
-                $statusTone = 'info';
-                $nextAction = 'No borrower action is required while the SPMU Head/Admin prepares the RSLDDP for external signing.';
+                $statusTone = 'warning';
+                $nextAction = 'No borrower action is required. SPMU Head/Admin will upload the accomplished RSLDDP after external processing.';
                 $actionState = self::ACTION_PROCESSING;
             } elseif ($incident->status === 'RSLDDP_FOR_ACCOUNTING_PROCESSING') {
+                // Legacy only - no new decision ever sets this.
                 $statusLabel = 'For Accounting Processing';
                 $statusTone = 'info';
                 $nextAction = 'No borrower action is required while the accomplished RSLDDP is processed by the Accounting Office.';
                 $actionState = self::ACTION_PROCESSING;
+            } elseif ($incident->status === 'RSLDDP_DISPOSITION_PENDING') {
+                $statusLabel = 'Official Disposition Pending';
+                $statusTone = 'info';
+                $nextAction = 'No borrower action is required while the SPMU Head/Admin records the official disposition stated in the accomplished RSLDDP.';
+                $actionState = self::ACTION_PROCESSING;
+            } elseif ($incident->status === 'RSLDDP_COMPLIANCE_VERIFICATION' && $incident->official_disposition !== 'MONETARY_SETTLEMENT') {
+                // Monetary falls through to the $linkedBilling branch below -
+                // the borrower's action there is already Cashier settlement.
+                $statusLabel = \App\Support\AccountabilityDispositionLabels::subStatusLabel($incident);
+                $statusTone = 'warning';
+                $nextAction = 'Complete the required '.\App\Support\AccountabilityDispositionLabels::officialDispositionLabel($incident->official_disposition).', then present it to the SPMU Action Officer for verification.';
+                $nextTone = 'warning';
+                $actionState = self::ACTION_BORROWER;
             } elseif ($linkedBilling) {
                 if ($linkedBilling->status === 'RECEIPT_SUBMITTED') {
                     $statusLabel = 'Payment Verification';
@@ -314,19 +367,19 @@ class BorrowerObligationService
              * in a new one.
              */
             if ($document) {
-                $actions[] = [$billingLabel, route('documents.preview', $document), false, 'primary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $document), false, 'primary', 'document', $billingLabel];
             }
 
             if ($rslddpDocument) {
-                $actions[] = ['Preview', route('documents.preview', $rslddpDocument), false, 'secondary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $rslddpDocument), false, 'secondary', 'document', 'RSLDDP'];
             }
 
             if ($complianceDocument) {
-                $actions[] = ['Preview', route('documents.preview', $complianceDocument), false, 'primary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $complianceDocument), false, 'primary', 'document', 'Compliance Notice'];
             }
 
             if ($linkedRestriction && $linkedRestriction->incident_id) {
-                $actions[] = ['Preview', route('restrictions.notice', $linkedRestriction), false, 'secondary', 'document'];
+                $actions[] = ['Preview', route('restrictions.notice', $linkedRestriction), false, 'secondary', 'document', 'Restriction Notice'];
             }
 
             if ($custody) {
@@ -366,10 +419,10 @@ class BorrowerObligationService
                 'title' => $itemName.' — '.$incidentType,
                 'reference' => $incident->incident_no,
                 'summary' => $linkedBilling
-                    ? 'The property case and its Billing Statement are shown together here.'
+                    ? 'This property issue and its payment requirement are grouped as one obligation.'
                     : ($incident->status === 'COMPLIANCE_REQUIRED'
-                        ? 'SPMU requires property compliance before this obligation can be cleared.'
-                        : 'This property accountability case remains under SPMU processing.'),
+                        ? 'A repair, replacement, or other compliance step is required before this obligation can be cleared.'
+                        : 'SPMU is reviewing this property accountability matter.'),
                 'badge' => $statusLabel,
                 'badge_tone' => $statusTone,
                 'status_meta' => $statusMeta,
@@ -379,6 +432,7 @@ class BorrowerObligationService
                 'next_tone' => $nextTone,
                 'facts' => $facts,
                 'actions' => $actions,
+                'rslddp_upload_incident_id' => $rslddpUploadIncidentId,
                 'search' => strtolower(implode(' ', [
                     'property accountability',
                     $itemName,
@@ -497,7 +551,7 @@ class BorrowerObligationService
                 } else {
                     $statusLabel = 'Payment Required';
                     $statusTone = 'warning';
-                    $nextAction = 'Settle the issued Late Return Billing Statement through the CSPC Cashier, then present the official receipt to the SPMU Action Officer for recording and confirmation.';
+                    $nextAction = 'Preview or print the Late Return Billing Statement, present it to the CSPC Cashier, then submit the official receipt to SPMU.';
                     $nextTone = 'warning';
                     $actionState = self::ACTION_BORROWER;
                 }
@@ -517,11 +571,11 @@ class BorrowerObligationService
             $actions = [];
 
             if ($lateReturnNotice) {
-                $actions[] = ['Preview', route('documents.preview', $lateReturnNotice), false, $linkedBilling ? 'secondary' : 'primary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $lateReturnNotice), false, $linkedBilling ? 'secondary' : 'primary', 'document', 'Late Return Notice'];
             }
 
             if ($document) {
-                $actions[] = ['Preview', route('documents.preview', $document), false, 'primary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $document), false, 'primary', 'document', 'Late Return Billing Statement'];
             }
 
             if ($custody) {
@@ -536,10 +590,8 @@ class BorrowerObligationService
                 ['Custody', $custody?->custody_no ?: '—'],
             ];
 
-            if ($linkedBilling) {
-                $facts[] = ['Late Return Billing Statement', $linkedBilling->billing_no];
-                $facts[] = ['Amount', '₱'.number_format((float) $linkedBilling->total_amount, 2)];
-            }
+            /* Billing reference and amount already appear in the obligation header
+               and Documents section, so History / Details keeps only return facts. */
 
             /* The restriction's own reason/dates/status now have a dedicated
                panel in the expanded obligation - see 'restriction' below. */
@@ -559,10 +611,10 @@ class BorrowerObligationService
                 'title' => 'Late Return Obligation',
                 'reference' => $custody?->custody_no ?: ($custody?->request?->request_no ?: 'Late return record'),
                 'summary' => $linkedBilling
-                    ? 'The late-return case and its Late Return Billing Statement are shown together here.'
+                    ? 'This late return and its payment requirement are grouped as one obligation.'
                     : ($isPhysicallyOutstanding
-                        ? 'The item is still physically outstanding.'
-                        : 'The physical return is complete and the late-return assessment is being processed.'),
+                        ? 'Some property is still overdue and must be returned.'
+                        : 'The return is complete. SPMU is processing the late-return assessment.'),
                 'badge' => $statusLabel,
                 'badge_tone' => $statusTone,
                 'status_meta' => $statusMeta,
@@ -633,7 +685,7 @@ class BorrowerObligationService
 
             $actions = [];
             if ($document) {
-                $actions[] = ["Open {$billingLabel}", route('documents.preview', $document), false, 'primary', 'document'];
+                $actions[] = ['Preview', route('documents.preview', $document), false, 'primary', 'document', $billingLabel];
             }
 
             $obligationRows[] = [
@@ -646,7 +698,7 @@ class BorrowerObligationService
                 'type' => 'Financial Obligation',
                 'title' => $billing->lines->first()?->description ?: $billingLabel,
                 'reference' => $billing->billing_no,
-                'summary' => "An open SPMU {$billingLabel} requires settlement or verification.",
+                'summary' => "A payment requirement is still open and needs settlement or verification.",
                 'badge' => $statusLabel,
                 'badge_tone' => $latestPayment?->status === 'REJECTED' ? 'danger' : 'info',
                 'status_meta' => '₱'.number_format((float) $billing->total_amount, 2),
@@ -711,15 +763,16 @@ class BorrowerObligationService
                 $sanctionDocument = $activeDocument($sanctionForRestriction->documents, 'ADMINISTRATIVE_SANCTION_NOTICE');
                 if ($sanctionDocument) {
                     $actions[] = [
-                        $isSuspension ? 'Preview' : 'Preview',
+                        'Preview',
                         route('documents.preview', $sanctionDocument),
                         false,
                         'secondary',
                         'document',
+                        $isSuspension ? 'Suspension Notice' : 'Administrative Sanction Notice',
                     ];
                 }
             } elseif ($restriction->incident_id) {
-                $actions[] = ['Preview', route('restrictions.notice', $restriction), false, 'secondary', 'document'];
+                $actions[] = ['Preview', route('restrictions.notice', $restriction), false, 'secondary', 'document', 'Restriction Notice'];
             }
 
             $obligationRows[] = [

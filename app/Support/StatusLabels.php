@@ -44,9 +44,11 @@ class StatusLabels
         'COMPLIANCE_REQUIRED' => 'Compliance Required',
         'COMPLIANCE_RSLDDP_PENDING' => 'Compliance - RSLDDP Pending',
         'RSLDDP_AWAITING_UPLOAD' => 'RSLDDP Processing',
-        'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing',
-        'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required',
-        'RSLDDP_FOR_RESOLUTION' => 'For Resolution',
+        'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'For Accounting Processing', // legacy only, no new row ever reaches this
+        'RSLDDP_PAYMENT_REQUIRED' => 'Payment Required', // legacy only, no new row ever reaches this
+        'RSLDDP_DISPOSITION_PENDING' => 'Official Disposition Pending',
+        'RSLDDP_COMPLIANCE_VERIFICATION' => 'Compliance Verification',
+        'RSLDDP_FOR_RESOLUTION' => 'For Final Review',
         'FOR_BILLING' => 'Billing Statement Pending',
         'BILLING_OPEN' => 'Billing Pending',
         'BILLING_ISSUED' => 'Billing Unpaid',

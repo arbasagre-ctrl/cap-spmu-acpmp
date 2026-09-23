@@ -98,14 +98,8 @@ class CustodyController extends Controller
     {
         $this->authorizeSpmuOfficer($request);
 
+        $calendar = app(OperationalCalendarService::class);
         $relations = ['borrower', 'request.currentVersion', 'lines.requestItem.inventoryItem', 'laundryJob.latestEvidence.file', 'incidents', 'overdueCase'];
-        $hasEarlyReturnTable = Schema::hasTable('early_return_requests');
-
-        if ($hasEarlyReturnTable) {
-            $relations['earlyReturnRequests'] = fn ($query) => $query
-                ->where('status', 'REQUESTED')
-                ->latest('requested_at');
-        }
 
         $custodies = CustodyTransaction::with($relations)
             ->whereNotNull('released_at')
@@ -115,27 +109,16 @@ class CustodyController extends Controller
             ->latest()
             ->get();
 
-        if (! $hasEarlyReturnTable) {
-            $custodies->each(
-                fn (CustodyTransaction $custody) => $custody->setRelation('earlyReturnRequests', collect())
-            );
-        }
-
-        /*
-         * Put active Early Return requests first so the Action Officer can
-         * notice them immediately, while retaining the normal newest-first
-         * order within the Early Return and regular-return groups.
-         */
-        $custodies = $custodies->sort(function (CustodyTransaction $left, CustodyTransaction $right): int {
-            $leftEarly = $left->earlyReturnRequests->isNotEmpty() ? 1 : 0;
-            $rightEarly = $right->earlyReturnRequests->isNotEmpty() ? 1 : 0;
-
-            if ($leftEarly !== $rightEarly) {
-                return $rightEarly <=> $leftEarly;
+        // Keep displayed Expected Return dates synchronized with the current
+        // Operational Calendar. A closed/non-return day (for example Sunday)
+        // automatically moves to the next configured day that allows Returns.
+        // original_due_at is preserved for audit/history by the calendar service.
+        $custodies->each(function (CustodyTransaction $custody) use ($calendar): void {
+            if ($custody->due_at && ! $custody->closed_at) {
+                $calendar->synchronizeCustodyDueDate($custody);
             }
+        });
 
-            return ($right->updated_at?->timestamp ?? 0) <=> ($left->updated_at?->timestamp ?? 0);
-        })->values();
 
         return view('custody.index', [
             'custodies' => $custodies,
@@ -186,6 +169,14 @@ class CustodyController extends Controller
 
     private function renderShow(Request $request, CustodyTransaction $custody, ?string $spmuMode = null): View
     {
+        // Self-heal existing open custody records before rendering the page.
+        // This ensures the Return UI never shows a closed/non-return date as
+        // the effective Expected Return after the Operational Calendar changes.
+        if ($custody->due_at && ! $custody->closed_at) {
+            $custody = app(OperationalCalendarService::class)
+                ->synchronizeCustodyDueDate($custody);
+        }
+
         $relations = [
             'borrower',
             'request.currentVersion.approvalSteps',
@@ -205,13 +196,6 @@ class CustodyController extends Controller
             $relations[] = 'laundryJob.formVerifier';
         }
 
-        if (Schema::hasTable('early_return_requests')) {
-            $relations[] = Schema::hasTable('early_return_request_lines')
-                ? 'earlyReturnRequests.lines.custodyLine.requestItem'
-                : 'earlyReturnRequests';
-        } else {
-            $custody->setRelation('earlyReturnRequests', collect());
-        }
 
         $custody->load($relations);
 
@@ -282,7 +266,21 @@ class CustodyController extends Controller
         $pickupRescheduleAvailable = false;
         $approvedReturnDate = $custody->original_due_at ?: $custody->due_at;
 
-        if (! $custody->released_at && $custody->status === 'PREPARING_RELEASE' && $approvedReturnDate) {
+        /*
+         * Only one reschedule cycle is ever granted per custody transaction
+         * (see CustodyService::requestPickupReschedule()'s own
+         * "already rescheduled" guard) - a second missed pickup is handled
+         * by the automatic cancellation safety net, not another reschedule.
+         * Mirror that same check here so the Request Reschedule action never
+         * renders as available only to fail when clicked.
+         */
+        $alreadyRescheduledOnce = AuditEvent::query()
+            ->where('record_type', CustodyTransaction::class)
+            ->where('record_id', $custody->id)
+            ->where('action_code', 'PICKUP_RESCHEDULED')
+            ->exists();
+
+        if (! $custody->released_at && $custody->status === 'PREPARING_RELEASE' && $approvedReturnDate && ! $alreadyRescheduledOnce) {
             $timezone = config('app.timezone') ?: 'Asia/Manila';
             $now = now($timezone);
             $nextPickupRescheduleAt = app(OperationalCalendarService::class)->nextPickupWindow($now);
@@ -780,34 +778,6 @@ class CustodyController extends Controller
         return redirect()
             ->to(route('custody.return.show', $custody).'#return-primary')
             ->with('status', 'Return inspection recorded.');
-    }
-
-    public function requestEarlyReturn(Request $request, CustodyTransaction $custody, CustodyService $service): RedirectResponse
-    {
-        $this->authorizeCustody($request, $custody);
-
-        abort_unless(
-            strtoupper((string) $request->session()->get('active_workspace')) === 'BORROWER'
-                && $custody->borrower_user_id === $request->user()?->id,
-            403
-        );
-
-        $data = $request->validate([
-            'proposed_return_at' => ['required', 'date', 'after:now'],
-            'reason' => ['nullable', 'string', 'max:1000'],
-        ]);
-
-        $service->requestEarlyReturn(
-            $custody,
-            $request->user(),
-            $data['proposed_return_at'],
-            $data['reason'] ?? null
-        );
-
-        return back()->with(
-            'status',
-            'Early Return coordination sent to SPMU. Actual quantities and conditions will be recorded only during physical Return & Inspection.'
-        );
     }
 
     private function authorizeSpmuOfficer(Request $request): void

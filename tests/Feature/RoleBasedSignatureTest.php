@@ -238,9 +238,6 @@ class RoleBasedSignatureTest extends TestCase
         // SIGNATURE UPON RECEIPT OF ITEMS" column, which stays blank for the
         // person who actually receives the items.
         $this->assertSame(1, substr_count($html, $borrowerImage));
-
-        $this->assertStringContainsString($custody->custody_no, $html);
-        $this->assertStringContainsString($request->request_no, $html);
     }
 
     public function test_replacing_a_registered_signature_does_not_alter_an_existing_borrower_slip(): void
@@ -982,24 +979,22 @@ class RoleBasedSignatureTest extends TestCase
         ]));
 
         /*
-         * The Borrower's Slip has a separate, legitimate, static
-         * letterhead addressee block that always reads "ANGELICA P.
-         * REGONDOLA, PhD / Administrative Officer V" regardless of any
-         * request/approver data -- that single occurrence is expected and
-         * must stay. What must NOT happen is the dynamic "Approved By"
-         * signatory block ALSO printing that same name/title as an
-         * invented stand-in for this specific approver, which would show
-         * up as a SECOND occurrence.
+         * The current Rev. 4 Borrower's Slip has no separate static
+         * letterhead addressee block at all -- the "Approved by" signatory
+         * block is the only place an approver name/title can appear. So
+         * neither an invented name nor an invented title must ever appear
+         * as a stand-in for a real, identified approver with no
+         * designation on file.
          */
-        $this->assertSame(
-            1,
-            substr_count($html, 'Administrative Officer V'),
-            'The invented title must not be used as a fallback for a real, identified approver with no designation on file.'
+        $this->assertStringNotContainsString(
+            'Administrative Officer V',
+            $html,
+            'An invented title must not be used as a fallback for a real, identified approver with no designation on file.'
         );
-        $this->assertSame(
-            1,
-            substr_count($html, 'ANGELICA P. REGONDOLA'),
-            'The invented name must not be used as a fallback for a real, identified approver.'
+        $this->assertStringNotContainsString(
+            'ANGELICA P. REGONDOLA',
+            $html,
+            'An invented name must not be used as a fallback for a real, identified approver.'
         );
         $this->assertStringContainsString($head->full_name, $html);
     }

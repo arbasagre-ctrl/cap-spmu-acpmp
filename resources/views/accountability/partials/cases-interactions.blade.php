@@ -1,17 +1,13 @@
 <script>
-/*
- * One row, one toggle: works for any [data-case-toggle] button anywhere on
- * the page (Current Accountability cases and Accountability History rows
- * alike), independent of whether the cases table's own filter toolbar exists
- * on this page load. Delegated on document so it also covers rows that sit
- * later in the DOM than this script tag - such as the History table below.
- */
+/* One row, one disclosure. Filtering never changes workflow state. */
 document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-case-toggle]');
     if (!button) return;
+
     const row = button.closest('tr');
     const detail = row?.nextElementSibling;
     if (!detail?.classList.contains('accountability-case-detail-row')) return;
+
     const wasExpanded = detail.dataset.expanded === 'true';
     detail.dataset.expanded = String(!wasExpanded);
     detail.hidden = wasExpanded;
@@ -19,101 +15,111 @@ document.addEventListener('click', (event) => {
 });
 
 (() => {
-    const search = document.getElementById('accountability-case-search');
-    const toggle = document.getElementById('accountability-filter-toggle');
-    const menu = document.getElementById('accountability-filter-menu');
     const body = document.getElementById('accountability-cases-body');
     const empty = document.getElementById('accountability-cases-none');
-    if (!search || !toggle || !menu || !body || !empty) return;
+    if (!body || !empty) return;
 
     const rows = [...body.querySelectorAll('[data-case]')];
-    const filters = [...menu.querySelectorAll('input[type="checkbox"]')];
-    const typeChips = [...document.querySelectorAll('.accountability-type-chip')];
+    if (rows.length === 0) return;
 
-    function selectedType() {
-        return typeChips.find(chip => chip.classList.contains('is-active'))?.dataset.typeFilter ?? 'all';
+    const search = document.getElementById('accountability-case-search');
+    const typeSelect = document.getElementById('accountability-case-type');
+    const statusSelect = document.getElementById('accountability-case-status');
+    const count = document.getElementById('accountability-case-count');
+
+    const rowMatchesType = (row, type) => {
+        if (!type || type === 'all') return true;
+        if (type === 'RESTRICTION') return row.dataset.hasRestriction === '1';
+        return row.dataset.caseType === type;
+    };
+
+    /* A status that does not exist for the selected type is hidden/disabled.
+       This prevents combinations that look broken but can never return rows. */
+    function syncStatusOptions() {
+        if (!statusSelect) return;
+
+        const type = typeSelect?.value || 'all';
+        const eligibleRows = rows.filter(row => rowMatchesType(row, type));
+
+        [...statusSelect.options].forEach(option => {
+            if (option.value === 'all') {
+                option.hidden = false;
+                option.disabled = false;
+                return;
+            }
+
+            const available = eligibleRows.some(row => row.dataset.status === option.value);
+            option.hidden = !available;
+            option.disabled = !available;
+        });
+
+        const selected = statusSelect.selectedOptions[0];
+        if (selected?.disabled || selected?.hidden) {
+            statusSelect.value = 'all';
+        }
     }
 
-    /*
-     * Every rendered case status has a checkbox, so the selected set narrows
-     * Property, Late Return, Billing, and standalone Restriction rows alike.
-     * The Restrictions chip instead selects rows by their restriction flag;
-     * a Property or Late Return case keeps its real case type.
-     *
-     * Cases are collapsed by default and only expand from their own action
-     * button (see the data-case-toggle handler below). Filtering must never
-     * force a detail row open - it only ever forces one shut, when its
-     * summary row no longer matches and so cannot be seen at all.
-     */
     function filterCases() {
-        const query = search.value.trim().toLocaleLowerCase();
-        const statuses = new Set(filters.filter(input => input.checked).map(input => input.value));
-        const type = selectedType();
+        const query = search?.value.trim().toLocaleLowerCase() || '';
+        const type = typeSelect?.value || 'all';
+        const status = statusSelect?.value || 'all';
         let visible = 0;
+
         rows.forEach(row => {
-            const searchMatches = row.dataset.search.toLocaleLowerCase().includes(query);
-            const statusMatches = statuses.has(row.dataset.status);
-            const typeMatches = type === 'all'
-                || (type === 'RESTRICTION'
-                    ? row.dataset.hasRestriction === '1'
-                    : row.dataset.caseType === type);
-            const matches = searchMatches && statusMatches && typeMatches;
+            const matchesSearch = !query || (row.dataset.search || '').toLocaleLowerCase().includes(query);
+            const matchesType = rowMatchesType(row, type);
+            const matchesStatus = status === 'all' || row.dataset.status === status;
+            const matches = matchesSearch && matchesType && matchesStatus;
+
             row.hidden = !matches;
+
             const detail = row.nextElementSibling;
             if (detail?.classList.contains('accountability-case-detail-row')) {
                 detail.hidden = !matches || detail.dataset.expanded !== 'true';
             }
+
             if (matches) visible++;
         });
+
         empty.hidden = visible > 0;
+        if (count) count.textContent = String(visible);
     }
 
-    typeChips.forEach(chip => {
-        chip.addEventListener('click', () => {
-            typeChips.forEach(other => other.classList.toggle('is-active', other === chip));
-            filterCases();
-        });
-    });
-    function closeMenu() {
-        menu.hidden = true;
-        toggle.setAttribute('aria-expanded', 'false');
-    }
-    /*
-     * A summary card can hand the queue a focus hint, so a reader who clicked
-     * "Overdue Awaiting Return" lands on the rows that figure was counted
-     * from. It only unticks statuses in the filter already on the page: it
-     * narrows nothing the server did not return, and an unknown hint is
-     * ignored rather than emptying the queue.
-     */
-    const FOCUS = {
-        overdue: ['OVERDUE'],
-        late: ['RETURNED_PENDING_SETTLEMENT', 'FOR_HEAD_APPROVAL', 'BILLED'],
-    };
+    /* Summary-card focus links can still open the correct subset, but only
+       when that control is actually useful enough to be rendered. */
+    const focus = new URLSearchParams(location.search).get('focus');
 
-    const wanted = FOCUS[new URLSearchParams(location.search).get('focus')];
-
-    if (wanted && filters.some(input => wanted.includes(input.value))) {
-        filters.forEach(input => { input.checked = wanted.includes(input.value); });
-        /* A focus hint is only ever about a late-return status, so narrow the type too. */
-        const lateReturnChip = typeChips.find(chip => chip.dataset.typeFilter === 'LATE_RETURN');
-        if (lateReturnChip) typeChips.forEach(chip => chip.classList.toggle('is-active', chip === lateReturnChip));
-        filterCases();
-    }
-
-    search.addEventListener('input', filterCases);
-    filters.forEach(input => input.addEventListener('change', filterCases));
-    toggle.addEventListener('click', () => {
-        menu.hidden = !menu.hidden;
-        toggle.setAttribute('aria-expanded', String(!menu.hidden));
-    });
-    document.addEventListener('click', event => {
-        if (!menu.contains(event.target) && !toggle.contains(event.target)) closeMenu();
-    });
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && !menu.hidden) {
-            closeMenu();
-            toggle.focus();
+    if (focus === 'overdue') {
+        if (typeSelect && [...typeSelect.options].some(option => option.value === 'LATE_RETURN')) {
+            typeSelect.value = 'LATE_RETURN';
         }
+        syncStatusOptions();
+        if (statusSelect && [...statusSelect.options].some(option => option.value === 'OVERDUE' && !option.disabled)) {
+            statusSelect.value = 'OVERDUE';
+        }
+    } else if (focus === 'late') {
+        if (typeSelect && [...typeSelect.options].some(option => option.value === 'LATE_RETURN')) {
+            typeSelect.value = 'LATE_RETURN';
+        }
+        if (statusSelect) statusSelect.value = 'all';
+        syncStatusOptions();
+    } else if (focus === 'restrictions') {
+        if (typeSelect && [...typeSelect.options].some(option => option.value === 'RESTRICTION')) {
+            typeSelect.value = 'RESTRICTION';
+        }
+        if (statusSelect) statusSelect.value = 'all';
+        syncStatusOptions();
+    } else {
+        syncStatusOptions();
+    }
+
+    search?.addEventListener('input', filterCases);
+    typeSelect?.addEventListener('change', () => {
+        syncStatusOptions();
+        filterCases();
     });
+    statusSelect?.addEventListener('change', filterCases);
+
+    filterCases();
 })();
 </script>
