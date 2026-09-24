@@ -267,13 +267,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->middleware('workspace:BORROWER,SPMU')
         ->name('requests.cancel');
 
-    Route::post(
-        '/requests/{borrowingRequest}/cancellation/review',
-        [BorrowingRequestController::class, 'reviewCancellation']
-    )
-        ->middleware('workspace:SPMU')
-        ->name('requests.cancellation.review');
-
 
     /*
     |--------------------------------------------------------------------------

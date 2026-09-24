@@ -307,18 +307,19 @@ class PolicyService
 
         $existingSanction = $existingViolation?->sanction;
 
-        $confirmedBefore = 0;
-        if ($period) {
-            $confirmedBefore = BorrowerViolation::query()
-                ->where('borrower_user_id', $incident->borrower_user_id)
-                ->where('academic_period_id', $period->id)
-                ->where('status', 'CONFIRMED')
-                ->when(
-                    $existingViolation,
-                    fn ($query) => $query->whereKeyNot($existingViolation->id)
-                )
-                ->count();
-        }
+        /*
+         * Cumulative across the borrower's full confirmed history - see
+         * applyConfirmedDecision(). $period only dates a previewed 3rd-offense
+         * suspension below; it never scopes this count.
+         */
+        $confirmedBefore = BorrowerViolation::query()
+            ->where('borrower_user_id', $incident->borrower_user_id)
+            ->where('status', 'CONFIRMED')
+            ->when(
+                $existingViolation,
+                fn ($query) => $query->whereKeyNot($existingViolation->id)
+            )
+            ->count();
 
         $offenseNo = $existingSanction?->offense_no ?: ($confirmedBefore + 1);
         $rule = SanctionRule::query()
@@ -401,14 +402,16 @@ class PolicyService
     {
         $period = $violation->academicPeriod ?: $this->activePeriodFor($violation->detected_at);
 
-        $confirmedBefore = $period
-            ? BorrowerViolation::query()
-                ->where('borrower_user_id', $violation->borrower_user_id)
-                ->where('academic_period_id', $period->id)
-                ->where('status', 'CONFIRMED')
-                ->whereKeyNot($violation->id)
-                ->count()
-            : 0;
+        /*
+         * Cumulative across the borrower's full confirmed history - see
+         * applyConfirmedDecision(). $period only dates a previewed 3rd-offense
+         * suspension below; it never scopes this count.
+         */
+        $confirmedBefore = BorrowerViolation::query()
+            ->where('borrower_user_id', $violation->borrower_user_id)
+            ->where('status', 'CONFIRMED')
+            ->whereKeyNot($violation->id)
+            ->count();
 
         $offenseNo = $confirmedBefore + 1;
         $rule = SanctionRule::query()
@@ -720,9 +723,16 @@ class PolicyService
             }
         }
 
+        /*
+         * Offense history is cumulative across the borrower's full confirmed
+         * violation history, not scoped to one academic period - a new
+         * semester never resets the offense ladder back to 1st. $period
+         * (the CURRENT violation's own period) is used below only to date
+         * the 3rd-offense "until academic period end" suspension, never to
+         * filter this count.
+         */
         $offenseNo = BorrowerViolation::query()
             ->where('borrower_user_id', $locked->borrower_user_id)
-            ->where('academic_period_id', $period->id)
             ->where('status', 'CONFIRMED')
             ->whereKeyNot($locked->id)
             ->count() + 1;

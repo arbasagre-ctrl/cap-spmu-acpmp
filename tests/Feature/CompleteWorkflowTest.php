@@ -1377,8 +1377,8 @@ class CompleteWorkflowTest extends TestCase
         ]);
 
         /*
-         * Save Disposition: the Head records ONLY the official disposition
-         * actually stated in the accomplished RSLDDP - here, a Monetary
+         * Record Official Disposition: the Head records the official
+         * disposition stated in the accomplished RSLDDP - here, a Monetary
          * Settlement. The amount recorded here already creates the payable
          * BillingStatement; no separate Accounting Office upload is
          * required to reach the Cashier receipt step.

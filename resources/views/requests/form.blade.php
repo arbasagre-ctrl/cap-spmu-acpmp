@@ -835,6 +835,24 @@
     </div>
 </section>
 
+@if(!empty($borrowingBlockedReasons))
+<section class="content-area">
+    <div class="action-panel action-warning" role="alert">
+        <div>
+            <p class="eyebrow">Borrowing restricted</p>
+            <h2>You cannot submit a new borrowing request right now</h2>
+            <p>Resolve the item(s) below with SPMU before creating or submitting another borrowing request.</p>
+        </div>
+
+        <ul>
+            @foreach($borrowingBlockedReasons as $reason)
+                <li>{{ $reason }}</li>
+            @endforeach
+        </ul>
+    </div>
+</section>
+@endif
+
 @if($isReturned)
 <section class="content-area">
     <div class="action-panel action-warning" role="status">
@@ -1182,15 +1200,6 @@
                 </div>
 
                 <div
-                    id="off-campus-mode-note"
-                    class="callout info picker-warning picker-guidance"
-                    hidden
-                >
-                    <strong>Gate Pass required for off-campus borrowing.</strong>
-                    <p>Search and select exactly one eligible Barricade item. It must be the only item in this request.</p>
-                </div>
-
-                <div
                     id="campus-mode-conflict"
                     class="callout danger picker-warning"
                     hidden
@@ -1477,13 +1486,15 @@
                 <div class="request-dialog-body">
                     <p>By submitting this request, the borrower acknowledges the following conditions for this borrowing transaction:</p>
                     <ol class="request-terms-list">
-                        <li>The information and supporting documents submitted must be complete, accurate, and authentic.</li>
-                        <li>Submission does not guarantee approval or reservation. Inventory is allocated only after the authorized final approval and availability check.</li>
-                        <li>Approved items must be used only for the approved purpose, premises, and borrowing period stated in the request.</li>
-                        <li>The borrower is responsible for borrowed items from confirmed physical release until the applicable physical return is properly received and documented. For linen, physical custody ends when Laundry Personnel receive the returned linen and record the receipt on the Laundry Form; any later verified damage, loss, or other accountability finding remains subject to applicable SPMU rules.</li>
-                        <li>Items must be physically returned on or before the effective Expected Return Date, subject to the applicable SPMU operational calendar. Damage, loss, missing quantity, or other adverse findings may result in accountability processing under applicable SPMU rules.</li>
-                        <li>Linen and off-campus barricade transactions must follow the applicable Laundry Form and Gate Pass procedures.</li>
-                        <li>The borrower's registered E-signature snapshot will be bound to this submitted request version and retained with the corresponding audit record.</li>
+                        <li>The information and supporting documents you submit must be complete, accurate, and authentic.</li>
+                        <li>Submitting a request does not guarantee approval or item availability. Approved items may only be used for the approved purpose, location, and borrowing period.</li>
+                        <li>Approved items must be picked up within the assigned schedule and released in full; partial issuance is not allowed. If you miss the pickup schedule, you may request a reschedule or cancel while another valid pickup schedule is still available. The system may automatically cancel an unreleased request if no valid pickup schedule remains or if the allowed response period has passed.</li>
+                        <li>You are responsible for the borrowed items from the time they are released until they are properly returned and received. For linen, the return is recorded through the Laundry Form.</li>
+                        <li>All items must be returned in full on or before the Expected Return Date. Partial returns are not allowed, but early returns are allowed.</li>
+                        <li>Late returns may result in a Late Return Notice, billing, accountability processing, or other applicable sanctions.</li>
+                        <li>Damaged, lost, missing, or otherwise problematic items may be subject to accountability processing. Confirmed property accountability may require RSLDDP or other required external procedures before the case is resolved.</li>
+                        <li>Off-campus borrowing is limited to eligible Barricade items and requires the applicable Gate Pass process.</li>
+                        <li>Your registered E-signature will be attached to the submitted request and kept as part of the official record.</li>
                     </ol>
                 </div>
                 <div class="request-dialog-actions">
@@ -1573,7 +1584,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const requestOffCampusToggle = document.getElementById('request-off-campus-toggle');
     const requestOnCampusToggle = document.getElementById('request-on-campus-toggle');
     const premisesHelp = document.getElementById('request-premises-help');
-    const offCampusModeNote = document.getElementById('off-campus-mode-note');
     const campusModeConflict = document.getElementById('campus-mode-conflict');
     const stageOneNextButton = document.querySelector('[data-stage-next="2"]');
     const stageTwoNextButton = document.querySelector('[data-stage-next="3"]');
@@ -2306,7 +2316,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedEmpty) selectedEmpty.hidden = count !== 0;
         if (selectedItemsTableWrap) selectedItemsTableWrap.hidden = count === 0;
         if (selectedCount) selectedCount.textContent = String(count);
-        if (offCampusModeNote) offCampusModeNote.hidden = !offCampusMode || offCampusConflict;
         if (campusModeConflict) campusModeConflict.hidden = !offCampusConflict;
         if (availabilityConflict) {
             availabilityConflict.hidden = !availabilityLoaded || !conflict;

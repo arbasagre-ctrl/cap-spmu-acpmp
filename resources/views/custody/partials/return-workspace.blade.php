@@ -97,7 +97,7 @@
                     <h2>Transaction Summary</h2>
                 </div>
                 @if($gatePassDocumentationPending && !$returnAccountability)
-                    <span class="status-badge status-warning">Gate Pass Pending</span>
+                    <span class="status-badge status-warning">Awaiting Accomplished Gate Pass</span>
                 @elseif($returnWorkflowStatus['key'] !== 'COMPLETED')
                     <x-status-badge :status="$returnWorkflowStatus['key']" :label="$returnWorkflowStatus['label']" />
                 @else

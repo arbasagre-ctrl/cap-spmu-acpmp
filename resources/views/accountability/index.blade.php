@@ -1805,7 +1805,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                             <small>{{ $isHead ? 'Your current action' : 'Current status' }}</small>
                             <strong>Official Disposition Pending</strong>
                             <p>{{ $isHead
-                                ? 'Record ONLY the official disposition actually stated in the accomplished RSLDDP.'
+                                ? 'Record the official disposition stated in the accomplished RSLDDP.'
                                 : 'Action by: SPMU Head/Admin. The accomplished RSLDDP has been received. Borrowing Status: Restricted.' }}</p>
                         </div>
                         @if($rsldppDocument)
@@ -1816,7 +1816,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                     </div>
                     @if($isHead)
                         <details class="accountability-action-disclosure">
-                            <summary><span>Save Disposition</span><x-icon name="chevron-down" size="15" class="accountability-disclosure-chevron" /></summary>
+                            <summary><span>Record Official Disposition</span><x-icon name="chevron-down" size="15" class="accountability-disclosure-chevron" /></summary>
                             <div class="accountability-action-body">
                                 <form method="post" action="{{ route('incidents.disposition.record', $incident) }}" class="form-grid">
                                     @csrf
@@ -1849,7 +1849,7 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                                         Remarks
                                         <textarea name="resolution_remarks" rows="2" maxlength="2000" required placeholder="Note where this disposition is stated in the accomplished RSLDDP."></textarea>
                                     </label>
-                                    <button class="button primary">Save Disposition</button>
+                                    <button class="button primary">Record Official Disposition</button>
                                 </form>
                             </div>
                         </details>

@@ -100,7 +100,7 @@ class ItemPreparationStep2ContractTest extends TestCase
     {
         $source = (string) file_get_contents(app_path('Services/RequestWorkflowService.php'));
         $start = strpos($source, 'public function cancelApprovedForPreparationDiscrepancy(');
-        $end = strpos($source, 'public function reviewCancellation(', $start ?: 0);
+        $end = strpos($source, 'private function finalizeCancellation(', $start ?: 0);
 
         $this->assertNotFalse($start);
         $this->assertNotFalse($end);

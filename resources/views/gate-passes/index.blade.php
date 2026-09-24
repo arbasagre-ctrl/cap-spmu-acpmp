@@ -6,6 +6,7 @@
         'custody.request',
         'custody.lines.requestItem.inventoryItem',
         'custody.laundryJob.latestEvidence.file',
+        'custody.returns',
     ]);
 
     /*
@@ -21,8 +22,9 @@
         ['key' => 'PREPARING_RELEASE', 'label' => 'Preparing for Release'],
         ['key' => 'PICKUP_EXPIRED', 'label' => 'Pickup Missed'],
         ['key' => 'READY_FOR_PRINTING', 'label' => 'Approved / Ready for Release'],
+        ['key' => 'AWAITING_PHYSICAL_RETURN', 'label' => 'Awaiting Physical Return'],
         ['key' => 'AWAITING_ACCOMPLISHED_GATE_PASS', 'label' => 'Awaiting Accomplished Gate Pass'],
-        ['key' => 'VERIFIED', 'label' => 'Completed'],
+        ['key' => 'VERIFIED', 'label' => 'Recorded'],
         ['key' => 'VOID', 'label' => 'Voided'],
     ]);
 @endphp

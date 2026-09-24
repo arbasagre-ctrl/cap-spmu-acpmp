@@ -64,34 +64,28 @@
                     <h2>
                         {{ $gatePassVoided
                             ? 'Voided Gate Pass'
-                            : ($gatePassRecorded
+                            : (($gatePassRecorded || $gatePassRecording)
                                 ? 'Accomplished Gate Pass'
-                                : ($gatePassRecording
-                                    ? 'Record Accomplished Gate Pass'
-                                    : ($gatePassFinalized ? 'Approved Gate Pass' : 'Gate Pass Pending'))) }}
+                                : ($gatePassFinalized ? 'Approved Gate Pass' : 'Gate Pass Pending')) }}
                     </h2>
                 </div>
-                @if($gatePassRecording)
-                    <x-status-badge :status="$gatePassStatus['key']" label="Pending Copy" />
-                @else
-                    <x-status-badge :status="$gatePassStatus['key']" :label="$gatePassStatus['label']" />
-                @endif
+                <x-status-badge :status="$gatePassStatus['key']" :label="$gatePassStatus['label']" />
             </div>
 
             @if($gatePassVoided)
                 <div class="callout neutral">
-                    <strong>This Gate Pass is voided.</strong>
-                    <p>The related borrowing request was cancelled. No release or Gate Pass completion action is required.</p>
+                    <strong>Voided.</strong>
+                    <p>The related borrowing request was cancelled. No further action is required.</p>
                 </div>
             @elseif(!$gatePassFinalized)
                 <div class="callout info">
-                    <strong>Gate Pass is not ready for release.</strong>
-                    <p>Complete the approved Gate Pass record before any off-campus handover.</p>
+                    <strong>Not ready for release.</strong>
+                    <p>Approve the Gate Pass before any off-campus handover.</p>
                 </div>
             @else
                 @if(!$custody?->released_at)
                     <div class="callout success">
-                        <strong>Ready for printing.</strong>
+                        <strong>Prepared.</strong>
                         <p>The Guard on Duty completes the printed Gate Pass at campus exit.</p>
                         <div class="inline-actions top-gap">
                             <a class="button secondary ui-pressable" href="{{ route('documents.preview', $gatePass->passDocument) }}">Preview</a>
@@ -102,23 +96,23 @@
 
             @if($gatePass->status === 'READY_FOR_PRINTING' && $itemsReleased && ! $physicalReturnRecorded)
                 <div class="callout info top-gap">
-                    <strong>Awaiting physical return inspection.</strong>
-                    <p>The Guard on Duty completes the <strong>Released by</strong>, date, and time fields on the printed Gate Pass when the property leaves campus. Record the accomplished Gate Pass only after the borrower returns the property and SPMU records the physical return inspection.</p>
+                    <strong>Awaiting Physical Return.</strong>
+                    <p>The Guard on Duty records the exit details on the printed Gate Pass at campus exit.</p>
                 </div>
             @elseif($gatePass->status === 'READY_FOR_PRINTING' && $physicalReturnRecorded)
                 <form method="post" action="{{ route('gate-passes.verify', $gatePass) }}" enctype="multipart/form-data" class="form-grid">
                     @csrf
                     <div class="callout info">
-                        <strong>Record accomplished Gate Pass</strong>
-                        <p>Receive the accomplished Gate Pass from the borrower after the physical return inspection, upload the copy, then encode the Guard on Duty and the off-campus release date/time exactly as written on the form.</p>
+                        <strong>Accomplished Gate Pass</strong>
+                        <p>Upload the accomplished Gate Pass and record the details written on the form.</p>
                     </div>
-                    <label>Signed Gate Pass Copy
+                    <label>Accomplished Gate Pass Copy
                         <input type="file" name="accomplished_form" accept="application/pdf,image/png,image/jpeg,image/webp" required>
                     </label>
                     <label>Guard on Duty
                         <input name="guard_name" value="{{ old('guard_name', $gatePass->guard_name) }}" maxlength="255" required>
                     </label>
-                    <label>Date &amp; Time Released Off Campus
+                    <label>Off-Campus Release Date &amp; Time
                         <input
                             type="datetime-local"
                             name="guard_signed_at"
@@ -127,19 +121,18 @@
                             @if($recordedReturn?->received_at) max="{{ $recordedReturn->received_at->format('Y-m-d\TH:i') }}" @endif
                             required
                         >
-                        <small class="meta">Enter the Guard's handwritten exit date/time exactly as shown on the accomplished Gate Pass. Do not use the Physical Return Recorded time.</small>
+                        <small class="meta">Enter the date and time written on the accomplished Gate Pass.</small>
                     </label>
-                    <label>Remarks <small class="meta">Optional</small>
+                    <label>Remarks (Optional)
                         <textarea name="remarks" rows="3" maxlength="2000" placeholder="Optional note">{{ old('remarks', $gatePass->verification_remarks) }}</textarea>
                     </label>
                     <button class="button primary ui-pressable">Save Gate Pass Record</button>
                 </form>
             @elseif($gatePass->status === 'READY_FOR_PRINTING')
-                <div class="callout info top-gap"><strong>Awaiting physical release.</strong> The printed Gate Pass is ready for use.</div>
+                <div class="callout info top-gap"><strong>Ready for Release.</strong> The printed Gate Pass is ready for use.</div>
             @elseif($gatePass->status === 'VERIFIED')
                 <div class="callout success top-gap">
-                    <strong>Accomplished Gate Pass recorded.</strong>
-                    <p>The accomplished Gate Pass has been received and recorded by SPMU.</p>
+                    <strong>Recorded.</strong>
                     @if($gatePass->accomplishedFile)
                         <div class="inline-actions top-gap">
                             <a class="button secondary small ui-pressable" href="{{ route('files.preview', $gatePass->accomplishedFile) }}">Preview</a>
@@ -157,16 +150,16 @@
                 <dt>Purpose</dt><dd>{{ $gatePass->purpose ?: ($version?->purpose_event ?: '—') }}</dd>
                 @if($gatePass->status === 'VERIFIED')
                     <dt>Guard on Duty</dt><dd>{{ $gatePass->guard_name ?: '—' }}</dd>
-                    <dt>Date &amp; Time Released Off Campus</dt>
+                    <dt>Off-Campus Release Date &amp; Time</dt>
                     <dd>
                         {{ optional($gatePass->guard_signed_at)->format('d M Y, g:i A') ?: '—' }}
-                        <small class="meta gate-pass-detail-note">Transcribed by the AO from the Guard's handwritten Released by / Date / Time section on the accomplished Gate Pass.</small>
+                        <small class="meta gate-pass-detail-note">From the Guard's handwritten entry on the accomplished Gate Pass.</small>
                     </dd>
                     @if($recordedReturn?->received_at)
                         <dt>Physical Return Recorded</dt>
                         <dd>
                             {{ $recordedReturn->received_at->format('d M Y, g:i A') }}
-                            <small class="meta gate-pass-detail-note">System timestamp of the AO physical return inspection. This is a separate event from the off-campus release time above.</small>
+                            <small class="meta gate-pass-detail-note">Recorded separately from the off-campus release time above.</small>
                         </dd>
                     @endif
                 @endif
@@ -176,7 +169,7 @@
                 <span class="status-badge status-danger">Not available</span>
             @endif
 
-            <div class="table-wrap top-gap">
+            <div class="table-wrap gate-pass-items-table top-gap">
                 <table><thead><tr><th>Item</th><th>Qty</th></tr></thead><tbody>
                 @foreach($offCampusLines as $line)
                     <tr><td>{{ $line->requestItem?->description_snapshot }}</td><td>{{ $line->approved_quantity + 0 }}</td></tr>
@@ -200,6 +193,8 @@
     .gate-pass-detail-grid { gap: 24px; }
     .gate-pass-detail-grid .callout p { max-width: 760px; line-height: 1.5; }
     .gate-pass-detail-note { display: block; margin-top: .2rem; line-height: 1.35; }
+    .gate-pass-items-table table { min-width: 0; }
+    .gate-pass-items-table th:last-child, .gate-pass-items-table td:last-child { width: 72px; text-align: right; }
     @media (max-width: 800px) { .gate-pass-progress { align-items: flex-start; } .gate-pass-progress-line { min-width: .75rem; } }
 </style>
 @endsection

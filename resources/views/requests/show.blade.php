@@ -18,7 +18,6 @@
         'document_type',
         App\Models\RequestSupportingDocument::TYPE_PERMISSION_TO_CONDUCT
     );
-    $pendingCancellation = $borrowingRequest->pendingCancellation;
     $isUnderSpmuReview = $isSpmu
         && $borrowingRequest->status === App\Enums\RequestStatus::UnderSpmu;
     $actionOfficerStep = $v->approvalSteps->firstWhere('sequence_no', 1);
@@ -1059,53 +1058,6 @@
 </section>
 @endif
 
-@if($pendingCancellation)
-<section class="content-area">
-    <article class="card">
-        <div class="card-header">
-            <div>
-                <p class="eyebrow">Cancellation requested</p>
-                <h2>SPMU confirmation required</h2>
-            </div>
-            <x-status-badge status="PENDING_SPMU" />
-        </div>
-
-        <p><strong>Reason:</strong> {{ $pendingCancellation->reason }}</p>
-        <p class="meta">The reservation remains active until SPMU approves this cancellation.</p>
-
-        @if($isSpmu)
-            <form
-                method="post"
-                action="{{ route('requests.cancellation.review', $borrowingRequest) }}"
-                class="form-grid"
-            >
-                @csrf
-                <label>
-                    Review remarks
-                    <textarea name="remarks"></textarea>
-                </label>
-                <div class="inline-actions">
-                    <button
-                        class="button primary"
-                        name="decision"
-                        value="APPROVED"
-                    >
-                        Confirm Cancellation & Restore Reservation
-                    </button>
-                    <button
-                        class="button danger"
-                        name="decision"
-                        value="REJECTED"
-                    >
-                        Reject Cancellation
-                    </button>
-                </div>
-            </form>
-        @endif
-    </article>
-</section>
-@endif
-
 @if(
     $isBorrower
     && !in_array(
@@ -1119,7 +1071,6 @@
         true
     )
     && !$borrowingRequest->custody?->released_at
-    && !$pendingCancellation
     && ! $pickupMissedForBorrower
 )
 <div class="content-area borrower-request-detail">

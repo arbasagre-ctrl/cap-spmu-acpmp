@@ -12,7 +12,6 @@
                 'REQUEST_RETURNED_FOR_REVISION' => 'Request Revision Required',
                 'REQUEST_REJECTED' => 'Borrowing Request Not Approved',
                 'REQUEST_CANCELLED' => 'Borrowing Request Cancelled',
-                'CANCELLATION_REJECTED' => 'Cancellation Request Not Approved',
                 'PICKUP_SCHEDULED' => 'Pickup Schedule Updated',
                 'PICKUP_EXPIRED' => 'Pickup Schedule Missed',
                 'PICKUP_RESCHEDULE_REQUESTED' => 'Pickup Reschedule Requested',

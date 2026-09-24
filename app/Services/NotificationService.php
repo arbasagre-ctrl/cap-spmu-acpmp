@@ -374,7 +374,6 @@ HTML;
             'RETURN_DUE_TOMORROW' => 'Return Due Tomorrow',
             'RETURN_SCHEDULE_ADJUSTED' => 'Return Schedule Updated',
             'EARLY_RETURN_REQUESTED' => 'Early Return Request Received',
-            'CANCELLATION_REJECTED' => 'Cancellation Request Not Approved',
             'PICKUP_EXPIRED' => 'Pickup Schedule Missed',
             'PICKUP_HELD_PREPARATION_ISSUE' => 'Pickup on Hold — Inventory Review',
             'PICKUP_RESCHEDULE_REQUESTED' => 'Pickup Reschedule Requested',

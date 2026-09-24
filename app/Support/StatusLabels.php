@@ -37,6 +37,7 @@ class StatusLabels
         'CANCELLED' => 'Cancelled',
         'VOID' => 'Voided',
         'AWAITING_ACCOMPLISHED_GATE_PASS' => 'Awaiting Accomplished Gate Pass',
+        'AWAITING_PHYSICAL_RETURN' => 'Awaiting Physical Return',
         'PREPARING_RELEASE' => 'Preparing for Release',
         'RETURN_PROCESSING' => 'Return Processing',
         'OBLIGATION_OPEN' => 'Accountability Pending',

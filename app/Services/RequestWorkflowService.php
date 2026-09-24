@@ -13,9 +13,7 @@ use App\Models\CustodyLine;
 use App\Models\CustodyTransaction;
 use App\Models\DownloadEvent;
 use App\Models\GatePass;
-use App\Models\Incident;
 use App\Models\NotificationEvent;
-use App\Models\OverdueCase;
 use App\Models\GeneratedDocument;
 use App\Models\RequestCancellation;
 use App\Models\RequestStatusHistory;
@@ -35,7 +33,74 @@ class RequestWorkflowService
         private NotificationService $notifications,
         private AuditService $audit,
         private OperationalCalendarService $operationalCalendar,
+        private BorrowerObligationService $obligations,
     ) {}
+
+    /**
+     * The single source of truth for whether a borrower may create or
+     * submit a new borrowing request right now. Combines the narrow
+     * scheduler-lag safety check below (an item can be physically overdue
+     * before the daily scheduler has recorded it as such) with
+     * BorrowerObligationService::blockingReasons(), which is itself the
+     * same "open case/obligation/restriction" definition already used by
+     * the borrower dashboard and My Obligations - so this never disagrees
+     * with what the borrower is shown there, and never decides eligibility
+     * from only the borrower's latest sanction.
+     *
+     * Throws with every applicable reason at once (not just the first
+     * found) so the borrower sees the complete picture instead of
+     * resolving one blocker only to discover another on the next attempt.
+     */
+    public function assertEligibleToBorrow(User $borrower): void
+    {
+        /*
+         * A normal active custody is NOT, by itself, a borrowing
+         * restriction. Borrowers may submit another request while
+         * previously issued property is still on custody, provided it is
+         * still within the effective return period. RETURN_PROCESSING/
+         * PARTIALLY_RETURNED records that are still on time are
+         * deliberately allowed.
+         */
+        $overdueCustody = CustodyTransaction::query()
+            ->where('borrower_user_id', $borrower->id)
+            ->whereNull('closed_at')
+            ->whereNotNull('released_at')
+            ->where(function ($query): void {
+                $query->where('status', 'OVERDUE')
+                    ->orWhere(function ($query): void {
+                        /*
+                         * Do not depend only on the scheduler having already
+                         * changed ACTIVE/RETURN_PROCESSING to OVERDUE. If the
+                         * effective due time has passed and released quantity
+                         * is still outstanding, this must already block.
+                         */
+                        $query->whereNotNull('due_at')
+                            ->where('due_at', '<', now())
+                            ->whereHas('lines', function ($lineQuery): void {
+                                $lineQuery->whereColumn(
+                                    'returned_quantity',
+                                    '<',
+                                    'actual_released_quantity'
+                                );
+                            });
+                    });
+            })
+            ->latest('id')
+            ->first();
+
+        $reasons = $overdueCustody
+            ? ["Property under {$overdueCustody->custody_no} is already overdue for return."]
+            : [];
+
+        $reasons = array_values(array_unique(array_merge(
+            $reasons,
+            $this->obligations->blockingReasons($borrower->id)
+        )));
+
+        if ($reasons !== []) {
+            throw ValidationException::withMessages(['restriction' => $reasons]);
+        }
+    }
 
     /**
      * Submit the borrower's request to the SPMU Action Officer.
@@ -75,103 +140,7 @@ class RequestWorkflowService
             ]);
         }
 
-        /*
-         * A normal active custody is NOT, by itself, a borrowing restriction.
-         * Borrowers may submit another request while previously issued property
-         * is still on custody, provided it is still within the effective return
-         * period and there is no unresolved accountability case or restriction.
-         *
-         * Block only when the borrower actually has a compliance problem:
-         *   - property is currently overdue and still physically outstanding;
-         *   - a late-return accountability case is still unresolved;
-         *   - a property accountability incident is still unresolved; or
-         *   - an active BorrowerRestriction exists (billing, sanction, etc.).
-         *
-         * RETURN_PROCESSING/PARTIALLY_RETURNED records that are still on time
-         * are deliberately allowed. This also avoids treating an internal
-         * Gate Pass/Laundry document follow-up as a new-borrowing prohibition
-         * unless an actual accountability restriction has been imposed.
-         */
-        $overdueCustody = CustodyTransaction::query()
-            ->where('borrower_user_id', $borrower->id)
-            ->whereNull('closed_at')
-            ->whereNotNull('released_at')
-            ->where(function ($query): void {
-                $query->where('status', 'OVERDUE')
-                    ->orWhere(function ($query): void {
-                        /*
-                         * Do not depend only on the scheduler having already
-                         * changed ACTIVE/RETURN_PROCESSING to OVERDUE. If the
-                         * effective due time has passed and released quantity is
-                         * still outstanding, submission must already be blocked.
-                         */
-                        $query->whereNotNull('due_at')
-                            ->where('due_at', '<', now())
-                            ->whereHas('lines', function ($lineQuery): void {
-                                $lineQuery->whereColumn(
-                                    'returned_quantity',
-                                    '<',
-                                    'actual_released_quantity'
-                                );
-                            });
-                    });
-            })
-            ->latest('id')
-            ->first();
-
-        if ($overdueCustody) {
-            throw ValidationException::withMessages([
-                'restriction' =>
-                    "You cannot submit a new borrowing request while {$overdueCustody->custody_no} has property that is already overdue for return.",
-            ]);
-        }
-
-        $openLateReturnCase = OverdueCase::query()
-            ->where('borrower_user_id', $borrower->id)
-            ->where('status', '!=', 'RESOLVED')
-            ->latest('id')
-            ->first();
-
-        if ($openLateReturnCase) {
-            $custodyNo = CustodyTransaction::query()
-                ->whereKey($openLateReturnCase->custody_transaction_id)
-                ->value('custody_no');
-
-            throw ValidationException::withMessages([
-                'restriction' => $custodyNo
-                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved late-return accountability case."
-                    : 'You cannot submit a new borrowing request while you have an unresolved late-return accountability case.',
-            ]);
-        }
-
-        $openIncident = Incident::query()
-            ->where('borrower_user_id', $borrower->id)
-            ->whereNotIn('status', ['RESOLVED', 'CLOSED', 'VOID_CORRECTION'])
-            ->latest('id')
-            ->first();
-
-        if ($openIncident) {
-            $custodyNo = CustodyTransaction::query()
-                ->whereKey($openIncident->custody_transaction_id)
-                ->value('custody_no');
-
-            throw ValidationException::withMessages([
-                'restriction' => $custodyNo
-                    ? "You cannot submit a new borrowing request while {$custodyNo} has an unresolved property accountability case."
-                    : 'You cannot submit a new borrowing request while you have an unresolved property accountability case.',
-            ]);
-        }
-
-        if ($borrower->activeRestrictions()->exists()) {
-            $reason = $borrower->activeRestrictions()->latest('effective_from')->value('reason');
-
-            throw ValidationException::withMessages([
-                'restriction' =>
-                    $reason
-                        ? 'Borrowing is currently restricted: '.$reason
-                        : 'You currently have an unresolved borrowing obligation. Resolve it with SPMU before submitting another request.',
-            ]);
-        }
+        $this->assertEligibleToBorrow($borrower);
 
         DB::transaction(
             function () use (
@@ -1742,7 +1711,6 @@ class RequestWorkflowService
                 $spmuHead,
                 $reason,
                 true,
-                true,
                 'PREPARATION_UNABLE_TO_FULFILL',
                 "SPMU could not complete preparation for request {$request->request_no} because the full approved quantity was not physically available. The approved request was cancelled before release. No items were released, this is not recorded as a missed pickup, and the reserved quantity has been returned to inventory. If you still need the items, submit a new borrowing request.",
                 'PREPARATION_UNABLE_TO_FULFILL'
@@ -1750,82 +1718,17 @@ class RequestWorkflowService
         }, 3);
     }
 
-    public function reviewCancellation(
-        BorrowingRequest $request,
-        User $spmu,
-        string $decision,
-        ?string $remarks = null
-    ): void {
-        abort_unless($spmu->hasRole(UserRole::Spmu), 403);
-        $decision = strtoupper($decision);
-
-        if (! in_array($decision, ['APPROVED', 'REJECTED'], true)) {
-            throw ValidationException::withMessages([
-                'decision' => 'Choose APPROVED or REJECTED.',
-            ]);
-        }
-
-        $cancellation = RequestCancellation::query()
-            ->where('request_id', $request->id)
-            ->where('status', 'PENDING_SPMU')
-            ->latest('id')
-            ->first();
-
-        if (! $cancellation) {
-            throw ValidationException::withMessages([
-                'cancel' => 'There is no pending cancellation request for this borrowing request.',
-            ]);
-        }
-
-        if ($decision === 'REJECTED') {
-            $cancellation->update([
-                'status' => 'REJECTED',
-                'reviewed_by_user_id' => $spmu->id,
-                'reviewed_at' => now(),
-                'decision_remarks' => $remarks,
-            ]);
-
-            $this->audit->record(
-                'CANCELLATION_REJECTED',
-                $cancellation,
-                reason: $remarks
-            );
-
-            $this->notifications->send(
-                'CANCELLATION_REJECTED',
-                collect([$request->borrower]),
-                "Cancellation request for {$request->request_no} was not approved by SPMU.".($remarks ? " {$remarks}" : ''),
-                $request
-            );
-
-            return;
-        }
-
-        DB::transaction(function () use ($request, $spmu, $remarks, $cancellation): void {
-            $cancellation->update([
-                'status' => 'CONFIRMED',
-                'reviewed_by_user_id' => $spmu->id,
-                'reviewed_at' => now(),
-                'decision_remarks' => $remarks,
-                'cancelled_at' => now(),
-            ]);
-
-            $this->finalizeCancellation(
-                $request,
-                $spmu,
-                $cancellation->reason,
-                true,
-                false
-            );
-        }, 3);
-    }
-
+    /**
+     * Cancellation is finalized in one step for every current caller
+     * (cancel(), cancelApprovedForPreparationDiscrepancy()) - no current
+     * workflow defers a cancellation to a separate SPMU confirmation step,
+     * so a RequestCancellation history record is always written here.
+     */
     private function finalizeCancellation(
         BorrowingRequest $request,
         User $actor,
         string $reason,
         bool $afterReservation,
-        bool $createCancellationRecord = true,
         string $notificationEventCode = 'REQUEST_CANCELLED',
         ?string $notificationMessage = null,
         string $auditActionCode = 'REQUEST_CANCELLED'
@@ -1835,7 +1738,6 @@ class RequestWorkflowService
             $actor,
             $reason,
             $afterReservation,
-            $createCancellationRecord,
             $notificationEventCode,
             $notificationMessage,
             $auditActionCode
@@ -1848,28 +1750,26 @@ class RequestWorkflowService
                 );
             }
 
-            if ($createCancellationRecord) {
-                $cancelledBySpmu = in_array(
-                    $actor->access_classification,
-                    [AccessClassification::SpmuHead, AccessClassification::SpmuOfficer],
-                    true
-                );
+            $cancelledBySpmu = in_array(
+                $actor->access_classification,
+                [AccessClassification::SpmuHead, AccessClassification::SpmuOfficer],
+                true
+            );
 
-                RequestCancellation::query()->create([
-                    'request_id' => $request->id,
-                    'request_version_id' => $request->currentVersion?->id,
-                    'cancelled_by_user_id' => $actor->id,
-                    'phase' => $afterReservation
-                        ? 'AFTER_APPROVAL_BEFORE_RELEASE'
-                        : 'BEFORE_FINAL_APPROVAL',
-                    'reason' => $reason,
-                    'status' => 'CONFIRMED',
-                    'requested_at' => now(),
-                    'reviewed_by_user_id' => $cancelledBySpmu ? $actor->id : null,
-                    'reviewed_at' => $cancelledBySpmu ? now() : null,
-                    'cancelled_at' => now(),
-                ]);
-            }
+            RequestCancellation::query()->create([
+                'request_id' => $request->id,
+                'request_version_id' => $request->currentVersion?->id,
+                'cancelled_by_user_id' => $actor->id,
+                'phase' => $afterReservation
+                    ? 'AFTER_APPROVAL_BEFORE_RELEASE'
+                    : 'BEFORE_FINAL_APPROVAL',
+                'reason' => $reason,
+                'status' => 'CONFIRMED',
+                'requested_at' => now(),
+                'reviewed_by_user_id' => $cancelledBySpmu ? $actor->id : null,
+                'reviewed_at' => $cancelledBySpmu ? now() : null,
+                'cancelled_at' => now(),
+            ]);
 
             /*
              * Borrower Slip, Gate Pass, Laundry Form, request-letter copies,

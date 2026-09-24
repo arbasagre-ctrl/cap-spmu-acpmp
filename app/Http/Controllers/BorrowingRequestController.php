@@ -255,7 +255,7 @@ class BorrowingRequestController extends Controller
         );
     }
 
-    public function create(Request $request): View
+    public function create(Request $request, \App\Services\BorrowerObligationService $obligations): View
     {
         /*
          * Organizational identity is centrally managed by ICTU. A borrower
@@ -264,6 +264,15 @@ class BorrowingRequestController extends Controller
          */
         $borrower = $request->user()->loadMissing(['organizationalUnit', 'authorizedOrganizationalUnits']);
         $requestingUnitOptions = $this->requestingUnitOptions($borrower);
+
+        /*
+         * Server-side submission is the real gate (assertEligibleToBorrow()
+         * in store()/RequestWorkflowService::submit()) - this is only the
+         * same reasons shown up front so a restricted borrower is not left
+         * to fill out the whole multi-step form before discovering why it
+         * was rejected at the very end.
+         */
+        $borrowingBlockedReasons = $obligations->blockingReasons($borrower->id);
 
         $prefillRequestingUnitId = collect($requestingUnitOptions)
             ->firstWhere('is_primary', true)['id']
@@ -281,6 +290,7 @@ class BorrowingRequestController extends Controller
                 'borrowingRequest' => new BorrowingRequest,
                 'version' => new RequestVersion,
 
+                'borrowingBlockedReasons' => $borrowingBlockedReasons,
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
@@ -313,12 +323,13 @@ class BorrowingRequestController extends Controller
 
         $user = $request->user();
 
-        if ($user->activeRestrictions()->exists()) {
-            throw ValidationException::withMessages([
-                'request' =>
-                    'An active borrowing restriction prevents a new request.',
-            ]);
-        }
+        /*
+         * Same eligibility gate submit() enforces (overdue custody, open
+         * accountability cases, outstanding billing, active restrictions) -
+         * checked here too so a restricted borrower cannot even create a
+         * new request/draft, not only be stopped at final submission.
+         */
+        $workflow->assertEligibleToBorrow($user);
 
         $isSubmission = $request->input('intent') === 'submit';
 
@@ -545,7 +556,8 @@ class BorrowingRequestController extends Controller
 
     public function edit(
         Request $request,
-        BorrowingRequest $borrowingRequest
+        BorrowingRequest $borrowingRequest,
+        \App\Services\BorrowerObligationService $obligations
     ): View {
         abort_unless(
             $borrowingRequest->borrower_user_id
@@ -582,6 +594,8 @@ class BorrowingRequestController extends Controller
 
                 'version' =>
                     $borrowingRequest->currentVersion,
+
+                'borrowingBlockedReasons' => $obligations->blockingReasons($borrower->id),
 
                 'officeUnitsByDivision' => [],
                 'requestingUnitOptions' => $requestingUnitOptions,
@@ -630,6 +644,8 @@ class BorrowingRequestController extends Controller
         if ($request->input('intent') === 'submit') {
             $this->validateESignatureConfirmation($request);
         }
+
+        $workflow->assertEligibleToBorrow($request->user());
 
         DB::transaction(
             function () use (
@@ -862,42 +878,6 @@ class BorrowingRequestController extends Controller
         }
 
         return back()->with('status', $message);
-    }
-
-    public function reviewCancellation(
-        Request $request,
-        BorrowingRequest $borrowingRequest,
-        RequestWorkflowService $workflow
-    ): RedirectResponse {
-        $data = $request->validate([
-            'decision' => [
-                'required',
-                Rule::in([
-                    'APPROVED',
-                    'REJECTED',
-                ]),
-            ],
-
-            'remarks' => [
-                'nullable',
-                'string',
-                'max:2000',
-            ],
-        ]);
-
-        $workflow->reviewCancellation(
-            $borrowingRequest,
-            $request->user(),
-            $data['decision'],
-            $data['remarks'] ?? null
-        );
-
-        return back()->with(
-            'status',
-            $data['decision'] === 'APPROVED'
-                ? 'Cancellation confirmed by SPMU. The unreleased reservation was restored to Available inventory.'
-                : 'Cancellation request rejected. The existing reservation remains active.'
-        );
     }
 
     private function validateRequest(

@@ -160,6 +160,92 @@ class BorrowerObligationService
     }
 
     /**
+     * Whether this borrower currently has any open accountability case,
+     * outstanding billing, or active restriction that must block a new
+     * borrowing request. This is the single source of truth for borrowing
+     * eligibility: it reuses the exact same "open" definition as the
+     * borrower dashboard and My Obligations (filterOpenRecords()), so
+     * eligibility is decided from the borrower's OVERALL standing - every
+     * open case, obligation, and restriction - never from only the most
+     * recently confirmed sanction.
+     */
+    public function isEligibleToBorrow(int $borrowerUserId): bool
+    {
+        return $this->blockingReasons($borrowerUserId) === [];
+    }
+
+    /**
+     * Human-readable reasons this borrower cannot currently submit a new
+     * borrowing request, one per open case/obligation/restriction found.
+     * Empty when eligible.
+     *
+     * A resolved case and an expired sanction restriction are each removed
+     * independently of one another (filterOpenRecords()'s own status/date
+     * rules), so a case that is still open keeps blocking even after its
+     * sanction's suspension period has ended, and an active suspension
+     * keeps blocking even after its underlying case is fully resolved -
+     * only when both clear does this return empty.
+     *
+     * @return list<string>
+     */
+    public function blockingReasons(int $borrowerUserId): array
+    {
+        [$openIncidents, $openOverdueCases, $openBillings, $activeRestrictions] = $this->filterOpenRecords(
+            $this->recordsForBorrower($borrowerUserId)
+        );
+
+        $reasons = [];
+
+        foreach ($openOverdueCases as $overdueCase) {
+            $custodyNo = $overdueCase->custody?->custody_no;
+            $reasons[] = $custodyNo
+                ? "Active late-return accountability case ({$custodyNo})."
+                : 'Active late-return accountability case.';
+        }
+
+        foreach ($openIncidents as $incident) {
+            $custodyNo = $incident->custody?->custody_no;
+            $reasons[] = $custodyNo
+                ? "Active property accountability case ({$custodyNo})."
+                : 'Active property accountability case.';
+        }
+
+        foreach ($openBillings as $billing) {
+            $reasons[] = "Outstanding payment: {$billing->billing_no}.";
+        }
+
+        foreach ($activeRestrictions as $restriction) {
+            /*
+             * A restriction created directly from an open Incident/OverdueCase
+             * (PENDING_RETURN, OVERDUE_RETURN, UNRESOLVED_INCIDENT) is already
+             * represented by that case above - listing it again would repeat
+             * the same underlying fact under two different wordings.
+             */
+            if (in_array($restriction->restriction_type, ['PENDING_RETURN', 'OVERDUE_RETURN', 'UNRESOLVED_INCIDENT'], true)) {
+                continue;
+            }
+
+            if ($restriction->restriction_type === 'SANCTION_SUSPENSION') {
+                $isCurrentSemesterSuspension = (int) ($restriction->sanction?->offense_no ?? 0) >= 3;
+                $until = $restriction->effective_to?->format('d M Y');
+
+                $reasons[] = match (true) {
+                    $isCurrentSemesterSuspension && $until => "Suspended for the current semester (until {$until}).",
+                    $isCurrentSemesterSuspension => 'Suspended for the current semester.',
+                    (bool) $until => "Suspension active until {$until}.",
+                    default => 'Suspension active.',
+                };
+
+                continue;
+            }
+
+            $reasons[] = $restriction->reason ?: 'An active borrowing restriction is in effect.';
+        }
+
+        return array_values(array_unique($reasons));
+    }
+
+    /**
      * @param  array{incidents: Collection, billings: Collection, restrictions: Collection, overdueCases: Collection}  $records
      * @return array{0: Collection, 1: Collection, 2: Collection, 3: Collection}
      */

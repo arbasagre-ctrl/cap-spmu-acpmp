@@ -311,7 +311,7 @@
                 $gatePass->verified_at
                     ? ($gatePass->verifiedBy?->full_name ?: 'SPMU Action Officer')
                     : ($gatePass->uploadedBy?->full_name ?: 'SPMU Action Officer'),
-                'Signed/accomplished Gate Pass received and recorded by SPMU.',
+                'Accomplished Gate Pass recorded by SPMU.',
                 'gate-pass-recorded',
                 85
             );

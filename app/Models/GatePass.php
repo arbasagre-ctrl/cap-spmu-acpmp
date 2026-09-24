@@ -109,11 +109,22 @@ class GatePass extends Model
         }
 
         if ((string) $this->status === 'VERIFIED') {
-            return ['key' => 'VERIFIED', 'label' => 'Completed', 'tone' => 'success'];
+            return ['key' => 'VERIFIED', 'label' => 'Recorded', 'tone' => 'success'];
         }
 
         if ((string) $this->status === 'READY_FOR_PRINTING') {
             if ($custody?->released_at) {
+                $physicalReturnRecorded = $custody->returns
+                    ->contains(fn ($return) => $return->received_at !== null);
+
+                if (! $physicalReturnRecorded) {
+                    return [
+                        'key' => 'AWAITING_PHYSICAL_RETURN',
+                        'label' => 'Awaiting Physical Return',
+                        'tone' => 'warning',
+                    ];
+                }
+
                 return [
                     'key' => 'AWAITING_ACCOMPLISHED_GATE_PASS',
                     'label' => 'Awaiting Accomplished Gate Pass',

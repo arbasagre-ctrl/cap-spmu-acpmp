@@ -108,7 +108,7 @@ class ConditionalProcessingController extends Controller
                     && $guardReleasedAt->lt($spmuReleasedAt->copy()->startOfMinute())) {
                     throw ValidationException::withMessages([
                         'guard_signed_at' =>
-                            'The off-campus release time cannot be earlier than the SPMU physical release time. Enter the date and time written by the Guard on the accomplished Gate Pass.',
+                            'The off-campus release time cannot be earlier than the recorded item release.',
                     ]);
                 }
 
@@ -116,7 +116,7 @@ class ConditionalProcessingController extends Controller
                     && $guardReleasedAt->gt($recordedReturnAt->copy()->endOfMinute())) {
                     throw ValidationException::withMessages([
                         'guard_signed_at' =>
-                            'The off-campus release time cannot be later than the Physical Return Recorded time. Enter the date and time written by the Guard on the accomplished Gate Pass.',
+                            'The off-campus release time must be before the recorded physical return.',
                     ]);
                 }
 

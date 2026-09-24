@@ -14,10 +14,6 @@
     margin-top: 16px;
 }
 
-#request-form .create-request-ui .picker-guidance {
-    border-left-width: 3px;
-}
-
 /* Disabled actions must look disabled, not like active primary actions. */
 #request-form .create-request-ui .button:disabled,
 #request-form .create-request-ui .button[disabled] {

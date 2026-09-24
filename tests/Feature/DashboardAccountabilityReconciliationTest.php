@@ -801,7 +801,7 @@ class DashboardAccountabilityReconciliationTest extends TestCase
         $view = file_get_contents(resource_path('views/accountability/index.blade.php'));
 
         $this->assertStringContainsString(
-            'Record ONLY the official disposition actually stated in the accomplished RSLDDP.',
+            'Record the official disposition stated in the accomplished RSLDDP.',
             $view
         );
         $this->assertStringContainsString(

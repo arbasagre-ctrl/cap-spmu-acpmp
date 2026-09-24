@@ -665,7 +665,7 @@
                                             'FOR_BILLING' => 'Generate Billing',
                                             'BILLING_PENDING', 'RSLDDP_PAYMENT_REQUIRED' => 'Record Receipt',
                                             'RSLDDP_AWAITING_UPLOAD', 'COMPLIANCE_RSLDDP_PENDING' => 'Upload RSLDDP',
-                                            'RSLDDP_DISPOSITION_PENDING' => 'Record Disposition',
+                                            'RSLDDP_DISPOSITION_PENDING' => 'Record Official Disposition',
                                             'RSLDDP_COMPLIANCE_VERIFICATION' => $incident->official_disposition === 'MONETARY_SETTLEMENT' ? 'Record Receipt' : 'Record Verification',
                                             'COMPLIANCE_REQUIRED' => 'Verify Compliance',
                                             'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'Record Billing Statement',
@@ -678,7 +678,7 @@
                                                 'FOR_BILLING' => 'Generate the required property Billing Statement.',
                                                 'BILLING_PENDING', 'RSLDDP_PAYMENT_REQUIRED' => 'Record the official Cashier receipt after payment.',
                                                 'RSLDDP_AWAITING_UPLOAD', 'COMPLIANCE_RSLDDP_PENDING' => 'Upload the accomplished RSLDDP received by SPMU.',
-                                                'RSLDDP_DISPOSITION_PENDING' => 'Record the disposition stated in the accomplished RSLDDP.',
+                                                'RSLDDP_DISPOSITION_PENDING' => 'Record the official disposition stated in the accomplished RSLDDP.',
                                                 'RSLDDP_COMPLIANCE_VERIFICATION' => $incident->official_disposition === 'MONETARY_SETTLEMENT' ? 'Record the official Cashier receipt after payment.' : 'Verify the required property compliance.',
                                                 'COMPLIANCE_REQUIRED' => 'Verify the completed property compliance recorded for this legacy case.',
                                                 'RSLDDP_FOR_ACCOUNTING_PROCESSING' => 'Record the official Accounting-issued Billing Statement.',
@@ -792,7 +792,7 @@
                                                 @elseif($statusKey === 'RSLDDP_DISPOSITION_PENDING')
                                                     <form method="post" action="{{ route('incidents.disposition.record', $incident) }}" data-disposition-form>
                                                         @csrf
-                                                        <p class="accountability-dialog-note">Record only the disposition stated in the accomplished RSLDDP. Do not choose a settlement outcome on the borrower's behalf.</p>
+                                                        <p class="accountability-dialog-note">Record the official disposition stated in the accomplished RSLDDP. Do not choose a settlement outcome on the borrower's behalf.</p>
                                                         <label>Official Disposition
                                                             <select name="official_disposition" required data-disposition-select>
                                                                 <option value="">Select disposition</option>
@@ -814,7 +814,7 @@
                                                         </label>
                                                         <div class="accountability-dialog-actions">
                                                             <button type="button" class="button secondary small" data-dialog-close>Cancel</button>
-                                                            <button class="button primary small">Save Disposition</button>
+                                                            <button class="button primary small">Record Official Disposition</button>
                                                         </div>
                                                     </form>
                                                 @elseif($statusKey === 'COMPLIANCE_REQUIRED')

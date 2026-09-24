@@ -73,11 +73,4 @@ class BorrowingRequest extends Model
     {
         return $this->hasMany(RequestCancellation::class, 'request_id');
     }
-
-    public function pendingCancellation(): HasOne
-    {
-        return $this->hasOne(RequestCancellation::class, 'request_id')
-            ->where('status', 'PENDING_SPMU')
-            ->latestOfMany();
-    }
 }
