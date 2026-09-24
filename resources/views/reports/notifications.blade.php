@@ -59,7 +59,7 @@
     <div>
         <p class="eyebrow">ICTU notification administration</p>
         <h1>Notification Delivery</h1>
-        <p>Review system, email, and SMS delivery attempts and provider responses.</p>
+        <p>Review system and email delivery attempts and provider responses.</p>
     </div>
 </section>
 

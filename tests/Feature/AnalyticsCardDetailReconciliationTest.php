@@ -97,7 +97,7 @@ class AnalyticsCardDetailReconciliationTest extends TestCase
         $detail = $this->detail('forecast.division');
 
         /* The card is a forecast, so the detail is titled as one. */
-        $this->assertSame('Forecasted Demand by Organizational Classification', $detail['title']);
+        $this->assertSame('Forecasted Demand by Division', $detail['title']);
         $this->assertNull($detail['empty']);
 
         /* Every division the card draws, in the card's order: forecast descending. */
@@ -175,7 +175,7 @@ class AnalyticsCardDetailReconciliationTest extends TestCase
 
         $division = $this->detail('forecast.division');
 
-        $this->assertSame('Scheduled Demand by Organizational Classification', $division['title']);
+        $this->assertSame('Scheduled Demand by Division', $division['title']);
         $this->assertStringContainsString('not a forecast', $division['context']);
         $this->assertNull($division['empty']);
         $this->assertSame(
@@ -207,9 +207,8 @@ class AnalyticsCardDetailReconciliationTest extends TestCase
         ]));
 
         $page->assertOk();
-        $page->assertSee('Scheduled Demand by Organizational Classification');
-        $page->assertDontSee('Forecasted Demand by Organizational Classification');
-        $page->assertDontSee('No organizational classification has enough recorded activity');
+        $page->assertSee('Scheduled Demand by Division');
+        $page->assertDontSee('Forecasted Demand by Division');
         $page->assertDontSee('No division has enough recorded activity');
     }
 

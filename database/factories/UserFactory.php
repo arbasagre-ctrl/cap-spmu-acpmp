@@ -36,7 +36,6 @@ class UserFactory extends Factory
             'notification_preferences' => [
                 'system' => true,
                 'email' => true,
-                'sms' => false,
             ],
             'account_status' => AccountStatus::Active,
             'access_classification' => AccessClassification::BorrowerOnly,

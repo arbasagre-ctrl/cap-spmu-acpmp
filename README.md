@@ -36,7 +36,7 @@ The application has one requester portal and three active staff classifications:
 - Exact reservation/allocation with database locking and no silent quantity reduction.
 - Cancellation/Early Return controls and item-level physical return inspection.
 - Damage, destruction, missing, lost, stolen, evidence, billing, sanctions and restrictions.
-- In-system notifications, SMTP email, configurable SMS webhook and delivery records.
+- In-system notifications, SMTP email and delivery records.
 - Reports, CSV exports, audit history, security headers, login throttling and protected file storage.
 - Docker/MariaDB application, database and scheduler services.
 

@@ -1,8 +1,7 @@
 <section class="request-card request-details-card" data-stage-panel="1" aria-labelledby="request-details-heading">
     <div class="request-card-header">
         <div>
-            <p class="eyebrow">Request details</p>
-            <h2 id="request-details-heading">Borrowing information</h2>
+            <h2 class="eyebrow" id="request-details-heading">Borrowing information</h2>
         </div>
         <span class="visually-hidden" id="inventory-date-context">Select dates</span>
     </div>
@@ -52,15 +51,12 @@
             @endphp
 
             <label>
-                Organizational Classification
-                <input
+                Division
+                <span
+                    class="request-static-field"
                     id="division-display"
-                    value="{{ $selectedRequestingOption['division_label'] ?? '' }}"
-                    readonly
-                    tabindex="-1"
-                    aria-readonly="true"
-                    placeholder="No organizational classification assigned"
-                >
+                    aria-live="polite"
+                >{{ $selectedRequestingOption['division_label'] ?? 'No division assigned' }}</span>
                 <input id="division_code" type="hidden" name="division_code" value="{{ $effectiveDivisionCode }}">
             </label>
 
@@ -89,13 +85,7 @@
                         Select the Office / College / Unit you are officially representing for this request.
                     </small>
                 @elseif(count($requestingUnitOptions) === 1)
-                    <input
-                        id="requesting-unit-display"
-                        value="{{ $requestingUnitOptions[0]['name'] }}"
-                        readonly
-                        tabindex="-1"
-                        aria-readonly="true"
-                    >
+                    <span class="request-static-field" id="requesting-unit-display">{{ $requestingUnitOptions[0]['name'] }}</span>
                     <input
                         id="requesting_organizational_unit_id"
                         type="hidden"
@@ -104,14 +94,7 @@
                         required
                     >
                 @else
-                    <input
-                        id="requesting-unit-display"
-                        value=""
-                        readonly
-                        tabindex="-1"
-                        aria-readonly="true"
-                        placeholder="No authorized Office / College / Unit"
-                    >
+                    <span class="request-static-field is-empty" id="requesting-unit-display">No authorized Office / College / Unit</span>
                     <input
                         id="requesting_organizational_unit_id"
                         type="hidden"
@@ -169,7 +152,7 @@
         </div>
 
         <small class="field-help request-schedule-help">
-            Please indicate the date by which you need to already have the requested item(s) in your custody for the intended activity. SPMU will arrange the appropriate pickup and release schedule after approval.
+            Enter the date by which you need the requested item(s) in your custody for the activity.
         </small>
     </div>
 <div class="student-activity-panel">
@@ -217,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const label = option.dataset.divisionLabel || '';
         const name = option.dataset.unitName || option.textContent?.replace(/\s+—\s+Primary\s*$/, '').trim() || '';
 
-        if (divisionDisplay) divisionDisplay.value = label;
+        if (divisionDisplay) divisionDisplay.textContent = label || 'No division assigned';
         if (divisionCode) divisionCode.value = code;
         if (officeUnit) officeUnit.value = name;
     };

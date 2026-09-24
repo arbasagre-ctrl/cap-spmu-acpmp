@@ -89,9 +89,9 @@
 
             <div class="form-columns">
                 <label>
-                    Organizational Classification
+                    Division
                     <select name="division_code" id="ictu-division" @required(!$historicalPrimaryUnit)>
-                        <option value="">Select organizational classification</option>
+                        <option value="">Select Division</option>
                         @foreach($divisionOptions as $code => $label)
                             <option value="{{ $code }}" @selected(old('division_code', $selectedDivisionCode) === $code)>
                                 {{ $label }}
@@ -153,7 +153,7 @@
                         maxlength="255"
                         placeholder="Enter the official Office / College / Unit name"
                     >
-                    <small class="field-note">The new Office / College / Unit will be saved under the selected Organizational Classification.</small>
+                    <small class="field-note">The new Office / College / Unit will be saved under the selected Division.</small>
                     @error('new_organizational_unit_name')
                         <small class="field-error">{{ $message }}</small>
                     @enderror

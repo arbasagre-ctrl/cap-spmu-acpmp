@@ -22,7 +22,6 @@ class NotificationPreferenceTest extends TestCase
             'notification_preferences' => [
                 'system' => true,
                 'email' => false,
-                'sms' => false,
             ],
         ]);
 

@@ -58,10 +58,10 @@
 
             <label for="analytics-group">
                 <span class="analytics-filter-label">
-                    Organizational Classification
+                    Division
                 </span>
                 <select id="analytics-group" name="group" onchange="this.form.submit()">
-                    <option value="all" @selected($selectedDivision === 'all')>All organizational classifications</option>
+                    <option value="all" @selected($selectedDivision === 'all')>All divisions</option>
                     @foreach($divisions as $code => $label)
                         <option value="{{ $code }}" @selected($selectedDivision === $code)>{{ $label }}</option>
                     @endforeach

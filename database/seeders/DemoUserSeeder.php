@@ -31,7 +31,7 @@ class DemoUserSeeder extends Seeder
                 'designation' => $classification === AccessClassification::BorrowerOnly ? null : $classification->label(),
                 'employment_type' => $employment,
                 'mobile_no' => '09170000000',
-                'notification_preferences' => ['system' => true, 'email' => true, 'sms' => true],
+                'notification_preferences' => ['system' => true, 'email' => true],
                 'account_status' => AccountStatus::Active,
                 'access_classification' => $classification,
             ]);

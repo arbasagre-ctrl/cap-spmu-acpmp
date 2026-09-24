@@ -113,7 +113,7 @@ class AnalyticsCardDetailService
     private function inventoryCurrentNote(): string
     {
         return 'Institution-wide current inventory snapshot: measured as of today. '
-            .'Reporting Period, Organizational Classification, Office / College / Unit, and Borrower filters do not change physical stock totals.';
+            .'Reporting Period, Division, Office / College / Unit, and Borrower filters do not change physical stock totals.';
     }
 
     /** The previous period's dates as the panel prints them. */
@@ -600,12 +600,12 @@ class AnalyticsCardDetailService
         );
 
         return [
-            'title' => 'Demand by Organizational Classification',
+            'title' => 'Demand by Division',
             'value' => $groups['total'],
             'value_label' => $groups['total'] === 1 ? 'request filed' : 'requests filed',
             'context' => 'Share of filed borrowing demand',
             'note' => $this->periodNote($scope)
-                .' An organizational classification with no activity is left out of the comparison rather than shown '
+                .' A division with no activity is left out of the comparison rather than shown '
                 .'as a zero share.',
             'bars' => $groups['groups']->isEmpty() ? null : $groups['groups']->map(
                 static fn (array $group): array => [
@@ -1378,10 +1378,10 @@ class AnalyticsCardDetailService
             $scope,
             $rows,
             $projected,
-            'Demand by Organizational Classification',
-            'organizational classification',
+            'Demand by Division',
+            'division',
             $projected
-                ? 'No organizational classification is expected to record borrowing activity next period.'
+                ? 'No division is expected to record borrowing activity next period.'
                 : 'No borrowing requests are recorded for the next period yet.'
         );
     }

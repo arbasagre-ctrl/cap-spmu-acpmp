@@ -586,11 +586,11 @@ class ReportPageTest extends TestCase
 
         /*
          * One compact value list, not the old per-filter label sentence. The
-         * report's own "Organizational Classification" table column is
-         * unrelated and expected to still appear.
+         * report's own "Division" table column is unrelated and expected to
+         * still appear.
          */
         $response->assertDontSee('Applied Filters', false);
-        $response->assertDontSee('All classifications', false);
+        $response->assertDontSee('All divisions', false);
         $response->assertDontSee('All units', false);
     }
 

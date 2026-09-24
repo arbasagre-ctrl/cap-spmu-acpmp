@@ -32,9 +32,9 @@ final class ReportCatalogue
     {
         return [
             'division' => [
-                'label' => 'Organizational Classification',
+                'label' => 'Division',
                 'type' => 'select',
-                'placeholder' => 'All organizational classifications',
+                'placeholder' => 'All divisions',
                 'options' => fn (): array => OrganizationalStructure::divisions(),
             ],
 

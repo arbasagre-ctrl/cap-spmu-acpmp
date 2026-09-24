@@ -119,7 +119,7 @@ class OrganizationalStructureTest extends TestCase
         $this->actingAs($ictu)
             ->get(route('administration.users.create'))
             ->assertOk()
-            ->assertSee('Organizational Classification')
+            ->assertSee('Division')
             ->assertSee('Research, Innovation, &amp; Collaboration', false)
             ->assertSee('Supply and Property Management Unit (SPMU)')
             ->assertDontSee('Office of the Vice President for Academic Affairs');
@@ -127,7 +127,7 @@ class OrganizationalStructureTest extends TestCase
         $this->actingAs($borrower)
             ->get(route('profile.show'))
             ->assertOk()
-            ->assertSee('Organizational Classification')
+            ->assertSee('Division')
             ->assertSee('Academic')
             ->assertSee('College of Computer Studies (CCS)');
     }

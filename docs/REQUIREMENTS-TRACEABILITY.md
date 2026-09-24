@@ -15,7 +15,7 @@
 | Linen-only Laundry portal/workflow | LaundryJob/LaundryJobLine, LaundryController, Laundry views | SimpleLaundryWorkflowTest |
 | Cancellation and Early Return | RequestWorkflowService, EarlyReturnRequest, SPMU physical inspection | RevisionControlsTest |
 | Returns/incidents/accountability | custody/return/incident/billing services and controllers | CompleteWorkflowTest |
-| Notifications | inbox, SMTP, SMS webhook, delivery evidence | workflow and role smoke tests |
+| Notifications | inbox, SMTP, delivery evidence | workflow and role smoke tests |
 | Reports/audit | ReportController and AuditService | role/page tests |
 | Docker/security/deployment | Docker stack, scheduler, headers, throttling, protected storage | ProtectedFilePreviewTest and deployment checks |
 

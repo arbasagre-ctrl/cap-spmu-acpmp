@@ -175,7 +175,7 @@ class LaundryOperationsReport implements ReportBuilder
                 ['key' => 'custody_no', 'label' => 'Custody No.'],
                 ['key' => 'request_no', 'label' => 'Request No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'division', 'label' => 'Division'],
                 ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'linen_items', 'label' => 'Linen'],
                 ['key' => 'issued_at', 'label' => 'Issue Date'],

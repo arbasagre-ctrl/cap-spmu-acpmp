@@ -212,7 +212,6 @@ class CreateSystemUser extends Command
                         'notification_preferences' => [
                             'system' => true,
                             'email' => true,
-                            'sms' => false,
                         ],
                     ],
                 );

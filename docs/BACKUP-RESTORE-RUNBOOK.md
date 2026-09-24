@@ -79,7 +79,7 @@ Compare-Object (Get-Content "$backupSet\SHA256SUMS.txt") $actualChecksums
 
 ## Isolated restore rehearsal
 
-Never rehearse against the production project name, production MariaDB volume, or live storage volume. Use an isolated working copy, a new Compose project name, fresh volumes, and an isolated `.env.docker` with `RUN_MIGRATIONS=false` while restoring the captured database. Before starting the scheduler, use a rehearsal-safe mail transport and blank SMS configuration so no restored notification work reaches production recipients.
+Never rehearse against the production project name, production MariaDB volume, or live storage volume. Use an isolated working copy, a new Compose project name, fresh volumes, and an isolated `.env.docker` with `RUN_MIGRATIONS=false` while restoring the captured database. Before starting the scheduler, use a rehearsal-safe mail transport so no restored notification work reaches production recipients.
 
 ```powershell
 $restoreProject = 'spmu-acpmp-restore-REPLACE-WITH-REHEARSAL-ID'

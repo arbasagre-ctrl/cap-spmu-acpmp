@@ -1238,7 +1238,7 @@
                     <strong id="summary-location">&mdash;</strong>
                 </div>
                 <div class="review-summary-field">
-                    <span>Organizational Classification</span>
+                    <span>Division</span>
                     <strong id="summary-division">&mdash;</strong>
                 </div>
                 <div class="review-summary-field">
@@ -1620,7 +1620,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setSummaryText(summaryLocation, locationField?.value);
         setSummaryText(
             summaryDivision,
-            divisionLabels[divisionSelect?.value || ''] || divisionDisplay?.value
+            divisionLabels[divisionSelect?.value || ''] || divisionDisplay?.textContent
         );
         setSummaryText(summaryOffice, officeInput?.value);
         setSummaryText(summaryFrom, formatDateLabel(scheduleDate?.value));
@@ -1994,7 +1994,7 @@ document.addEventListener('DOMContentLoaded', () => {
             officeInput.value = unitName;
 
             if (divisionDisplay) {
-                divisionDisplay.value = divisionLabel;
+                divisionDisplay.textContent = divisionLabel || 'No division assigned';
             }
         }
 

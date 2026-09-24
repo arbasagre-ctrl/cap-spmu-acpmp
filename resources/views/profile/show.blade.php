@@ -487,7 +487,7 @@
                         }}
                     </strong>
                 </div>
-                <div class="account-settings-readonly"><span>Organizational Classification</span><strong>{{ $user->organizationalUnit?->divisionLabel() ?: 'Not recorded' }}</strong></div>
+                <div class="account-settings-readonly"><span>Division</span><strong>{{ $user->organizationalUnit?->divisionLabel() ?: 'Not recorded' }}</strong></div>
                 <div class="account-settings-readonly"><span>Office / College / Unit</span><strong>{{ $user->organizationalUnit?->unit_name ?: 'Not recorded' }}</strong></div>
 
                 @php
@@ -673,7 +673,6 @@
                 <div class="account-settings-notification-grid">
                     <label class="checkbox"><input type="checkbox" name="system_notifications" value="1" @checked(data_get($user->notification_preferences, 'system', true))> In-system</label>
                     <label class="checkbox"><input type="checkbox" name="email_notifications" value="1" @checked(data_get($user->notification_preferences, 'email', true))> Email</label>
-                    <label class="checkbox"><input type="checkbox" name="sms_notifications" value="1" @checked(data_get($user->notification_preferences, 'sms', false))> SMS</label>
                 </div>
             </fieldset>
 

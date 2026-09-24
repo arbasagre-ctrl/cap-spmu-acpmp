@@ -16,6 +16,8 @@
 #request-form .create-request-ui .request-details-card .field-grid input,
 #request-form .create-request-ui .request-details-card .field-grid select { display: block; width: 100%; height: 48px; min-height: 48px; margin-top: 10px; padding: 11px 15px; border: 1px solid var(--border); border-radius: 7px; background-color: var(--surface-elevated); color: var(--heading); font-size: 14px; font-weight: 400; }
 #request-form .create-request-ui .request-details-card .field-grid select { padding-right: 36px; }
+#request-form .create-request-ui .request-details-card .field-grid .request-static-field { display: flex; align-items: center; width: 100%; height: 48px; min-height: 48px; margin-top: 10px; padding: 11px 15px; border: 1px solid transparent; border-radius: 7px; background: var(--surface-subtle); color: var(--heading); font-size: 14px; font-weight: 600; line-height: 1.4; cursor: default; user-select: text; }
+#request-form .create-request-ui .request-details-card .field-grid .request-static-field.is-empty { color: var(--text-muted); font-weight: 400; }
 #request-form .create-request-ui .request-details-card input:focus,
 #request-form .create-request-ui .request-details-card select:focus,
 #request-form .create-request-ui .request-picker-card input:focus { border-color: var(--interactive); outline: 0; box-shadow: var(--focus-ring); }
@@ -23,7 +25,7 @@
 #request-form .create-request-ui .request-schedule-fields { padding: 24px 28px 28px; border-top: 1px solid var(--border); }
 #request-form .create-request-ui .request-schedule-heading { display: grid; gap: 7px; margin-bottom: 18px; }
 #request-form .create-request-ui .request-schedule-heading > .eyebrow { margin: 0; }
-#request-form .create-request-ui .request-schedule-note { max-width: 760px; margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 400; line-height: 1.55; }
+#request-form .create-request-ui .request-schedule-note { margin: 0; color: var(--text-muted); font-size: 12px; font-weight: 400; line-height: 1.55; }
 #request-form .create-request-ui .request-details-card .student-activity-panel { margin: 0; padding: 22px 28px 26px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
 #request-form .create-request-ui .student-activity-panel .checkbox { align-items: flex-start; gap: 17px; cursor: pointer; }
 #request-form .create-request-ui .student-activity-panel .checkbox input[type="checkbox"] { width: 22px; height: 22px; min-height: 22px; margin: 0; accent-color: var(--interactive); }
@@ -148,7 +150,6 @@
 
 #request-form .create-request-ui .request-schedule-help {
     display: block;
-    max-width: 760px;
     margin: 12px 0 0;
     color: var(--text-muted);
     font-size: 12px;

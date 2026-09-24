@@ -458,7 +458,7 @@ class AnalyticsLateReturnRateTest extends TestCase
         ]));
         $whole->assertOk();
         $whole->assertSee('data-analytics-detail-panel', false);
-        $whole->assertSee('Late Return Rate by Organizational Classification');
+        $whole->assertSee('Late Return Rate by Division');
         $whole->assertSee('3 late of 9 completed');
 
         $x = $this->xpath($whole->getContent());

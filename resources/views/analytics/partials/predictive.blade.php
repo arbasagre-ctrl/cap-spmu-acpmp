@@ -185,7 +185,7 @@
             'tone' => 'info',
             'icon' => 'users',
             'text' => $hasDivision
-                ? $leader['label'].' is projected to remain the largest borrowing organizational classification.'
+                ? $leader['label'].' is projected to remain the largest borrowing division.'
                 : $leader['label'].' accounts for the largest known scheduled demand.',
         ];
     }
@@ -421,12 +421,12 @@
             <span class="analytics-card-mark" aria-hidden="true"><x-icon name="users" size="15" /></span>
             <div>
                 {{-- The heading follows the data: a scheduled count is never called a forecast. --}}
-                <h2>{{ $hasDivision ? 'Forecasted' : 'Scheduled' }} Demand by Organizational Classification</h2>
+                <h2>{{ $hasDivision ? 'Forecasted' : 'Scheduled' }} Demand by Division</h2>
                 <p>{{ $hasDivision
                     ? 'Projected requests for the next period.'
                     : 'Requests already recorded for '.$windowLabel.'.' }}</p>
             </div>
-            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'predictive', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'forecast.division']) }}" aria-label="View Demand by Organizational Classification details"><x-icon name="arrow-right" size="15" /></a>
+            <a class="analytics-card-open" href="{{ App\Support\AnalyticsDetailLink::to('card', 'predictive', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'forecast.division']) }}" aria-label="View Demand by Division details"><x-icon name="arrow-right" size="15" /></a>
         </header>
 
         <div class="analytics-card-body">
@@ -434,7 +434,7 @@
                 <p class="analytics-blank">
                     <span class="analytics-blank-mark" aria-hidden="true"><x-icon name="users" size="19" /></span>
                     {{ $hasDivision
-                        ? 'No organizational classification is expected to record borrowing activity next period.'
+                        ? 'No division is expected to record borrowing activity next period.'
                         : 'No borrowing requests are recorded for the next period yet.' }}
                 </p>
             @else

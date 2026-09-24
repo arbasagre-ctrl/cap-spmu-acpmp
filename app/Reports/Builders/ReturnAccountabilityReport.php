@@ -308,7 +308,7 @@ class ReturnAccountabilityReport implements ReportBuilder
                 ['key' => 'custody_no', 'label' => 'Custody No.'],
                 ['key' => 'request_no', 'label' => 'Request No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'division', 'label' => 'Division'],
                 ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'released_at', 'label' => 'Released'],
                 ['key' => 'due_at', 'label' => 'Expected Return'],

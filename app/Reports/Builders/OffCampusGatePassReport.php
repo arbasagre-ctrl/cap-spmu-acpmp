@@ -192,7 +192,7 @@ class OffCampusGatePassReport implements ReportBuilder
                 ['key' => 'request_no', 'label' => 'Request No.'],
                 ['key' => 'custody_no', 'label' => 'Custody No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'division', 'label' => 'Division'],
                 ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'purpose_event', 'label' => 'Activity / Purpose'],
                 ['key' => 'off_campus', 'label' => 'Off-Campus'],

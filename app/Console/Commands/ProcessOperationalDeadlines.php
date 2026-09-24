@@ -317,7 +317,7 @@ class ProcessOperationalDeadlines extends Command
                     collect([$custody->borrower]),
                     "The borrowed items under {$custody->custody_no} are overdue by {$daysLate} day(s). Please return the outstanding items to SPMU as soon as possible.",
                     $custody,
-                    ['SYSTEM', 'EMAIL', 'SMS'],
+                    ['SYSTEM', 'EMAIL'],
                     ['SYSTEM', 'EMAIL']
                 );
             }

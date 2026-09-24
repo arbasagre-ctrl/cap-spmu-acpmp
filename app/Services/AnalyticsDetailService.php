@@ -478,7 +478,7 @@ class AnalyticsDetailService
         return $this->organisation(
             $scope,
             OrganizationalStructure::label($code),
-            'Organizational Classification detail',
+            'Division detail',
             $code,
             null
         );
@@ -1166,7 +1166,7 @@ class AnalyticsDetailService
             self::RECORD_LIMIT
         );
 
-        $noun = $level === 'unit' ? 'unit' : 'organizational classification';
+        $noun = $level === 'unit' ? 'unit' : 'division';
 
         $stats = $selected === null
             ? [
@@ -1193,7 +1193,7 @@ class AnalyticsDetailService
 
         return [
             'title' => $selected === null
-                ? 'Late Return Rate by '.($level === 'unit' ? 'Unit' : 'Organizational Classification')
+                ? 'Late Return Rate by '.($level === 'unit' ? 'Unit' : 'Division')
                 : $selected['label'].($level === 'unit' ? ' · '.$selected['division_label'] : ''),
             'value' => ($selected ?? $rates)['late_rate'] === null ? null : ($selected ?? $rates)['late_rate'].'%',
             'value_label' => ($selected ?? $rates)['late_rate'] === null
@@ -1207,7 +1207,7 @@ class AnalyticsDetailService
                 .' is as large as its completed-return count says, no larger. '
                 .($reportsUrl !== null
                     ? 'The source-record view opens only the late returns of this scope, the numerator, not every completed return; the table below lists every completed return the rate was measured against.'
-                    : 'Reports cannot represent returns with no recorded organizational classification, so no source-record view is offered.'),
+                    : 'Reports cannot represent returns with no recorded division, so no source-record view is offered.'),
             'stats' => $stats,
             'bars' => $rates['groups'] === [] ? null : array_map(
                 static fn (array $row): array => [

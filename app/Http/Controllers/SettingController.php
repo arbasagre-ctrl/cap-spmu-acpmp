@@ -13,7 +13,6 @@ use Illuminate\View\View;
 class SettingController extends Controller
 {
     private const ICTU_SETTING_KEYS = [
-        'sms_provider',
         'max_upload_mb',
         'backup_schedule',
     ];

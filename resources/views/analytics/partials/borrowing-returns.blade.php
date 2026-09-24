@@ -321,7 +321,7 @@
 
     /* The card shows the leading rows; the detail lists every segment. */
     $lateRatePanels = [
-        ['level' => 'division', 'title' => 'Late Return Rate by Organizational Classification', 'data' => $lateRatesByDivision, 'shown' => 4],
+        ['level' => 'division', 'title' => 'Late Return Rate by Division', 'data' => $lateRatesByDivision, 'shown' => 4],
         ['level' => 'unit', 'title' => 'Late Return Rate by Unit', 'data' => $lateRatesByUnit, 'shown' => 6],
     ];
 @endphp

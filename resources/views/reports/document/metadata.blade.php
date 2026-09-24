@@ -3,7 +3,7 @@
     | Document metadata as institutional text, not cards.
     |
     | Report Scope is omitted entirely when the report was generated without
-    | a meaningful filter (a default such as "All classifications" is never a
+    | a meaningful filter (a default such as "All divisions" is never a
     | scope value in applied_filters to begin with), rather than printing an
     | empty label.
     */

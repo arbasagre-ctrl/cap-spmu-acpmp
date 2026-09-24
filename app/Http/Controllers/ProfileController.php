@@ -37,7 +37,6 @@ class ProfileController extends Controller
             'mobile_no' => ['nullable', 'string', 'max:30'],
             'system_notifications' => ['nullable', 'boolean'],
             'email_notifications' => ['nullable', 'boolean'],
-            'sms_notifications' => ['nullable', 'boolean'],
         ]);
 
         $user = $request->user();
@@ -48,7 +47,6 @@ class ProfileController extends Controller
             'notification_preferences' => [
                 'system' => $request->boolean('system_notifications'),
                 'email' => $request->boolean('email_notifications'),
-                'sms' => $request->boolean('sms_notifications'),
             ],
         ]);
 

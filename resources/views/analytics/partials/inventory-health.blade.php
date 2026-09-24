@@ -125,7 +125,7 @@
 
 <p class="analytics-inventory-scope-note" role="note">
     <x-icon name="information" size="14" aria-hidden="true" />
-    <span><strong>Current stock scope:</strong> inventory totals are institution-wide and do not change with Organizational Classification, Office / College / Unit, or Borrower. Utilization and Stock Coverage below still use the selected reporting period.</span>
+    <span><strong>Current stock scope:</strong> inventory totals are institution-wide and do not change with Division, Office / College / Unit, or Borrower. Utilization and Stock Coverage below still use the selected reporting period.</span>
 </p>
 
 {{-- Availability and composition ---------------------------------------- --}}

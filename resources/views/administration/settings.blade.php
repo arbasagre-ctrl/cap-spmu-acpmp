@@ -37,33 +37,6 @@
 
     $emailConfigured = $isIctu && $mailTransport !== '';
 
-    $smsProviderSetting = $isIctu
-        ? $ictuSettings->get('sms_provider')
-        : null;
-
-    $effectiveSmsProvider = $isIctu
-        ? (
-            filled($smsProviderSetting?->value_json)
-                ? (string) $smsProviderSetting->value_json
-                : trim((string) config('services.sms.provider'))
-        )
-        : '';
-
-    $smsEndpointConfigured = $isIctu
-        && filled(config('services.sms.webhook_url'))
-        && filled(config('services.sms.token'));
-
-    $smsEnabled = $isIctu && (bool) config('services.sms.enabled', false);
-
-    $smsSenderName = $isIctu
-        ? trim((string) config('services.sms.sender_name'))
-        : '';
-
-    $smsReady = $isIctu
-        && $smsEnabled
-        && filled($effectiveSmsProvider)
-        && $smsEndpointConfigured;
-
     $maxUploadSetting = $isIctu
         ? $ictuSettings->get('max_upload_mb')
         : null;
@@ -144,27 +117,6 @@
                 <strong>{{ $mailTransport !== '' ? strtoupper($mailTransport) : 'Not configured' }}</strong>
             </div>
         </article>
-
-        <article class="card ictu-service-status-card">
-            <div class="ictu-service-card-heading">
-                <div>
-                    <span class="badge">SMS</span>
-                    <h3>SMS Delivery</h3>
-                </div>
-                <span class="ictu-config-state {{ $smsReady ? 'is-ready' : 'is-pending' }}">
-                    {{ $smsReady ? 'Ready' : ($smsEnabled ? 'Not configured' : 'Disabled') }}
-                </span>
-            </div>
-            <p>SMS delivery is queued after the related workflow commits. Provider credentials remain protected in environment configuration.</p>
-            <div class="ictu-readonly-value">
-                <span>Enabled</span>
-                <strong>{{ $smsEnabled ? 'Yes' : 'No' }}</strong>
-            </div>
-            <div class="ictu-readonly-value">
-                <span>Provider / sender</span>
-                <strong>{{ filled($effectiveSmsProvider) ? $effectiveSmsProvider : 'Not configured' }}{{ $smsSenderName !== '' ? ' / '.$smsSenderName : '' }}</strong>
-            </div>
-        </article>
     </div>
 </section>
 
@@ -178,53 +130,6 @@
     </div>
 
     <div class="ictu-technical-settings-grid">
-        @if($smsProviderSetting)
-            <form
-                id="setting-{{ $smsProviderSetting->setting_key }}"
-                method="post"
-                action="{{ route('administration.settings.update', $smsProviderSetting) }}"
-                class="card form-grid ictu-technical-setting-card"
-                data-settings-form
-            >
-                @csrf
-                @method('PUT')
-
-                <div class="ictu-setting-card-heading">
-                    <div>
-                        <span class="badge">NOTIFICATION</span>
-                        <h3>SMS Provider</h3>
-                    </div>
-                    <span class="ictu-config-state {{ $smsReady ? 'is-ready' : 'is-pending' }}">
-                        {{ $smsReady ? 'Ready' : 'Not configured' }}
-                    </span>
-                </div>
-
-                <p>Record the approved SMS provider name. Webhook URL and API credentials remain protected in the environment configuration.</p>
-
-                <label>
-                    Provider name
-                    <input
-                        type="text"
-                        name="value"
-                        value="{{ $smsProviderSetting->value_json ?? '' }}"
-                        placeholder="Enter approved SMS provider"
-                        maxlength="2000"
-                    >
-                </label>
-
-                <label>
-                    Reason for change
-                    <textarea name="reason" required maxlength="1000" placeholder="Describe the configuration change..."></textarea>
-                </label>
-
-                <div class="settings-actions">
-                    <button class="button primary ui-pressable" data-save-button type="submit" disabled>
-                        Save change
-                    </button>
-                </div>
-            </form>
-        @endif
-
         @if($maxUploadSetting)
             <form
                 id="setting-{{ $maxUploadSetting->setting_key }}"

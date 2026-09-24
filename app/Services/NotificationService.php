@@ -24,15 +24,13 @@ use Throwable;
 
 class NotificationService
 {
-    public function __construct(private SmsNotificationChannel $sms) {}
-
     /** @param iterable<User> $recipients */
     public function send(
         string $eventCode,
         iterable $recipients,
         string $message,
         ?Model $source = null,
-        array $channels = ['SYSTEM', 'EMAIL', 'SMS'],
+        array $channels = ['SYSTEM', 'EMAIL'],
         array $requiredChannels = []
     ): NotificationEvent {
         $event = NotificationEvent::query()->create([
@@ -47,40 +45,24 @@ class NotificationService
         ]);
 
         foreach (collect($recipients)->filter()->unique(fn (User $recipient) => $recipient->id) as $recipient) {
-            $smsMessage = $this->sms->messageFor($eventCode, $recipient, $source);
             $eventChannels = collect($channels)
                 ->map(fn ($channel) => strtoupper((string) $channel))
-                ->when($smsMessage !== null, fn ($configured) => $configured->push('SMS'))
                 ->unique()
                 ->values();
 
             foreach ($eventChannels as $channel) {
-                if ($channel === 'SMS') {
-                    /*
-                     * An older caller may explicitly include SMS for an
-                     * event that is intentionally not SMS-eligible. Keep
-                     * that workflow in its existing channels rather than
-                     * allowing a null SMS body to affect the transaction.
-                     */
-                    if ($smsMessage !== null) {
-                        $this->sms->stage($event, $recipient, $smsMessage);
-                    }
-
-                    continue;
-                }
-
                 /*
                  * Respect the recipient's own notification preferences
                  * (Account Settings > Notification preferences). Defaults
-                 * match that form exactly (system/email on, SMS off) so
-                 * nothing changes for a recipient who never touched them.
+                 * match that form exactly (system/email on) so nothing
+                 * changes for a recipient who never touched them.
                  */
                 $preferenceKey = strtolower($channel);
                 $channelRequired = in_array($channel, $requiredChannels, true);
                 $channelEnabled = $channelRequired || (bool) data_get(
                     $recipient->notification_preferences,
                     $preferenceKey,
-                    $channel !== 'SMS'
+                    true
                 );
 
                 if (! $channelEnabled) {
@@ -89,7 +71,6 @@ class NotificationService
 
                 $address = match ($channel) {
                     'EMAIL' => $recipient->email,
-                    'SMS' => $recipient->mobile_no,
                     default => (string) $recipient->id,
                 };
 
@@ -1262,7 +1243,7 @@ HTML;
     /**
      * Email-only institutional wording.
      *
-     * Existing SYSTEM and SMS messages remain concise and unchanged.
+     * Existing SYSTEM messages remain concise and unchanged.
      */
     private function emailSummary(
         string $eventCode,

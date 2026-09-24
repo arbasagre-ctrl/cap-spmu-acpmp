@@ -223,7 +223,7 @@ class ReportFoundationTest extends TestCase
 
         $this->assertSame(
             [
-                'Organizational Classification' => 'Academic',
+                'Division' => 'Academic',
                 'Office / College / Unit' => 'College of Computer Studies (CCS)',
                 'Status' => 'Under SPMU Review',
             ],
@@ -278,7 +278,7 @@ class ReportFoundationTest extends TestCase
 
         $this->assertSame('Borrowing Activity Report', $meta['report_name']);
         $this->assertSame('01 Apr 2026 – 30 Apr 2026', $meta['period_label']);
-        $this->assertSame(['Organizational Classification' => 'Academic'], $meta['applied_filters']);
+        $this->assertSame(['Division' => 'Academic'], $meta['applied_filters']);
         $this->assertSame('Head Of SPMU', $meta['generated_by']);
         $this->assertSame(1, $dataset->count());
         $this->assertNotEmpty($meta['generated_at']);

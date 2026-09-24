@@ -77,7 +77,6 @@ class UserAdministrationController extends Controller
                 'notification_preferences' => [
                     'system' => true,
                     'email' => true,
-                    'sms' => true,
                 ],
                 'account_status' => $data['account_status'],
                 'access_classification' => $classification,
@@ -395,7 +394,7 @@ class UserAdministrationController extends Controller
             if ($existing) {
                 if ($existing->divisionCode() !== $divisionCode) {
                     throw ValidationException::withMessages([
-                        'new_organizational_unit_name' => 'That Office / College / Unit already exists under a different organizational classification.',
+                        'new_organizational_unit_name' => 'That Office / College / Unit already exists under a different Division.',
                     ]);
                 }
 
@@ -428,7 +427,7 @@ class UserAdministrationController extends Controller
 
             if ($unit->divisionCode() !== $divisionCode) {
                 throw ValidationException::withMessages([
-                    'organizational_unit_id' => 'The selected Office / College / Unit does not belong to the selected Organizational Classification.',
+                    'organizational_unit_id' => 'The selected Office / College / Unit does not belong to the selected Division.',
                 ]);
             }
         }

@@ -1123,7 +1123,7 @@ class BorrowingRequestController extends Controller
         if (! $divisionCode) {
             throw ValidationException::withMessages([
                 'requesting_organizational_unit_id' =>
-                    'The selected Office / College / Unit does not have a valid Organizational Classification. Contact ICTU.',
+                    'The selected Office / College / Unit does not have a valid Division. Contact ICTU.',
             ]);
         }
 

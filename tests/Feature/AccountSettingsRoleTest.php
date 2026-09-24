@@ -106,7 +106,6 @@ class AccountSettingsRoleTest extends TestCase
             'mobile_no' => '09171234567',
             'system_notifications' => '0',
             'email_notifications' => '1',
-            'sms_notifications' => '1',
             'employee_no' => 'BORROWER-2026-001',
             'organizational_unit_id' => $authorityUnit->id,
             'access_classification' => AccessClassification::IctuMaintainer->value,
@@ -119,7 +118,6 @@ class AccountSettingsRoleTest extends TestCase
         $this->assertSame([
             'system' => false,
             'email' => true,
-            'sms' => true,
         ], $borrower->notification_preferences);
     }
 
@@ -174,7 +172,6 @@ class AccountSettingsRoleTest extends TestCase
             'mobile_no' => $user->mobile_no,
             'system_notifications' => '1',
             'email_notifications' => '1',
-            'sms_notifications' => '0',
         ];
     }
 

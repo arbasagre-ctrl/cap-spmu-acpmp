@@ -141,7 +141,7 @@ class BorrowingActivityReport implements ReportBuilder
             columns: [
                 ['key' => 'request_no', 'label' => 'Request No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'division', 'label' => 'Division'],
                 ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'purpose_event', 'label' => 'Event / Purpose'],
                 ['key' => 'schedule_date', 'label' => 'Schedule Date'],

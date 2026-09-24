@@ -6,7 +6,6 @@ SPMU/ICTU manage these values from **Administration → Configuration**. Every c
 |---|---:|---|---|
 | `overdue_grace_hours` | `24` | SPMU/client policy | Grace period before Overdue, restriction, sanction, and tariff |
 | `daily_overdue_tariff` | unset | Client/SPMU | Daily amount; billing remains blocked until finalized |
-| `sms_provider` | unset | ICTU | Provider name; webhook and token are environment secrets |
 | `due_soon_hours` | `24` | SPMU | Due-soon reminder window |
 | `rslddp_template_status` | `PROVISIONAL` | Client/SPMU | Set to `APPROVED` only after official content/layout approval; then incident output is generated |
 | `max_upload_mb` | `5` | ICTU/SPMU | Maximum protected supporting-document/evidence upload size |
@@ -23,7 +22,6 @@ Deployment values are not Administration settings and must remain in the protect
 - Opening inventory reconciliation, including the provisional Barricade quantity of six.
 - Penalty/tariff amounts and category-specific rules.
 - Official RSLDDP content, acronym wording, appraisal fields, signatories, and layout.
-- Approved SMS provider, sender identity, delivery contract, and privacy terms.
 - Production backup frequency, retention, encryption/key ownership, destination, off-site copy, RPO, RTO, responsible operator, and restore-test schedule.
 - Final institutional report layouts and SLDDRP/RSLDDP naming/content.
 

@@ -188,7 +188,7 @@ class AccountabilityCasesReport implements ReportBuilder
                 ['key' => 'case_reference', 'label' => 'Case / Reference No.'],
                 ['key' => 'custody_no', 'label' => 'Custody No.'],
                 ['key' => 'borrower', 'label' => 'Borrower'],
-                ['key' => 'division', 'label' => 'Organizational Classification'],
+                ['key' => 'division', 'label' => 'Division'],
                 ['key' => 'office_unit', 'label' => 'Office / College / Unit'],
                 ['key' => 'case_type', 'label' => 'Case Type', 'badge' => true],
                 ['key' => 'finding', 'label' => 'Finding'],
