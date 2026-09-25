@@ -161,6 +161,10 @@
 </div>
 
 {{-- Return trend and outcome ------------------------------------------ --}}
+@if($detail)
+    @include('analytics.partials.detail-panel')
+@endif
+
 <div class="analytics-overview-main">
     <section
         data-card-detail="{{ App\Support\AnalyticsDetailLink::to('card', 'returns', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'returns.trend']) }}"

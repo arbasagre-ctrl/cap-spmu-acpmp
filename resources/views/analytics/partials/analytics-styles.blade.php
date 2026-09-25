@@ -4337,33 +4337,32 @@ body.analytics-detail-open { overflow: hidden; }
 
 <style>
 /* ================================================================
-   FINAL UNIVERSAL ALIGNMENT — Dashboard / Accountability / Inventory
-   Navigation is a flat section strip, never a row of primary buttons.
-   KPI cards use the same geometry as the SPMU Admin Dashboard.
+   OPTION 6 — compact tabs, plain filters, and colorful KPI cards.
+   Presentation only; existing controls and data remain unchanged.
    ================================================================ */
 .analytics-page .analytics-tabs {
     display:grid !important;
     grid-auto-flow:column !important;
     grid-auto-columns:minmax(max-content,1fr) !important;
-    gap:0 !important;
-    padding:0 8px !important;
+    gap:4px !important;
+    padding:4px !important;
     overflow-x:auto !important;
     border:1px solid var(--border) !important;
     border-radius:11px !important;
-    background:var(--surface) !important;
+    background:#fff !important;
     box-shadow:none !important;
 }
 .analytics-page .analytics-tab {
     position:relative !important;
     display:inline-flex !important;
-    min-height:48px !important;
+    min-height:36px !important;
     align-items:center !important;
     justify-content:center !important;
     padding:0 14px !important;
     border:0 !important;
-    border-radius:0 !important;
+    border-radius:8px !important;
     background:transparent !important;
-    color:var(--text-secondary) !important;
+    color:#475569 !important;
     font-size:11px !important;
     font-weight:800 !important;
     box-shadow:none !important;
@@ -4371,45 +4370,55 @@ body.analytics-detail-open { overflow: hidden; }
 }
 .analytics-page .analytics-tab:hover,
 .analytics-page .analytics-tab:focus-visible {
-    color:var(--interactive) !important;
-    background:var(--surface-hover) !important;
-    outline:none !important;
+    color:#1d4ed8 !important;
+    background:#eff6ff !important;
+}
+.analytics-page .analytics-tab:focus-visible {
+    outline:2px solid #2563eb !important;
+    outline-offset:-2px !important;
 }
 .analytics-page .analytics-tab.is-active {
-    color:var(--interactive) !important;
-    background:transparent !important;
-    box-shadow:inset 0 -3px 0 var(--interactive) !important;
+    color:#fff !important;
+    background:linear-gradient(135deg, #2563eb, #4f46e5) !important;
+    box-shadow:none !important;
 }
 
 .analytics-page .analytics-kpi-card {
     --kpi-accent:#1769e0;
     position:relative !important;
     display:grid !important;
-    grid-template-columns:46px minmax(0,1fr) !important;
-    grid-template-rows:auto auto auto !important;
+    grid-template-columns:34px minmax(0,1fr) 16px !important;
+    grid-template-rows:auto auto auto auto !important;
     column-gap:12px !important;
     row-gap:2px !important;
     min-height:122px !important;
     padding:16px 18px !important;
-    border:1px solid var(--border) !important;
-    border-top:3px solid var(--kpi-accent) !important;
+    border:1px solid transparent !important;
     border-radius:12px !important;
-    background:var(--surface) !important;
+    color:#fff !important;
+    background:linear-gradient(135deg, var(--kpi-from), var(--kpi-to)) !important;
     box-shadow:0 1px 2px rgba(7,27,53,.05) !important;
     transform:none !important;
 }
+.analytics-page .analytics-kpi-card.tone-requests { --kpi-from:#1d4ed8; --kpi-to:#2563eb; }
+.analytics-page .analytics-kpi-card.tone-custody { --kpi-from:#0f766e; --kpi-to:#047857; }
+.analytics-page .analytics-kpi-card.tone-overdue { --kpi-from:#9a3412; --kpi-to:#c2410c; }
+.analytics-page .analytics-kpi-card.tone-stock { --kpi-from:#6d28d9; --kpi-to:#7c3aed; }
 .analytics-page .analytics-kpi-card::before,
 .analytics-page .analytics-kpi-card::after { content:none !important; display:none !important; }
 .analytics-page .analytics-kpi-card-icon {
     grid-column:1 !important;
-    grid-row:1 / span 3 !important;
+    grid-row:1 / span 2 !important;
     display:grid !important;
-    width:44px !important;
-    height:44px !important;
+    width:34px !important;
+    height:34px !important;
     place-items:center !important;
     align-self:center !important;
     margin:0 !important;
     border-radius:50% !important;
+    color:#fff !important;
+    background:rgba(255,255,255,.16) !important;
+    border:1px solid rgba(255,255,255,.24) !important;
 }
 .analytics-page .analytics-kpi-card-label {
     grid-column:2 !important;
@@ -4417,44 +4426,69 @@ body.analytics-detail-open { overflow: hidden; }
     align-self:end !important;
     font-size:11px !important;
     font-weight:800 !important;
+    color:#fff !important;
 }
 .analytics-page .analytics-kpi-card-value {
     grid-column:2 !important;
     grid-row:2 !important;
     margin:0 !important;
-    color:var(--heading) !important;
+    color:#fff !important;
     font-size:25px !important;
     line-height:1.15 !important;
 }
 .analytics-page .analytics-kpi-card-note {
-    grid-column:2 !important;
+    grid-column:2 / -1 !important;
     grid-row:3 !important;
+    margin-top:4px !important;
+    color:#fff !important;
     font-size:10px !important;
     line-height:1.35 !important;
 }
+.analytics-page .analytics-kpi-card-meta {
+    grid-column:2 / -1;
+    color:#fff !important;
+    white-space:normal;
+    overflow-wrap:anywhere;
+}
 .analytics-page .analytics-kpi-card-arrow {
-    position:absolute !important;
-    top:14px !important;
-    right:14px !important;
+    position:relative !important;
+    grid-column:3 !important;
+    grid-row:1 !important;
+    align-self:start !important;
+    color:rgba(255,255,255,.8) !important;
 }
 .analytics-page .analytics-kpi-card:hover,
 .analytics-page .analytics-kpi-card:focus-visible {
-    transform:translateY(-1px) !important;
-    border-color:var(--border-strong) !important;
-    border-top-color:var(--kpi-accent) !important;
+    transform:none !important;
+    border-color:rgba(255,255,255,.5) !important;
     box-shadow:0 10px 24px rgba(7,27,53,.08) !important;
 }
+.analytics-page .analytics-kpi-card:hover .analytics-kpi-card-arrow,
+.analytics-page .analytics-kpi-card:focus-visible .analytics-kpi-card-arrow { color:#fff !important; }
+.analytics-page .analytics-kpi-card:focus-visible { outline:2px solid #2563eb; }
 
-/* Filter cards share the same corner radius/control height across modules. */
-.analytics-page .analytics-filters label,
-.analytics-page .analytics-filters .analytics-filter-field {
-    min-height:82px !important;
-    padding:10px 12px !important;
-    border-radius:12px !important;
+/* Plain, equal-height filter cards; only the existing dropdown chevrons remain. */
+.analytics-page .analytics-filters > label,
+.analytics-page .analytics-filters > .analytics-filter-field {
+    min-height:66px !important;
+    min-width:0;
+    padding:8px 12px !important;
+    border:1px solid #dbe2ea;
+    border-radius:10px !important;
+    background:#fff;
+    box-shadow:none;
+}
+.analytics-page .analytics-filter-label { color:#64748b; }
+.analytics-page .analytics-borrower-trigger > [data-borrower-current] {
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
 }
 .analytics-page .analytics-filters select,
 .analytics-page .analytics-borrower-trigger {
-    min-height:44px !important;
+    min-height:32px !important;
+    color:#1e293b !important;
+    background-color:transparent !important;
 }
 
 .analytics-inventory-scope-note {
@@ -4472,4 +4506,245 @@ body.analytics-detail-open { overflow: hidden; }
 }
 .analytics-inventory-scope-note .ui-icon { flex:0 0 auto; margin-top:1px; color:var(--interactive); }
 .analytics-inventory-scope-note strong { color:var(--text-secondary); }
+</style>
+
+<style>
+/* ANALYTICS UNIVERSAL DETAIL REFINEMENT
+   Shared by every Analytics KPI / summary-card drill-down.
+   Presentation only — no metric or workflow logic. */
+
+/* Keep the expanded detail visually connected to the KPI row. */
+.analytics-detail-inline {
+    border-color: color-mix(in srgb, var(--interactive) 24%, var(--border));
+    border-left: 4px solid var(--interactive);
+    box-shadow: 0 6px 18px rgba(15, 35, 58, .05);
+}
+
+/* Clear but compact panel heading. */
+.analytics-detail-inline-head {
+    padding: 14px 18px 12px;
+}
+
+.analytics-detail-inline-head h2 {
+    margin-top: 3px;
+    font-size: 16px;
+    line-height: 1.3;
+}
+
+.analytics-detail-inline-body {
+    gap: 12px;
+    padding: 14px 18px;
+}
+
+/* Main metric:
+   keep the number and its explanation close together instead of
+   making the number occupy a wide invisible column. */
+.analytics-detail-lead {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 13px 15px;
+    background: color-mix(
+        in srgb,
+        var(--interactive) 4%,
+        var(--surface-subtle)
+    );
+    border: 1px solid color-mix(
+        in srgb,
+        var(--interactive) 15%,
+        var(--border)
+    );
+    border-radius: 10px;
+}
+
+.analytics-detail-lead .analytics-detail-figure {
+    flex: 0 0 auto;
+    min-width: 0;
+    margin: 0;
+    padding-right: 14px;
+    border-right: 1px solid color-mix(
+        in srgb,
+        var(--interactive) 18%,
+        var(--border)
+    );
+}
+
+.analytics-detail-lead .analytics-detail-figure strong {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.analytics-detail-lead .analytics-detail-note {
+    flex: 0 1 auto;
+    width: auto;
+    max-width: 760px;
+    margin: 0;
+    padding: 0;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 0;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* Supporting sections should read like one analytics report,
+   not several cards nested inside another card. */
+.analytics-detail-support {
+    gap: 0;
+}
+
+.analytics-detail-block {
+    padding: 8px 0 2px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.analytics-detail-support.is-split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+}
+
+.analytics-detail-support.is-split > .analytics-detail-block + .analytics-detail-block {
+    padding-left: 18px;
+    border-left: 1px solid var(--border);
+}
+
+.analytics-detail-block .analytics-detail-subhead {
+    margin: 0 0 9px;
+}
+
+/* Period comparison:
+   simple three-column evidence row instead of another boxed panel. */
+.analytics-detail-inline .analytics-compare {
+    gap: 9px;
+    margin: 0;
+    padding-top: 8px;
+    border: 0;
+}
+
+.analytics-detail-inline .analytics-compare-window {
+    margin: -3px 0 4px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.analytics-detail-inline .analytics-compare-rows {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+}
+
+.analytics-detail-inline .analytics-compare-rows > div {
+    min-width: 0;
+    padding: 3px 16px;
+    border-left: 1px solid var(--border);
+}
+
+.analytics-detail-inline .analytics-compare-rows > div:first-child {
+    padding-left: 0;
+    border-left: 0;
+}
+
+.analytics-detail-inline .analytics-compare-rows dt {
+    margin: 0 0 4px;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 700;
+}
+
+.analytics-detail-inline .analytics-compare-rows dd {
+    margin: 0;
+    color: var(--heading);
+    font-size: 13.5px;
+    font-weight: 750;
+    line-height: 1.4;
+}
+
+/* Proper interpretation / zero-data message. */
+.analytics-detail-empty {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin: 0 !important;
+    padding: 11px 13px !important;
+    color: var(--text-secondary) !important;
+    background: var(--surface-subtle) !important;
+    border: 0 !important;
+    border-radius: 9px !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+}
+
+.analytics-detail-empty-icon {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    color: var(--text-muted);
+    background: var(--surface-muted);
+    border-radius: 50%;
+}
+
+/* Tables remain framed because tabular records need a clear boundary. */
+.analytics-detail-table {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+/* Quiet footer: explanation left, source-record action right. */
+.analytics-detail-inline-foot {
+    padding: 10px 18px;
+    background: color-mix(
+        in srgb,
+        var(--surface-subtle) 75%,
+        var(--surface-elevated)
+    );
+}
+
+/* Responsive: return to a vertical reading order on narrow screens. */
+@media (max-width: 620px) {
+    .analytics-detail-lead {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 7px;
+    }
+
+    .analytics-detail-lead .analytics-detail-figure {
+        padding-right: 0;
+        padding-bottom: 8px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .analytics-detail-support.is-split {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 10px;
+    }
+
+    .analytics-detail-support.is-split > .analytics-detail-block + .analytics-detail-block {
+        padding-left: 0;
+        padding-top: 12px;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+    }
+
+    .analytics-detail-inline .analytics-compare-rows {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .analytics-detail-inline .analytics-compare-rows > div,
+    .analytics-detail-inline .analytics-compare-rows > div:first-child {
+        padding: 8px 0;
+        border-left: 0;
+        border-top: 1px solid var(--border);
+    }
+
+    .analytics-detail-inline .analytics-compare-rows > div:first-child {
+        border-top: 0;
+    }
+}
 </style>

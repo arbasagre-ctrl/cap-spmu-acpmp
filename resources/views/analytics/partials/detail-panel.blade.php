@@ -30,7 +30,7 @@
             <p class="analytics-detail-scope">
                 {{ $detail['period_label'] }}
                 @if($detail['filters'])
-                    <span aria-hidden="true">·</span> {{ $detail['filters'] }}
+                    <span aria-hidden="true">Â·</span> {{ $detail['filters'] }}
                 @endif
             </p>
         </div>
@@ -157,7 +157,12 @@
         @endif
 
         @if($detail['empty'])
-            <p class="analytics-empty analytics-detail-empty">{{ $detail['empty'] }}</p>
+            <p class="analytics-empty analytics-detail-empty">
+                <span class="analytics-detail-empty-icon" aria-hidden="true">
+                    <x-icon name="information" size="17" />
+                </span>
+                <span>{{ $detail['empty'] }}</span>
+            </p>
         @endif
     </div>
 

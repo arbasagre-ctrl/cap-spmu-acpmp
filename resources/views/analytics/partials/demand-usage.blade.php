@@ -214,6 +214,10 @@
 </div>
 
 {{-- Trend and composition ---------------------------------------------- --}}
+@if($detail)
+    @include('analytics.partials.detail-panel')
+@endif
+
 <div class="analytics-demand-main">
     <section
         data-card-detail="{{ App\Support\AnalyticsDetailLink::to('card', 'demand', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'demand.trend']) }}"

@@ -271,6 +271,10 @@
 </div>
 
 {{-- Outlook and readiness ------------------------------------------------ --}}
+@if($detail)
+    @include('analytics.partials.detail-panel')
+@endif
+
 <div class="analytics-forecast-main">
     <section
         data-card-detail="{{ App\Support\AnalyticsDetailLink::to('card', 'predictive', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'forecast.outlook']) }}"

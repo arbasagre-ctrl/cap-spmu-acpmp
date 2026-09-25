@@ -109,13 +109,7 @@
         @endif
 
 
-        {{--
-            Analytics detail stays inside the dashboard flow. It appears directly
-            below the active scope instead of covering the page with a drawer.
-        --}}
-        @if($detail && $section !== 'overview')
-            @include('analytics.partials.detail-panel')
-        @endif
+        {{-- Each section places the shared detail after its complete KPI group. --}}
         @include('analytics.partials.'.$sectionPartial)
     </div>
 </section>
