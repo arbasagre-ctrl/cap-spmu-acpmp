@@ -529,10 +529,21 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
 @media (max-width:760px) {
     .accountability-overview { grid-template-columns:1fr; }
 }
+
+/*
+ | The heading action sits at the upper right of this heading only. The global
+ | .page-heading is already a space-between flex row, so the button needs no
+ | float or absolute positioning - only the cross-axis start alignment that
+ | levels it with the title block instead of the subtitle baseline. Below
+ | 768px app.css turns .page-heading into a column, so it wraps under the
+ | heading on its own; flex-shrink keeps the label on one line above that.
+ */
+.accountability-heading { align-items: flex-start; }
+.accountability-heading > .accountability-heading-action { flex-shrink: 0; }
 </style>
 @endonce
 
-<section class="page-heading">
+<section class="page-heading accountability-heading">
     <div>
         <p class="eyebrow">Financial and property accountability</p>
         <h1>{{ $pageTitle }}</h1>
@@ -544,6 +555,13 @@ html[data-theme="dark"] .accountability-case-ref__restriction {
                     : 'Process property, late-return, billing, and payment follow-up.') }}
         </p>
     </div>
+
+    @if($isOfficer)
+        <a class="button secondary small accountability-heading-action" href="#accountability-cases-section">
+            <span>View Accountability Cases</span>
+            <x-icon name="arrow-right" size="14" />
+        </a>
+    @endif
 </section>
 
 @unless($isBorrower)

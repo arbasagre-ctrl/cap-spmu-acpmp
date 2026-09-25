@@ -122,6 +122,13 @@
         .' '.$statusLabel
     ));
 
+    /*
+     * A DRAFT has not entered the workflow, so its card opens the editor
+     * rather than a detail page with nothing to report. requests.show
+     * redirects drafts to the same place, so a stale link still lands right.
+     */
+    $isDraft = $request->status === \App\Enums\RequestStatus::Draft;
+
     $rowToneClass = match (true) {
         ($custodyWorkflow['key'] ?? $statusKey) === 'OVERDUE' => 'is-danger',
         ($custodyWorkflow['group'] ?? null) === 'attention' => 'is-warning',
@@ -132,7 +139,7 @@
 
 <a
     class="operational-record ui-pressable {{ $rowToneClass }}"
-    href="{{ route('requests.show', $request) }}"
+    href="{{ $isDraft ? route('requests.edit', $request) : route('requests.show', $request) }}"
     data-request-card
     data-status-group="{{ $statusGroup }}"
     data-search="{{ $searchText }}"
@@ -169,6 +176,6 @@
             :status="$statusKey"
             :label="$statusLabel"
         />
-        <strong>View Request<x-icon name="arrow-right" size="16" /></strong>
+        <strong>{{ $isDraft ? 'Resume Draft' : 'View Request' }}<x-icon name="arrow-right" size="16" /></strong>
     </span>
 </a>

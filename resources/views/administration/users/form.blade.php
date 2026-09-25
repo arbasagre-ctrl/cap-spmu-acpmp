@@ -365,13 +365,24 @@
         </fieldset>
 
         <div class="actions admin-form-actions">
-            <button class="button primary ui-pressable" type="submit">Save Changes</button>
             <a class="button secondary ui-pressable" href="{{ route('administration.users.index') }}">Cancel</a>
+            <button class="button primary ui-pressable" type="submit">Save Changes</button>
         </div>
     </form>
 </section>
 
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-org-unit-field {
     min-width: 0;
 }
@@ -488,6 +499,17 @@
 
 {{-- ADMIN_USER_SINGLE_FIELD_LAYOUT --}}
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-form-grid .form-columns > :only-child {
     grid-column: 1 / -1;
 }
@@ -495,6 +517,17 @@
 
 {{-- ADMIN_USER_THREE_COLUMN_ROW_START --}}
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 /*
  * Desktop:
  * Access Classification | Account Status | Mobile Number
@@ -558,6 +591,17 @@
 
 {{-- ADMIN_USER_ACTION_BUTTONS_LAYOUT --}}
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-form-grid .inline-actions,
 .admin-form-grid .form-actions {
     display: flex;
@@ -577,6 +621,17 @@
 
 {{-- ADMIN_USER_SAVE_BUTTON_HOVER --}}
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-form-grid button[type="submit"],
 .admin-form-grid input[type="submit"] {
     transition:
@@ -611,6 +666,17 @@
 }
 </style>
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-new-unit-field {
     margin-top: 14px;
 }
@@ -620,6 +686,17 @@
 </style>
 
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-additional-assignment {
     margin-top: 16px;
     padding-top: 16px;
@@ -702,6 +779,17 @@
 
 {{-- ADDITIONAL_AUTHORIZED_UNIT_CHEVRON_UI --}}
 <style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .admin-additional-assignment {
     margin-top: 18px !important;
     margin-bottom: 24px !important;
@@ -898,3 +986,31 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 @endsection
+
+<style>
+/* ICTU user account final actions */
+.admin-form-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+/* Admin user form final actions */
+.admin-form-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    width: 100%;
+}
+
+@media (max-width: 620px) {
+    .admin-form-actions {
+        flex-wrap: wrap;
+    }
+}
+</style>

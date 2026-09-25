@@ -13,7 +13,7 @@
     $isActionOfficer = auth()->user()?->access_classification?->value === 'SPMU_OFFICER';
 @endphp
 
-<section class="page-heading heading-action-lowered">
+<section class="page-heading">
     <div>
         <p class="eyebrow">
             @if($isBorrower)

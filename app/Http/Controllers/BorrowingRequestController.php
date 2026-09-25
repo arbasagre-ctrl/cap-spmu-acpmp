@@ -441,7 +441,7 @@ class BorrowingRequestController extends Controller
         Request $request,
         BorrowingRequest $borrowingRequest,
         TransactionAccountabilityHistoryService $transactionHistory
-    ): View {
+    ): View|RedirectResponse {
         $canVerify = $this->canVerifyRequest($request, $borrowingRequest);
         $canDecide = $this->canDecideApproval($request, $borrowingRequest);
 
@@ -451,6 +451,22 @@ class BorrowingRequestController extends Controller
             $canVerify,
             $canDecide
         );
+
+        /*
+         * A DRAFT has no workflow to show: nothing has been submitted, so the
+         * detail page would render a progress timeline for a request that has
+         * not entered the process. Every entry point - My Requests, the
+         * dashboard, a bookmarked URL - therefore lands on the editor, which
+         * reopens the stage the borrower stopped on.
+         *
+         * authorizeRequest() has already run, and for a DRAFT the only branch
+         * that can pass it is the owning borrower (there is no approval
+         * history and the status is not UNDER_SPMU), so this redirect cannot
+         * widen access: a non-owner has been aborted above.
+         */
+        if ($borrowingRequest->status === RequestStatus::Draft) {
+            return redirect()->route('requests.edit', $borrowingRequest);
+        }
 
         $reviewMode = match (true) {
             $canVerify => 'ACTION_OFFICER_VERIFICATION',

@@ -1506,14 +1506,21 @@
         <div class="request-dialog-backdrop" id="request-submit-confirmation-dialog" data-request-submit-dialog role="dialog" aria-modal="true" aria-labelledby="request-submit-confirmation-title" hidden>
             <div class="request-dialog request-submit-dialog" role="document">
                 <div class="request-dialog-header">
-                    <div>
-                        <p class="request-section-label">Confirmation</p>
-                        <h2 id="request-submit-confirmation-title">Confirm E-signature and Submission</h2>
+                    <div class="request-submit-identity">
+                        <span class="request-submit-icon" aria-hidden="true"><x-icon name="approval" size="20" /></span>
+                        <div>
+                            <p class="request-section-label">Confirmation</p>
+                            <h2 id="request-submit-confirmation-title">Confirm E-signature and Submission</h2>
+                        </div>
                     </div>
+                    <button type="button" class="request-dialog-close" data-cancel-request-submit aria-label="Close confirmation">&times;</button>
                 </div>
                 <div class="request-dialog-body">
-                    <p>You are about to submit this request using your registered E-signature.</p>
-                    <p>By continuing, you confirm that you have reviewed the request and agree to the SPMU Terms and Conditions.</p>
+                    <p>You are about to submit this request to SPMU using your registered E-signature.</p>
+                    <p class="request-submit-note">
+                        By continuing, you confirm that you have reviewed the request and agree to the SPMU
+                        <a href="#request-terms-dialog" class="request-terms-link" data-open-request-terms>Terms and Conditions</a>.
+                    </p>
                 </div>
                 <div class="request-dialog-actions">
                     <button type="button" class="button secondary ui-pressable" data-cancel-request-submit>Cancel</button>
@@ -1537,7 +1544,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const termsDialog = document.querySelector('[data-request-terms-dialog]');
     const submitDialog = document.querySelector('[data-request-submit-dialog]');
     const confirmSubmitButton = document.querySelector('[data-confirm-request-submit]');
-    const cancelSubmitButton = document.querySelector('[data-cancel-request-submit]');
+    const cancelSubmitButtons = document.querySelectorAll('[data-cancel-request-submit]');
     const signatureReady = {{ $hasCurrentESignature ? 'true' : 'false' }};
     let submissionConfirmed = false;
 
@@ -2705,10 +2712,12 @@ document.addEventListener('DOMContentLoaded', () => {
     termsDialog?.addEventListener('click', (event) => {
         if (event.target === termsDialog) closeDialog(termsDialog);
     });
-    cancelSubmitButton?.addEventListener('click', () => {
-        submissionConfirmed = false;
-        closeDialog(submitDialog);
-        submitButton?.focus();
+    cancelSubmitButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            submissionConfirmed = false;
+            closeDialog(submitDialog);
+            submitButton?.focus();
+        });
     });
     confirmSubmitButton?.addEventListener('click', () => {
         if (!form || !finalConfirmation?.checked) return;

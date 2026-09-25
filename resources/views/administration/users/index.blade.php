@@ -174,7 +174,7 @@
                             @endif
                         </td>
 
-                        <td class="actions-cell ictu-user-action-cell">
+                        <td class="actions-cell ictu-users-action-cell">
                             <a
                                 class="button secondary ictu-user-manage-button"
                                 href="{{ route('administration.users.edit', $user) }}"
@@ -203,10 +203,6 @@
 </section>
 
 <style>
-.ictu-users-heading {
-    align-items: flex-end;
-}
-
 .ictu-users-area {
     display: grid;
     gap: 14px;
@@ -264,7 +260,6 @@
 .ictu-users-table th:nth-child(3) { width: 23%; }
 .ictu-users-table th:nth-child(4) { width: 15%; }
 .ictu-users-table th:nth-child(5) { width: 15%; }
-.ictu-users-table th:nth-child(6) { width: 8%; }
 
 .ictu-user-identity-cell,
 .ictu-user-unit-cell,
@@ -316,9 +311,19 @@
     flex-wrap: wrap;
 }
 
-.ictu-users-action-heading,
-.ictu-user-action-cell {
-    text-align: right;
+/* Action column: wide enough for the Manage button at its existing size,
+   so it is never clipped and sits centred with equal left/right spacing. */
+.ictu-users-table .ictu-users-action-heading {
+    width: 144px;
+    min-width: 144px;
+}
+
+/* Scoped to the table so this outranks `.table-wrap th { text-align: left }`
+   in app.css, which is more specific than a lone class selector. */
+.ictu-users-table .ictu-users-action-heading,
+.ictu-users-table .ictu-users-action-cell {
+    text-align: center;
+    vertical-align: middle;
 }
 
 .ictu-user-manage-button {

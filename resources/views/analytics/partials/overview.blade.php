@@ -250,6 +250,10 @@
 </div>
 
 {{-- Trend and priority signals ---------------------------------------- --}}
+@if($detail)
+    @include('analytics.partials.detail-panel')
+@endif
+
 <div class="analytics-overview-main">
     <section
         data-card-detail="{{ App\Support\AnalyticsDetailLink::to('card', 'overview', $periodSelection, $selectedDivision === 'all' ? null : $selectedDivision, $selectedUnit === 'all' ? null : $selectedUnit, ['for' => 'overview.trend']) }}"

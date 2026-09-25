@@ -400,18 +400,45 @@ button { color: inherit; }
 
 /* Page hierarchy and content */
 .page-heading {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 20px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-auto-flow: row dense;
+    align-items: start;
+    column-gap: 20px;
     margin: 0 0 20px;
 }
-.page-heading > div:first-child { min-width: 0; }
+
+/*
+ | HEADING TITLE ROW - one rule, every page, every role.
+ |
+ | A heading action belongs on the TITLE's row: not the eyebrow above it, not
+ | the description below it. Rather than offset the action, the copy wrapper
+ | stops generating a box, so the eyebrow, title and description become rows
+ | of the heading grid itself - the semantic title row the markup never had,
+ | without editing 23 templates.
+ |
+ | The eyebrow takes a full-width row of its own, so the title always starts
+ | the row after it. The action fixes only its COLUMN, and `dense` packs it
+ | into the first free cell of column 2 - which is the title's row. A heading
+ | with no eyebrow still pairs correctly, because there the title owns row 1.
+ |
+ | Column 1 is minmax(0, 1fr), which is what keeps long titles from
+ | overflowing now that the copy wrapper no longer carries min-width: 0.
+ */
+.page-heading > div:first-child { display: contents; }
+.page-heading > div:first-child > * { grid-column: 1; }
+.page-heading > div:first-child > .eyebrow,
+.page-heading > div:first-child > .release-eyebrow { grid-column: 1 / -1; }
+.page-heading > :not(div:first-child) { grid-column: 2; align-self: center; }
+
+/* Request operational heading: no eyebrow, its own title row and a boxed
+   "next action" panel, plus flex-specific wrap rules of its own. It keeps
+   the original flex heading rather than being forced into the grid. */
+.request-operational-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+.request-operational-heading > div:first-child { display: block; min-width: 0; }
+.request-operational-heading > :not(div:first-child) { align-self: auto; }
 .page-heading h1 { margin: 2px 0 5px; color: var(--heading); font-size: clamp(23px, 2vw, 29px); font-weight: 750; letter-spacing: -.022em; line-height: 1.18; }
 .page-heading p:not(.eyebrow) { max-width: 760px; margin: 0; color: var(--text-muted); }
-/* Drops a heading action clear of the description line it would otherwise
-   sit level with. Offset only, so the heading's own spacing is unchanged. */
-.page-heading.heading-action-lowered > .button { position: relative; top: 11px; }
 /* Compact identity line under a record title: "Borrower: X   Submitted: Y". */
 .request-heading-meta { display: flex; flex-wrap: wrap; gap: 3px 20px; margin-top: 6px !important; font-size: 12.5px; }
 .request-heading-meta strong { color: var(--text-secondary); font-weight: 700; }
@@ -1043,7 +1070,6 @@ a.app-pagination-link:hover { color: var(--heading); border-color: var(--border-
 .availability-number { color: var(--interactive); font-size: 22px; line-height: 1; }
 
 /* Borrowing calendar */
-.calendar-page-heading { align-items: flex-end; }
 .calendar-month-summary {
     display: flex;
     flex-wrap: wrap;
@@ -2699,8 +2725,8 @@ body > main + footer {
     .app-topbar { gap: 8px; }
     .topbar-title { margin-right: auto; }
     .account-nav { margin-left: 0; gap: 1px; }
-    .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
-    .page-heading.heading-action-lowered > .button { top: 0; }
+    .page-heading { display: flex; align-items: flex-start; flex-direction: column; gap: 13px; }
+    .page-heading > div:first-child { display: block; min-width: 0; }
     .page-heading h1 { font-size: 25px; }
     .stat-grid, .content-grid, .content-grid.two, .content-grid.three, .dashboard-grid, .hero { grid-template-columns: 1fr; }
     .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

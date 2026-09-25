@@ -1,6 +1,6 @@
 <style>
 .inventory-form-page { --inventory-blue: #0865df; width: 100%; min-width: 0; font-size: 13px; }
-.inventory-form-page .inventory-form-heading { align-items: flex-end; flex-wrap: wrap; gap: 14px 22px; margin-bottom: 22px; }
+.inventory-form-page .inventory-form-heading { column-gap: 22px; margin-bottom: 22px; }
 .inventory-form-heading .eyebrow { margin-bottom: 10px; }
 .inventory-form-page .inventory-form-heading h1 { margin: 0; }
 .inventory-form-page .inventory-form-back { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 2px; color: var(--inventory-blue); font-size: 13px; font-weight: 700; text-decoration: none; }

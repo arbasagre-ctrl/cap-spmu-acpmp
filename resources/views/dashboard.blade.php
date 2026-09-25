@@ -6,7 +6,7 @@
 @endif
 
 <style>
-    .dashboard-heading { align-items:center; margin-bottom:16px; }
+    .dashboard-heading { margin-bottom:16px; }
     .dashboard-heading > div > p:last-child { max-width:860px; }
 
     /* One universal KPI language for Borrower, AO, Admin/Head, and ICTU.

@@ -8,7 +8,7 @@
     font-size: 13px;
 }
 .completed-laundry [hidden] { display: none !important; }
-.completed-laundry .completed-laundry-heading { align-items: flex-end; gap: 20px; margin-bottom: 20px; }
+.completed-laundry .completed-laundry-heading { column-gap: 20px; margin-bottom: 20px; }
 .completed-laundry-heading .eyebrow { margin-bottom: 9px; font-size: 10px; letter-spacing: .1em; }
 .completed-laundry .completed-laundry-heading h1 { margin: 0 0 8px; font-size: clamp(25px, 2vw, 29px); line-height: 1.25; }
 .completed-laundry .completed-laundry-heading > div > p:last-child { margin: 0; font-size: 13px; line-height: 1.5; }

@@ -882,7 +882,7 @@
 @endif
 
 <style>
-.operational-config-heading{align-items:flex-end}.operational-config-heading .button{flex:0 0 auto}
+.operational-config-heading .button{flex:0 0 auto}
 .operational-config-section-heading .eyebrow{color:var(--interactive)}
 .operational-config-hub{--config-blue:#0f62d6}
 .operational-config-group{display:grid;gap:12px;margin-bottom:26px}

@@ -415,18 +415,26 @@
                     </span>
                 </a>
             @empty
+                @if($mode === 'return')
+                    {{-- Card empty state, matching the Verification Queue treatment. --}}
+                    <section class="operational-empty-card">
+                        <div class="operational-empty-card-content">
+                            <span class="operational-empty-card-icon" aria-hidden="true"><x-icon name="custody" size="30" /></span>
+                            <h2>No released transactions to return.</h2>
+                            <p>After physical release, the transaction moves here for return tracking and reconciliation.</p>
+                        </div>
+                    </section>
+                @else
                 <div class="empty-state">
                     @if($mode === 'release')
                         <strong>No transactions waiting for release.</strong>
                         <span>Approved transactions appear here until physical release is confirmed.</span>
-                    @elseif($mode === 'return')
-                        <strong>No released transactions to return.</strong>
-                        <span>After physical release, the transaction moves here for return tracking and reconciliation.</span>
                     @else
                         <strong>No custody/pickup records.</strong>
                         <span>A record appears after the SPMU Head verifies and approves a request and the approved quantities are allocated/held for pickup.</span>
                     @endif
                 </div>
+                @endif
             @endforelse
         </div>
         @if(in_array($mode, ['release','return'], true))
@@ -439,7 +447,14 @@
     .operational-browser-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--text-muted)}
     .operational-browser-toolbar input,.operational-browser-toolbar select{min-height:42px;width:100%}
     .operational-record-action{align-content:center}
-    @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}}
+    /* Empty-state card: same treatment as the Verification Queue empty state in approvals/partials/queue-styles.blade.php. */
+    .operational-empty-card{--operational-empty-accent:#0865df;display:flex;min-height:clamp(250px,32vh,320px);align-items:center;justify-content:center;padding:36px 20px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:9px;text-align:center}
+    .operational-empty-card-content{display:flex;flex-direction:column;align-items:center;max-width:400px}
+    .operational-empty-card-icon{display:grid;place-items:center;width:72px;height:72px;margin-bottom:18px;border-radius:50%;background:var(--info-bg);color:var(--operational-empty-accent)}
+    .operational-empty-card h2{margin:0 0 8px;font-size:16px;font-weight:750;line-height:1.4}
+    .operational-empty-card p{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.65}
+    html[data-theme="dark"] .operational-empty-card{--operational-empty-accent:#72b7f4}
+    @media(max-width:760px){.operational-browser-toolbar{grid-template-columns:1fr}.operational-empty-card{min-height:240px;padding:28px 16px}}
     </style>
     <script>
     (()=>{const list=document.getElementById('operational-filter-list');const rows=[...document.querySelectorAll('[data-operational-record]')];const search=document.getElementById('operational-search');const status=document.getElementById('operational-status');const sort=document.getElementById('operational-sort');const empty=document.getElementById('operational-filter-empty');if(!list||!rows.length||!search||!status||!sort)return;const render=()=>{const q=search.value.trim().toLowerCase();const st=status.value;const ordered=[...rows].sort((a,b)=>{const priority=Number(b.dataset.priority||0)-Number(a.dataset.priority||0);if(priority!==0)return priority;return(Number(b.dataset.created)-Number(a.dataset.created))*(sort.value==='newest'?1:-1)});ordered.forEach(r=>list.appendChild(r));let n=0;rows.forEach(r=>{const show=(!q||r.dataset.search.includes(q))&&(st==='all'||r.dataset.status===st);r.hidden=!show;if(show)n++});if(empty)empty.hidden=n>0};search.addEventListener('input',render);status.addEventListener('change',render);sort.addEventListener('change',render);render()})();

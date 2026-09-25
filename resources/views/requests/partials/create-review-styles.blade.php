@@ -81,7 +81,7 @@ body.request-dialog-open { overflow: hidden; }
 .request-dialog-backdrop[hidden] { display: none !important; }
 .request-dialog-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 24px; background: rgba(8, 18, 33, .58); }
 .request-dialog { width: min(680px, 100%); max-height: min(82vh, 760px); overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-elevated); box-shadow: 0 24px 70px rgba(0, 0, 0, .24); }
-.request-submit-dialog { width: min(560px, 100%); }
+.request-submit-dialog { width: min(500px, calc(100vw - 32px)); }
 .request-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px 16px; border-bottom: 1px solid var(--border); }
 .request-dialog-header h2 { margin: 4px 0 0; color: var(--heading); font-size: 19px; line-height: 1.35; }
 .request-dialog-close { display: grid; place-items: center; width: 34px; height: 34px; min-height: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 24px; line-height: 1; cursor: pointer; }
@@ -91,6 +91,24 @@ body.request-dialog-open { overflow: hidden; }
 .request-terms-note { padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-subtle); color: var(--text-muted); }
 .request-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 16px 22px 20px; border-top: 1px solid var(--border); }
 .request-dialog-actions .button { justify-content: center; }
+
+/*
+ | Submission confirmation dialog. Same shell, border-radius, shadow, backdrop
+ | and button styles as the Terms dialog above - only the header composition and
+ | a tighter rhythm, since this one is a short confirm rather than a long read.
+ | The Terms dialog keeps its own padding because it carries the full list.
+ */
+.request-submit-dialog .request-dialog-header { gap: 12px; padding: 16px 18px 12px; }
+.request-submit-dialog .request-dialog-header h2 { font-size: 18px; }
+.request-submit-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.request-submit-icon { display: grid; flex: 0 0 auto; place-items: center; width: 36px; height: 36px; margin-top: 2px; border-radius: 50%; background: var(--info-bg); color: var(--interactive); }
+.request-submit-dialog .request-dialog-body { gap: 10px; padding: 14px 18px; }
+.request-submit-note { margin: 0; padding: 12px 14px; border: 1px solid var(--info-border); border-radius: 8px; background: var(--info-bg); }
+.request-submit-dialog .request-dialog-actions { padding: 12px 18px 16px; }
+html[data-theme="dark"] .request-submit-icon { color: #72b7f4; }
+
+/* The Terms dialog can be opened from inside the submit dialog, so it stacks above it. */
+#request-terms-dialog { z-index: 1210; }
 
 /* Review action bar */
 #request-form .create-request-ui .sticky-actions.request-review-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 18px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); box-shadow: var(--shadow-sm); }
@@ -118,7 +136,10 @@ html[data-theme="dark"] #request-form .create-request-ui .document-dropzone.is-d
     .request-dialog-backdrop { padding: 12px; }
     .request-dialog-header,
     .request-dialog-body,
-    .request-dialog-actions { padding-left: 16px; padding-right: 16px; }
+    .request-dialog-actions,
+    .request-submit-dialog .request-dialog-header,
+    .request-submit-dialog .request-dialog-body,
+    .request-submit-dialog .request-dialog-actions { padding-left: 16px; padding-right: 16px; }
     .request-dialog-actions .button { flex: 1 1 auto; }
 }
 @media (prefers-reduced-motion: reduce) {

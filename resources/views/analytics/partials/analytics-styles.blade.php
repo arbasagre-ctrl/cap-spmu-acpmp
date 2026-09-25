@@ -1084,14 +1084,22 @@ a.analytics-trend-col:hover .analytics-trend-bar { background: var(--interactive
 }
 
 .analytics-page .analytics-tab.is-active {
-    background: var(--primary-action);
-    box-shadow: 0 3px 10px rgba(23, 105, 170, .25);
+    color: #fff;
+    background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+    box-shadow: 0 3px 10px rgba(37, 99, 235, .25);
+}
+
+html[data-theme="dark"] .analytics-page .analytics-tab.is-active {
+    background: linear-gradient(135deg, #1d4ed8 0%, #4338ca 100%);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .45);
 }
 
 /* Filters ---------------------------------------------------------------- */
 /*
-| Three cards rather than one form panel. The controls, their names and their
-| submit behaviour are untouched; only the frame around them changed.
+| Four cards rather than one form panel: period, division, unit, borrower.
+| No icons - a small uppercase name over the selected value, nothing beside
+| it. The controls, their names, their options and their submit behaviour are
+| untouched; only the frame around them changed.
 */
 .analytics-page .analytics-filters {
     padding: 0;
@@ -1228,7 +1236,7 @@ a.analytics-trend-col:hover .analytics-trend-bar { background: var(--interactive
     color: #fff;
     background: rgba(255, 255, 255, .2);
     border: 1px solid rgba(255, 255, 255, .26);
-    border-radius: 10px;
+    border-radius: 50%;
 }
 
 .analytics-kpi-card-label {
@@ -1294,15 +1302,15 @@ a.analytics-trend-col:hover .analytics-trend-bar { background: var(--interactive
 .analytics-kpi-card:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 .analytics-kpi-card.tone-requests { --kpi-from: #2563eb; --kpi-to: #38bdf8; --kpi-glow: rgba(37, 99, 235, .3); }
-.analytics-kpi-card.tone-custody  { --kpi-from: #6d28d9; --kpi-to: #6366f1; --kpi-glow: rgba(109, 40, 217, .3); }
+.analytics-kpi-card.tone-custody  { --kpi-from: #0f766e; --kpi-to: #10b981; --kpi-glow: rgba(15, 118, 110, .28); }
 .analytics-kpi-card.tone-overdue  { --kpi-from: #c2410c; --kpi-to: #f59e0b; --kpi-glow: rgba(194, 65, 12, .28); }
-.analytics-kpi-card.tone-stock    { --kpi-from: #dc2626; --kpi-to: #fb7185; --kpi-glow: rgba(220, 38, 38, .28); }
+.analytics-kpi-card.tone-stock    { --kpi-from: #6d28d9; --kpi-to: #8b5cf6; --kpi-glow: rgba(109, 40, 217, .3); }
 
 /* Deeper on dark so the fills sit in the page rather than glaring off it. */
 html[data-theme="dark"] .analytics-kpi-card.tone-requests { --kpi-from: #1d4ed8; --kpi-to: #0ea5e9; --kpi-glow: rgba(0, 0, 0, .45); }
-html[data-theme="dark"] .analytics-kpi-card.tone-custody  { --kpi-from: #5b21b6; --kpi-to: #4f46e5; --kpi-glow: rgba(0, 0, 0, .45); }
+html[data-theme="dark"] .analytics-kpi-card.tone-custody  { --kpi-from: #115e59; --kpi-to: #059669; --kpi-glow: rgba(0, 0, 0, .45); }
 html[data-theme="dark"] .analytics-kpi-card.tone-overdue  { --kpi-from: #9a3412; --kpi-to: #d97706; --kpi-glow: rgba(0, 0, 0, .45); }
-html[data-theme="dark"] .analytics-kpi-card.tone-stock    { --kpi-from: #b91c1c; --kpi-to: #e11d48; --kpi-glow: rgba(0, 0, 0, .45); }
+html[data-theme="dark"] .analytics-kpi-card.tone-stock    { --kpi-from: #5b21b6; --kpi-to: #7c3aed; --kpi-glow: rgba(0, 0, 0, .45); }
 
 /* Reading cards ---------------------------------------------------------- */
 

@@ -8,7 +8,7 @@
     font-size: 13px;
 }
 .laundry-operations [hidden] { display: none !important; }
-.laundry-operations .laundry-operations-heading { align-items: flex-end; gap: 20px; margin-bottom: 20px; }
+.laundry-operations .laundry-operations-heading { column-gap: 20px; margin-bottom: 20px; }
 .laundry-operations-heading .eyebrow { margin-bottom: 9px; font-size: 10px; letter-spacing: .1em; }
 .laundry-operations .laundry-operations-heading h1 { margin: 0 0 8px; font-size: clamp(25px, 2vw, 29px); }
 .laundry-operations .laundry-operations-heading > div > p:last-child { font-size: 13px; line-height: 1.5; }
